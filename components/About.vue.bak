@@ -1,0 +1,189 @@
+<template>
+  <div class="frame-1">
+    <div class="button-edge">
+      <svg
+          class="leading-icon"
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+      >
+        <g clip-path="url(#clip0_18_12)">
+          <path
+              d="M3 11.6667H1.33333C0.979711 11.6667 0.640573 11.8072 0.390524 12.0572C0.140476 12.3073 0 12.6464 0 13L0 14.6667C0 15.0203 0.140476 15.3594 0.390524 15.6095C0.640573 15.8595 0.979711 16 1.33333 16H3C3.35362 16 3.69276 15.8595 3.94281 15.6095C4.19286 15.3594 4.33333 15.0203 4.33333 14.6667V13C4.33333 12.6464 4.19286 12.3073 3.94281 12.0572C3.69276 11.8072 3.35362 11.6667 3 11.6667ZM3 14.6667H1.33333V13H3V14.6667Z"
+              fill="white"
+          />
+          <path
+              d="M14.6667 11.6667H13C12.6464 11.6667 12.3072 11.8072 12.0572 12.0572C11.8071 12.3073 11.6667 12.6464 11.6667 13V14.6667C11.6667 15.0203 11.8071 15.3594 12.0572 15.6095C12.3072 15.8595 12.6464 16 13 16H14.6667C15.0203 16 15.3594 15.8595 15.6095 15.6095C15.8595 15.3594 16 15.0203 16 14.6667V13C16 12.6464 15.8595 12.3073 15.6095 12.0572C15.3594 11.8072 15.0203 11.6667 14.6667 11.6667ZM14.6667 14.6667H13V13H14.6667V14.6667Z"
+              fill="white"
+          />
+          <path
+              d="M3 5.83331H1.33333C0.979711 5.83331 0.640573 5.97379 0.390524 6.22384C0.140476 6.47389 0 6.81302 0 7.16665L0 8.83331C0 9.18694 0.140476 9.52607 0.390524 9.77612C0.640573 10.0262 0.979711 10.1666 1.33333 10.1666H3C3.35362 10.1666 3.69276 10.0262 3.94281 9.77612C4.19286 9.52607 4.33333 9.18694 4.33333 8.83331V7.16665C4.33333 6.81302 4.19286 6.47389 3.94281 6.22384C3.69276 5.97379 3.35362 5.83331 3 5.83331ZM3 8.83331H1.33333V7.16665H3V8.83331Z"
+              fill="white"
+          />
+          <path
+              d="M14.6667 5.83331H13C12.6464 5.83331 12.3072 5.97379 12.0572 6.22384C11.8071 6.47389 11.6667 6.81302 11.6667 7.16665V8.83331C11.6667 9.18694 11.8071 9.52607 12.0572 9.77612C12.3072 10.0262 12.6464 10.1666 13 10.1666H14.6667C15.0203 10.1666 15.3594 10.0262 15.6095 9.77612C15.8595 9.52607 16 9.18694 16 8.83331V7.16665C16 6.81302 15.8595 6.47389 15.6095 6.22384C15.3594 5.97379 15.0203 5.83331 14.6667 5.83331ZM14.6667 8.83331H13V7.16665H14.6667V8.83331Z"
+              fill="white"
+          />
+          <path
+              d="M3 0H1.33333C0.979711 0 0.640573 0.140476 0.390524 0.390524C0.140476 0.640573 0 0.979711 0 1.33333L0 3C0 3.35362 0.140476 3.69276 0.390524 3.94281C0.640573 4.19286 0.979711 4.33333 1.33333 4.33333H3C3.35362 4.33333 3.69276 4.19286 3.94281 3.94281C4.19286 3.69276 4.33333 3.35362 4.33333 3V1.33333C4.33333 0.979711 4.19286 0.640573 3.94281 0.390524C3.69276 0.140476 3.35362 0 3 0ZM3 3H1.33333V1.33333H3V3Z"
+              fill="white"
+          />
+          <path
+              d="M8.83334 11.6667H7.16668C6.81305 11.6667 6.47392 11.8072 6.22387 12.0572C5.97382 12.3073 5.83334 12.6464 5.83334 13V14.6667C5.83334 15.0203 5.97382 15.3594 6.22387 15.6095C6.47392 15.8595 6.81305 16 7.16668 16H8.83334C9.18697 16 9.5261 15.8595 9.77615 15.6095C10.0262 15.3594 10.1667 15.0203 10.1667 14.6667V13C10.1667 12.6464 10.0262 12.3073 9.77615 12.0572C9.5261 11.8072 9.18697 11.6667 8.83334 11.6667ZM8.83334 14.6667H7.16668V13H8.83334V14.6667Z"
+              fill="white"
+          />
+          <path
+              d="M8.83334 5.83331H7.16668C6.81305 5.83331 6.47392 5.97379 6.22387 6.22384C5.97382 6.47389 5.83334 6.81302 5.83334 7.16665V8.83331C5.83334 9.18694 5.97382 9.52607 6.22387 9.77612C6.47392 10.0262 6.81305 10.1666 7.16668 10.1666H8.83334C9.18697 10.1666 9.5261 10.0262 9.77615 9.77612C10.0262 9.52607 10.1667 9.18694 10.1667 8.83331V7.16665C10.1667 6.81302 10.0262 6.47389 9.77615 6.22384C9.5261 5.97379 9.18697 5.83331 8.83334 5.83331ZM8.83334 8.83331H7.16668V7.16665H8.83334V8.83331Z"
+              fill="white"
+          />
+          <path
+              d="M8.83334 0H7.16668C6.81305 0 6.47392 0.140476 6.22387 0.390524C5.97382 0.640573 5.83334 0.979711 5.83334 1.33333V3C5.83334 3.35362 5.97382 3.69276 6.22387 3.94281C6.47392 4.19286 6.81305 4.33333 7.16668 4.33333H8.83334C9.18697 4.33333 9.5261 4.19286 9.77615 3.94281C10.0262 3.69276 10.1667 3.35362 10.1667 3V1.33333C10.1667 0.979711 10.0262 0.640573 9.77615 0.390524C9.5261 0.140476 9.18697 0 8.83334 0ZM8.83334 3H7.16668V1.33333H8.83334V3Z"
+              fill="white"
+          />
+          <path
+              d="M14.6667 0H13C12.6464 0 12.3072 0.140476 12.0572 0.390524C11.8071 0.640573 11.6667 0.979711 11.6667 1.33333V3C11.6667 3.35362 11.8071 3.69276 12.0572 3.94281C12.3072 4.19286 12.6464 4.33333 13 4.33333H14.6667C15.0203 4.33333 15.3594 4.19286 15.6095 3.94281C15.8595 3.69276 16 3.35362 16 3V1.33333C16 0.979711 15.8595 0.640573 15.6095 0.390524C15.3594 0.140476 15.0203 0 14.6667 0ZM14.6667 3H13V1.33333H14.6667V3Z"
+              fill="white"
+          />
+        </g>
+        <defs>
+          <clipPath id="clip0_18_12">
+            <rect width="16" height="16" fill="white" />
+          </clipPath>
+        </defs>
+      </svg>
+      <div class="button-text">Button text</div>
+    </div>
+    <div class="toggle" @click="toggleStyle()">
+      <div id="ellipse" class="toggleOff" ></div>
+    </div>
+  </div>
+
+</template>
+
+<script lang="ts">
+
+export default {
+
+  methods: {
+    toggleStyle() {
+      const flexContainer = document.querySelector('.toggle');
+      const toggleElement = document.getElementById('ellipse');
+      if (toggleElement.classList.contains('toggleOn')) {
+        toggleElement.classList.remove('toggleOn');
+        toggleElement.classList.add('toggleOff');
+      } else {
+        toggleElement.classList.remove('toggleOff');
+        toggleElement.classList.add('toggleOn');
+      }
+      // if (toggleElement.classList.contains('margin-start')) {
+      //   toggleElement.classList.remove('margin-start');
+      //   toggleElement.classList.add('margin-end');
+      // } else {
+      //   toggleElement.classList.remove('margin-end');
+      //   toggleElement.classList.add('margin-start');
+      // }
+
+    },
+  },
+}
+
+</script>
+
+<style scoped>
+.frame-1,
+.frame-1 * {
+  box-sizing: border-box;
+}
+.frame-1 {
+  background: #ffffff;
+  height: 500px;
+  position: relative;
+  overflow: hidden;
+}
+.button-edge {
+  background: var(--component-hover-component-hover-primary, #6236cc);
+  border-radius: var(--radius-radius-sm-4x, 8px);
+  padding: var(--padding-padding-12px, 12px) var(--padding-padding-24px, 24px)
+  var(--padding-padding-12px, 12px) var(--padding-padding-24px, 24px);
+  display: flex;
+  flex-direction: row;
+  gap: var(--padding-padding-48px, 48px);
+  align-items: center;
+  justify-content: flex-start;
+  position: absolute;
+  left: 107px;
+  top: 88px;
+}
+.leading-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  position: relative;
+  overflow: visible;
+}
+.button-text {
+  color: var(--component-text-component-text-light-fixed, #ffffff);
+  text-align: center;
+  font-family: var(
+      --body-xs-regular-normal-font-family,
+      "Poppins-Regular",
+      sans-serif
+  );
+  font-size: var(--body-xs-regular-normal-font-size, 14px);
+  line-height: var(--body-xs-regular-normal-line-height, 20px);
+  font-weight: var(--body-xs-regular-normal-font-weight, 400);
+  position: relative;
+}
+.toggle {
+  background: var(--component-fill-component-fill-dark-soft, #f0f1f3);
+  border-radius: var(--radius-radius-infinity, 9999px);
+  padding: 4px;
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  align-items: center;
+  width: 48px;
+  position: absolute;
+  left: 166.5px;
+  top: 162px;
+}
+#ellipse {
+  transition: all 0.5s ease-out;
+}
+.toggleOff {
+  margin-left: 0;
+  background: var(--component-fill-component-fill-light-fixed, #ffffff);
+  border-radius: 50%;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  position: relative;
+  box-shadow: var(
+      --shadow-background-xsm-box-shadow,
+      0px 2px 2px 2px rgba(0, 0, 0, 0.16)
+  );
+}
+.margin-start {
+  margin-left: 0;
+}
+
+.margin-end {
+  margin-left: 250px;
+}
+.toggleOn {
+  margin-left: 16px;
+  background: var(--component-fill-component-fill-positive, #23c965);
+  border-radius: 50%;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  position: relative;
+  box-shadow: var(
+      --shadow-background-xsm-box-shadow,
+      0px 2px 2px 2px rgba(0, 0, 0, 0.16)
+  );
+}
+
+</style>

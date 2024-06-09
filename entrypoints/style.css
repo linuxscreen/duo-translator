@@ -1,0 +1,95 @@
+/* 按钮样式 */
+#myExtensionButton {
+    position: fixed;
+    bottom: 20px;  /* 距离底部20px */
+    right: 20px;   /* 距离右侧20px */
+    z-index: 10000; /* 确保在最上层 */
+    cursor: pointer;
+    padding: 10px 20px;
+    background-color: #0078D7;
+    color: white;
+    border-radius: 5px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+/* 菜单样式 */
+#myExtensionMenu {
+    position: fixed;
+    bottom: 60px;  /* 距离底部更高一些 */
+    right: 20px;
+    z-index: 10000;
+    background-color: white;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    display: none; /* 默认不显示 */
+    padding: 10px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.menu-item {
+    margin: 5px 0;
+    cursor: pointer;
+}
+
+.gridElement {
+    /*width: 300px; !* 或任何其他尺寸 *!*/
+    /*height: 200px;*/
+    background-color: gray; /* 基本的灰色背景 */
+    background-image:
+            linear-gradient(rgba(255, 255, 255, 0) 1px, transparent 1px),
+            linear-gradient(120deg, transparent calc(50% - 1px), rgba(0, 0, 0, 0.1) 1px, transparent calc(50% + 1px));
+    background-size:
+            100% 100%, /* 第一个渐变覆盖整个元素 */
+            20px 20px; /* 设置网格的大小 */
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    transition: background-color 0.3s; /* 平滑背景色变化 */
+}
+
+.gridElement:hover {
+    background-color: red; /* 鼠标悬停时变红 */
+}
+
+.gridElement > * {  /* 直接子元素应用 */
+    background: inherit;  /* 继承背景 */
+    background-size : inherit; /* 继承背景大小 */
+}
+
+.yellowBorder {
+    border: 2px solid yellow; /* 黄色边框 */
+}
+
+.redBorder {
+    border: 2px solid red; /* 黄色边框 */
+}
+
+.greenBorder {
+    border: 2px solid green; /* 黄色边框 */
+}
+
+/* 在 CSS 文件中 */
+.doubleTransStyle {
+    /*color: var(--color); !* 默认黑色 *!*/
+    /*!*background-color: var(--bg-color, transparent); !* 默认白色 *!*!*/
+    /*!* 可以动态设置边框的宽度，类型，颜色等*!*/
+    /*border-width: var(--border-width, 0);*/
+    /*border-style: var(--border-style, solid);*/
+    /*border-color: var(--border-color, transparent);*/
+}
+
+/* 定义带有波浪线下划线的样式 */
+.wavy-underline {
+    /*background-image: url('data:image/svg+xml;utf8,<svg t="1714817533820" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" p-id="5092" width="200" height="200"><path d="M718.03392 565.94944a177.93536 177.93536 0 0 1-31.29344 35.6096q-28.5696 28.30336-79.36 29.2864a136.12032 136.12032 0 0 1-52.27008-10.99776q-27.60192-10.496-57.60512-22.5024-27.5968-13.4912-53.248-24.4992a143.1808 143.1808 0 0 0-47.9232-12.49792 70.07232 70.07232 0 0 0-49.36704 22.49728c-1.65888 1.88416-3.29728 3.82976-4.9408 5.77024a34.65728 34.65728 0 1 1-55.64416-41.15968 204.13952 204.13952 0 0 1 32.98816-38.25152q29.52192-26.81344 77.93152-27.80672a173.312 173.312 0 0 1 54.69696 9.50272 589.9776 589.9776 0 0 1 55.66464 24.4992q27.58656 13.50144 54.2208 24.50432a114.83136 114.83136 0 0 0 46.46912 12.49792 68.608 68.608 0 0 0 50.816-24.4992c1.67936-1.73056 3.29216-3.54304 4.92544-5.34016a34.64192 34.64192 0 1 1 53.9392 43.38688z" fill="" p-id="5093"></path></svg>');*/
+    /*background-repeat: repeat-x;*/
+    /*background-size: 10px 10px; !* 控制波浪线的大小 *!*/
+    /*background-position: 0 100%; !* 确保波浪线出现在文本下方 *!*/
+    /*padding-bottom: 2px; !* 防止文本与波浪线重叠 *!*/
+    /*display: inline;*/
+}
+
+
+
+

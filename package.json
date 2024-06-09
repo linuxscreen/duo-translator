@@ -1,0 +1,41 @@
+{
+  "name": "wxt-starter",
+  "description": "manifest.json description",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "build:firefox": "wxt build -b firefox",
+    "zip": "wxt zip",
+    "zip:firefox": "wxt zip -b firefox",
+    "compile": "vue-tsc --noEmit",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "element-plus": "^2.7.3",
+    "loglevel": "^1.9.1",
+    "uuid": "^9.0.1",
+    "vue": "^3.4.0",
+    "vue-i18n": "9",
+    "vue-router": "^4.3.2",
+    "vuetify": "^3.5.16"
+  },
+  "devDependencies": {
+    "@intlify/unplugin-vue-i18n": "^1.4.0",
+    "@mdi/font": "^7.4.47",
+    "@types/langdetect": "^0.2.2",
+    "@types/pouchdb": "^6.4.2",
+    "@vitejs/plugin-vue": "^5.0.1",
+    "events": "^3.3.0",
+    "franc": "^6.2.0",
+    "langdetect": "^0.2.1",
+    "pouchdb": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.5.0",
+    "vue-tsc": "^2.0.6",
+    "wxt": "^0.17.0"
+  }
+}

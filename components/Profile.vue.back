@@ -1,0 +1,100 @@
+<script lang="ts">
+
+function sendMessageToBackground(action, item) {
+  browser.runtime.sendMessage({ action, item }, response => {
+    if (response.status==='200'){
+      return response.date
+    }else {
+      return null
+    }
+  });
+}
+
+function getAllItems() {
+  return sendMessageToBackground("getAllRule",null)
+}
+
+export default {
+  data: () => ({
+    // tt : await deleteItem(1),
+    items: [],
+    data: [
+      {title: "title1", content: "content1"},
+      {title: "title2", content: "content2"},
+    ]
+  }),
+
+  async created() {
+    console.log("created")
+    let resp = await browser.runtime.sendMessage({action: "getAllRule"})
+    this.items = resp.data
+    this.items.forEach((value, index, array) => {
+      console.log(value._id)
+      value.rules.forEach(value1 => {
+        console.log(value1.title)
+        console.log(value1.content)
+      })
+    })
+  },
+
+  methods: {
+    deleteItem(index) {
+      this.items.splice(index, 1);
+    },
+    deleteSubItem(parentIndex, index) {
+      this.items[parentIndex].subItems.splice(index, 1);
+    }
+  }
+}
+
+
+</script>
+<template>
+  <v-card
+      class="mx-auto"
+
+  >
+    <v-list >
+<!--      <v-list-item prepend-icon="mdi-home" title="规则"></v-list-item>-->
+
+      <v-list-group :value="index" v-for="(item, index) in items">
+        <template v-slot:activator="{ props }">
+          <v-list-item
+              v-bind="props"
+              prepend-icon="mdi-account-circle"
+              :key="index"
+              :title="item._id">
+            <v-btn icon @click.stop="deleteItem(index)">
+              <v-icon>mdi-delete</v-icon>
+            </v-btn>
+          </v-list-item>
+        </template>
+        <v-list-item
+            v-for="(ele, i) in item.rules"
+            :key="i"
+            :title="ele.title"
+            :subtitle="ele.content"
+            >
+<!--          <v-list-item-content>-->
+<!--&lt;!&ndash;            <v-list-item-title>{{ ele.title }}</v-list-item-title>&ndash;&gt;-->
+<!--            {{ ele.content }}-->
+<!--          </v-list-item-content>-->
+          <v-btn icon @click.stop="deleteSubItem(index, i)">
+            <v-icon>mdi-delete</v-icon>
+          </v-btn>
+        </v-list-item>
+      </v-list-group>
+
+    </v-list>
+  </v-card>
+</template>
+
+<style scoped>
+.read-the-docs {
+  color: #888;
+}
+.v-list {
+  max-height: 300px; /* Adjust based on your needs */
+  overflow-y: auto;
+}
+</style>
