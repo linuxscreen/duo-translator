@@ -1,6 +1,7 @@
 import {browser} from "wxt/browser";
 import {Rule, sendMessageToBackground, SubRule, UrlStorage} from "@/entrypoints/utils";
 import {
+    CONFIG_KEY,
     DB_ACTION,
     DOMAIN_STRATEGY,
     STATUS_FAIL,
@@ -48,16 +49,16 @@ export default defineContentScript({
         let ruleStrategy = (await sendMessageToBackground({action: "searchRule", data: {domain: domain}}))?.[0]?.rules
         console.log("ruleStrategy: ", ruleStrategy)
         //遍历所有的规则，不用来翻译
-            ruleStrategy?.forEach((value) => {
-                let content = value.content
-                let element = document.querySelector(content);
-                if (element == null) {
-                    console.log("没有找到元素")
-                    return
-                }
-                // 添加一个class，标记为no-translate
-                element.classList.add('no-translate');
-            })
+        ruleStrategy?.forEach((value) => {
+            let content = value.content
+            let element = document.querySelector(content);
+            if (element == null) {
+                console.log("没有找到元素")
+                return
+            }
+            // 添加一个class，标记为no-translate
+            element.classList.add('no-translate');
+        })
 
         // 获取当前页面的翻译策略
         let viewStrategy = await sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {key: "viewStrategy"}})
@@ -65,7 +66,10 @@ export default defineContentScript({
             // 默认策略为双语翻译
             viewStrategy = VIEW_STRATEGY.DOUBLE
         }
-        let domainStrategy = (await sendMessageToBackground({action: DB_ACTION.DOMAIN_GET, data: {domain: domain}}))?.strategy;
+        let domainStrategy = (await sendMessageToBackground({
+            action: DB_ACTION.DOMAIN_GET,
+            data: {domain: domain}
+        }))?.strategy;
         if (!domainStrategy) {
             // 默认策略为自动判断是否翻译
             domainStrategy = DOMAIN_STRATEGY.AUTO
@@ -116,7 +120,10 @@ export default defineContentScript({
                 }
                 // 如果当前页面的语言和目标语言一致 不翻译
                 if (tabLanguage == targetLanguage) {
-                    await sendMessageToBackground({action: STORAGE_ACTION.SESSION_SET, data: {key: tabKey, value: "translate"}})
+                    await sendMessageToBackground({
+                        action: STORAGE_ACTION.SESSION_SET,
+                        data: {key: tabKey, value: "translate"}
+                    })
                     return
                 }
                 break
@@ -128,7 +135,10 @@ export default defineContentScript({
             // case DOMAIN_STRATEGY.NON_TARGET:
             //     break
             case DOMAIN_STRATEGY.NEVER:
-                await sendMessageToBackground({action: STORAGE_ACTION.SESSION_SET, data: {key: tabKey, value: "translate"}})
+                await sendMessageToBackground({
+                    action: STORAGE_ACTION.SESSION_SET,
+                    data: {key: tabKey, value: "translate"}
+                })
                 console.log("不翻译")
                 return
         }
@@ -252,7 +262,82 @@ export default defineContentScript({
             }
         }
 
-        function translateDoubleDOM(tree, params: translateParams) {
+        function customElementStyle(element,bgColor, fontColor, borderStyle, padding) {
+            element.style.backgroundColor = bgColor
+            element.style.color = fontColor
+            element.style.padding = padding
+            if (borderStyle == undefined) {
+                borderStyle = 'noneStyleSelect'
+            }
+            switch (borderStyle) {
+                case 'noneStyleSelect':
+                    element.style.border = 'none';
+                    break;
+                case 'solidBorder':
+                    element.style.border = '2px solid';
+                    break;
+                case 'dottedBorder':
+                    element.style.border = '2px dotted';
+                    break;
+                case 'dashedBorder':
+                    element.style.border = '2px dashed';
+                    break;
+                case "wavyLine":
+                    element.style.textDecoration = "wavy underline";
+                    break;
+                case "doubleLine":
+                    element.style.textDecoration = "underline double";
+                    break;
+                case "underLine":
+                    element.style.textDecoration = "underline";
+                    break;
+                case "dottedLine":
+                    element.style.textDecoration = "underline dotted";
+                    break;
+                case "dashedLine":
+                    element.style.textDecoration = "underline dashed";
+                    break;
+            }
+            if (borderStyle.endsWith("Line")) {
+                element.style.textUnderlineOffset = `${padding}px`
+            } else {
+                element.style.padding = `${padding}px`
+            }
+        }
+
+        async function translateDoubleDOM(tree, params: translateParams) {
+            // 获取定义的样式
+            let [bgColor, fontColor, borderStyle, padding] = await Promise.all([
+                sendMessageToBackground({
+                    action: DB_ACTION.CONFIG_GET,
+                    data: {name: CONFIG_KEY.BG_COLOR}
+                }),
+                sendMessageToBackground({
+                    action: DB_ACTION.CONFIG_GET,
+                    data: {name: CONFIG_KEY.FONT_COLOR}
+                }),
+                sendMessageToBackground({
+                    action: DB_ACTION.CONFIG_GET,
+                    data: {name: CONFIG_KEY.STYLE}
+                }),
+                sendMessageToBackground({
+                    action: DB_ACTION.CONFIG_GET,
+                    data: {name: CONFIG_KEY.PADDING}
+                })
+            ]);
+            // let bgColor = await sendMessageToBackground({
+            //     action: DB_ACTION.CONFIG_GET,
+            //     data: {name: CONFIG_KEY.BG_COLOR}
+            // })
+            // let fontColor = await sendMessageToBackground({
+            //     action: DB_ACTION.CONFIG_GET,
+            //     data: {name: CONFIG_KEY.FONT_COLOR}
+            // })
+            // let borderStyle = await sendMessageToBackground({
+            //     action: DB_ACTION.CONFIG_GET,
+            //     data: {name: CONFIG_KEY.STYLE}
+            // })
+
             let needTranslates = []
             let eles = collectElements(tree, isParagraphElement, [])
             if (!eles) {
@@ -274,7 +359,7 @@ export default defineContentScript({
                 // fontElement.classList.add("wavy-underline")
                 // 将 clone 的内容复制到新的 font 元素中
                 fontElement.innerHTML = clone.innerHTML;
-
+                customElementStyle(fontElement, bgColor, fontColor, borderStyle, padding)
                 // 当前文本的长度超过40个字符，就添加一个换行符
                 if (element.textContent.length > 40) {
                     element.appendChild(document.createElement('br'));

@@ -20,12 +20,22 @@ export default {
       default: {}
     },
     activePreSelected: {},
+    modelValue: {
+      type: String,
+      required: true,
+    },
+    selectedIndex: {
+      type: Number,
+      required: true,
+    }
   },
   data() {
     return {
-      colorPicked: '#ff0000',
+      colorPicked: '',
+      // colorPicked: this.modelValue,
       'my-custom-class': true,
-      preSelectedIndex: 0
+      preSelectedIndex: 0,
+
     };
   },
   setup() {
@@ -40,16 +50,46 @@ export default {
       callInternalMethod,
     };
   },
+  watch: {
+    modelValue(newValue, oldValue) {
+      this.colorPicked = newValue;
+      console.log('modelValue', newValue, oldValue)
+      let ele = this.$el.querySelector('#colorPickBox');
+      ele.setAttribute('data-custom-color', newValue)
+      console.log('modelValue ele', ele.getAttribute('data-custom-color'))
 
+    },
+    colorPicked(newValue, oldValue) {
+      console.log('colorPicked', newValue, oldValue)
+    },
+    selectedIndex(val,old){
+      console.log('selectedIndex inner',val,'old',old)
+      const elements = this.$el.querySelectorAll('.color-item');
+      // 获取当前选中的色块index
+      for (let i = 0; i < elements.length; i++) {
+        let ele = elements[i];
+        ele.classList.remove('active');
+      }
+      // 根据value prop（即index）找到对应的色块元素
+      const selectedElement = elements[val];
+      selectedElement.classList.add('active')
+    }
+  },
   methods: {
+    test(){
+      console.log('test',this.modelValue)
+    },
     checkedColor(event) {
       // 两种色块不能是同种颜色
       let pickers = document.querySelectorAll(".bg-color-pick-list");
+      console.log('checkedColor pickers', pickers)
       for (let i = 0; i < pickers.length; i++) {
         let picker = pickers[i];
         if (picker !== this.$el) {
           let elements = picker.querySelector('#colorPickBox');
+          console.log('checkedColor elements', elements)
           let color = elements?.getAttribute('data-custom-color');
+          console.log('checkedColor color', color)
           if (event.target.style.color != '' && color == rgbToHex(event.target.style.color).toUpperCase()) {
             ElMessage({
               showClose: true,
@@ -63,27 +103,33 @@ export default {
       }
       //移出其他的active
       let elements = this.$el.querySelectorAll('.color-item');
-      // 获取当前选中的色块index
-      for (let i = 0; i < elements.length; i++) {
-        let ele = elements[i];
-        ele.classList.remove('active');
-      }
       let ele = event.target
       let color = ele.style.color
       let hexColor = this.rgbToHex(color).toUpperCase();
-      ele.classList.add('active');
+      // ele.classList.add('active');
       this.preSelectedIndex = Array.from(elements).indexOf(ele)
       this.colorPicked = hexColor;
-      this.$emit('color-changed', hexColor);
+      this.$emit('update:modelValue', hexColor);
+      // 获取当前选中的色块index
+      for (let i = 0; i < elements.length; i++) {
+        if (elements[i] === ele) {
+          this.$emit('update:selectedIndex', i);
+        }
+        // let ele = elements[i];
+        // if (ele.classList.contains('active')) {
+          // this.$emit('update:selectedIndex', i);
+        //   // this.$emit('update:modelValue', i);
+        // }
+      }
     },
     showColorPicker() {
+      this.$emit('update:selectedIndex', 5);
+      // this.$emit('update:modelValue', 5);
       this.callInternalMethod();
-      let elements = this.$el.querySelectorAll('.bg-color-pick-list .color-item');
-      elements.forEach((ele) => {
-        ele.classList.remove('active');
-      });
-      let ele = this.$el.querySelector("#colorPickBox")
-      ele?.classList.add('active');
+      // let elements = this.$el.querySelectorAll('.bg-color-pick-list .color-item');
+
+      // let ele = this.$el.querySelector("#colorPickBox")
+      // ele?.classList.add('active');
     },
     onColorChange() {
       let pickers = document.querySelectorAll(".bg-color-pick-list");
@@ -107,7 +153,8 @@ export default {
           }
         }
       }
-      this.$emit('color-changed', this.colorPicked);
+      // this.$emit('color-changed', this.colorPicked);
+
     },
     rgbToHex(rgb) {
       // Extract the RGB values
@@ -119,6 +166,21 @@ export default {
     },
   },
   mounted() {
+    console.log('custom mounted',this.modelValue)
+    // this.$nextTick(() => {
+    //   console.log('selectedIndexMm',this.selectedIndex)
+    //   // console.log('selectedIndex',val,'old',old)
+    //   const elements = this.$el.querySelectorAll('.color-item');
+    //   // 根据value prop（即index）找到对应的色块元素
+    //   const selectedElement = elements[this.selectedIndex];
+    //   selectedElement.classList.add('active');
+    //   console.log('selectedElement', selectedElement)
+    //
+    // });
+    // // 如果找到了对应的色块元素，就添加active类
+    // if (selectedElement) {
+    //   selectedElement.classList.add('active');
+    // }
     // let ele = this.$el.querySelector('#colorPickBox')
     // // 获取颜色选择box的位置
     // let top = ele.getBoundingClientRect.top
@@ -136,6 +198,8 @@ export default {
 
 <template>
   <section class="bg-color-pick-list" :class="customClass">
+<!--     <span class="color-item" @click="test">-->
+<!--          </span>-->
         <span class="color-item" @click="checkedColor($event)">
           </span>
     <span class="color-item" style="color: #df5f47" @click="checkedColor($event)">
@@ -147,8 +211,8 @@ export default {
     <span class="color-item" style="color:#73b364;" @click="checkedColor($event)">
           </span><!---->
     <span class="color-item" id="colorPickBox" :data-custom-color="colorPicked" @click="showColorPicker()">
-  <el-color-picker id="colorPicker" v-model="colorPicked" ref="colorPickerComponent" v-bind="$attrs"
-                   @change="onColorChange"/>
+  <el-color-picker id="colorPicker" ref="colorPickerComponent" v-bind="$attrs"
+                   @change="onColorChange" />
         </span>
   </section>
 

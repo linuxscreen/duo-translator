@@ -44,16 +44,48 @@
 
   <marquee-text text="sff sfffsff sfffsff sfffsff sfffsff sfffsff sfffsff sfffsff sfffsff sfff"
                 width="120px"></marquee-text>
+  <v-btn @click="toggleColorPicker">
+    {{ showColorPicker ? 'Hide' : 'Show' }} Color Picker
+  </v-btn>
+  <v-dialog v-model="showColorPicker" persistent>
+    <v-card>
+      <v-card-title>
+        <span class="headline">Select Color</span>
+      </v-card-title>
+      <v-card-text>
+        <v-color-picker v-model="selectedColor" />
+      </v-card-text>
+      <v-card-actions>
+        <v-spacer></v-spacer>
+        <v-btn color="primary" text @click="showColorPicker = false">Done</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+  <p>Selected Color: {{ selectedColor }}</p>
 </template>
 
 <script lang="ts">
 import CustomSwitch from "@/components/CustomSwitch.vue";
 import CustomColorPicker from "@/components/CustomColorPicker.vue";
 import MarqueeText from "@/components/MarqueeText.vue";
+import {ref} from "vue";
 // import { ref } from 'vue'
 //
 // const value = ref(true)
 export default {
+  setup() {
+    const selectedColor = ref('#ff0000'); // 默认颜色值
+    const showColorPicker = ref(false);
+
+    const toggleColorPicker = () => {
+      showColorPicker.value = !showColorPicker.value;
+    };
+    return {
+      selectedColor,
+      showColorPicker,
+      toggleColorPicker,
+    };
+  },
   components: {MarqueeText, CustomColorPicker, CustomSwitch},
 
   async mounted() {
@@ -71,7 +103,10 @@ export default {
 }
 
 </script>
-<style scoped>
+<style >
+h1 {
+  color: green;
+}
 #grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));

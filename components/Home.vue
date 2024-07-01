@@ -1,14 +1,16 @@
 <script lang="ts">
-import {ref, defineComponent} from 'vue';
+import {ref} from 'vue';
 import CustomColorPicker from "@/components/CustomColorPicker.vue";
 import CustomSwitch from "@/components/CustomSwitch.vue";
 import {rgbToHex, sendMessageToBackground, sendMessageToTab} from "@/entrypoints/utils";
 import {
-  COMMON, CONFIG_KEY,
+  COMMON,
+  CONFIG_KEY,
   DB_ACTION,
-  DEFAULT,
   DOMAIN_STRATEGY,
-  LANG_CODE, STORAGE_ACTION, TB_ACTION,
+  LANG_CODE,
+  STORAGE_ACTION,
+  TB_ACTION,
   TRANS_ACTION,
   TRANS_SERVICE,
   VIEW_STRATEGY
@@ -17,7 +19,10 @@ import useI18n from "@/composables/useI18n";
 import {browser} from "wxt/browser";
 import MarqueeText from "@/components/MarqueeText.vue";
 import {translationServices} from "@/entrypoints/translateService";
-
+// import {useUserStore} from "@/utils/userStorage";
+import {getUserList,getUserInfo} from "@/api/user";
+const title = import.meta.env.VITE_APP_TITLE
+const env = import.meta.env.VITE_ENV
 export default {
   computed: {
     translationServices() {
@@ -25,33 +30,72 @@ export default {
     }
   },
   setup() {
+    // const userStorage = useUserStore()
+    const bgColorIndex = ref(0); // 默认选中颜色的索引
     const {t} = useI18n();
     const colorPickerComponent = ref(null)
-    const stylePadding = ref(4)
+    const padding = ref(3)
     const callInternalMethod = () => {
       if (colorPickerComponent.value) {
         colorPickerComponent.value.show();
       }
     };
     return {
+      // userStorage,
       colorPickerComponent,
       callInternalMethod,
-      stylePadding,
-      t
+      padding: padding,
+      t,
+      // bgColorIndex,
     };
   },
   watch: {
-    stylePadding(newVal) {
+    bgColor(newVal, oldVal) {
+      // 储存当前颜色到配置文件
+
+      console.log("bgColor saved")
+      sendMessageToBackground({action: DB_ACTION.CONFIG_SET, data: {name: CONFIG_KEY.BG_COLOR, value: newVal}});
+      let ele = document.querySelector("#showDemoTranslated") as HTMLElement
+      ele.style.backgroundColor = newVal
+      console.log('selectedColor', newVal, 'oldVal', oldVal)
+    },
+    fontColor(newVal, oldVal) {
+      // 储存当前颜色到配置文件
+      sendMessageToBackground({action: DB_ACTION.CONFIG_SET, data: {name: CONFIG_KEY.FONT_COLOR, value: newVal}});
+      let ele = document.querySelector("#showDemoTranslated") as HTMLElement
+      ele.style.color = newVal
+    },
+    bgColorIndex(newVal) {
+      // 储存当前颜色到配置文件
+      sendMessageToBackground({action: DB_ACTION.CONFIG_SET, data: {name: CONFIG_KEY.BG_COLOR_INDEX, value: newVal}})
+      console.log('bgColorIndex', newVal)
+    },
+    fontColorIndex(newVal) {
+      // 储存当前颜色到配置文件
+      sendMessageToBackground({action: DB_ACTION.CONFIG_SET, data: {name: CONFIG_KEY.FONT_COLOR_INDEX, value: newVal}})
+    },
+    async padding(newVal) {
+      console.log('padding', newVal)
+      // 储存配置到数据库
+      await sendMessageToBackground({
+        action: DB_ACTION.CONFIG_SET,
+        data: {name: CONFIG_KEY.PADDING, value: newVal}
+      })
       let ele = document.querySelector("#showDemoTranslated") as HTMLElement
       //设置文字和下划线的间距
-      if (this.styleSelected.endsWith("Line")) {
+      if (this.style.endsWith("Line")) {
         ele.style.textUnderlineOffset = `${newVal}px`
-      } else if (this.styleSelected.endsWith("Border")) {
+      } else if (this.style.endsWith("Border")) {
         ele.style.padding = `${newVal}px`
       }
       // ele.style.textUnderlineOffset = `${newVal}px`
     },
-    styleSelected(newVal) {
+    async style(newVal) {
+      // 储存配置到数据库
+      await sendMessageToBackground({
+        action: DB_ACTION.CONFIG_SET,
+        data: {name: CONFIG_KEY.STYLE, value: newVal}
+      })
       let ele = document.querySelector("#showDemoTranslated") as HTMLElement
       ele.style.border = ''
       ele.style.textDecoration = ''
@@ -84,28 +128,32 @@ export default {
           ele.style.textDecoration = "underline dashed"
           break;
       }
-      if (this.styleSelected.endsWith("Line")) {
-        ele.style.textUnderlineOffset = `${this.stylePadding}px`
+      if (this.style.endsWith("Line")) {
+        ele.style.textUnderlineOffset = `${this.padding}px`
       } else {
-        ele.style.padding = `${this.stylePadding}px`
+        ele.style.padding = `${this.padding}px`
       }
       console.log(newVal)
     },
-    bgColorPicked(newVal, oldVal) {
-      if (newVal == this.fontColorPicked) {
-        this.bgColorPicked = oldVal
-
-      }
-    },
-    fontColorPicked(newVal) {
-
-    }
+    // bgColor(newVal, oldVal) {
+    //   if (newVal == this.fontColor) {
+    //     this.bgColor = oldVal
+    //   }
+    // },
+    // fontColorPicked(newVal) {
+    //
+    // }
 
   },
   components: {MarqueeText, CustomSwitch, CustomColorPicker},
   data() {
+    const userStorage = useUserStore
+    // const userInfo = getUserInfo
     return {
-      sourceLanguage: undefined,
+      // userInfo,
+      // userStorage,
+      bgColorIndex: -1,
+      fontColorIndex: -1,
       tabLanguage: undefined,
       tabs: undefined,
       tabTranslateStatus: "translate",
@@ -156,21 +204,21 @@ export default {
         {title: "german", value: LANG_CODE.DE},
         {title: "japanese", value: LANG_CODE.JA},
       ],
-      domainStrategySelected: "automaticallyDetermineWhetherToTranslate",
+      domainStrategy: "automaticallyDetermineWhetherToTranslate",
       // strategySelected: {title: "displayBilingual", value: VIEW_STRATEGY.DOUBLE, action: TRANS_ACTION.DOUBLE},
-      viewStrategySelected: "bilingual",
+      viewStrategy: "bilingual",
       selected: "default",
-      targetLanguageSelected: "simplifiedChinese",
-      translateServiceSelected: "microsoftTranslator",
-      sourceLanguageSelected: "automaticDetection",
+      targetLanguage: "simplifiedChinese",
+      translateService: "microsoftTranslator",
+      sourceLanguage: "automaticDetection",
       switchAlwaysTranslate: false,
       switchNeverTranslate: false,
       switchAutoDetect: false,
       localStorageValue: undefined,
       translateToggle: false,
-      bgColorPicked: '',
-      fontColorPicked: '',
-      styleSelected: 'noneStyleSelect',
+      bgColor: undefined,
+      fontColor: undefined,
+      style: 'noneStyleSelect',
       options: [
         {
           label: '包围',
@@ -224,6 +272,22 @@ export default {
     }
   },
   methods: {
+
+    async test(){
+      const res = await getUserInfo()
+      console.log("ffddfffffff")
+      // console.log("testssss",res)
+      // console.log("testssss",res)
+      // this.userStorage.setToken('123')
+      // console.log('get token',this.userStorage.token)
+      // service.get("/test").then((res) => {
+      //   console.log(res);
+      // });
+      // console.log('bgColor',this.bgColor)
+      // console.log('app',title)
+      // console.log('env',env)
+      // console.log('process path',process.env.VITE_APP_TITLE)
+    },
     changeDomainStrategy(selected) {
       // 获取到域名,然后保存策略到数据库
       sendMessageToBackground({
@@ -231,7 +295,7 @@ export default {
         data: {domain: this.domain, strategy: this.getItemByTitle(this.domainStrategies, selected)?.value}
       }).then((response) => {
         //修改前端显示的策略
-        this.domainStrategySelected = selected;
+        this.domainStrategy = selected;
       }).catch(
           // 上传报错信息
       )
@@ -242,7 +306,7 @@ export default {
         action: DB_ACTION.CONFIG_SET,
         data: {name: CONFIG_KEY.TRANS_SERVICE, value: selected.value}
       })
-      this.translateServiceSelected = selected.title
+      this.translateService = selected.title
     },
     async changeViewStrategy(selected) {
       //保存到数据库
@@ -254,7 +318,7 @@ export default {
       //   action: DB_ACTION.DOMAIN_UPDATE,
       //   data: {domain: this.domain, viewStrategy: selected.value}
       // })
-      this.viewStrategySelected = selected.title
+      this.viewStrategy = selected.title
     },
     async changeTargetLanguage(selected) {
       //保存到数据库
@@ -262,10 +326,10 @@ export default {
         action: DB_ACTION.CONFIG_SET,
         data: {name: CONFIG_KEY.TARGET_LANG, value: selected.value}
       })
-      this.targetLanguageSelected = selected.title
+      this.targetLanguage = selected.title
     },
     handleColorChecked() {
-      return {bgColor: this.bgColorPicked, fontColor: this.fontColorPicked}
+      return {bgColor: this.bgColor, fontColor: this.fontColor}
     },
     getIndexByColor(color) {
       let index = 0
@@ -284,15 +348,18 @@ export default {
       }
       return index
     },
-    async handleBgColorChanged(newColor) {
-      this.bgColorPicked = newColor;
-      let ele = document.querySelector("#showDemoTranslated") as HTMLElement
-      ele.style.backgroundColor = newColor
-      //储存当前颜色到配置文件
-      // await sendMessageToBackground({action: DB_ACTION.CONFIG_SET, data: {name: "bgColor", value: newColor}});
-      await this.timeSlice()
-      console.log("handleBgColorChanged")
-    },
+    // async handleBgColorChanged(newColor) {
+    //   this.bgColor = newColor;
+    //   // 储存当前颜色到配置文件
+    //   await sendMessageToBackground({action: DB_ACTION.CONFIG_SET, data: {name: CONFIG_KEY.BG_COLOR, value: newColor}});
+    //   // await sendMessageToBackground({action:DB_ACTION.CONFIG_SET,data:{name:CONFIG_KEY.BG_COLOR_INDEX,value:this.bgColorIndex}})
+    //   this.bgColor = newColor;
+    //   let ele = document.querySelector("#showDemoTranslated") as HTMLElement
+    //   ele.style.backgroundColor = newColor
+    //
+    //   // await this.timeSlice()
+    //   // console.log("handleBgColorChanged")
+    // },
     timeSlice() {
       return new Promise(resolve => {
         setTimeout(() => {
@@ -301,14 +368,19 @@ export default {
         }, 2000)
       })
     },
-    async handleFontColorChanged(newColor) {
-      this.fontColorPicked = newColor;
-      let ele = document.querySelector("#showDemoTranslated") as HTMLElement
-      ele.style.color = newColor
-      console.log("handleFontColorChanged")
-    },
+    // async handleFontColorChanged(newColor) {
+    //   this.fontColor = newColor;
+    //   // 储存当前颜色到配置文件
+    //   await sendMessageToBackground({
+    //     action: DB_ACTION.CONFIG_SET,
+    //     data: {name: CONFIG_KEY.FONT_COLOR, value: newColor}
+    //   });
+    //   let ele = document.querySelector("#showDemoTranslated") as HTMLElement
+    //   ele.style.color = newColor
+    //   console.log("handleFontColorChanged")
+    // },
     changeSourceLanguage(item) {
-      this.sourceLanguageSelected = item.title
+      this.sourceLanguage = item.title
       // 保存到数据库
       sendMessageToBackground({
         action: DB_ACTION.CONFIG_SET,
@@ -322,7 +394,7 @@ export default {
       window.close()
     },
     changeTargetLanguages(item) {
-      this.targetLanguageSelected = item.title
+      this.targetLanguage = item.title
       // 保存到数据库
       sendMessageToBackground({
         action: DB_ACTION.CONFIG_SET,
@@ -335,8 +407,8 @@ export default {
     getItemByValue(array: Array<any>, code: string) {
       return array.find(value => value.value == code)
     },
-    async toggleTranslation(translateStatus :boolean) {
-      console.log("enter toggleTranslation",translateStatus)
+    async toggleTranslation(translateStatus: boolean) {
+      console.log("enter toggleTranslation", translateStatus)
       //设置当前翻译状态
       await sendMessageToBackground({
         action: STORAGE_ACTION.SESSION_SET,
@@ -344,13 +416,13 @@ export default {
       })
       if (translateStatus) {
         // 向content script发送消息,执行特定的翻译行为
-        let action = this.viewStrategies.find(value => value.title == this.viewStrategySelected)?.action
+        let action = this.viewStrategies.find(value => value.title == this.viewStrategy)?.action
         await sendMessageToTab({
           action: action,
           data: {
-            targetLanguage: this.getItemByTitle(this.targetLanguages, this.targetLanguageSelected)?.value,
+            targetLanguage: this.getItemByTitle(this.targetLanguages, this.targetLanguage)?.value,
             sourceLanguage: undefined,
-            translateService: this.getItemByTitle(this.translateServices, this.translateServiceSelected)?.value
+            translateService: this.getItemByTitle(this.translateServices, this.translateService)?.value
           }
         })
       } else {
@@ -366,7 +438,7 @@ export default {
         action: DB_ACTION.CONFIG_SET,
         data: {name: "translateService", value: selected.value}
       })
-      this.translateServiceSelected = selected.title
+      this.translateService = selected.title
     },
     switchAlwaysTranslateChanged(newVal) {
       console.log("Switch value changed to: ", newVal);
@@ -411,14 +483,14 @@ export default {
         // 根据code获取title 设置前端显示
         this.targetLanguages.forEach(language => {
           if (language.value == targetLanguageConfigValue) {
-            this.targetLanguageSelected = language.title;
+            this.targetLanguage = language.title;
           }
         })
       } else {
         this.targetLanguages.forEach(language => {
           // get default browser language
           if (language.value == navigator.language) {
-            this.targetLanguageSelected = language.title;
+            this.targetLanguage = language.title;
           }
         })
       }
@@ -441,7 +513,7 @@ export default {
         data: {name: CONFIG_KEY.TRANS_SERVICE}
       });
       if (translateServiceConfigValue) {
-        this.translateServiceSelected = this.getItemByValue(this.translateServices, translateServiceConfigValue)?.title;
+        this.translateService = this.getItemByValue(this.translateServices, translateServiceConfigValue)?.title;
       }
       //获取当前活动的tab
       this.tabs = await browser.tabs.query({active: true, currentWindow: true})
@@ -460,7 +532,7 @@ export default {
         data: {name: CONFIG_KEY.VIEW_STRATEGY}
       });
       if (viewStrategyConfigValue) {
-        this.viewStrategySelected = this.getItemByValue(this.viewStrategies, viewStrategyConfigValue)?.title;
+        this.viewStrategy = this.getItemByValue(this.viewStrategies, viewStrategyConfigValue)?.title;
       }
       // 获取当前域名的翻译策略
       this.domain = await sendMessageToBackground({action: TB_ACTION.TAB_DOMAIN_GET});
@@ -469,8 +541,51 @@ export default {
         //根据strategy value获取title
         this.domainStrategies.forEach(strategy => {
           if (strategy.value == domainData.strategy) {
-            this.domainStrategySelected = strategy.title;
+            this.domainStrategy = strategy.title;
           }
+        })
+        // 样式初始化
+        // 赋值style
+        this.style = await sendMessageToBackground({
+          action: DB_ACTION.CONFIG_GET,
+          data: {name: CONFIG_KEY.STYLE}
+        })
+        // 赋值颜色
+        let bgColorConfig = await sendMessageToBackground({
+          action: DB_ACTION.CONFIG_GET,
+          data: {name: CONFIG_KEY.BG_COLOR}
+        })
+        if (bgColorConfig) {
+          this.bgColor = bgColorConfig
+        }
+        let fontColorConfig = await sendMessageToBackground({
+          action: DB_ACTION.CONFIG_GET,
+          data: {name: CONFIG_KEY.FONT_COLOR}
+        })
+        if (fontColorConfig) {
+          this.fontColor = fontColorConfig
+        }
+        let bgColorIndexConfig = await sendMessageToBackground({
+          action: DB_ACTION.CONFIG_GET,
+          data: {name: CONFIG_KEY.BG_COLOR_INDEX}
+        })
+        if (bgColorIndexConfig != undefined) {
+          this.bgColorIndex = Number(bgColorIndexConfig)
+        } else {
+          this.bgColorIndex = 0;
+        }
+        let fontColorIndexConfig = await sendMessageToBackground({
+          action: DB_ACTION.CONFIG_GET,
+          data: {name: CONFIG_KEY.FONT_COLOR_INDEX}
+        })
+        if (fontColorIndexConfig != undefined) {
+          this.fontColorIndex = Number(fontColorIndexConfig)
+        } else {
+          this.fontColorIndex = 0;
+        }
+        this.padding = await sendMessageToBackground({
+          action: DB_ACTION.CONFIG_GET,
+          data: {name: CONFIG_KEY.PADDING}
         })
         // this.viewStrategies.forEach((vs) => {
         //   if (vs.value == domainData.viewStrategy) {
@@ -479,7 +594,7 @@ export default {
         // })
         // this.strategySelectedTitle = domain.strategy;
       }
-      console.log("domain", this.domainStrategySelected)
+      console.log("domain", this.domainStrategy)
     } catch (e) {
       console.log(e)
     }
@@ -507,14 +622,15 @@ export default {
     </svg>
     <div class="login">
       <div class="avatar">
-        <div class="ellipse-583"></div>
-        <img class="avatar-image" style="width: 60px;height: 60px"
-             src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRCyB8Jms4jsegDW1tuOeFuA7XiN5p65ccZVDifwa85AA&s"/>
+        <div >
+<!--          <img src="@/public/avatar.png" class="avatar-image"  alt="avatar" style="width: 60px;height: 60px"/>-->
+        </div>
+        <div class="login-message">
+          <div class="logged-in">tourist</div>
+          <div class="div">{{ t('loginToSynchronizeData') }}</div>
+        </div>
       </div>
-      <div class="login-message">
-        <div class="logged-in">Logged in</div>
-        <div class="div">{{ t('loginToSynchronizeData') }}</div>
-      </div>
+
       <div class="btn-rule" @click="toggleSelectionMode">
         <div class="leading-icon">
           <svg
@@ -546,7 +662,7 @@ export default {
         <div class="btn-strategy">
           <el-dropdown @command="changeViewStrategy" trigger="click" size="large">
             <div class="select-strategy">
-              <div class="button-text">{{ t(viewStrategySelected) }}</div>
+              <div class="button-text">{{ t(viewStrategy) }}</div>
               <svg
                   class="trailing-icon"
                   width="16"
@@ -582,7 +698,7 @@ export default {
         <div class="btn-target">
           <el-dropdown @command="changeTargetLanguage" trigger="click" size="large">
             <div class="select-target">
-              <div class="button-text">{{ t(targetLanguageSelected) }}</div>
+              <div class="button-text">{{ t(targetLanguage) }}</div>
               <svg
                   class="trailing-icon2"
                   width="16"
@@ -620,10 +736,10 @@ export default {
 
           <div class="btn-trans">
             <div class="leading-icon2">
-              <img :src="'fi-brands-'+ getItemByTitle(translateServices,translateServiceSelected).value + '.svg'"
-                   :alt="translateServiceSelected">
+              <img :src="'fi-brands-'+ getItemByTitle(translateServices,translateService).value + '.svg'"
+                   :alt="translateService">
             </div>
-            <div class="button-text-large">{{ t(translateServiceSelected) }}</div>
+            <div class="button-text-large">{{ t(translateService) }}</div>
             <svg
                 class="trailing-icon3"
                 width="20"
@@ -681,7 +797,7 @@ export default {
         <marquee-text :text="t('border')" width="148px"></marquee-text>
         <!--        {{t('border')}}-->
       </div>
-      <el-select v-model="styleSelected" placeholder="Select">
+      <el-select v-model="style" placeholder="Select">
         <el-option-group
             v-for="group in options"
             :key="group.label"
@@ -704,7 +820,7 @@ export default {
         <!--        {{t('backgroundColor')}}-->
         <marquee-text :text="t('backgroundColor')" width="148px"></marquee-text>
       </div>
-      <custom-color-picker @color-changed="handleBgColorChanged">
+      <custom-color-picker v-model="bgColor" v-model:selectedIndex="bgColorIndex">
 
       </custom-color-picker>
       <!--      <section class=" bg-color-pick-list
@@ -727,19 +843,22 @@ export default {
         <!--        {{t('fontColor')}}-->
         <marquee-text :text="t('fontColor')" width="148px"></marquee-text>
       </div>
-      <custom-color-picker @color-changed="handleFontColorChanged">
+      <!-- font-color -->
+      <!--      @color-changed="handleFontColorChanged"-->
+      <custom-color-picker v-model="fontColor"
+                           v-model:selectedIndex="fontColorIndex">
 
       </custom-color-picker>
       <div class="styleSetting">
-        <!--        {{t('margins')}}-->
-        <marquee-text :text="t('margins')" width="148px"></marquee-text>
+        <!--        {{t('padding')}}-->
+        <marquee-text :text="t('padding')" width="148px"></marquee-text>
       </div>
-      <el-slider v-model="stylePadding" size="small" input-size="small" :min="1" :max="10"/>
+      <el-slider v-model="padding" size="small" input-size="small" :min="1" :max="10"/>
     </div>
 
     <div class="style-show">
       <div class="mb-2 flex items-center text-sm">
-        <el-radio-group v-model="domainStrategySelected" class="ml-0">
+        <el-radio-group v-model="domainStrategy" class="ml-0">
           <el-radio @change="changeDomainStrategy" v-for="(domainStrategy,index) in domainStrategies"
                     :value="domainStrategy.title" size="large">
             <marquee-text :text="t(domainStrategy.title)" width="135px"></marquee-text>
@@ -754,6 +873,7 @@ export default {
         <p id="showDemoTranslated">
           {{ t('hereIsTheTranslation') }}
         </p>
+        <v-btn @click="test">test</v-btn>
       </div>
     </div>
   </div>
@@ -929,6 +1049,7 @@ export default {
 }
 
 .help {
+  margin-left: 6px;
   width: 4.8%;
   height: 3.31%;
   position: absolute;
@@ -942,9 +1063,9 @@ export default {
 .login {
   display: flex;
   flex-direction: row;
-  gap: 30px;
+  /*gap: 3px;*/
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   width: 309px;
   height: 71px;
   position: absolute;
@@ -953,51 +1074,48 @@ export default {
 }
 
 .avatar {
-  padding: 10px;
+  /*padding: 10px;*/
+  width: 170px;
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  align-items: flex-start;
-  justify-content: flex-start;
+  flex-direction: row;
+  /*gap: 10px;*/
+  align-items: center;
+  justify-content: space-between;
   flex-shrink: 0;
-  position: relative;
+  /*position: relative;*/
 }
 
-.ellipse-583 {
-  background: #c8f7dc;
-  border-radius: 50%;
-  flex-shrink: 0;
-  width: 84.9%;
-  height: 84.9%;
-  position: absolute;
-  right: 6.52%;
-  left: 8.58%;
-  bottom: 8.82%;
-  top: 6.28%;
-}
+/*.ellipse-583 {*/
+/*  background: #c8f7dc;*/
+/*  border-radius: 50%;*/
+/*  flex-shrink: 0;*/
+/*  width: 84.9%;*/
+/*  height: 84.9%;*/
+/*  position: absolute;*/
+/*  right: 6.52%;*/
+/*  left: 8.58%;*/
+/*  bottom: 8.82%;*/
+/*  top: 6.28%;*/
+/*}*/
 
 .avatar-image {
+  display: flex;
   flex-shrink: 0;
   width: 100%;
   height: 100%;
-  position: absolute;
-  right: 0%;
-  left: 0%;
-  bottom: 0%;
-  top: 0%;
-  object-fit: cover;
+  /*position: absolute;*/
+  /*object-fit: cover;*/
 }
 
 .login-message {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  align-items: flex-start;
-  justify-content: flex-start;
+  /*align-items: flex-start;*/
+  /*justify-content: flex-start;*/
   flex-shrink: 0;
-  width: 85px;
-  height: 39px;
-  position: relative;
+  width: 100px;
+  /*position: relative;*/
 }
 
 .logged-in {

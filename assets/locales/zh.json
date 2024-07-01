@@ -3,6 +3,7 @@
   "backgroundColor": "背景颜色",
   "fontColor": "字体颜色",
   "margins": "边距",
+  "padding": "边距",
   "Home": "首页",
   "Profile": "用户",
   "Settings": "设置",

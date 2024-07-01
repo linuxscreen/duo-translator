@@ -1,29 +1,217 @@
 <template>
+  <div class="main-container">
+    <div class="hint">
+      <div class="introduce">
+        <span class="sign-up">Sign in to </span
+        ><span class="powerful">DuoTranslator is powerful</span>
+      </div>
+      <div class="register">
+        <span class="no-account-register"
+        >If you don’t have an account register</span
+        >
+        <div class="login-here">
+          <span class="text-4">You can </span
+          ><span class="register-here-text" @click="goToRegister">Register here !</span>
+        </div>
+      </div>
+    </div>
+    <div class="box-4">
+      <el-form
+          style="width: 100%"
+          ref="loginForm"
+          :model="loginFormData"
+          :rules="rules"
+          :validate-on-rule-change="false"
+          @keyup.enter="submitForm"
+      >
+        <el-form-item prop="username" style="width: 100%">
+          <el-input class="el-input-custom" v-model="loginFormData.username"
+                    placeholder="email or user name"></el-input>
+        </el-form-item>
+        <el-form-item prop="password" style="width: 100%">
+          <el-input class="el-input-custom" v-model="loginFormData.password" type="password"
+                    placeholder="password" show-password></el-input>
+        </el-form-item>
+        <div style="display: flex">
+          <el-form-item prop="password" style="width: 65%;">
+            <el-input class="el-input-custom" v-model="loginFormData.captcha" placeholder="verification code"
+                      show-password></el-input>
 
-<!--  <login-component v-if="isLogin"></login-component>-->
+          </el-form-item>
+          <img
+              style="width:100px;height: 40px;margin-left: 10px;"
+              v-if="picPath"
+              class="w-full h-full"
+              :src="picPath"
+              alt="请输入验证码"
+              @click="loginVerify()"
+          >
+        </div>
 
+        <div>
+
+        </div>
+      </el-form>
+      <span class="forgot-password"><a>Forgot password ?</a></span>
+      <el-button class="login-button" @click="submitForm" color="#4D47C3">login
+      </el-button
+      >
+      <span class="continue-with">or continue with</span>
+      <div class="via">
+        <div class="group-6">
+          <div class="apple">
+            <img src="@/public/apple.svg" alt="apple"/>
+          </div>
+          <div class="google">
+            <img src="@/public/google.svg" alt="goole"/>
+          </div>
+          <div class="wechat">
+            <img src="@/public/wechat.svg" alt="wechat"/>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 <script lang="ts">
-import LoginComponent from "@/components/Login.vue";
-
+import {reactive, ref} from "vue";
+import {useUserStore} from "@/utils/userStorage";
 export default {
-  components: {LoginComponent},
+  name: "LoginComponent",
+  components: {},
+  props: {},
   data() {
-    return {
-      isLogin: true
+    // const userStore = useUserStore
+    // 验证函数
+    const checkUsername = (rule, value, callback) => {
+      if (value.length < 5) {
+        return callback(new Error('请输入正确的用户名'))
+      } else {
+        callback()
+      }
     }
-  }
-
+    const checkPassword = (rule, value, callback) => {
+      if (value.length < 8) {
+        return callback(new Error('请输入正确的密码'))
+      } else {
+        callback()
+      }
+    }
+    const loginForm = ref(null)
+    const picPath = ref('')
+    const loginFormData = reactive({
+      username: '',
+      password: '',
+      captcha: '',
+      captchaId: '',
+      openCaptcha: false,
+    })
+    const rules = reactive({
+      username: [{validator: checkUsername, trigger: 'blur'}],
+      password: [{validator: checkPassword, trigger: 'blur'}],
+      captcha: [
+        {
+          message: '验证码格式不正确',
+          trigger: 'blur',
+        },
+      ],
+    })
+    return {
+      // userStore,
+      picPath,
+      loginForm,
+      loginFormData,
+      rules,
+    };
+  },
+  methods: {
+    loginVerify() {
+      // 获取验证码
+      fetch('http://localhost:8888/base/captcha', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }).then((response) => response.json())
+          .then((data) => {
+            this.picPath = data.data.picPath
+            this.loginFormData.captchaId = data.data.captchaId
+            this.loginFormData.openCaptcha = data.data.openCaptcha
+            this.rules.captcha.push({
+              max: data.data.captchaLength,
+              min: data.data.captchaLength,
+              message: `请输入${data.data.captchaLength}位验证码`,
+              trigger: 'blur',
+            })
+          })
+          .catch((error) => {
+            console.error('Error:', error)
+          })
+    },
+    goToRegister() {
+      this.$router.push("/register");
+    },
+    submitForm() {
+      this.$refs.loginForm.validate((valid) => {
+        if (valid) {
+          // 登陆
+          fetch('http://localhost:8888/base/login', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(this.loginFormData),
+          }).then((response) => response.json())
+              .then((data) => {
+                if (data.code === 0) {
+                  // this.$router.push("/home"); // 跳转到用户中心
+                  this.$message({
+                    message: '登录成功',
+                    type: 'success',
+                  })
+                  // 登录成功后，获取用户信息,储存token
+                  // this.userStore.setToken(data.data.token)
+                } else {
+                  this.$message({
+                    message: data.msg,
+                    type: 'error',
+                  })
+                  this.loginVerify()
+                }
+              })
+              .catch((error) => {
+                console.error('Error:', error)
+              })
+        } else {
+          return false;
+        }
+      });
+    },
+  },
+  mounted() {
+    this.loginVerify()
+  },
 };
 </script>
 
 <style scoped>
 :root {
-  --el-input-bg-color:red !important;
+  --el-input-bg-color: red !important;
   --default-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
   Ubuntu, "Helvetica Neue", Helvetica, Arial, "PingFang SC",
   "Hiragino Sans GB", "Microsoft Yahei UI", "Microsoft Yahei",
   "Source Han Sans CN", sans-serif;
+}
+
+.el-form-item.is-error ::v-deep(.el-input__wrapper) {
+  box-shadow: none !important;
+}
+
+.register-here-text {
+  color: #4D47C3;
+  /*字体加粗*/
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .el-input-custom ::v-deep(.el-input__wrapper) {
@@ -36,9 +224,10 @@ export default {
   /*  background-color: red !important;*/
   /*}*/
 }
+
 .el-input-custom ::v-deep(.el-input__inner) {
   /*--el-input-text-color: #a7a2ff;*/
-  --el-input-placeholder-color : #a7a2ff;
+  --el-input-placeholder-color: #a7a2ff;
 }
 
 

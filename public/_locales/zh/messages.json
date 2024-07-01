@@ -1,8 +1,8 @@
 {
   "extName": {
-    "message": "I18n插件"
+    "message": "DuoTranslator"
   },
   "extDescription": {
-    "message": "这是一个I18n插件"
+    "message": "双语翻译插件"
   }
 }

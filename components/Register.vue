@@ -1,29 +1,278 @@
 <template>
+  <div class="main-container">
+    <div class="hint">
+      <div class="introduce">
+        <span class="sign-up">Sign up</span
+        >
+        <!--        <span class="powerful">DuoTranslator is powerful</span>-->
+      </div>
+      <div class="register">
+        <span class="no-account-register"
+        >If you already have an account register</span
+        >
+        <div class="login-here">
+          <span class="text-4">You can </span
+          ><span class="register-here-text" @click="goToLogin">Login here !</span>
+        </div>
+      </div>
+    </div>
+    <div class="box-4">
+      <el-form style="width: 100%"
+               :rules="rules"
+               ref="form"
+               :model="{
+                 email: email,
+                 username: username,
+                 password: password,
+                 verificationCode: verificationCode
+               }"
+      >
+        <el-form-item style="width: 100%" prop="email">
+          <el-input class="el-input-custom" v-model="email" placeholder="email">
+            <template #append>
+              <button class="get-code-btn" :disabled="isDisabled" @click.prevent="getVerificationCode"><span
+                  class="get-code" style="display:block;width: 66px !important;">{{ buttonText }}</span></button>
+            </template>
+          </el-input>
+        </el-form-item>
+        <el-form-item style="width: 100%" prop="username">
+          <el-input class="el-input-custom" v-model="username" placeholder="username"></el-input>
+        </el-form-item>
+        <el-form-item style="width: 100%" prop="password">
+          <el-input class="el-input-custom" v-model="password" type="password" placeholder="password"
+                    show-password></el-input>
+        </el-form-item>
+        <el-form-item style="width: 100%" prop="verificationCode">
+          <el-input class="el-input-custom" v-model="verificationCode" placeholder="verification code"></el-input>
+        </el-form-item>
+      </el-form>
 
-<!--  <login-component v-if="isLogin"></login-component>-->
-
+      <!--      <span class="forgot-password"><a>Forgot password ?</a></span>-->
+      <el-button class="login-button" @click="register" color="#4D47C3">register
+      </el-button
+      >
+      <span class="continue-with">or continue with</span>
+      <div class="via">
+        <div class="group-6">
+          <div class="apple">
+            <img src="@/public/apple.svg" alt="apple"/>
+          </div>
+          <div class="google">
+            <img src="@/public/google.svg" alt="goole"/>
+          </div>
+          <div class="wechat">
+            <img src="@/public/wechat.svg" alt="wechat"/>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 <script lang="ts">
-import LoginComponent from "@/components/Login.vue";
 
 export default {
-  components: {LoginComponent},
+  name: "RegisterComponent",
+  components: {},
+  props: {},
   data() {
-    return {
-      isLogin: true
-    }
-  }
+    const validateEmail = (rule, value, callback) => {
+      console.log("validateEmail", value)
+      const emailReg = /^([a-zA-Z0-9._%-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,6})*$/;
+      if (!emailReg.test(value)) {
+        callback(new Error('Invalid email'));
+      } else {
+        callback();
+      }
+    };
 
+    const validateCode = (rule, value, callback) => {
+      console.log("validateCode", value)
+      if (value.length !== 6 || !/^\d+$/.test(value)) {
+        callback(new Error('Verification code should be 6 digits'));
+      } else {
+        callback();
+      }
+    };
+    return {
+      buttonText: "get code",
+      timer: 0,
+      intervalId: null,
+      isDisabled: false,
+      email: "",
+      username: "",
+      verificationCode: "",
+      password: "",
+      rules: {
+        email: [
+          {required: true, message: "Please input email", trigger: "blur"},
+          {validator: validateEmail, trigger: "blur"},
+        ],
+        username: [
+          {required: true, message: "Please input username", trigger: "blur"},
+        ],
+        verificationCode: [
+          {required: true, message: "Please input verification code", trigger: "blur"},
+          {validator: validateCode, trigger: "blur"},
+        ],
+        password: [
+          {required: true, message: "Please input password", trigger: "blur"},
+          //请输入 8-20 个字符，需同时包含数字、字母
+          {
+            pattern: /^(?![0-9]+$)(?![a-zA-Z]+$)[0-9A-Za-z]{8,20}$/,
+            message: "8-20 characters, including numbers and letters",
+            trigger: "blur"
+          },
+        ],
+      },
+
+    };
+  },
+  methods: {
+    register() {
+      // 检查所有输入是否合法
+      this.$refs.form.validate(async (valid) => {
+        if (valid) {
+          // 请求接口注册
+          let url = new URL("http://localhost:8888/base/registerWithVerificationCode");
+          let resp = await fetch(url, {
+            method: "POST",
+            headers: {
+              'Content-Type': 'application/json',
+              // 'Authorization': 'Bearer your-token' (if needed)
+            },
+            body: JSON.stringify({
+              email: this.email,
+              username: this.username,
+              password: this.password,
+              verificationCode: this.verificationCode,
+              region: navigator.language
+            })
+          })
+          let data = await resp.json();
+          if (data.code === 0) {
+            this.$message({
+              message: data.msg,
+              type: 'success'
+            });
+            this.$router.push("/login");
+          } else {
+            this.$message({
+              message: data.msg,
+              type: 'error'
+            });
+          }
+        } else {
+          return false;
+        }
+      });
+    },
+    startTimer() {
+      this.timer = 60;
+      this.updateButtonText(this.timer); // 更新按钮文本
+      this.intervalId = setInterval(() => {
+        if (this.timer > 0) {
+          this.timer -= 1;
+          this.updateButtonText(this.timer); // 持续更新按钮文本
+        } else {
+          this.clearTimer();
+        }
+      }, 1000);
+    },
+    updateButtonText(time) {
+      this.buttonText = time > 0 ? `${time}s` : 'get code';
+      if (time === 0) {
+        this.isDisabled = false;
+      }
+    },
+    clearTimer() {
+      clearInterval(this.intervalId);
+      this.timer = 0;
+      this.updateButtonText(this.timer);
+    },
+    goToLogin() {
+      this.$router.push("/login");
+    },
+    async getVerificationCode() {
+      // 获取当前语言偏好
+      let language = navigator.language;
+      let url = new URL("http://localhost:8888/base/sendVerificationCode");
+      url.searchParams.append("email", this.email);
+      url.searchParams.append("region", language)
+      //请求接口获取验证码
+      let resp = await fetch(url, {
+        method: "GET",
+        headers: {
+          'Content-Type': 'application/json',
+          // 'Authorization': 'Bearer your-token' (if needed)
+        }
+      })
+      let data = await resp.json();
+      if (data.code === 0) {
+        // 设置定时器60s,不能再次点击
+        this.isDisabled = true;
+        this.startTimer();
+        this.$message({
+          message: data.msg,
+          type: 'success'
+        });
+      } else {
+        this.$message({
+          message: data.msg,
+          type: 'error'
+        });
+
+      }
+    }
+  },
+  beforeDestroy() {
+    this.clearTimer();
+  }
 };
 </script>
 
 <style scoped>
 :root {
-  --el-input-bg-color:red !important;
+  --el-input-bg-color: red !important;
   --default-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
   Ubuntu, "Helvetica Neue", Helvetica, Arial, "PingFang SC",
   "Hiragino Sans GB", "Microsoft Yahei UI", "Microsoft Yahei",
   "Source Han Sans CN", sans-serif;
+}
+
+.get-code-btn:disabled span {
+  color: #C4C4C4;
+  cursor: not-allowed;
+}
+
+.get-code {
+  color: #4D47C3;
+  cursor: pointer;
+}
+
+.el-form-item.is-error ::v-deep(.el-input__wrapper) {
+  box-shadow: none !important;
+}
+
+.el-input-custom ::v-deep(.el-input-group__append) {
+  background-color: #F0EFFF;
+  box-shadow: none;
+  /*  左边有个边框*/
+
+  /*  修改span样式*/
+
+  span {
+    border-left: #C4C4C4 2px solid;
+    /*  设置边框与文字距离*/
+    padding-left: 10px;
+  }
+}
+
+
+.register-here-text {
+  color: #4D47C3;
+  /*字体加粗*/
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .el-input-custom ::v-deep(.el-input__wrapper) {
@@ -36,9 +285,10 @@ export default {
   /*  background-color: red !important;*/
   /*}*/
 }
+
 .el-input-custom ::v-deep(.el-input__inner) {
   /*--el-input-text-color: #a7a2ff;*/
-  --el-input-placeholder-color : #a7a2ff;
+  --el-input-placeholder-color: #a7a2ff;
 }
 
 
@@ -82,7 +332,7 @@ button {
   gap: 16px;
   position: relative;
   min-width: 0;
-  height: 156px;
+  height: 124px;
 }
 
 .introduce {

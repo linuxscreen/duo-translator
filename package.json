@@ -15,8 +15,11 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
+    "axios": "^1.7.2",
     "element-plus": "^2.7.3",
+    "js-cookie": "^3.0.5",
     "loglevel": "^1.9.1",
+    "pinia": "^2.1.7",
     "uuid": "^9.0.1",
     "vue": "^3.4.0",
     "vue-i18n": "9",

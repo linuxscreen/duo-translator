@@ -3,6 +3,7 @@
   "backgroundColor": "background color",
   "fontColor": "font color",
   "margins": "margins",
+  "padding": "padding",
   "Home": "Home",
   "Profile": "Profile",
   "Settings": "Settings",

@@ -731,8 +731,8 @@ export default {
 
       </custom-color-picker>
       <div class="styleSetting">
-        <!--        {{t('margins')}}-->
-        <marquee-text :text="t('margins')" width="148px"></marquee-text>
+        <!--        {{t('padding')}}-->
+        <marquee-text :text="t('padding')" width="148px"></marquee-text>
       </div>
       <el-slider v-model="stylePadding" size="small" input-size="small" :min="1" :max="10"/>
     </div>
@@ -761,7 +761,7 @@ export default {
 
 </template>
 
-<style>
+<style scoped>
 
 .translate-service .el-dropdown {
   width: 100%;

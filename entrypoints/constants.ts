@@ -168,5 +168,11 @@ export enum CONFIG_KEY {
     TARGET_LANG = 'targetLanguage',
     SOURCE_LANG = 'sourceLanguage',
     TRANS_SERVICE = 'transService',
+    STYLE = 'style',
+    BG_COLOR = 'bgColor',
+    FONT_COLOR = 'fontColor',
+    PADDING = 'padding',
+    BG_COLOR_INDEX = 'bgColorIndex',
+    FONT_COLOR_INDEX = 'fontColorIndex',
 }
 
