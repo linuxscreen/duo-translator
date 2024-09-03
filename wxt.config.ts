@@ -36,4 +36,7 @@ export default defineConfig({
             sourcemap: false,
         },
     }),
+    runner: {
+        disabled: true,
+    },
 });

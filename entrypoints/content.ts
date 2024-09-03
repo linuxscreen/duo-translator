@@ -1,5 +1,6 @@
 import {browser} from "wxt/browser";
 import {Rule, sendMessageToBackground, SubRule, UrlStorage} from "@/entrypoints/utils";
+import {split} from "sentence-splitter"
 import {
     CONFIG_KEY,
     DB_ACTION,
@@ -199,26 +200,26 @@ export default defineContentScript({
         // let d = await microsoftTranslationService.translateText(["hello","world"], "zh")
         // console.log(d)
         // 递归遍历DOM树，收集满足条件的节点
-        function collectElements(element, condition, elements) {
+        function collectElements(element: HTMLElement, condition: (element: HTMLElement) => boolean, elements: HTMLElement[] = []): HTMLElement[] {
             elements = elements || []; // 初始化元素数组
             let nodeName = element.nodeName.toLowerCase();
             // class为no-translate的元素不翻译
             if (element.classList != null && element.classList.contains('no-translate')) {
-                return
+                return elements;
             }
             if (nodeName === 'script' || nodeName === 'style' || nodeName === '#comment') {
-                return;
+                return elements;
             }
             // 检查当前元素是否满足条件
             if (condition(element)) {
                 elements.push(element); // 满足条件则添加到数组中
-                return;
+                return elements;
             }
             // 遍历当前元素的所有子节点
             for (var i = 0; i < element.childNodes.length; i++) {
                 var currentNode = element.childNodes[i];
                 if (currentNode.nodeType === 1) { // 检查节点是否为元素节点
-                    collectElements(currentNode, condition, elements); // 递归搜索
+                    collectElements(currentNode as HTMLElement, condition, elements); // 递归搜索
                 }
             }
             return elements;
@@ -238,15 +239,16 @@ export default defineContentScript({
             }
         }
 
-        function isParagraphElement(element) {
+        function isParagraphElement(element: HTMLElement): boolean {
             //如果子节点有文本节点，并且不为空，就认为是一个段落
             if (element.childNodes.length > 0) {
                 for (let i = 0; i < element.childNodes.length; i++) {
-                    if (element.childNodes[i].nodeType === Node.TEXT_NODE && element.childNodes[i].textContent.trim() !== "") {
+                    if (element.childNodes[i].nodeType === Node.TEXT_NODE && element.childNodes[i].textContent!.trim() !== "") {
                         return true
                     }
                 }
             }
+            return false
             // return element.nodeName.toLowerCase() === 'p'; // 检查是否为<p>元素
         }
 
@@ -262,7 +264,7 @@ export default defineContentScript({
             }
         }
 
-        function customElementStyle(element,bgColor, fontColor, borderStyle, padding) {
+        function customElementStyle(element, bgColor, fontColor, borderStyle, padding) {
             element.style.backgroundColor = bgColor
             element.style.color = fontColor
             element.style.padding = padding
@@ -305,7 +307,74 @@ export default defineContentScript({
             }
         }
 
+        function replaceDomContentForTranslate(element: HTMLElement): Map<string, string> {
+            const tagMap = new Map<string, string>();
+            let replaceHtmlTags = (element: HTMLElement, index = 10): number => {
+                element.childNodes.forEach((node: HTMLElement) => {
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        const el = node as HTMLElement;
+                        index = replaceHtmlTags(el, index);
+                        // Replace start and end tags with custom placeholders
+                        index++;
+                        // const replacedOuterHtml = originalOuterHtml.replace(
+                        //     new RegExp(`^<${el.tagName.toLowerCase()}[^>]*>`, 'i'),
+                        //     openingTag
+                        // ).replace(
+                        //     new RegExp(`</${el.tagName.toLowerCase()}>$`, 'i'),
+                        //     closingTag
+                        // );
+                        // 创建正则表达式匹配完整的开始和结束标签
+                        const openingTagRegex = new RegExp(`^<${el.tagName.toLowerCase()}[^>]*>`, 'i');
+                        const closingTagRegex = new RegExp(`</${el.tagName.toLowerCase()}>$`, 'i');
+
+                        // 获取完整的标签字符串
+                        const originalOuterHtml = el.outerHTML;
+                        const openingTag = originalOuterHtml.match(openingTagRegex)?.[0] || '';
+                        const closingTag = originalOuterHtml.match(closingTagRegex)?.[0] || '';
+
+                        // 保存到Map中
+                        const placeholderStart = `<b${index}>`;
+                        const placeholderEnd = `</b${index}>`;
+                        tagMap.set(placeholderStart, openingTag);
+                        tagMap.set(placeholderEnd, closingTag);
+
+                        // 替换outerHTML为占位符
+                        const replacedOuterHtml = originalOuterHtml
+                            .replace(openingTagRegex, placeholderStart)
+                            .replace(closingTagRegex, placeholderEnd);
+                        el.outerHTML = replacedOuterHtml;
+                        // Recursively process children
+                        // index = replaceHtmlTags(el, index + 1);
+                    }
+                });
+                return index;
+            }
+            replaceHtmlTags(element)
+            return tagMap
+        }
+
+        function hasAttributeIncludingParents(element: HTMLElement, attribute: string): boolean {
+            // 当前元素有这个属性
+            if (element.hasAttribute(attribute)) {
+                return true;
+            }
+
+            // 向上递归检查父元素
+            if (element.parentElement) {
+                return hasAttributeIncludingParents(element.parentElement, attribute);
+            }
+
+            // 如果到达根元素还没有找到，返回 false
+            return false;
+        }
         async function translateDoubleDOM(tree, params: translateParams) {
+            let treeElm = tree as HTMLElement
+            if (!(treeElm instanceof HTMLElement)) {
+                return;
+            }
+            if (hasAttributeIncludingParents(treeElm,"duo-no-observer")) {
+                return
+            }
             // 获取定义的样式
             let [bgColor, fontColor, borderStyle, padding] = await Promise.all([
                 sendMessageToBackground({
@@ -338,63 +407,208 @@ export default defineContentScript({
             //     data: {name: CONFIG_KEY.STYLE}
             // })
 
-            let needTranslates = []
+            let needTranslateElement = []
+            let elementTextContents: string[] = []
+            let tagMaps : Map<string,string>[] = []
             let eles = collectElements(tree, isParagraphElement, [])
             if (!eles) {
                 return
             }
-            for (const element of eles) {
-                //复制当前元素
-                let clone = element.cloneNode(true);
-                // let textWidth = clone.offsetWidth; // 获取元素内文本的长度
-                // clone.style.width = textWidth + 'px'; // 设置元素的宽度
-                //设置为行内元素
-                // clone.style.display = 'inline';
-                clone.removeAttribute("id")
-                // clone.removeAttribute("class")
-                //删除所有的非文本子节点，需要递归删除
-                removeChildrenElement(clone)
-                let fontElement = document.createElement('font');
-                fontElement.classList.add("doubleTransStyle")
-                // fontElement.classList.add("wavy-underline")
-                // 将 clone 的内容复制到新的 font 元素中
-                fontElement.innerHTML = clone.innerHTML;
-                customElementStyle(fontElement, bgColor, fontColor, borderStyle, padding)
+
+            for (let element of eles) {
+
+                //分段
+                const sentences = split(element.innerHTML).filter((node) => node.type === 'Sentence');
+                // ele.cloneNode(false)
+                element.innerHTML = ""
+                // const newDiv = document.createElement('span');
+                for (let i = 0; i < sentences.length; i++) {
+                    let sentence = sentences[i]
+                    let span = document.createElement('span');
+                    // span.style.display = "inline-block"
+                    span.onmouseover = function () {
+                        span.style.backgroundColor = "#ADD8E6"
+                        //找到对应的翻译句子,修改背景颜色
+                        let querySelectorAll = span.parentElement?.querySelectorAll("duo-translated span");
+                        let translatedSpan = querySelectorAll![parseInt(span.getAttribute("duo-sequence")!)] as HTMLElement;
+                        translatedSpan.style.backgroundColor = "#FFECCB"
+                    }
+                    span.onmouseleave = function () {
+                        span.style.backgroundColor = ""
+                        let querySelectorAll = span.parentElement?.querySelectorAll("duo-translated span");
+                        let translatedSpan = querySelectorAll![parseInt(span.getAttribute("duo-sequence")!)] as HTMLElement;
+                        translatedSpan.style.backgroundColor = ""
+                    }
+                    span.innerHTML = sentence.raw;
+                    span.setAttribute("duo-no-observer", "true")
+                    span.setAttribute("duo-sequence", i.toString())
+                    // span.setAttribute("data-sentence", i.toString())
+                    // ele.appendChild(span)
+                    element.appendChild(span)
+                }
+                // element.innerHTML = newDiv.innerHTML
+                element.setAttribute("no-observer", "true")
+                let cloneNode = element.cloneNode(true) as HTMLElement;
+                let map = replaceDomContentForTranslate(cloneNode);
+                tagMaps.push(map)
                 // 当前文本的长度超过40个字符，就添加一个换行符
-                if (element.textContent.length > 40) {
+                if (element.textContent!.length > 40) {
                     element.appendChild(document.createElement('br'));
                 } else {
                     //添加一个空格
                     element.appendChild(document.createTextNode(' '));
                 }
+                let duoElement = document.createElement('duo-translated')
+                duoElement.setAttribute("duo-no-observer", "true")
                 // 添加到eles[i]元素的后面
-                element.appendChild(fontElement)
-                // eles[i].parentNode.insertBefore(clone, eles[i].nextSibling);
-                needTranslates.push(fontElement)
+                element.appendChild(duoElement)
+                needTranslateElement.push(duoElement)
+                elementTextContents.push(cloneNode.innerHTML)
             }
-            let textNodes = []
-            for (let i = 0; i < needTranslates.length; i++) {
-                collectTextNodes(needTranslates[i], textNodes)
-            }
-            // console.log(textNodes)
-            //翻译文本
-            splitElements(textNodes, 10).forEach((ele, index) => {
-                let texts = []
-                for (let eleElement of ele) {
-                    // console.log(eleElement)
-                    texts.push(eleElement.textContent.trim())
+            console.log(elementTextContents)
+            console.log(needTranslateElement)
+            params.serviceName = "microsoft"
+            // for (let i = 0; i < needTranslateElement.length; i++) {
+            //             needTranslateElement[i].innerHTML = '<a>aaa</a>'
+            //         }
+            translationServices.get(params.serviceName)?.translateText(elementTextContents, params.targetLang, params.sourceLang).then((res) => {
+                console.log(res)
+                for (let i = 0; i < needTranslateElement.length; i++) {
+                    let htmlText = res[i][0]
+                    console.log(htmlText,"htmlText")
+                    let map = tagMaps[i]
+                    map.forEach((value, key) => {
+                        htmlText = htmlText.replace(key, value)
+                    })
+                    needTranslateElement[i].innerHTML = htmlText
+                    const spanElements = needTranslateElement[i].querySelectorAll('span');
+
+                    spanElements.forEach(span => {
+                        span.addEventListener('mouseover', () => {
+                            span.style.backgroundColor = '#FFECCB';
+                            let querySelectorAll = span.parentElement?.parentElement?.querySelectorAll("span");
+                            let translatedSpan = querySelectorAll![parseInt(span.getAttribute("duo-sequence")!)] as HTMLElement;
+                            translatedSpan.style.backgroundColor = "#ADD8E6"
+                            // 在这里添加你想在鼠标悬浮时执行的其他操作
+                        });
+                        span.addEventListener('mouseleave', () => {
+                            span.style.backgroundColor = '';
+                            let querySelectorAll = span.parentElement?.parentElement?.querySelectorAll("span");
+                            let translatedSpan = querySelectorAll![parseInt(span.getAttribute("duo-sequence")!)] as HTMLElement;
+                            translatedSpan.style.backgroundColor = ""
+                            // 在这里添加你想在鼠标悬浮时执行的其他操作
+                        });
+                    });
                 }
-                // console.log(translationServices.get(params.serviceName))
-                translationServices.get(params.serviceName)?.translateText(texts, params.targetLang, params.sourceLang).then((res) => {
-                    for (let i = 0; i < ele.length; i++) {
-                        // console.log()
-                        ele[i].textContent = res[i]
-                    }
-                })
             })
+
+            // let textNodes = []
+            // for (let i = 0; i < needTranslates.length; i++) {
+            //     collectTextNodes(needTranslates[i], textNodes)
+            // }
+
+
+            // let clone = element.cloneNode(true) as HTMLElement;
+            // // let textWidth = clone.offsetWidth; // 获取元素内文本的长度
+            // // clone.style.width = textWidth + 'px'; // 设置元素的宽度
+            // //设置为行内元素
+            // // clone.style.display = 'inline';
+            // clone.removeAttribute("id")
+            // // clone.removeAttribute("class")
+            // //删除所有的非文本子节点，需要递归删除
+            // removeChildrenElement(clone)
+            // let fontElement = document.createElement('font');
+            // fontElement.classList.add("doubleTransStyle")
+            // // fontElement.classList.add("wavy-underline")
+            // // 将 clone 的内容复制到新的 font 元素中
+            // fontElement.innerHTML = clone.innerHTML;
+            // customElementStyle(fontElement, bgColor, fontColor, borderStyle, padding)
+            // // 当前文本的长度超过40个字符，就添加一个换行符
+            // if (element.textContent!.length > 40) {
+            //     element.appendChild(document.createElement('br'));
+            // } else {
+            //     //添加一个空格
+            //     element.appendChild(document.createTextNode(' '));
+            // }
+            // // 添加到eles[i]元素的后面
+            // element.appendChild(fontElement)
+            // // eles[i].parentNode.insertBefore(clone, eles[i].nextSibling);
+            // needTranslates.push(fontElement)
         }
 
-        function translateTextTest(texts: string[], zh: string) {
+        // for (const element of eles) {
+        //     //开启标记阅读模式
+        //     //分割文本为句子
+        //     //获取element innerHtml
+        //     console.log(element)
+        //     const sentences = split(element.innerHTML).filter((node) => node.type === 'Sentence');
+        //     // console.log(sentences.map(sentence => sentence.raw));
+        //     //遍历所有的句子
+        //     if (sentences.length === 1) {
+        //         //只有一个句子，不需要标记
+        //         continue
+        //     }
+        //     for (let i = 0; i < sentences.length; i++) {
+        //         let sentence = sentences[i]
+        //         // let span = document.createElement('span');
+        //         // span.textContent = sentence.raw;
+        //         console.log(sentence.raw)
+        //     }
+        //     //复制当前元素
+        //     let clone = element.cloneNode(true) as HTMLElement;
+        //     // let textWidth = clone.offsetWidth; // 获取元素内文本的长度
+        //     // clone.style.width = textWidth + 'px'; // 设置元素的宽度
+        //     //设置为行内元素
+        //     // clone.style.display = 'inline';
+        //     clone.removeAttribute("id")
+        //     // clone.removeAttribute("class")
+        //     //删除所有的非文本子节点，需要递归删除
+        //     removeChildrenElement(clone)
+        //     let fontElement = document.createElement('font');
+        //     fontElement.classList.add("doubleTransStyle")
+        //     // fontElement.classList.add("wavy-underline")
+        //     // 将 clone 的内容复制到新的 font 元素中
+        //     fontElement.innerHTML = clone.innerHTML;
+        //     customElementStyle(fontElement, bgColor, fontColor, borderStyle, padding)
+        //     // 当前文本的长度超过40个字符，就添加一个换行符
+        //     if (element.textContent!.length > 40) {
+        //         element.appendChild(document.createElement('br'));
+        //     } else {
+        //         //添加一个空格
+        //         element.appendChild(document.createTextNode(' '));
+        //     }
+        //     // 添加到eles[i]元素的后面
+        //     element.appendChild(fontElement)
+        //     // eles[i].parentNode.insertBefore(clone, eles[i].nextSibling);
+        //     needTranslates.push(fontElement)
+        // }
+        // let textNodes = []
+        // for (let i = 0; i < needTranslates.length; i++) {
+        //     collectTextNodes(needTranslates[i], textNodes)
+        // }
+        // // console.log(textNodes)
+        // //翻译文本
+        // splitElements(textNodes, 10).forEach((ele, index) => {
+        //     let texts = []
+        //     for (let eleElement of ele) {
+        //         // console.log(eleElement)
+        //         texts.push(eleElement.textContent.trim())
+        //     }
+        //     // console.log(translationServices.get(params.serviceName))
+        //     translationServices.get(params.serviceName)?.translateText(texts, params.targetLang, params.sourceLang).then((res) => {
+        //         for (let i = 0; i < ele.length; i++) {
+        //             // console.log()
+        //             ele[i].textContent = res[i]
+        //         }
+        //     })
+        // })
+
+        function translateTextTest(texts
+                                       :
+                                       string[], zh
+                                       :
+                                       string
+        ) {
             let data = []
             for (let i = 0; i < texts.length; i++) {
                 data.push({translatedText: "翻译"})
@@ -404,14 +618,14 @@ export default defineContentScript({
             })
         }
 
-        //设置边框的样式
-        // 在 TypeScript 中设置变量值
+//设置边框的样式
+// 在 TypeScript 中设置变量值
         const root = document.documentElement; // 或者另一个特定的容器元素
-        // root.style.setProperty('--color', 'red');
-        // root.style.setProperty('--border-width', '1');
-        // root.style.setProperty('--border-color', 'red');
-        // root.style.setProperty('--border-style', 'dashed');
-        // root.style.setProperty('--bg-color', 'blue');
+// root.style.setProperty('--color', 'red');
+// root.style.setProperty('--border-width', '1');
+// root.style.setProperty('--border-color', 'red');
+// root.style.setProperty('--border-style', 'dashed');
+// root.style.setProperty('--bg-color', 'blue');
 
 
         function collectTextNodes(element, textNodes) {
@@ -430,36 +644,36 @@ export default defineContentScript({
             // return textNodes;
         }
 
-        // 使用示例：
-        // var textNodes = collectTextNodes(document.body); // 从<body>标签开始收集所有文本节点
-        // console.log(textNodes); // 打印所有文本节点
-        // //遍历所有的文本节点
-        // textNodes.forEach((node) => {
-        //     // 找到最近的块级父元素
-        //     let parent = node.parentNode;
-        //     if (window.getComputedStyle(parent).display == 'block') {
-        //         //单独的一个段落
-        //     }
-        //
-        // })
+// 使用示例：
+// var textNodes = collectTextNodes(document.body); // 从<body>标签开始收集所有文本节点
+// console.log(textNodes); // 打印所有文本节点
+// //遍历所有的文本节点
+// textNodes.forEach((node) => {
+//     // 找到最近的块级父元素
+//     let parent = node.parentNode;
+//     if (window.getComputedStyle(parent).display == 'block') {
+//         //单独的一个段落
+//     }
+//
+// })
 
 
-        // const systemLanguage = navigator.language;
-        // const siteLanguage = await getSiteLang();
-        // console.log("系统语言", systemLanguage)
-        // console.log("网站语言", siteLanguage)
-        // translateDOM(document.body)
+// const systemLanguage = navigator.language;
+// const siteLanguage = await getSiteLang();
+// console.log("系统语言", systemLanguage)
+// console.log("网站语言", siteLanguage)
+// translateDOM(document.body)
 
-        // observer.observe(document.body, {childList: true, subtree: true});
+// observer.observe(document.body, {childList: true, subtree: true});
 
-        // // 采集页面文本
-        // let sampleText = document.documentElement.textContent.slice(0, 2000);
-        // console.log(sampleText)
-        // // 使用 franc 检测语言
-        // let detectedLanguage = franc(sampleText);
-        // console.log("通过 franc 检测到的语言:", detectedLanguage);
-        // const text = "这是一段测试文本，用于检测语言。";
-        // console.log(franc(text));
+// // 采集页面文本
+// let sampleText = document.documentElement.textContent.slice(0, 2000);
+// console.log(sampleText)
+// // 使用 franc 检测语言
+// let detectedLanguage = franc(sampleText);
+// console.log("通过 franc 检测到的语言:", detectedLanguage);
+// const text = "这是一段测试文本，用于检测语言。";
+// console.log(franc(text));
         /**
          * 获取当前网站的语言
          */
@@ -467,10 +681,10 @@ export default defineContentScript({
             return browser.runtime.sendMessage({action: "getTabLanguage"})
         }
 
-        // -----右下角添加一个菜单，用于选择翻译插件的配置------
+// -----右下角添加一个菜单，用于选择翻译插件的配置------
         const body = document.body;
         console.log("添加按钮")
-        // 创建按钮和菜单
+// 创建按钮和菜单
         const button = document.createElement('div');
         button.id = 'myExtensionButton';
         button.textContent = '+';
@@ -480,12 +694,12 @@ export default defineContentScript({
         body.appendChild(button);
         body.appendChild(menu);
 
-        // 按钮点击事件，切换菜单显示
+// 按钮点击事件，切换菜单显示
         button.addEventListener('click', function () {
             menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
         });
 
-        // 鼠标移动事件，自动隐藏按钮
+// 鼠标移动事件，自动隐藏按钮
         let timeout;
         body.addEventListener('mousemove', function () {
             button.style.opacity = '1';
@@ -494,7 +708,7 @@ export default defineContentScript({
                 button.style.opacity = '0';
             }, 2000); // 2秒无操作后自动隐藏
         });
-        // --------节点选择器---------
+// --------节点选择器---------
         let selectionModeActive = false;
         const selectorButton = document.getElementById("addRule");
         selectorButton?.addEventListener('click', function (event) {
@@ -806,4 +1020,5 @@ export default defineContentScript({
 
 
     }
-});
+})
+;

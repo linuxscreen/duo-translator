@@ -20,6 +20,7 @@
     "js-cookie": "^3.0.5",
     "loglevel": "^1.9.1",
     "pinia": "^2.1.7",
+    "sentence-splitter": "^5.0.0",
     "uuid": "^9.0.1",
     "vue": "^3.4.0",
     "vue-i18n": "9",
@@ -29,6 +30,7 @@
   "devDependencies": {
     "@intlify/unplugin-vue-i18n": "^1.4.0",
     "@mdi/font": "^7.4.47",
+    "@types/js-cookie": "^3.0.6",
     "@types/langdetect": "^0.2.2",
     "@types/pouchdb": "^6.4.2",
     "@vitejs/plugin-vue": "^5.0.1",

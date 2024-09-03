@@ -3,8 +3,9 @@ import { jsonInBlacklist } from '@/api/jwt'
 import { ElLoading, ElMessage } from 'element-plus'
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
+import router from "@/router";
 // import { useRouterStore } from './router'
-// import cookie from 'js-cookie'
+import cookie from 'js-cookie'
 
 export const useUserStore = defineStore('user', () => {
     const loadingInstance = ref(null)
@@ -52,7 +53,7 @@ export const useUserStore = defineStore('user', () => {
         const res = await jsonInBlacklist()
         if (res.code === 0) {
             await ClearStorage()
-            // router.push({ name: 'Login', replace: true })
+            // router.push({ name: 'login'}) 导致热加载失败,暂时不使用
             // window.location.reload()
         }
     }
@@ -61,7 +62,7 @@ export const useUserStore = defineStore('user', () => {
         token.value = ''
         sessionStorage.clear()
         localStorage.removeItem('token')
-        // cookie.remove('x-token')
+        cookie.remove('x-token')
     }
 
 

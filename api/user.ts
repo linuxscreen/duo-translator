@@ -163,3 +163,24 @@ export const resetPassword = (data) => {
         data: data
     })
 }
+
+// @Tags User
+// @Summary 上传头像
+// @Security ApiKeyAuth
+// @accept application/json
+// @Produce application/json
+// @Success 200 {string} json "{"success":true,"data":{},"msg":"获取成功"}"
+// @Router /user/getUserInfo [get]
+export const uploadAvatar = (file :File) => {
+    const formData = new FormData();
+    formData.append('file', file); // Assuming the server expects the file under the key 'avatar'
+
+    return service({
+        url: '/avatarUploadAndDownload/upload',
+        method: 'POST',
+        headers: {
+            // 'Content-Type': 'multipart/form-data' is not needed here; axios will set it automatically when you pass FormData
+        },
+        data: formData
+    });
+}

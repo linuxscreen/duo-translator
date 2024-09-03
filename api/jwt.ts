@@ -1,5 +1,8 @@
+import service from "@/utils/request";
+
 export const jsonInBlacklist = () => {
-    return fetch('/jwt/jsonInBlacklist',{
-        method: 'POST'
+    return service({
+        url: '/jwt/jsonInBlacklist',
+        method: 'post'
     })
 }

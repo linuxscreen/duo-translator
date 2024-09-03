@@ -85,8 +85,8 @@ export const microsoftTranslationService = new TranslationService(
     // 翻译文本函数
     async function (text: Array<string>, targetLang: string, sourceLang?: string) {
         // text都填充为已经翻译-- 用于模拟翻译
-        text.fill("已经翻译", 0, text.length)
-        return text
+        // text.fill("已经翻译", 0, text.length)
+        // return text
         //拼接urlfrom=en&to=zh-CHS&
         let url: string
         if (sourceLang == undefined) {

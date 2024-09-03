@@ -75,7 +75,8 @@
 </template>
 <script lang="ts">
 import {reactive, ref} from "vue";
-import {useUserStore} from "@/utils/userStorage";
+// import {useUserStore} from "@/utils/user";
+
 export default {
   name: "LoginComponent",
   components: {},
@@ -171,6 +172,7 @@ export default {
                   })
                   // 登录成功后，获取用户信息,储存token
                   // this.userStore.setToken(data.data.token)
+                  // useUserStore.setToken()
                 } else {
                   this.$message({
                     message: data.msg,
