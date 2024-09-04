@@ -20,7 +20,8 @@ import {browser} from "wxt/browser";
 import MarqueeText from "@/components/MarqueeText.vue";
 import {translationServices} from "@/entrypoints/translateService";
 // import {useUserStore} from "@/utils/userStorage";
-import {getUserList,getUserInfo} from "@/api/user";
+import {getUserList, getUserInfo} from "@/api/user";
+
 const title = import.meta.env.VITE_APP_TITLE
 const env = import.meta.env.VITE_ENV
 export default {
@@ -150,6 +151,8 @@ export default {
     const userStorage = useUserStore
     // const userInfo = getUserInfo
     return {
+      globalSwitch:true,
+      isPopupWindow: false, // 默认假设不是弹出窗口
       // userInfo,
       // userStorage,
       bgColorIndex: -1,
@@ -272,8 +275,17 @@ export default {
     }
   },
   methods: {
+    openInWindow() {
+      window.open('/popup.html', '_blank', 'width=404,height=635,scrollbars=no,resizable=no,location=no,status=no');
 
-    async test(){
+      // browser.windows.create({
+      //   url: "/popup.html",
+      //   type: "popup",
+      //   width: 375,
+      //   height: 700,
+      // })
+    },
+    async test() {
       const res = await getUserInfo()
       console.log("ffddfffffff")
       // console.log("testssss",res)
@@ -468,6 +480,8 @@ export default {
     }
   },
   async mounted() {
+    // 检查是否为弹出窗口
+    this.isPopupWindow = !!window.opener;
     //添加样式设置 无样式
     let element = document.querySelector("#noneStyleSelect")
     if (element) {
@@ -621,81 +635,118 @@ export default {
       />
     </svg>
     <div class="login">
-      <div class="avatar">
-        <div >
-<!--          <img src="@/public/avatar.png" class="avatar-image"  alt="avatar" style="width: 60px;height: 60px"/>-->
-        </div>
+      <div class="avatar" @click="openInWindow">
+        <el-tooltip :content="t('popUpToANewWindow')" placement="bottom" effect="customized" showAfter="500">
+          <div class="btn-window" v-if="!isPopupWindow">
+            <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" viewBox="0 0 25 25" fill="none">
+              <g clip-path="url(#clip0_251_936)">
+                <path d="M24.1455 15.0024C23.6743 15.0024 23.291 15.3857 23.291 15.8569V21.543C23.291 22.5073 22.5073 23.291 21.543 23.291H3.45703C3.29346 23.291 3.13477 23.2666 2.9834 23.2251L11.8652 14.3433V18.8721C11.8652 19.3433 12.2485 19.7266 12.7197 19.7266C13.1909 19.7266 13.5742 19.3433 13.5742 18.8721V12.2388C13.5742 12.2314 13.5742 12.2266 13.5718 12.2192C13.5718 12.2119 13.5718 12.2046 13.5693 12.1973C13.5693 12.1899 13.5669 12.1802 13.5669 12.1729C13.5669 12.168 13.5645 12.1631 13.5645 12.1558C13.562 12.146 13.562 12.1387 13.5596 12.1289C13.5596 12.124 13.5571 12.1191 13.5571 12.1143C13.5547 12.1045 13.5522 12.0972 13.5522 12.0874C13.5522 12.0825 13.5498 12.0776 13.5498 12.0728C13.5474 12.063 13.5449 12.0557 13.5425 12.0459C13.54 12.041 13.54 12.0361 13.5376 12.0312C13.5352 12.0239 13.5327 12.0166 13.5303 12.0068C13.5278 12.002 13.5278 11.9971 13.5254 11.9897L13.5181 11.9678C13.5156 11.9604 13.5132 11.9556 13.5107 11.9482C13.5083 11.9409 13.5059 11.936 13.5034 11.9312C13.501 11.9238 13.4961 11.9165 13.4937 11.9116L13.4863 11.897C13.4814 11.8896 13.479 11.8823 13.4741 11.875C13.4717 11.8701 13.4692 11.8652 13.4668 11.8628C13.4619 11.8555 13.457 11.8481 13.4521 11.8384C13.4497 11.8335 13.4473 11.8311 13.4448 11.8262C13.4399 11.8188 13.4351 11.8115 13.4302 11.8018C13.4277 11.7969 13.4253 11.7944 13.4229 11.7896L13.4082 11.7676C13.4058 11.7627 13.4009 11.7603 13.3984 11.7554C13.3936 11.748 13.3887 11.7432 13.3838 11.7358C13.3789 11.731 13.374 11.7261 13.3691 11.7188C13.3643 11.7139 13.3594 11.709 13.3569 11.7041C13.3472 11.6943 13.3374 11.6846 13.3276 11.6724C13.3179 11.6626 13.3081 11.6528 13.2959 11.6431C13.291 11.6382 13.2861 11.6333 13.2812 11.6309C13.2764 11.626 13.269 11.6211 13.2642 11.6162C13.2568 11.6113 13.252 11.6064 13.2446 11.6016C13.2397 11.5991 13.2349 11.5942 13.2324 11.5918L13.2104 11.5771C13.2056 11.5747 13.2031 11.5723 13.1982 11.5698L13.1763 11.5552C13.1714 11.5527 13.1689 11.5503 13.1641 11.5479C13.1567 11.543 13.1494 11.5381 13.1396 11.5356C13.1348 11.5332 13.1299 11.5308 13.1274 11.5283C13.1201 11.5234 13.1128 11.521 13.1055 11.5161L13.0908 11.5088C13.0835 11.5063 13.0762 11.5015 13.0713 11.499C13.0664 11.4966 13.0591 11.4941 13.0542 11.4917C13.0469 11.4893 13.042 11.4868 13.0347 11.4844L13.0127 11.4771C13.0078 11.4746 13.0005 11.4722 12.9956 11.4722C12.9883 11.4697 12.981 11.4673 12.9712 11.4648C12.9663 11.4624 12.9614 11.4624 12.9565 11.46C12.9492 11.4575 12.9395 11.4551 12.9297 11.4526C12.9248 11.4526 12.9199 11.4502 12.915 11.4502C12.9053 11.4478 12.8979 11.4453 12.8882 11.4453C12.8833 11.4453 12.8784 11.4429 12.8735 11.4429C12.8638 11.4404 12.8564 11.4404 12.8467 11.438C12.8418 11.438 12.8345 11.4355 12.8296 11.4355C12.8223 11.4355 12.8125 11.4331 12.8052 11.4331C12.7979 11.4331 12.7905 11.4331 12.7832 11.4307C12.7759 11.4307 12.771 11.4307 12.7637 11.4282H6.12793C5.65674 11.4282 5.27344 11.8115 5.27344 12.2827C5.27344 12.7539 5.65674 13.1372 6.12793 13.1372H10.6567L1.7749 22.0166C1.7334 21.8652 1.70898 21.7065 1.70898 21.543V3.45703C1.70898 2.49268 2.49268 1.70898 3.45703 1.70898H9.14307C9.61426 1.70898 9.99756 1.32568 9.99756 0.854492C9.99756 0.383301 9.61426 0 9.14307 0H3.45703C1.55029 0 0 1.55029 0 3.45703V21.543C0 23.4497 1.55029 25 3.45703 25H21.543C23.4497 25 25 23.4497 25 21.543V15.8569C25 15.3857 24.6167 15.0024 24.1455 15.0024Z" fill="#8A8A8A"/>
+                <path d="M21.9653 0H18.269C16.5942 0 15.2344 1.35986 15.2344 3.03467V6.73096C15.2344 8.4082 16.5942 9.76562 18.269 9.76562H21.9653C23.6426 9.76562 25 8.40576 25 6.73096V3.03467C25 1.35986 23.6401 0 21.9653 0ZM23.291 6.73096C23.291 7.46338 22.6953 8.05664 21.9653 8.05664H18.269C17.5366 8.05664 16.9434 7.46094 16.9434 6.73096V3.03467C16.9434 2.30225 17.5391 1.70898 18.269 1.70898H21.9653C22.6978 1.70898 23.291 2.30469 23.291 3.03467V6.73096Z" fill="#8A8A8A"/>
+              </g>
+              <defs>
+                <clipPath id="clip0_251_936">
+                  <rect width="25" height="25" fill="white"/>
+                </clipPath>
+              </defs>
+            </svg>
+<!--            <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30" fill="none">-->
+<!--              <path d="M16.45 15.5002C16.45 15.2502 16.35 15.0002 16.15 14.8002L4.65002 3.30025L13 3.30025C13.55 3.30025 14 2.85024 14 2.30024C14 1.75024 13.55 1.30024 13 1.30024L2.15002 1.30024C1.60002 1.30024 1.15002 1.75024 1.15002 2.30024L1.15002 13.1502C1.15002 13.7002 1.60002 14.1502 2.15002 14.1502C2.70002 14.1502 3.15002 13.7002 3.15002 13.1502L3.15002 4.60024L14.75 16.2002C15.15 16.6002 15.75 16.6002 16.15 16.2002C16.35 16.0002 16.45 15.7502 16.45 15.5002Z" fill="#64748B"/>-->
+<!--              <path d="M17.4 2.20029C17.4 2.75029 17.85 3.20029 18.4 3.20029L27.25 3.20029L27.25 27.3003L3.15002 27.3003L3.15002 19.0503C3.15002 18.5003 2.70002 18.0503 2.15002 18.0503C1.60002 18.0503 1.15002 18.5003 1.15002 19.0503L1.15002 28.3003C1.15002 28.8503 1.60002 29.3003 2.15002 29.3003L28.25 29.3003C28.8 29.3003 29.25 28.8503 29.25 28.3003L29.25 2.20029C29.25 1.65029 28.8 1.20029 28.25 1.20029L18.4 1.20029C17.85 1.20029 17.4 1.65029 17.4 2.20029Z" fill="#64748B"/>-->
+<!--            </svg>-->
+            <!--            <marquee-text @click="openInWindow" :text="'open in window'" width="90px"></marquee-text>-->
+            <!--          <img src="@/public/avatar.png" class="avatar-image"  alt="avatar" style="width: 60px;height: 60px"/>-->
+          </div>
+        </el-tooltip>
         <div class="login-message">
-          <div class="logged-in">tourist</div>
-          <div class="div">{{ t('loginToSynchronizeData') }}</div>
+
         </div>
+      </div>
+      <div>
+        <el-tooltip :content="t('globalSwitch')" placement="bottom" effect="customized" showAfter="200">
+          <el-switch
+
+              v-model="globalSwitch"
+              size="large"
+          >
+            <template #active-action>
+              <span class="custom-active-action">G</span>
+            </template>
+            <template #inactive-action>
+              <span class="custom-inactive-action">G</span>
+            </template>
+          </el-switch>
+        </el-tooltip>
       </div>
 
-      <div class="btn-rule" @click="toggleSelectionMode">
-        <div class="leading-icon">
-          <svg
-              class="group"
-              width="16"
-              height="13"
-              viewBox="0 0 16 13"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-          >
-            <path
-                d="M8.00029 9.16532C9.4725 9.16532 10.666 7.97186 10.666 6.49965C10.666 5.02744 9.4725 3.83398 8.00029 3.83398C6.52809 3.83398 5.33463 5.02744 5.33463 6.49965C5.33463 7.97186 6.52809 9.16532 8.00029 9.16532Z"
-                fill="white"
-            />
-            <path
-                d="M15.5112 4.77983C14.4776 3.09645 12.1265 0.272156 7.99998 0.272156C3.87352 0.272156 1.52239 3.09645 0.488772 4.77983C-0.162924 5.8339 -0.162924 7.16578 0.488772 8.21989C1.52239 9.90327 3.87352 12.7276 7.99998 12.7276C12.1265 12.7276 14.4776 9.90327 15.5112 8.21989C16.1629 7.16578 16.1629 5.8339 15.5112 4.77983ZM7.99998 10.4984C5.79168 10.4984 4.00147 8.70815 4.00147 6.49984C4.00147 4.29154 5.79168 2.50133 7.99998 2.50133C10.2083 2.50133 11.9985 4.29154 11.9985 6.49984C11.9963 8.70724 10.2074 10.4961 7.99998 10.4984Z"
-                fill="white"
-            />
-          </svg>
+      <el-tooltip :content="t('specifyAreasNotToBeTranslated')" placement="bottom" effect="customized" showAfter="500">
+        <div class="btn-rule" @click="toggleSelectionMode">
+          <div class="leading-icon">
+            <svg
+                class="group"
+                width="16"
+                height="13"
+                viewBox="0 0 16 13"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                  d="M8.00029 9.16532C9.4725 9.16532 10.666 7.97186 10.666 6.49965C10.666 5.02744 9.4725 3.83398 8.00029 3.83398C6.52809 3.83398 5.33463 5.02744 5.33463 6.49965C5.33463 7.97186 6.52809 9.16532 8.00029 9.16532Z"
+                  fill="white"
+              />
+              <path
+                  d="M15.5112 4.77983C14.4776 3.09645 12.1265 0.272156 7.99998 0.272156C3.87352 0.272156 1.52239 3.09645 0.488772 4.77983C-0.162924 5.8339 -0.162924 7.16578 0.488772 8.21989C1.52239 9.90327 3.87352 12.7276 7.99998 12.7276C12.1265 12.7276 14.4776 9.90327 15.5112 8.21989C16.1629 7.16578 16.1629 5.8339 15.5112 4.77983ZM7.99998 10.4984C5.79168 10.4984 4.00147 8.70815 4.00147 6.49984C4.00147 4.29154 5.79168 2.50133 7.99998 2.50133C10.2083 2.50133 11.9985 4.29154 11.9985 6.49984C11.9963 8.70724 10.2074 10.4961 7.99998 10.4984Z"
+                  fill="white"
+              />
+            </svg>
+          </div>
+          <div class="button-text">
+            <!--          规则模式-->
+            <marquee-text :text="t('modeOfRule')" width="70px"></marquee-text>
+          </div>
         </div>
-        <div class="button-text">
-          <!--          规则模式-->
-          <marquee-text :text="t('modeOfRule')" width="70px"></marquee-text>
-        </div>
-      </div>
+      </el-tooltip>
     </div>
     <div class="main-function">
       <div class="translate-select">
-        <div class="btn-strategy">
-          <el-dropdown @command="changeViewStrategy" trigger="click" size="large">
-            <div class="select-strategy">
-              <div class="button-text">{{ t(viewStrategy) }}</div>
-              <svg
-                  class="trailing-icon"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-              >
-                <g clip-path="url(#clip0_86_5059)">
-                  <path
-                      d="M1.00695 4.05283C1.13828 4.05266 1.26833 4.07849 1.38962 4.12883C1.51091 4.17918 1.62103 4.25305 1.71362 4.34617L6.82895 9.46083C6.98372 9.61565 7.16748 9.73845 7.36971 9.82224C7.57195 9.90602 7.78871 9.94915 8.00762 9.94915C8.22653 9.94915 8.44329 9.90602 8.64553 9.82224C8.84777 9.73845 9.03152 9.61565 9.18629 9.46083L14.2936 4.35283C14.3859 4.25732 14.4962 4.18114 14.6182 4.12873C14.7402 4.07632 14.8714 4.04874 15.0042 4.04758C15.137 4.04643 15.2687 4.07173 15.3916 4.12201C15.5145 4.17229 15.6261 4.24655 15.72 4.34044C15.8139 4.43433 15.8882 4.54598 15.9384 4.66888C15.9887 4.79178 16.014 4.92346 16.0129 5.05624C16.0117 5.18901 15.9841 5.32024 15.9317 5.44224C15.8793 5.56424 15.8031 5.67459 15.7076 5.76683L10.6003 10.8748C9.91223 11.5616 8.97978 11.9473 8.00762 11.9473C7.03546 11.9473 6.10302 11.5616 5.41495 10.8748L0.299621 5.76017C0.159677 5.62031 0.064363 5.44209 0.0257402 5.24805C-0.0128825 5.05401 0.00692157 4.85287 0.0826466 4.67009C0.158372 4.48731 0.286614 4.3311 0.451146 4.22122C0.615679 4.11134 0.809107 4.05274 1.00695 4.05283Z"
-                      fill="white"
-                  />
-                </g>
-                <defs>
-                  <clipPath id="clip0_86_5059">
-                    <rect width="16" height="16" fill="white"/>
-                  </clipPath>
-                </defs>
-              </svg>
-            </div>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item v-for="(viewStrategy,index) in viewStrategies" :command="viewStrategy">
-                  {{ t(viewStrategy.title) }}
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+        <el-tooltip :content="t('displayMode')" placement="bottom" effect="customized" showAfter="500">
+          <div class="btn-strategy">
+            <el-dropdown @command="changeViewStrategy" trigger="click" size="large">
+              <div class="select-strategy">
+                <div class="button-text">{{ t(viewStrategy) }}</div>
+                <svg
+                    class="trailing-icon"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                >
+                  <g clip-path="url(#clip0_86_5059)">
+                    <path
+                        d="M1.00695 4.05283C1.13828 4.05266 1.26833 4.07849 1.38962 4.12883C1.51091 4.17918 1.62103 4.25305 1.71362 4.34617L6.82895 9.46083C6.98372 9.61565 7.16748 9.73845 7.36971 9.82224C7.57195 9.90602 7.78871 9.94915 8.00762 9.94915C8.22653 9.94915 8.44329 9.90602 8.64553 9.82224C8.84777 9.73845 9.03152 9.61565 9.18629 9.46083L14.2936 4.35283C14.3859 4.25732 14.4962 4.18114 14.6182 4.12873C14.7402 4.07632 14.8714 4.04874 15.0042 4.04758C15.137 4.04643 15.2687 4.07173 15.3916 4.12201C15.5145 4.17229 15.6261 4.24655 15.72 4.34044C15.8139 4.43433 15.8882 4.54598 15.9384 4.66888C15.9887 4.79178 16.014 4.92346 16.0129 5.05624C16.0117 5.18901 15.9841 5.32024 15.9317 5.44224C15.8793 5.56424 15.8031 5.67459 15.7076 5.76683L10.6003 10.8748C9.91223 11.5616 8.97978 11.9473 8.00762 11.9473C7.03546 11.9473 6.10302 11.5616 5.41495 10.8748L0.299621 5.76017C0.159677 5.62031 0.064363 5.44209 0.0257402 5.24805C-0.0128825 5.05401 0.00692157 4.85287 0.0826466 4.67009C0.158372 4.48731 0.286614 4.3311 0.451146 4.22122C0.615679 4.11134 0.809107 4.05274 1.00695 4.05283Z"
+                        fill="white"
+                    />
+                  </g>
+                  <defs>
+                    <clipPath id="clip0_86_5059">
+                      <rect width="16" height="16" fill="white"/>
+                    </clipPath>
+                  </defs>
+                </svg>
+              </div>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item v-for="(viewStrategy,index) in viewStrategies" :command="viewStrategy">
+                    {{ t(viewStrategy.title) }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
 
-        </div>
-
-        <div class="btn-target">
+          </div>
+        </el-tooltip>
+        <el-tooltip :content="t('targetLanguage')" placement="bottom" effect="customized" showAfter="500">
+          <div class="btn-target">
           <el-dropdown @command="changeTargetLanguage" trigger="click" size="large">
             <div class="select-target">
               <div class="button-text">{{ t(targetLanguage) }}</div>
@@ -730,7 +781,9 @@ export default {
           </el-dropdown>
 
         </div>
+        </el-tooltip>
       </div>
+      <el-tooltip :content="t('translateService')" placement="bottom" effect="customized" showAfter="500">
       <div class="translate-service">
         <el-dropdown @command="changeTranslateService" trigger="click" size="large">
 
@@ -775,6 +828,7 @@ export default {
           </template>
         </el-dropdown>
       </div>
+      </el-tooltip>
       <div class="translate-toggle">
         <custom-switch v-model="translateToggle" class="my-custom-class" :swidth="'60'"
                        size="large"
@@ -793,6 +847,7 @@ export default {
       </div>
     </div>
     <div class="style">
+      <p>译文样式</p>
       <div class="styleSetting">
         <marquee-text :text="t('border')" width="148px"></marquee-text>
         <!--        {{t('border')}}-->
@@ -823,24 +878,7 @@ export default {
       <custom-color-picker v-model="bgColor" v-model:selectedIndex="bgColorIndex">
 
       </custom-color-picker>
-      <!--      <section class=" bg-color-pick-list
-      ">-->
-      <!--        <span class="color-item" @click="checkedColor($event)">-->
-      <!--          </span>-->
-      <!--        <span class="color-item" style="color: #df5f47" @click="checkedColor($event)">-->
-      <!--          </span>&lt;!&ndash;&ndash;&gt;-->
-      <!--        <span class="color-item" style="color:#57a0ee;" @click="checkedColor($event)">-->
-      <!--          </span>&lt;!&ndash;&ndash;&gt;-->
-      <!--        <span class="color-item" style="color:#faec63;" @click="checkedColor($event)">-->
-      <!--          </span>&lt;!&ndash;&ndash;&gt;-->
-      <!--        <span class="color-item" style="color:#73b364;" @click="checkedColor($event)">-->
-      <!--          </span>&lt;!&ndash;&ndash;&gt;-->
-      <!--        <span class="color-item" id="bgColorPickBox" @click="showColorPicker()">-->
-      <!--  <el-color-picker id="colorPicker" v-model="colorPicked" ref="colorPickerComponent"/>-->
-      <!--        </span>-->
-      <!--      </section>-->
       <div class="styleSetting">
-        <!--        {{t('fontColor')}}-->
         <marquee-text :text="t('fontColor')" width="148px"></marquee-text>
       </div>
       <!-- font-color -->
@@ -849,11 +887,26 @@ export default {
                            v-model:selectedIndex="fontColorIndex">
 
       </custom-color-picker>
+<!--      <div class="styleSetting">-->
+<!--        &lt;!&ndash;        {{t('padding')}}&ndash;&gt;-->
+<!--        <marquee-text :text="t('padding')" width="148px"></marquee-text>-->
+<!--      </div>-->
+<!--      <el-slider v-model="padding" size="small" input-size="small" :min="1" :max="10"/>-->
+      <p>对照高亮</p>
       <div class="styleSetting">
-        <!--        {{t('padding')}}-->
-        <marquee-text :text="t('padding')" width="148px"></marquee-text>
+        <!--        {{t('backgroundColor')}}-->
+        <marquee-text :text="t('backgroundColor')" width="148px"></marquee-text>
       </div>
-      <el-slider v-model="padding" size="small" input-size="small" :min="1" :max="10"/>
+      <custom-color-picker v-model="bgColor" v-model:selectedIndex="bgColorIndex">
+
+      </custom-color-picker>
+      <div class="styleSetting">
+        <!--        {{t('backgroundColor')}}-->
+        <marquee-text :text="t('backgroundColor')" width="148px"></marquee-text>
+      </div>
+      <custom-color-picker v-model="bgColor" v-model:selectedIndex="bgColorIndex">
+
+      </custom-color-picker>
     </div>
 
     <div class="style-show">
@@ -867,21 +920,64 @@ export default {
           </el-radio>
         </el-radio-group>
       </div>
-      <div class="this-is-text">Here is the original</div>
+      <div class="bilingual-highlighting">
+        <marquee-text :text="t('bilingual Highlighting')" width="90px"></marquee-text>
+        <el-switch
+            v-model="bilingualHighlighting"
+            size="large"/>
+      </div>
+      <div class="this-is-text">I'm a little bird. How can I fly high.</div>
+<!--      <div class="showDemoTranslated">I'm a little bird, how can I fly high</div>-->
       <div class="show">
         <!--        <div class="rectangle-1523"></div>-->
-        <p id="showDemoTranslated">
-          {{ t('hereIsTheTranslation') }}
+
+           <p id="showDemoTranslated">
+              <span>
+          我是一只小小鸟。
+             <!--          {{ t('hereIsTheTranslation') }}-->
+                 </span>
+             <span>
+          怎么飞都飞不高。
+               <!--          {{ t('hereIsTheTranslation') }}-->
+                 </span>
         </p>
-        <v-btn @click="test">test</v-btn>
+
+
+<!--        <v-btn @click="test">test</v-btn>-->
       </div>
     </div>
+
   </div>
 
 
 </template>
 
 <style>
+.el-popper.is-customized {
+  /* Set padding to ensure the height is 32px */
+  padding: 6px 12px;
+  background: linear-gradient(90deg, rgb(159, 229, 151), rgb(204, 229, 129));
+}
+
+.el-popper.is-customized .el-popper__arrow::before {
+  background: linear-gradient(45deg, #b2e68d, #bce689);
+  right: 0;
+}
+
+.btn-window {
+  /*background: var(--component-fill-component-fill-warning, rgb(223, 95, 71));*/
+  /*border-radius: var(--radius-radius-sm-4x, 8px);*/
+  /*padding: var(--padding-padding-12px, 12px) 12px var(--padding-padding-12px, 12px) 12px;*/
+  /*display: flex;*/
+  /*flex-direction: row;*/
+  /*gap: 11px;*/
+  /*align-items: center;*/
+  /*justify-content: flex-start;*/
+  /*flex-shrink: 0;*/
+  /*width: 110px;*/
+  /*height: 33px;*/
+  /*position: relative;*/
+}
 
 .translate-service .el-dropdown {
   width: 100%;
@@ -1043,20 +1139,21 @@ export default {
 .main {
   background: linear-gradient(to left, #eaf2f5, #eaf2f5),
   linear-gradient(to left, #ffffff, #ffffff);
-  height: 544px;
+  height: 600px;
   position: relative;
   overflow: hidden;
 }
 
 .help {
-  margin-left: 6px;
+  margin-left: 1px;
+  margin-bottom: 6px;
   width: 4.8%;
   height: 3.31%;
   position: absolute;
   right: 4%;
   left: 91.2%;
   bottom: 88.79%;
-  top: 7.9%;
+  /*top: 7.9%;*/
   overflow: visible;
 }
 
@@ -1075,7 +1172,8 @@ export default {
 
 .avatar {
   /*padding: 10px;*/
-  width: 170px;
+  cursor: pointer;
+  width: 33px;
   display: flex;
   flex-direction: row;
   /*gap: 10px;*/
@@ -1148,9 +1246,11 @@ export default {
   align-items: center;
   justify-content: flex-start;
   flex-shrink: 0;
-  width: 120px;
+  width: 130px;
   height: 33px;
   position: relative;
+  cursor: pointer;
+  margin-right: 10px;
 }
 
 .leading-icon {
@@ -1461,7 +1561,7 @@ export default {
   align-items: flex-start;
   justify-content: space-between;
   width: 148px;
-  height: 232px;
+  /*height: 232px;*/
   position: absolute;
   left: 33px;
   top: 289px;
@@ -1579,6 +1679,18 @@ export default {
   top: 297px;
 }
 
+.bilingual-highlighting{
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  /*align-items: flex-start;*/
+  justify-content: space-between;
+  /*position: absolute;*/
+  width: 150px;
+  /*left: 33px;*/
+  /*top: 530px;*/
+}
+
 .radio-button {
   padding: 4px 0px 4px 0px;
   display: flex;
@@ -1644,10 +1756,10 @@ export default {
 }
 
 .show {
-  flex-shrink: 0;
+  /*flex-shrink: 0;*/
   /*width: 103px;*/
-  height: 33px;
-  position: relative;
+  height: 50px;
+  /*position: relative;*/
 }
 
 .rectangle-1523 {
@@ -1681,10 +1793,12 @@ export default {
 }
 
 #showDemoTranslated {
+  margin-top: 10px;
   font-size: 14px;
-  white-space: nowrap;
+  /*white-space: nowrap;*/
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: left;
 }
 
 </style>

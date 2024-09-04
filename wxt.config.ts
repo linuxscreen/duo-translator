@@ -8,7 +8,7 @@ export default defineConfig({
         name: '__MSG_extName__',
         description: '__MSG_extDescription__',
         default_locale: 'zh',
-        permissions: ['storage', 'tabs'],
+        permissions: ['storage', 'tabs', 'activeTab'],
         content_scripts: [
             {
                 matches: ['<all_urls>'],
