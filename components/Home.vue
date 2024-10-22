@@ -203,6 +203,9 @@ export default {
         }
     },
     methods: {
+        openHelpPage(){
+           browser.tabs.create({url:"https://duo.zeroflx.com/docs"})
+        },
         getNativeLanguage() {
             sendMessageToBackground({action: "getNativeLanguage"})
         },
@@ -564,7 +567,7 @@ export default {
 <template>
     <div class="main">
         <div class="login">
-            <div class="helpBtn">
+            <div class="helpBtn" @click="openHelpPage">
                 <el-tooltip :content="t('helpDocument')" placement="bottom" effect="customized" :showAfter="500">
                     <img src="@/public/icon/help.svg" alt="">
                 </el-tooltip>
