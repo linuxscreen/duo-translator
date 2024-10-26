@@ -403,6 +403,7 @@ export default {
             return array.find(value => value.value == code)
         },
         async toggleTranslation(translateStatus: boolean) {
+            console.log('toggleTranslation', translateStatus)
             // Sets the current tab translation status
             await sendMessageToBackground({
                 action: STORAGE_ACTION.SESSION_SET,

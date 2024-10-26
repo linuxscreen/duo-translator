@@ -34,8 +34,7 @@ export default defineContentScript({
         // collect all the paragraph elements, by the way add duo-paragraph class
         let ruleStrategy = await listRuleFromDB()
         ruleStrategyProcess(ruleStrategy)
-        let collectBodyElements = collectElements(document.body, isParagraphElement, [])
-
+        markParagraphElement(document.body)
         console.log('domain:', domain)
         // get the id of the current tab,which used unique defines the page
         let tabId = await sendMessageToBackground({action: TB_ACTION.TAB_ID_GET})
@@ -52,11 +51,28 @@ export default defineContentScript({
             mutations.forEach(mutation => {
                 if (mutation.addedNodes.length) {
                     mutation.addedNodes.forEach(node => {
-                        translateRoot(node as HTMLElement)
+                        // if the node is not a HTMLElement, return
+                        if (!(node instanceof HTMLElement)) {
+                            return
+                        }
+                        let element = node as HTMLElement
+                        // don't observe the element with duo-no-observer attribute
+                        if (hasAttributeIncludingParents(element, "duo-no-observer")) {
+                            return
+                        }
+                        markParagraphElement(element)
+                        // get translate status of the current tab
+                        getSessionStorage(tabTranslateStatusKey).then((status) => {
+                            if (status){
+                                translateRoot(element)
+                            }
+                        });
                     });
                 }
             });
         });
+        observer.observe(document.body, {childList: true, subtree: true});
+
         const getCssSelectorString = (ele: HTMLElement): string => {
             // ignore the elements with class start with duo
             return getCssSelector(ele, {selectors: ["id", "class", "tag"], blacklist: ['.duo-*']})
@@ -89,6 +105,7 @@ export default defineContentScript({
         await processStyleChangeAction()
 
         async function restoreOriginalPage() {
+            console.log('restore original page')
             for (let i = 0; i < translateElementRecords.length; i++) {
                 let ele = translateElementRecords[i]
                 let originalEle = originalElementRecords[i]
@@ -96,6 +113,7 @@ export default defineContentScript({
                     ele.innerHTML = originalEle?.innerHTML
                 }
             }
+            // to prevent record residual
             originalElementRecords = []
             translateElementRecords = []
         }
@@ -114,7 +132,7 @@ export default defineContentScript({
                 case TRANS_ACTION.ORIGIN:
                     console.log('show original')
                     // restore original page
-                    observer.disconnect()
+                    // observer.disconnect()
                     await restoreOriginalPage()
                     await sendMessageToBackground({
                         action: STORAGE_ACTION.SESSION_SET,
@@ -145,7 +163,7 @@ export default defineContentScript({
                 case ACTION.TRANSLATE_CHANGE:
                     console.log('translate change:', message.data)
                     // restore original page
-                    observer.disconnect()
+                    // observer.disconnect()
                     await restoreOriginalPage()
                     await translateRoot(document.body)
                     // document.body.innerHTML = domContent
@@ -173,8 +191,8 @@ export default defineContentScript({
             })
         }
 
-        function getSessionStorage(key: string) {
-            sendMessageToBackground({
+        async function getSessionStorage(key: string) {
+            return sendMessageToBackground({
                 action: STORAGE_ACTION.SESSION_GET,
                 data: {key: key}
             })
@@ -217,12 +235,14 @@ export default defineContentScript({
                     // todo A dialog box pops up asking if you want to translate
                     return false
                 case DOMAIN_STRATEGY.NEVER:
-                    observer.disconnect()
-                    console.log('translate status:', translateStatus)
-                    await setSessionStorage(tabTranslateStatusKey, false)
-                    // restore the original page
-                    await restoreOriginalPage()
-
+                    let status = await getSessionStorage(tabTranslateStatusKey)
+                    if (status) {
+                        // observer.disconnect()
+                        console.log('translate status:', translateStatus)
+                        await setSessionStorage(tabTranslateStatusKey, false)
+                        // restore the original page
+                        await restoreOriginalPage()
+                    }
                     return false
             }
             return false
@@ -246,6 +266,7 @@ export default defineContentScript({
 
         // translate the root DOM tree
         async function translateRoot(root: HTMLElement) {
+            // if the root is body, it means the page is reloaded, or re translated
             if (root == document.body) {
                 originalElementRecords = []
             }
@@ -325,12 +346,14 @@ export default defineContentScript({
          * @param elements
          */
         function collectElements(element: HTMLElement, condition: (element: HTMLElement) => boolean, elements: HTMLElement[] = []): HTMLElement[] {
-            console.log("collectElements:")
             elements = elements || []; // initialize element array
+            if (!(element instanceof HTMLElement)) {
+                return elements;
+            }
             let nodeName = element.nodeName.toLowerCase();
             // don't translate the element with class duo-no-translate and notranslate
             // todo support user defined class to exclude translation
-            if (element.classList?.contains('duo-no-translate') || element.classList?.contains('notranslate')) {
+            if (element.classList?.contains('duo-no-translate') || element.classList?.contains("duo-translated") || element.classList?.contains('notranslate')) {
                 return elements;
             }
             // todo support user defined tag to exclude translation
@@ -360,6 +383,58 @@ export default defineContentScript({
                 }
             }
             return elements;
+        }
+
+        function collectElementsToTranslate(element: HTMLElement): HTMLElement[] {
+            let elements :HTMLElement[] = []
+            if (element.classList.contains("duo-paragraph")) {
+                elements.push(element)
+            }else {
+                elements = Array.from(element.querySelectorAll('.duo-paragraph')) as HTMLElement[]
+            }
+            // remove the elements with duo-no-translate,duo-translated,notranslate class
+            elements = elements.filter((element) => {
+                // todo support user defined class to exclude translation
+                return !element.classList.contains('duo-no-translate') && !element.classList.contains("duo-translated") && !element.classList.contains('notranslate')
+            })
+            return elements
+        }
+
+        // search and add the duo-paragraph class to the paragraph element for marking
+        function markParagraphElement(element: HTMLElement) {
+            if (!(element instanceof HTMLElement)) {
+                return;
+            }
+            let nodeName = element.nodeName.toLowerCase();
+            // todo support user defined tag to exclude
+            if (nodeName === 'script' || nodeName === 'style' || nodeName === '#comment') {
+                return;
+            }
+            if (element.style.display === 'none') {
+                return;
+            }
+            if (element.classList.contains("duo-paragraph")) {
+                return;
+            }
+            if (isParagraphElement(element)) {
+                // Deletes all annotation nodes for the current element
+                for (let i = 0; i < element.childNodes.length; i++) {
+                    if (element.childNodes[i].nodeType === Node.COMMENT_NODE) {
+                        element.removeChild(element.childNodes[i]);
+                    }
+                }
+                // add duo-paragraph class
+                element.classList.add('duo-paragraph')
+                return;
+            }
+            // Recursively traverses all children of the current element
+            for (let i = 0; i < element.childNodes.length; i++) {
+                const currentNode = element.childNodes[i];
+                if (currentNode.nodeType === 1) { // check if the node is an element node
+                    markParagraphElement(currentNode as HTMLElement);
+                }
+            }
+
         }
 
         /**
@@ -398,7 +473,7 @@ export default defineContentScript({
             if (element.childNodes.length > 0) {
                 for (let i = 0; i < element.childNodes.length; i++) {
                     if (element.childNodes[i].nodeType === Node.TEXT_NODE && element.childNodes[i].textContent!.trim() !== "") {
-                        element.classList.add('duo-paragraph')
+                        console.log('isParagraphElement:', element)
                         return true
                     }
                 }
@@ -408,7 +483,7 @@ export default defineContentScript({
 
         function hasAttributeIncludingParents(element: HTMLElement, attribute: string): boolean {
             // The current element has this attribute
-            if (element.hasAttribute(attribute)) {
+            if (element?.hasAttribute(attribute)) {
                 return true;
             }
 
@@ -432,11 +507,7 @@ export default defineContentScript({
             if (!(treeElm instanceof HTMLElement)) {
                 return;
             }
-            // If the current element has the attribute duo-no-observer, it will not be observed and translated
-            if (hasAttributeIncludingParents(treeElm, "duo-no-observer")) {
-                return
-            }
-            let elements = collectElements(tree, isParagraphElement, [])
+            let elements = collectElementsToTranslate(tree)
             if (!elements) {
                 return
             }
@@ -446,7 +517,6 @@ export default defineContentScript({
             for (let element of elements) {
                 originalElementRecords.push(element.cloneNode(true) as HTMLElement)
                 translateElementRecords.push(element)
-                //分段
                 // console.log('element:', element.innerHTML)
                 const sentences = split(element.innerHTML).filter((node) => node.type === 'Sentence');
                 element.innerHTML = ""
@@ -526,7 +596,7 @@ export default defineContentScript({
                     }
 
                 }
-                element.setAttribute("no-observer", "true")
+                element.setAttribute("duo-no-observer", "true")
                 originalHtmlElements.push(element)
 
             }
@@ -862,34 +932,15 @@ export default defineContentScript({
          * @param params
          */
         function translateDOM(tree: HTMLElement, params: translateParams) {
-            let treeElm = tree as HTMLElement
-            if (!(treeElm instanceof HTMLElement)) {
-                return;
-            }
-            if (hasAttributeIncludingParents(treeElm, "duo-no-observer")) {
-                return
-            }
-            let needTranslateElement = []
-            let elements: HTMLElement[] = []
-            if (tree == document.body && collectBodyElements.length > 0) {
-                elements = collectBodyElements
-                collectBodyElements = []
-            } else {
-                elements = collectElements(tree, isParagraphElement, [])
-            }
-            if (!elements) {
-                return
-            }
-            // console.log('elements:', elements)
-            for (let i = 0; i < elements.length; i++) {
-                needTranslateElement.push(elements[i])
-            }
-            translateElementRecords.push(...needTranslateElement)
-            translationServices.get(params.serviceName)?.translateHtml?.(elements, params.targetLang, params.sourceLang).then((res) => {
+            let needTranslateElement = collectElementsToTranslate(tree)
+            translationServices.get(params.serviceName)?.translateHtml?.(needTranslateElement, params.targetLang, params.sourceLang).then((res) => {
                 for (let i = 0; i < needTranslateElement.length; i++) {
-                    // console.log('res:', res[i])
+                    console.log('res:', res[i])
                     originalElementRecords.push(needTranslateElement[i].cloneNode(true) as HTMLElement)
-                    needTranslateElement[i].innerHTML = res[i]
+                    let cloneElement = needTranslateElement[i].cloneNode(true) as HTMLElement
+                    cloneElement.innerHTML = res[i]
+                    needTranslateElement[i].innerHTML = cloneElement.firstElementChild?.innerHTML!
+                    translateElementRecords.push(needTranslateElement[i])
                     // when translated, set duo-no-observer attribute
                     needTranslateElement[i].setAttribute("duo-no-observer", "true")
                 }
