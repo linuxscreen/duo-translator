@@ -22,7 +22,7 @@ export class translateParams {
 }
 
 interface TranslateText {
-    (text: Array<string>, targetLang: string, sourceLang?: string): Promise<Array<string>>;
+    (text: Array<string>, targetLang: string, sourceLang?: string, options?:any): Promise<Array<string>>;
 }
 
 interface TranslateHtml {
@@ -203,8 +203,8 @@ export const googleTranslationService: TranslationService = new TranslationServi
         return Promise.resolve(translatedHtmlList)
     }
 );
-let retryCount = 0
-let maxRetryCount = 3
+const maxRetry = 5
+let gettingToken = false
 export const microsoftTranslationService = new TranslationService(
     "microsoft",
     "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&includeSentenceLength=true&",
@@ -212,7 +212,7 @@ export const microsoftTranslationService = new TranslationService(
     "",
     "",
     // Translate text functions
-    async function (this: TranslationService, text: Array<string>, targetLang: string, sourceLang?: string) {
+    async function (this: TranslationService, text: Array<string>, targetLang: string, sourceLang?: string,options?:any) {
         let url: string
         if (sourceLang == undefined) {
             url = this.baseUrl + "to=" + targetLang;
@@ -226,6 +226,12 @@ export const microsoftTranslationService = new TranslationService(
             // get token, firstly by db and then by fetch
             let token = await getConfig(CONFIG_KEY.MICROSOFT_TOKEN)
             if (!token || token == "") {
+                if (gettingToken) {
+                    // delay 100ms to get token
+                    await new Promise(resolve => setTimeout(resolve, 100))
+                    return this.translateText(text, targetLang, sourceLang,options)
+                }
+                gettingToken = true
                 token = await fetch(tokenUrl).then(response => response.text());
                 console.log('fetch token:', token)
                 await setConfig(CONFIG_KEY.MICROSOFT_TOKEN, token)
@@ -244,23 +250,27 @@ export const microsoftTranslationService = new TranslationService(
         });
         // if the response status is 401, the token is invalid and the token is re-obtained
         if (response.status === 401) {
-            maxRetryCount--
-            if (maxRetryCount < 0) {
-                maxRetryCount = 3
+            options.retryCount++
+            console.log('retryCount:', options.retryCount)
+            if (options.retryCount > maxRetry) {
                 return Promise.resolve([])
             }
-            if (retryCount < 1) {
+            if (options.retryCount == 1) {
                 // first time try to get token from db
                 this.authToken = await getConfig(CONFIG_KEY.MICROSOFT_TOKEN)
-                retryCount++
-                return this.translateText(text, targetLang, sourceLang)
+                return this.translateText(text, targetLang, sourceLang,options)
             }else {
                 // second time try to get token from fetch
+                if (gettingToken) {
+                    // delay 100ms to get token
+                    await new Promise(resolve => setTimeout(resolve, 100))
+                    return this.translateText(text, targetLang, sourceLang,options)
+                }
+                gettingToken = true
                 let token = await fetch(tokenUrl).then(response => response.text());
                 await setConfig(CONFIG_KEY.MICROSOFT_TOKEN, token)
                 this.authToken = token
-                retryCount = 0
-                return this.translateText(text, targetLang, sourceLang)
+                return this.translateText(text, targetLang, sourceLang,options)
             }
 
         }
@@ -331,7 +341,7 @@ export const microsoftTranslationService = new TranslationService(
 
         const translationPromises = texts.map((text, index) => {
             // the returned results are guaranteed to contain the original index for subsequent sorting
-            return this.translateText(text,targetLang,sourceLang).then(translatedText => ({
+            return this.translateText(text,targetLang,sourceLang,{retryCount:0}).then(translatedText => ({
                 index,
                 translatedText
             }));
