@@ -121,7 +121,7 @@ export default defineContentScript({
             process = true
             setTimeout(async () => {
                 try {
-                    if (!await getGlobalSwitch()){
+                    if (!(await getGlobalSwitch())){
                         return
                     }
                     let notTranslated = Array.from(document.body.querySelectorAll('.duo-translated')) as HTMLElement[]
@@ -133,6 +133,7 @@ export default defineContentScript({
                             getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
                         ]
                     )
+                    viewStrategy = viewStrategy || VIEW_STRATEGY.DOUBLE
                     translateService = translateService || TRANS_SERVICE.MICROSOFT
                     targetLanguage = targetLanguage || navigator.language
                     console.log('notTranslated:', notTranslated)
@@ -866,7 +867,7 @@ export default defineContentScript({
                     cssRule = 'text-decoration: underline dashed;'
                     break;
             }
-            if (style.endsWith("Line")) {
+            if (style?.endsWith("Line")) {
                 cssRule += `text-underline-offset: 4px;`
             } else {
                 // cssRule += `padding: 4px;`
