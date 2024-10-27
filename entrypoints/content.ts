@@ -21,6 +21,10 @@ export default defineContentScript({
     matches: ['<all_urls>'],
     cssInjectionMode: 'manual',
     async main(ctx) {
+        async function getGlobalSwitch() {
+            let globalSwitch = await getConfig(CONFIG_KEY.GLOBAL_SWITCH)
+            return globalSwitch === null ? true : globalSwitch
+        }
         let process = false
         const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
         // record the elements before translated, for show original
@@ -117,6 +121,9 @@ export default defineContentScript({
             process = true
             setTimeout(async () => {
                 try {
+                    if (!await getGlobalSwitch()){
+                        return
+                    }
                     let notTranslated = Array.from(document.body.querySelectorAll('.duo-translated')) as HTMLElement[]
                     notTranslated = notTranslated.filter(element => !element.querySelector('.duo-translation'));
                     let [viewStrategy, targetLanguage, translateService]: [string, string, string] = await Promise.all(
@@ -240,7 +247,7 @@ export default defineContentScript({
                     let strategy = message.data
                     console.log("domain strategy change: ", strategy)
                     // get global switch status
-                    let globalSwitch = await getConfig(CONFIG_KEY.GLOBAL_SWITCH)
+                    let globalSwitch = await getGlobalSwitch()
                     if (globalSwitch) {
                         return await translateStrategyProcess(strategy)
                     } else {
@@ -264,7 +271,7 @@ export default defineContentScript({
         }))?.strategy || DOMAIN_STRATEGY.AUTO
         console.log('domainStrategy:', domainStrategy)
         //get the global switch status
-        let globalSwitch = await getConfig(CONFIG_KEY.GLOBAL_SWITCH)
+        let globalSwitch = await getGlobalSwitch()
         if (globalSwitch) {
             // return
             await translateStrategyProcess(domainStrategy)
@@ -367,7 +374,7 @@ export default defineContentScript({
                 ]
             )
             viewStrategy = viewStrategy || VIEW_STRATEGY.DOUBLE
-
+            globalSwitch = globalSwitch === null ? true : globalSwitch
             translateService = translateService || TRANS_SERVICE.MICROSOFT
             targetLanguage = targetLanguage || navigator.language
             let params = new translateParams(translateService, targetLanguage, undefined)
@@ -398,6 +405,13 @@ export default defineContentScript({
                 getConfig(CONFIG_KEY.TRANSLATION_BG_COLOR),
                 getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH)
             ]);
+            bgColor = bgColor || ""
+            fontColor = fontColor || ""
+            borderStyle = borderStyle || "noneStyleSelect"
+            originalBgColor = originalBgColor || '#FFECCB'
+            translationBgColor = translationBgColor || '#ADD8E6'
+            highlightSwitch = highlightSwitch || true
+            console.log('style:', bgColor, fontColor, borderStyle, originalBgColor, translationBgColor, highlightSwitch)
             let styleSheet: HTMLStyleElement = document.getElementById("duo-translation-style") as HTMLStyleElement;
             if (!styleSheet) {
                 styleSheet = document.createElement("style");

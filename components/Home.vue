@@ -532,7 +532,7 @@ export default {
             ]);
 
             // style
-            this.style = styleConfig || ''; // If there is no result, the assignment is an empty string
+            this.style = styleConfig || 'noneStyleSelect'; // If there is no result, the assignment is an empty string
             // color
             this.bgColor = bgColorConfig || '';
             this.fontColor = fontColorConfig || '';
