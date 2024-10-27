@@ -21,6 +21,8 @@ export default defineContentScript({
     matches: ['<all_urls>'],
     cssInjectionMode: 'manual',
     async main(ctx) {
+        let process = false
+        const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
         // record the elements before translated, for show original
         let originalElementRecords: HTMLElement[] = []
         let translateElementRecords: HTMLElement[] = []
@@ -46,9 +48,35 @@ export default defineContentScript({
             action: STORAGE_ACTION.SESSION_SET,
             data: {key: tabTranslateStatusKey, value: false}
         })
+
+
+        let isTranslating = false;
+        let pendingTranslations: (() => void)[] = [];
+
+        function queueTranslation(task: () => Promise<void>) {
+            if (!isTranslating) {
+                pendingTranslations.push(task);
+            }
+            if (!isTranslating) processQueue();
+        }
+
+        async function processQueue() {
+            if (isTranslating) return;
+            isTranslating = true;
+
+            while (pendingTranslations.length > 0) {
+                const currentTask = pendingTranslations.shift();
+                if (currentTask) await currentTask();
+            }
+
+            isTranslating = false;
+        }
+
+
         // observe the dom change, translate the new added elements
-        let observer = new MutationObserver(mutations => {
+        let observer = new MutationObserver(async mutations => {
             mutations.forEach(mutation => {
+                // console.log('mutation root:', mutation)
                 if (mutation.addedNodes.length) {
                     mutation.addedNodes.forEach(node => {
                         // if the node is not a HTMLElement, return
@@ -56,22 +84,78 @@ export default defineContentScript({
                             return
                         }
                         let element = node as HTMLElement
+
                         // don't observe the element with duo-no-observer attribute
                         if (hasAttributeIncludingParents(element, "duo-no-observer")) {
                             return
                         }
+                        console.log('mutation:', element.cloneNode(true).textContent)
+
                         markParagraphElement(element)
                         // get translate status of the current tab
                         getSessionStorage(tabTranslateStatusKey).then((status) => {
-                            if (status){
+                            if (status) {
                                 translateRoot(element)
                             }
                         });
                     });
                 }
             });
+
+            // queueTranslation(async () => {
+            //     // Process each mutation only once per queue execution
+            //     let notTranslated = Array.from(document.body.querySelectorAll('.duo-translated')) as HTMLElement[]
+            //     notTranslated = notTranslated.filter(element => !element.querySelector('.duo-translation'));
+            //     console.log('notTranslated:', count, notTranslated)
+            //     await translateCollectedElements(notTranslated, {targetLang:"zh",serviceName:"microsoft",},beforeDuoTranslate,afterDuoTranslate)
+            // });
+
+            // search the element that have duo-translated class but not have duo-translation class children actually, we think it is not translated
+            if (process) {
+                return
+            }
+            process = true
+            setTimeout(async () => {
+                try {
+                    let notTranslated = Array.from(document.body.querySelectorAll('.duo-translated')) as HTMLElement[]
+                    notTranslated = notTranslated.filter(element => !element.querySelector('.duo-translation'));
+                    let [viewStrategy, targetLanguage, translateService]: [string, string, string] = await Promise.all(
+                        [
+                            getConfig(CONFIG_KEY.VIEW_STRATEGY),
+                            getConfig(CONFIG_KEY.TARGET_LANGUAGE),
+                            getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
+                        ]
+                    )
+                    translateService = translateService || TRANS_SERVICE.MICROSOFT
+                    targetLanguage = targetLanguage || navigator.language
+                    console.log('notTranslated:', notTranslated)
+                    let params = new translateParams(translateService, targetLanguage, undefined)
+                    switch (viewStrategy) {
+                        case VIEW_STRATEGY.DOUBLE:
+                            await translateCollectedElements(notTranslated, params, beforeDuoTranslate, afterDuoTranslate)
+                            break
+                        case VIEW_STRATEGY.SINGLE:
+                            await translateCollectedElements(notTranslated, params,undefined,afterTranslate)
+                            break
+                        case VIEW_STRATEGY.BUTTON:
+                            break
+                    }
+
+                } finally {
+                    process = false
+                }
+            }, 100)
+
+
         });
-        observer.observe(document.body, {childList: true, subtree: true});
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            characterData: true,
+            characterDataOldValue: true,
+            attributeOldValue: true
+        });
 
         const getCssSelectorString = (ele: HTMLElement): string => {
             // ignore the elements with class start with duo
@@ -96,7 +180,7 @@ export default defineContentScript({
         // Create a data URL for the cursor
         const cursorAddUrl = `url('data:image/svg+xml;base64,${svgAddBase64}'), auto`;
         const cursorTrashUrl = `url('data:image/svg+xml;base64,${svgTrashBase64}'), auto`;
-        
+
         // set rule mode css style
         let ruleModeStyle = document.createElement('style') as HTMLStyleElement
         ruleModeStyle.id = "rule-mode-style"
@@ -111,6 +195,8 @@ export default defineContentScript({
                 let originalEle = originalElementRecords[i]
                 if (ele && originalEle) {
                     ele.innerHTML = originalEle?.innerHTML
+                    ele.removeAttribute("duo-no-observer")
+                    ele.classList.remove("duo-translated")
                 }
             }
             // to prevent record residual
@@ -290,7 +376,7 @@ export default defineContentScript({
             if (globalSwitch) {
                 switch (viewStrategy) {
                     case VIEW_STRATEGY.DOUBLE:
-                        await translateDoubleDOM(root, params)
+                        await translateDuoDOM(root, params)
                         break
                     case VIEW_STRATEGY.SINGLE:
                         translateDOM(root, params)
@@ -324,13 +410,13 @@ export default defineContentScript({
             styleSheet.innerText = ""
             // insert css style
             if (bgColor && bgColor !== "") {
-                styleSheet.innerText += `.duo-translated { background-color: ${bgColor};}`;
+                styleSheet.innerText += `.duo-translation { background-color: ${bgColor};}`;
             }
             if (fontColor && fontColor !== "") {
-                styleSheet.innerText += `.duo-translated { color: ${fontColor};}`;
+                styleSheet.innerText += `.duo-translation { color: ${fontColor};}`;
             }
             if (rule && rule != "") {
-                styleSheet.innerText += `.duo-translated { ${rule} }`;
+                styleSheet.innerText += `.duo-translation { ${rule} }`;
             }
             if (highlightSwitch) {
                 styleSheet.innerText += `.duo-highlight-translation { background-color: ${translationBgColor}; }`;
@@ -353,7 +439,7 @@ export default defineContentScript({
             let nodeName = element.nodeName.toLowerCase();
             // don't translate the element with class duo-no-translate and notranslate
             // todo support user defined class to exclude translation
-            if (element.classList?.contains('duo-no-translate') || element.classList?.contains("duo-translated") || element.classList?.contains('notranslate')) {
+            if (element.classList?.contains('duo-no-translate') || element.classList?.contains("duo-translation") || element.classList?.contains('notranslate')) {
                 return elements;
             }
             // todo support user defined tag to exclude translation
@@ -386,18 +472,37 @@ export default defineContentScript({
         }
 
         function collectElementsToTranslate(element: HTMLElement): HTMLElement[] {
-            let elements :HTMLElement[] = []
+            let elements: HTMLElement[] = []
             if (element.classList.contains("duo-paragraph")) {
                 elements.push(element)
-            }else {
+            } else {
                 elements = Array.from(element.querySelectorAll('.duo-paragraph')) as HTMLElement[]
             }
-            // remove the elements with duo-no-translate,duo-translated,notranslate class
+            // remove the elements with duo-no-translate,duo-translation,notranslate class
             elements = elements.filter((element) => {
-                // todo support user defined class to exclude translation
-                return !element.classList.contains('duo-no-translate') && !element.classList.contains("duo-translated") && !element.classList.contains('notranslate')
+                return !ifElementWithParentMatchCondition(element, isTranslateExcludedElement)
             })
             return elements
+        }
+
+        function isTranslateExcludedElement(element: HTMLElement): boolean {
+            // todo support user defined class to exclude translation
+            return element.classList.contains('duo-no-translate') || element.classList.contains("duo-translation") || element.classList.contains('notranslate') ||
+                element.hasAttribute("duo-no-observer")
+        }
+
+        function ifElementWithParentMatchCondition(element: HTMLElement, condition: (element: HTMLElement) => boolean): boolean {
+            if (condition(element)) {
+                return true
+            }
+            if (element.parentElement) {
+                return ifElementWithParentMatchCondition(element.parentElement as HTMLElement, condition)
+            }
+            return false
+        }
+
+        function isParagraphExcludedElement(element: HTMLElement): boolean {
+            return element.nodeName.toLowerCase() === 'code' || element.classList.contains("duo-paragraph")
         }
 
         // search and add the duo-paragraph class to the paragraph element for marking
@@ -406,14 +511,12 @@ export default defineContentScript({
                 return;
             }
             let nodeName = element.nodeName.toLowerCase();
+            // console.log('nodeName:', nodeName)
             // todo support user defined tag to exclude
-            if (nodeName === 'script' || nodeName === 'style' || nodeName === '#comment') {
+            if (nodeName === 'script' || nodeName === 'style' || nodeName === 'comment' || ifElementWithParentMatchCondition(element, isParagraphExcludedElement)) {
                 return;
             }
             if (element.style.display === 'none') {
-                return;
-            }
-            if (element.classList.contains("duo-paragraph")) {
                 return;
             }
             if (isParagraphElement(element)) {
@@ -473,7 +576,7 @@ export default defineContentScript({
             if (element.childNodes.length > 0) {
                 for (let i = 0; i < element.childNodes.length; i++) {
                     if (element.childNodes[i].nodeType === Node.TEXT_NODE && element.childNodes[i].textContent!.trim() !== "") {
-                        console.log('isParagraphElement:', element)
+                        // console.log('isParagraphElement:', element)
                         return true
                     }
                 }
@@ -496,27 +599,83 @@ export default defineContentScript({
             return false;
         }
 
+
+        /**
+         * Translate the DOM tree for monolingual
+         * @param tree
+         * @param params
+         */
+        function translateDOM(tree: HTMLElement, params: translateParams) {
+            let needTranslateElement = collectElementsToTranslate(tree)
+            translateCollectedElements(needTranslateElement, params, undefined, afterTranslate)
+        }
+
+        function afterTranslate(needTranslateElement: HTMLElement[], res: string[]) {
+            for (let i = 0; i < needTranslateElement.length; i++) {
+                console.log('res:', res[i])
+                originalElementRecords.push(needTranslateElement[i].cloneNode(true) as HTMLElement)
+                let cloneElement = needTranslateElement[i].cloneNode(true) as HTMLElement
+                cloneElement.innerHTML = res[i]
+                console.log('cloneElement:', cloneElement)
+                needTranslateElement[i].innerHTML = cloneElement.firstElementChild?.innerHTML! || cloneElement.textContent || needTranslateElement[i].innerHTML
+                // identify the element that has been translated, in some cases, the translated element possibly be recovered(but attribute remained)
+                let translation = document.createElement('duo-translation')
+                translation.classList.add("duo-translation")
+                translation.style.display = 'none'
+                needTranslateElement[i].appendChild(translation)
+                translateElementRecords.push(needTranslateElement[i])
+                // when translated, set duo-no-observer attribute
+                needTranslateElement[i].setAttribute("duo-no-observer", "true")
+                needTranslateElement[i].classList.add("duo-translated")
+                console.log('needTranslateElement:', needTranslateElement[i].textContent)
+                // needTranslateElement[i].classList.add("duo-translated")
+
+            }
+        }
+
+        // const mutex = new Mutex();
+        class Lock {
+            private locked: boolean = false;
+
+            async acquire() {
+                while (this.locked) {
+                    await new Promise(resolve => setTimeout(resolve, 50)); // Poll every 50ms
+                }
+                this.locked = true;
+            }
+
+            release() {
+                this.locked = false;
+            }
+        }
+
+        let lock = new Lock();
+
         /**
          * Translate the DOM tree for bilingual
          * @param tree
          * @param params
          */
-        async function translateDoubleDOM(tree: HTMLElement, params: translateParams) {
-            console.log('translateDoubleDOM enter:', tree)
-            let treeElm = tree as HTMLElement
-            if (!(treeElm instanceof HTMLElement)) {
+        async function translateDuoDOM(tree: HTMLElement, params: translateParams) {
+            console.log('translateDuoDOM enter:', tree)
+            if (!(tree instanceof HTMLElement)) {
                 return;
             }
             let elements = collectElementsToTranslate(tree)
             if (!elements) {
                 return
             }
-            // console.log('eles:', elements)
-            const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
+            translateCollectedElements(elements, params, beforeDuoTranslate, afterDuoTranslate)
+        }
+
+        function beforeDuoTranslate(elements: HTMLElement[]): HTMLElement[] {
+            console.log('beforeDuoTranslate:', elements)
             let originalHtmlElements: HTMLElement[] = []
             for (let element of elements) {
+                console.log('translateDuoDOM element:', element.cloneNode(true))
                 originalElementRecords.push(element.cloneNode(true) as HTMLElement)
                 translateElementRecords.push(element)
+                element.setAttribute("duo-no-observer", "true")
                 // console.log('element:', element.innerHTML)
                 const sentences = split(element.innerHTML).filter((node) => node.type === 'Sentence');
                 element.innerHTML = ""
@@ -557,10 +716,9 @@ export default defineContentScript({
                         // patch the missing closing tags
                         rawHtml += `</${tagStack.pop()}>`
                     }
-
+                    span.setAttribute("duo-no-observer", "true")
                     span.innerHTML = rawHtml;
                     console.log('sentences:', rawHtml)
-                    span.setAttribute("duo-no-observer", "true")
                     span.setAttribute("duo-sequence", i.toString())
                     span.classList.add("duo-sentence")
                     // element.appendChild(span) // probably cause the page refresh all the time issue
@@ -574,7 +732,7 @@ export default defineContentScript({
                                 let sequence = parseInt(span.getAttribute("duo-sequence")!)
                                 span.classList.add("duo-highlight-original")
                                 // get all elements with the same sequence number
-                                let sequenceElements = span.parentElement?.querySelectorAll('.duo-translated > span[duo-sequence="' + sequence + '"]');
+                                let sequenceElements = span.parentElement?.querySelectorAll('.duo-translation > span[duo-sequence="' + sequence + '"]');
                                 // console.log('sequenceElements:', sequenceElements)
                                 if (sequenceElements) {
                                     for (let sequenceElement of sequenceElements) {
@@ -585,7 +743,7 @@ export default defineContentScript({
                             spanElement.onmouseleave = function () {
                                 span.classList.remove("duo-highlight-original")
                                 let sequence = parseInt(span.getAttribute("duo-sequence")!)
-                                let sequenceElements = span.parentElement?.querySelectorAll('.duo-translated > span[duo-sequence="' + sequence + '"]');
+                                let sequenceElements = span.parentElement?.querySelectorAll('.duo-translation > span[duo-sequence="' + sequence + '"]');
                                 if (sequenceElements) {
                                     for (let sequenceElement of sequenceElements) {
                                         sequenceElement.classList.remove("duo-highlight-translation")
@@ -596,51 +754,68 @@ export default defineContentScript({
                     }
 
                 }
-                element.setAttribute("duo-no-observer", "true")
+                // element.setAttribute("duo-no-observer", "true")
                 originalHtmlElements.push(element)
 
             }
+            return originalHtmlElements
+        }
 
-            // console.log('originalHtmlElements:', originalHtmlElements)
-            // return
-            translationServices.get(params.serviceName)?.translateHtml?.(originalHtmlElements, params.targetLang, params.sourceLang).then((res) => {
-                // console.log('res:', res)
-                for (let i = 0; i < originalHtmlElements.length; i++) {
-                    let element = originalHtmlElements[i]
-                    let elementCloned = element.cloneNode(false) as HTMLElement
-                    elementCloned.innerHTML = res[i]
-                    if (elementCloned.textContent?.trim() !== "" && elementCloned.textContent !== originalHtmlElements[i].textContent) {
-                        // If the current text is longer than 40 characters, add a line break. Otherwise, add a space
-                        if (element.textContent!.length > 40) {
-                            element.appendChild(document.createElement('br'));
-                        } else {
-                            element.appendChild(document.createTextNode(' '));
-                        }
-                        let duoElement = document.createElement('font')
-                        duoElement.classList.add("duo-translated")
-                        duoElement.setAttribute("duo-no-observer", "true")
-                        element.appendChild(duoElement)
-                        duoElement.innerHTML = elementCloned.firstElementChild?.innerHTML!
-                        element.classList.add("duo-original")
-
-                        // Translation highlighting settings
-                        duoElement?.querySelectorAll(".duo-sentence")?.forEach((child) => {
-                            let span = child as HTMLElement
-                            span.onmouseover = function () {
-                                span.classList.add("duo-highlight-translation")
-                                let querySelectorAll = element.querySelectorAll(".duo-sentence");
-                                let originalSpan = querySelectorAll![parseInt(span.getAttribute("duo-sequence")!)] as HTMLElement;
-                                originalSpan.classList.add("duo-highlight-original")
-                            }
-                            span.onmouseleave = function () {
-                                span.classList.remove("duo-highlight-translation")
-                                let querySelectorAll = element.querySelectorAll(".duo-sentence");
-                                let originalSpan = querySelectorAll![parseInt(span.getAttribute("duo-sequence")!)] as HTMLElement;
-                                originalSpan.classList.remove("duo-highlight-original")
-                            }
-                        })
-
+        function afterDuoTranslate(originalHtmlElements: HTMLElement[], res: string[]) {
+            for (let i = 0; i < originalHtmlElements.length; i++) {
+                let element = originalHtmlElements[i]
+                let elementCloned = element.cloneNode(false) as HTMLElement
+                elementCloned.innerHTML = res[i]
+                if (elementCloned.textContent?.trim() !== "" && elementCloned.textContent !== originalHtmlElements[i].textContent) {
+                    // If the current text is longer than 40 characters, add a line break. Otherwise, add a space
+                    if (element.textContent!.length > 40) {
+                        element.appendChild(document.createElement('br'));
+                    } else {
+                        element.appendChild(document.createTextNode(' '));
                     }
+                    let duoElement = document.createElement('font')
+                    duoElement.classList.add("duo-translation")
+                    duoElement.setAttribute("duo-no-observer", "true")
+                    element.appendChild(duoElement)
+                    duoElement.innerHTML = elementCloned.firstElementChild?.innerHTML!
+                    element.classList.add("duo-original")
+                    element.classList.add("duo-translated")
+                    console.log('element xxx:', element.cloneNode(true))
+
+                    // Translation highlighting settings
+                    duoElement?.querySelectorAll(".duo-sentence")?.forEach((child) => {
+                        let span = child as HTMLElement
+                        span.onmouseover = function () {
+                            span.classList.add("duo-highlight-translation")
+                            let querySelectorAll = element.querySelectorAll(".duo-sentence");
+                            let originalSpan = querySelectorAll![parseInt(span.getAttribute("duo-sequence")!)] as HTMLElement;
+                            originalSpan.classList.add("duo-highlight-original")
+                        }
+                        span.onmouseleave = function () {
+                            span.classList.remove("duo-highlight-translation")
+                            let querySelectorAll = element.querySelectorAll(".duo-sentence");
+                            let originalSpan = querySelectorAll![parseInt(span.getAttribute("duo-sequence")!)] as HTMLElement;
+                            originalSpan.classList.remove("duo-highlight-original")
+                        }
+                    })
+
+                }
+            }
+        }
+
+        async function translateCollectedElements(elements: HTMLElement[], params: translateParams, beforeTranslate?: (elements: HTMLElement[]) => HTMLElement[],
+                                                  afterTranslate?: (elements: HTMLElement[], res: string[]) => void) {
+            let originalHtmlElements: HTMLElement[] = elements
+            if (beforeTranslate) {
+                console.log('beforeTranslate11:', elements)
+                originalHtmlElements = beforeTranslate(elements)
+            }
+            console.log('originalHtmlElements:', originalHtmlElements)
+            // return
+            await translationServices.get(params.serviceName)?.translateHtml?.(originalHtmlElements, params.targetLang, params.sourceLang).then((res) => {
+                // console.log('res:', res)
+                if (afterTranslate && res) {
+                    afterTranslate(originalHtmlElements, res)
                 }
 
             })
@@ -924,27 +1099,6 @@ export default defineContentScript({
                 }
             }
             return path.join(" > ");
-        }
-
-        /**
-         * Translate the DOM tree for monolingual
-         * @param tree
-         * @param params
-         */
-        function translateDOM(tree: HTMLElement, params: translateParams) {
-            let needTranslateElement = collectElementsToTranslate(tree)
-            translationServices.get(params.serviceName)?.translateHtml?.(needTranslateElement, params.targetLang, params.sourceLang).then((res) => {
-                for (let i = 0; i < needTranslateElement.length; i++) {
-                    console.log('res:', res[i])
-                    originalElementRecords.push(needTranslateElement[i].cloneNode(true) as HTMLElement)
-                    let cloneElement = needTranslateElement[i].cloneNode(true) as HTMLElement
-                    cloneElement.innerHTML = res[i]
-                    needTranslateElement[i].innerHTML = cloneElement.firstElementChild?.innerHTML!
-                    translateElementRecords.push(needTranslateElement[i])
-                    // when translated, set duo-no-observer attribute
-                    needTranslateElement[i].setAttribute("duo-no-observer", "true")
-                }
-            })
         }
 
         /**
