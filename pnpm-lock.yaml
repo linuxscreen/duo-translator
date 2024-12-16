@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      async-mutex:
+        specifier: ^0.5.0
+        version: 0.5.0
       axios:
         specifier: ^1.7.2
         version: 1.7.2(debug@4.3.7)
@@ -910,6 +913,9 @@ packages:
 
   async-mutex@0.4.1:
     resolution: {integrity: sha512-WfoBo4E/TbCX1G95XTjbWTE3X2XLG0m1Xbv2cwOtuPdyH9CZvnaA5nCt1ucjaKEgW2A5IF71hxrRhr83Je5xjA==}
+
+  async-mutex@0.5.0:
+    resolution: {integrity: sha512-1A94B18jkJ3DYq284ohPxoXbfTA5HsQ7/Mf4DEhcyLx3Bz27Rh59iScbB6EPiP+B+joue6YCxcMXSbFC1tZKwA==}
 
   async-validator@4.2.5:
     resolution: {integrity: sha512-7HhHjtERjqlNbZtqNqy2rckN/SpOOlmDliet+lP7k+eKZEjPk3DgyeU9lIXLdeLz0uBbbVp+9Qdow9wJWgwwfg==}
@@ -3697,6 +3703,10 @@ snapshots:
   assertion-error@1.1.0: {}
 
   async-mutex@0.4.1:
+    dependencies:
+      tslib: 2.6.2
+
+  async-mutex@0.5.0:
     dependencies:
       tslib: 2.6.2
 

@@ -24,6 +24,7 @@ import {translationServices} from "@/entrypoints/translateService";
 import CustomDropdownMenu from "@/components/CustomDropdownMenu.vue";
 import axios from "axios";
 import debug from 'debug';
+
 const title = import.meta.env.VITE_APP_TITLE
 const env = import.meta.env.VITE_ENV
 const enableDebug = import.meta.env.VITE_DEBUG
@@ -86,6 +87,8 @@ export default {
     data() {
         // const userInfo = getUserInfo
         return {
+            domainStrategyAlwaysTranslate: false,
+            domainStrategyNeverTranslate: false,
             nativeLanguage: 'en',
             translateToggleEnabled: true, // used to determine whether the current page can be translated(e.g. not a chrome:// page)
             isScrollable: false,
@@ -109,6 +112,7 @@ export default {
             fontColorIndex: -1,
             tabLanguage: undefined,
             tabs: [],
+            tabStatusKey: '',
             domain: "",
             message: '',
 
@@ -118,6 +122,11 @@ export default {
                 {title: "neverTranslateThisSite", value: DOMAIN_STRATEGY.NEVER},
                 {title: "alwaysTranslateThisSite", value: DOMAIN_STRATEGY.ALWAYS},
                 // {title: "alwaysAskToTranslateThisSite", value: DOMAIN_STRATEGY.ASK},
+            ],
+            defaultStrategies: [
+                {title: "automaticallyDetermineWhetherToTranslate", value: DOMAIN_STRATEGY.AUTO},
+                {title: "notTranslateAllWebsites", value: DOMAIN_STRATEGY.NEVER},
+                {title: "translateAllWebsites", value: DOMAIN_STRATEGY.ALWAYS},
             ],
             // Translate the view strategy
             viewStrategies: [
@@ -133,7 +142,8 @@ export default {
             ],
             targetLanguages: LANGUAGES,
             sourceLanguages: LANGUAGES,
-            domainStrategy: "automaticallyDetermineWhetherToTranslate",
+            domainStrategy: "none",
+            defaultStrategy: "auto",
             viewStrategy: "bilingual",
             selected: "default",
             targetLanguage: "simplifiedChinese",
@@ -203,8 +213,12 @@ export default {
         }
     },
     methods: {
-        openHelpPage(){
-           browser.tabs.create({url:"https://duo.zeroflx.com/docs"})
+        openHelpPage() {
+            browser.tabs.create({url: "https://duo.zeroflx.com/docs"})
+        },
+        openSettingPage() {
+            browser.tabs.create({url: "options.html"})
+            // browser.runtime.openOptionsPage()
         },
         getNativeLanguage() {
             sendMessageToBackground({action: "getNativeLanguage"})
@@ -271,6 +285,53 @@ export default {
         async translationBgColorChanged(newVal) {
             await this.setConfig(CONFIG_KEY.TRANSLATION_BG_COLOR, newVal)
             await sendMessageToTab({action: ACTION.STYLE_CHANGE})
+        },
+        async defaultStrategyChanged(newVal) {
+            await this.setConfig(CONFIG_KEY.DEFAULT_STRATEGY, newVal)
+        },
+        async translateToggleChanged(newVal) {
+            await sendMessageToBackground({
+                action: STORAGE_ACTION.SESSION_SET,
+                data: {key: this.tabStatusKey, value: newVal}
+            })
+        },
+        async neverDomainStrategyChanged(newVal) {
+            // console.log('neverDomainStrategyChanged', newVal)
+            if (newVal) {
+                this.domainStrategyAlwaysTranslate = false
+                await sendMessageToBackground({
+                    action: DB_ACTION.DOMAIN_UPDATE,
+                    data: {domain: this.domain, strategy: DOMAIN_STRATEGY.NEVER}
+                })
+                this.translateToggle = await sendMessageToTab({
+                    action: ACTION.DOMAIN_STRATEGY_CHANGE,
+                    data: DOMAIN_STRATEGY.NEVER
+                })
+            }else {
+                await sendMessageToBackground({
+                    action: DB_ACTION.DOMAIN_UPDATE,
+                    data: {domain: this.domain, strategy: DOMAIN_STRATEGY.AUTO}
+                })
+            }
+
+        },
+        async alwaysDomainStrategyChanged(newVal) {
+            if (newVal) {
+                this.domainStrategyNeverTranslate = false
+                await sendMessageToBackground({
+                    action: DB_ACTION.DOMAIN_UPDATE,
+                    data: {domain: this.domain, strategy: DOMAIN_STRATEGY.ALWAYS}
+                })
+                this.translateToggle = await sendMessageToTab({
+                    action: ACTION.DOMAIN_STRATEGY_CHANGE,
+                    data: DOMAIN_STRATEGY.ALWAYS
+                })
+            }else {
+                await sendMessageToBackground({
+                    action: DB_ACTION.DOMAIN_UPDATE,
+                    data: {domain: this.domain, strategy: DOMAIN_STRATEGY.AUTO}
+                })
+            }
         },
         async bilingualHighlightingChanged(newVal) {
             await this.setConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH, newVal)
@@ -343,6 +404,18 @@ export default {
                 // todo upload an error message to the server
             )
         },
+        changeDefaultStrategy(selected) {
+            // Obtain the domain name and save the policy to the database
+            sendMessageToBackground({
+                action: DB_ACTION.CONFIG_SET,
+                data: {name: CONFIG_KEY.DEFAULT_STRATEGY, value: selected}
+            }).then(async (response) => {
+                // Modify the policy displayed on the frontend
+                this.defaultStrategy = selected;
+            }).catch(
+                // todo upload an error message to the server
+            )
+        },
         async changeTranslateService(selected) {
             await sendMessageToBackground({
                 action: DB_ACTION.CONFIG_SET,
@@ -361,7 +434,7 @@ export default {
             })
             this.viewStrategy = selected.title
             // if current is translate status, let content script to re-translate
-            console.log('changeViewStrategy translateToggle',this.translateToggle)
+            console.log('changeViewStrategy translateToggle', this.translateToggle)
             if (this.translateToggle) {
                 await sendMessageToTab({action: ACTION.TRANSLATE_CHANGE})
             }
@@ -382,7 +455,7 @@ export default {
             // if not in selection mode or not in translated status
             let status = await sendMessageToBackground({
                 action: STORAGE_ACTION.SESSION_GET,
-                data: {key: "tabTranslateStatus#" + this.tabs?.[0]?.id}
+                data: {key: this.tabStatusKey}
             })
             if (!status) {
                 await sendMessageToTab({action: ACTION.TOGGLE_SELECTION_MODE})
@@ -407,7 +480,7 @@ export default {
             // Sets the current tab translation status
             await sendMessageToBackground({
                 action: STORAGE_ACTION.SESSION_SET,
-                data: {key: "tabTranslateStatus#" + this.tabs[0].id, value: translateStatus}
+                data: {key: this.tabStatusKey, value: translateStatus}
             })
             if (translateStatus) {
                 // send message to content script, process translation action
@@ -429,7 +502,7 @@ export default {
         },
     },
     async mounted() {
-        console.log("aaa",title)
+        console.log("aaa", title)
         debug.log('debug test mounted')
         // Add a style setting Unstyled
         let element = document.querySelector("#noneStyleSelect")
@@ -441,6 +514,7 @@ export default {
         try {
             // Gets the currently active tab
             this.tabs = await browser.tabs.query({active: true, currentWindow: true})
+            this.tabStatusKey = "tabTranslateStatus#" + this.tabs?.[0]?.id
             let originUrl = this.tabs?.[0]?.url
             let url = new URL(originUrl)
             if (url.port != '80' && url.port != '443') {
@@ -453,13 +527,13 @@ export default {
                 this.translateToggleEnabled = false
             }
             console.log('tabs', this.tabs[0].id, 'domain', this.domain)
-            let [targetLanguageConfigValue, tabLanguage, translateServiceConfigValue, status, domainData, viewStrategyConfigValue,nativeLanguage] = await Promise.all([
+            let [targetLanguageConfigValue, tabLanguage, translateServiceConfigValue, status, domainData, viewStrategyConfigValue, nativeLanguage] = await Promise.all([
                 sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.TARGET_LANG}}),
                 sendMessageToBackground({action: TB_ACTION.TAB_LANG_GET, data: this.tabs?.[0]}),
                 sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.TRANSLATE_SERVICE}}),
                 sendMessageToBackground({
                     action: STORAGE_ACTION.SESSION_GET,
-                    data: {key: "tabTranslateStatus#" + this.tabs?.[0]?.id}
+                    data: {key: this.tabStatusKey}
                 }),
                 sendMessageToBackground({action: DB_ACTION.DOMAIN_GET, data: {domain: this.domain}}),
                 sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.VIEW_STRATEGY}}),
@@ -496,12 +570,16 @@ export default {
                 this.viewStrategy = this.getItemByValue(this.viewStrategies, viewStrategyConfigValue)?.title;
             }
             if (domainData) {
-                // get title by domainStrategies
-                this.domainStrategies.forEach(strategy => {
-                    if (strategy.value == domainData.strategy) {
-                        this.domainStrategy = strategy.title;
-                    }
-                })
+                if (domainData.strategy == DOMAIN_STRATEGY.ALWAYS) {
+                    this.domainStrategyAlwaysTranslate = true
+                    this.domainStrategyNeverTranslate = false
+                } else if (domainData.strategy == DOMAIN_STRATEGY.NEVER) {
+                    this.domainStrategyAlwaysTranslate = false
+                    this.domainStrategyNeverTranslate = true
+                } else {
+                    this.domainStrategyAlwaysTranslate = false
+                    this.domainStrategyNeverTranslate = false
+                }
             }
             const [
                 styleConfig,
@@ -515,7 +593,8 @@ export default {
                 translationBgColorConfig,
                 translationBgColorIndexConfig,
                 bilingualHighlighting,
-                globalSwitch
+                globalSwitch,
+                defaultStrategy,
             ] = await Promise.all([
                 this.getConfig(CONFIG_KEY.STYLE),
                 this.getConfig(CONFIG_KEY.BG_COLOR),
@@ -528,7 +607,8 @@ export default {
                 this.getConfig(CONFIG_KEY.TRANSLATION_BG_COLOR),
                 this.getConfig(CONFIG_KEY.TRANSLATION_BG_COLOR_INDEX),
                 this.getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
-                this.getConfig(CONFIG_KEY.GLOBAL_SWITCH)
+                this.getConfig(CONFIG_KEY.GLOBAL_SWITCH),
+                this.getConfig(CONFIG_KEY.DEFAULT_STRATEGY)
             ]);
 
             // style
@@ -546,6 +626,8 @@ export default {
             // padding
             this.padding = paddingConfig || '';
             this.bilingualHighlighting = bilingualHighlighting == undefined ? true : bilingualHighlighting;
+            this.defaultStrategy = defaultStrategy || 'auto';
+            console.log('defaultStrategy', defaultStrategy)
             // set translation demo style
             let ele = document.querySelector("#showDemoTranslated") as HTMLElement
             ele.style.backgroundColor = this.bgColor
@@ -557,6 +639,11 @@ export default {
             this.$watch('bilingualHighlighting', this.bilingualHighlightingChanged)
             this.$watch('originalBgColor', this.originalBgColorChanged)
             this.$watch('translationBgColor', this.translationBgColorChanged)
+
+            this.$watch('defaultStrategy', this.defaultStrategyChanged)
+            this.$watch('domainStrategyAlwaysTranslate', this.alwaysDomainStrategyChanged)
+            this.$watch('domainStrategyNeverTranslate', this.neverDomainStrategyChanged)
+            this.$watch('translateToggle', this.translateToggleChanged)
         } catch (e) {
             // console.log(e)
         }
@@ -575,6 +662,11 @@ export default {
                 <div class="login-message">
 
                 </div>
+            </div>
+            <div class="setting" @click="openSettingPage">
+                <el-tooltip :content="t('setting')" placement="bottom" effect="customized" :showAfter="500">
+                    <img src="../public/icon/setting.svg" alt="">
+                </el-tooltip>
             </div>
             <div>
                 <el-tooltip :content="t('globalSwitch')" placement="top" effect="customized" :showAfter="200">
@@ -824,38 +916,55 @@ export default {
         </div>
 
         <div class="style-show">
+
             <div class="flex items-center text-sm">
-                <el-radio-group v-model="domainStrategy" class="ml-0">
-                    <el-radio @change="changeDomainStrategy" v-for="(domainStrategy,index) in domainStrategies"
-                              :value="domainStrategy.title" size="large">
-                        <marquee-text :text="t(domainStrategy.title)" width="135px"></marquee-text>
+                <el-radio-group v-model="defaultStrategy" class="ml-0">
+                    <el-radio @change="changeDefaultStrategy" v-for="(strategy,index) in defaultStrategies"
+                              :value="strategy.value" size="default">
+                        <marquee-text :text="t(strategy.title)" width="135px"></marquee-text>
 
                     </el-radio>
                 </el-radio-group>
-            </div>
-            <div class="bilingual-highlighting">
-                <marquee-text :text="t('bilingualHighlighting')" width="100px"></marquee-text>
-                <el-switch
-                    v-model="bilingualHighlighting"
-                    size=""/>
+                <div class="domainStrategy">
+                    <marquee-text :text="t('neverTranslateThisSite')" width="130px"></marquee-text>
+                    <el-switch v-model="domainStrategyNeverTranslate">
+
+                    </el-switch>
+                </div>
+                <div class="domainStrategy">
+                    <marquee-text :text="t('alwaysTranslateThisSite')" width="100px"></marquee-text>
+                    <el-switch v-model="domainStrategyAlwaysTranslate">
+                    </el-switch>
+                </div>
+
+                <div class="domainStrategy">
+                    <marquee-text :text="t('bilingualHighlighting')" width="100px"></marquee-text>
+                    <el-switch
+                        v-model="bilingualHighlighting"
+                        size=""/>
+                </div>
+
+
             </div>
             <div class="this-is-text"><p><span id="origin-1" @mouseover="highlightMouseOverDemo"
                                                @mouseleave="highlightMouseLeaveDemo">
-                {{nativeLanguage.startsWith('en') ? "Donne du temps à la civilisation." : "give time to civilization. " }}</span>
+                {{
+                    nativeLanguage.startsWith('en') ? "Donne du temps à la civilisation." : "give time to civilization. "
+                }}</span>
                 <span
                     @mouseover="highlightMouseOverDemo" @mouseleave="highlightMouseLeaveDemo"
-                    id="origin-2">{{nativeLanguage.startsWith('en') ? 'et non la civilisation au temps.' : 'not civilization to time.' }}</span>
+                    id="origin-2">{{
+                        nativeLanguage.startsWith('en') ? 'et non la civilisation au temps.' : 'not civilization to time.'
+                    }}</span>
             </p></div>
             <div class="show this-is-text">
 
                 <p id="showDemoTranslated">
               <span id="translation-1" @mouseover="highlightMouseOverDemo" @mouseleave="highlightMouseLeaveDemo">
           {{ t('giveTimeToCivilization') }}
-                  <!--          {{ t('hereIsTheTranslation') }}-->
                  </span>
                     <span id="translation-2" @mouseover="highlightMouseOverDemo" @mouseleave="highlightMouseLeaveDemo">
           {{ t('notCivilizationToTime') }}
-                        <!--          {{ t('hereIsTheTranslation') }}-->
                  </span>
                 </p>
 
@@ -1565,9 +1674,17 @@ export default {
     justify-content: space-between;
     /*position: absolute;*/
     margin-top: -8px;
-    width: 150px;
+    width: 160px;
     /*left: 33px;*/
     /*top: 530px;*/
+}
+
+.domainStrategy {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    width: 160px;
 }
 
 .radio-button {
@@ -1674,7 +1791,7 @@ export default {
 }
 
 #showDemoTranslated {
-    margin-top: 10px;
+    margin-top: 6px;
     font-size: 14px;
     /*white-space: nowrap;*/
     overflow: hidden;

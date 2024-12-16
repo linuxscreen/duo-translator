@@ -3,6 +3,15 @@
     "message": "DuoTranslator"
   },
   "extDescription": {
-    "message": "Easy to use translation plug-in with bilingual and contrast highlighting functions"
+    "message": "open-source translation extension with bilingual display, contrast highlighting, and rule mode features"
+  },
+  "contextMenuTranslate": {
+    "message": "Translate this page"
+  },
+  "contextMenuOriginal": {
+    "message": "View original"
+  },
+  "shortcutToggleTranslation": {
+    "message": "translate/restore page"
   }
 }

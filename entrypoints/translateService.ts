@@ -22,15 +22,15 @@ export class translateParams {
 }
 
 interface TranslateText {
-    (text: Array<string>, targetLang: string, sourceLang?: string, options?:any): Promise<Array<string>>;
+    (text: Array<string>, targetLang: string, sourceLang?: string, options?:any): Promise<TranslatedElement[]>;
 }
 
 interface TranslateHtml {
-    (html: Array<HTMLElement>, targetLang: string, sourceLang?: string): Promise<Array<string>>;
+    (html: Array<HTMLElement>, targetLang: string, sourceLang?: string): Promise<TranslatedElement[]>;
 }
 
 interface TranslateBatchText {
-    (text: Array<string>, targetLang: string, sourceLang?: string): Promise<Array<string>>;
+    (text: Array<string>, targetLang: string, sourceLang?: string): Promise<TranslatedElement[]>;
 }
 
 type TagMap = {
@@ -123,6 +123,7 @@ class TranslationService {
         if (translateBatchText) {
             this.translateBatchText = translateBatchText.bind(this);
         }
+        console.log("TranslationService created:", this)
     }
 
     serviceName: string
@@ -169,8 +170,16 @@ export const googleTranslationService: TranslationService = new TranslationServi
             )
         });
         let data = await response.json()
+        let result :TranslatedElement[] = []
+        if (!data || data.length < 2) {
+            return Promise.resolve([])
+        }
         // console.log('google translate data:', data)
-        return data[0]
+        for (let i = 0; i < data?.[0].length; i++) {
+            result.push(new TranslatedElement(data[0][i], data[1][i], targetLang, "1"))
+        }
+        console.log('google translate result:', result)
+        return result
     },
     async function (this: TranslationService, html: Array<HTMLElement>, targetLang: string, sourceLang?: string) {
         let tagRegex = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
@@ -196,15 +205,39 @@ export const googleTranslationService: TranslationService = new TranslationServi
         for (let i = 0; i < translatedTexts.length; i++) {
             let translatedHtml = translatedTexts[i]
             tagMapList[i].forEach((value, key) => {
-                translatedHtml = translatedHtml.replace(key, value)
+                translatedHtml.translatedText = translatedHtml.translatedText.replace(key, value)
             })
-            translatedHtmlList.push(translatedHtml)
+            // translatedHtmlList.push(translatedHtml)
         }
-        return Promise.resolve(translatedHtmlList)
+        return Promise.resolve(translatedTexts)
     }
 );
 const maxRetry = 5
 let gettingToken = false
+export class TranslatedElement {
+    translatedText: string
+    sourceLang: string
+    targetLang: string
+    score :string
+
+    constructor(translatedText: string, sourceLang: string, targetLang: string, score: string) {
+        this.translatedText = translatedText;
+        this.sourceLang = sourceLang;
+        this.targetLang = targetLang;
+        this.score = score;
+    }
+}
+
+function transferLanguageCode(language :string){
+    if (language == "zh-Hans") {
+        return "zh-CN"
+    }
+    if (language == "zh-Hant") {
+        return "zh-TW"
+    }
+    return language
+}
+
 export const microsoftTranslationService = new TranslationService(
     "microsoft",
     "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&includeSentenceLength=true&",
@@ -213,12 +246,15 @@ export const microsoftTranslationService = new TranslationService(
     "",
     // Translate text functions
     async function (this: TranslationService, text: Array<string>, targetLang: string, sourceLang?: string,options?:any) {
+        // send request to background
+
         let url: string
-        if (sourceLang == undefined) {
-            url = this.baseUrl + "to=" + targetLang;
-        } else {
-            url = this.baseUrl + "from=" + sourceLang + "&to=" + targetLang;
-        }
+        url = this.baseUrl + "to=" + targetLang;
+        // if (sourceLang == undefined) {
+        //     url = this.baseUrl + "to=" + targetLang;
+        // } else {
+        //     url = this.baseUrl + "from=" + sourceLang + "&to=" + targetLang;
+        // }
         let tokenUrl = "https://edge.microsoft.com/translate/auth"
         //token initialization
         if (!this.authToken) {
@@ -276,8 +312,9 @@ export const microsoftTranslationService = new TranslationService(
         }
         let data = await response.json()
         return data.map((d: {
-            translations: { text: string }[]
-        }) => d.translations[0].text);
+            translations: { text: string }[],
+            detectedLanguage: { language: string, score: string }
+        }) => new TranslatedElement(d.translations[0].text, transferLanguageCode(d.detectedLanguage.language), targetLang, d.detectedLanguage.score));
     },
     async function (this: TranslationService, html: Array<HTMLElement>, targetLang: string, sourceLang?: string) {
         if (html.length == 0) {
@@ -293,26 +330,29 @@ export const microsoftTranslationService = new TranslationService(
         for (let i = 0; i < html.length; i++) {
             let originalHtml = html[i]
             let originHtml = originalHtml.outerHTML
+            console.log('originHtml:', originHtml)
             // remove space and line break, only process the text between > and <
             originHtml = originHtml.replace(/>([^<]+)</sg, (match, p1) => {
                 // Trim removes the left and right whitespace characters (including spaces and carriage returns) and retains a space in between
-                const cleanedText = p1.replace(/\s+/sg, ' ').trim();
-                return `>${cleanedText}<`;
+                // const cleanedText = p1.replace(/\s+/sg, ' ').trim();
+                return `>${p1}<`;
             });
             let translatedHtml = tagReplacer.replaceTags(originHtml)
             texts.push(translatedHtml)
         }
-        // console.log('texts:', texts)
+        console.log('texts:', texts)
         // @ts-ignore
         let translatedTexts = await this.translateBatchText(texts, targetLang, sourceLang)
-        let translatedHtmlList: string[] = []
+        // let translatedHtmlList: string[] = []
         for (let i = 0; i < translatedTexts.length; i++) {
-            let translatedHtml = tagReplacer.restoreTags(translatedTexts[i])
+            let translatedElement = translatedTexts[i]
+            let translatedHtml = tagReplacer.restoreTags(translatedElement.translatedText)
             let container = document.createElement("div")
             container.innerHTML = translatedHtml
-            translatedHtmlList.push(container.innerHTML)
+            translatedElement.translatedText = container.innerHTML
+            // translatedHtmlList.push(container.innerHTML)
         }
-        return Promise.resolve(translatedHtmlList)
+        return Promise.resolve(translatedTexts)
     },
     async function (this: TranslationService, text: Array<string>, targetLang: string, sourceLang?: string) {
         if (text.length == 0) {
@@ -341,9 +381,9 @@ export const microsoftTranslationService = new TranslationService(
 
         const translationPromises = texts.map((text, index) => {
             // the returned results are guaranteed to contain the original index for subsequent sorting
-            return this.translateText(text,targetLang,sourceLang,{retryCount:0}).then(translatedText => ({
+            return this.translateText(text,targetLang,sourceLang,{retryCount:0}).then((translatedTexts :TranslatedElement[]) => ({
                 index,
-                translatedText
+                translatedTexts
             }));
         });
 
@@ -354,8 +394,8 @@ export const microsoftTranslationService = new TranslationService(
         const sortedResults = translationResults.sort((a, b) => a.index - b.index);
 
         // restore the sorted results
-        let sortedList = sortedResults.map(result => result.translatedText)
-        let result :string[] = []
+        let sortedList = sortedResults.map(result => result.translatedTexts)
+        let result :TranslatedElement[] = []
         for (let s of sortedList) {
             for (let ss of s) {
                 result.push(ss)

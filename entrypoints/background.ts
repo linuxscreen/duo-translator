@@ -1,7 +1,18 @@
 import PouchDB from 'pouchdb';
-import {STATUS_FAIL, STATUS_SUCCESS, DOMAIN_STRATEGY, VIEW_STRATEGY} from "@/entrypoints/constants";
+import {
+    STATUS_FAIL,
+    STATUS_SUCCESS,
+    DOMAIN_STRATEGY,
+    VIEW_STRATEGY,
+    TRANS_ACTION,
+    TRANS_SERVICE, CONFIG_KEY
+} from "@/entrypoints/constants";
 import {Rule, SubRule} from "@/entrypoints/utils";
 import {browser} from "wxt/browser";
+import {browserSettings} from "webextension-polyfill";
+import {Events} from "webextension-polyfill/namespaces/events";
+import {translationServices} from "@/entrypoints/translateService";
+import {Mutex} from "async-mutex";
 
 export class Sub {
     constructor(title: string, content: string) {
@@ -41,7 +52,7 @@ class ConfigStorage {
         return ConfigStorage.instance;
     }
 
-    async setConfigItem(name: string, value: string) {
+    async setConfigItem(name: string, value: any) {
         name = this.prefix + name;
         return this.db.put({
             _id: name,
@@ -207,7 +218,7 @@ class RuleStorage {
         domain = this.prefix + domain;
         try {
             const doc: Rule = await this.db.get(domain);
-            let existRules  = doc.rules
+            let existRules = doc.rules
             const needDeleteList = new Set(rules);
             doc.rules = existRules.filter(rule => !needDeleteList.has(rule));
             await this.db.put(doc);
@@ -265,40 +276,99 @@ class RuleStorage {
     }
 }
 
+class Token {
+    token: string
+    expireTime: number
+
+    constructor(token: string, expireTime: number) {
+        this.token = token;
+        this.expireTime = expireTime;
+    }
+}
+
+function translateHtml(service: string, texts: string[], targetLang: string, sourceLang: string) {
+    switch (service) {
+        case TRANS_SERVICE.MICROSOFT:
+            break
+        case TRANS_SERVICE.GOOGLE:
+            break
+    }
+}
+
+const serviceTokenMap = new Map<string, Token>()
+
 export default defineBackground(() => {
+    // let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1dWlkIjoiNzg3ZWY2OGItNzBmYi00YWNhLWI4NTItZDIwNDg2N2JiNWYxIiwiaWQiOjQsInVzZXJuYW1lIjoiemhlbmciLCJuaWNrTmFtZSI6InpoZW5nIiwiYXV0aG9yaXR5SWQiOjg4OCwicm9sZXMiOlsidXNlciJdLCJidWZmZXJUaW1lIjo4NjQwMCwiaXNzIjoicW1QbHVzIiwic3ViIjoiemhlbmciLCJhdWQiOlsiR1ZBIl0sImV4cCI6MTcxOTA0NDMxMCwibmJmIjoxNzE4NDM5NTEwfQ.Hcei36lYGdfG3H2DAwrpkfcGR5n_hvG4Ovjxi1avLx4"
+    // // 创建一个新的fetch函数，该函数在每个请求中添加Authorization头
+    // const authFetch = (url, opts) => {
+    //     opts.headers.set('Authorization', `Bearer ${token}`);
+    //     opts.headers.set('Content-Type', 'application/json');
+    //     return fetch(url, opts);
+    // };
+
+    initTokenMap()
+    let username = 'zheng';
+    // 创建一个使用自定义fetch函数的PouchDB实例
+    // const remoteDb = new PouchDB('http://localhost:5984/userdb-' + username, {fetch: authFetch});
+    const remoteDb = new PouchDB('http://localhost:5984/userdb-' + username, {
+        auth: {
+            username: 'admin',
+            password: 'wang'
+        }
+    });
     let db = new PouchDB('userdb');
     // const remoteDb = new PouchDB('http://localhost:5984/userdb-' + "username", {auth:{username:'admin',password:'password'}});
     // todo synchronize with the remote database
-    // db.sync(remoteDb, {
-    //     live: true,  // real time synchronization
-    //     retry: true  // If the connection drops, it is automatically retried
-    // }).on('change', function (info) {
-    //     // triggered every time the data changes
-    //     // console.log('remote db change: ',info);
-    // }).on('paused', function (err) {
-    //     // triggered when sync is paused (ERR is passed in if there are unresolved errors)
-    //     // console.log(err);
-    // }).on('active', function () {
-    //     // triggered when synchronization resumes
-    //     // console.log('Sync resumed');
-    // }).on('denied', function (err) {
-    //     // if a document cannot be copied for validation or security reasons, the denied event is triggered
-    //     // console.log(err);
-    // }).on('complete', function (info) {
-    //     // triggered when synchronization is complete
-    //     // console.log(info);
-    // }).on('error', function (err) {
-    //     // triggered when there is a synchronization error
-    //     // console.log(err);
-    // });
+    db.sync(remoteDb, {
+        live: true,  // real time synchronization
+        retry: true  // If the connection drops, it is automatically retried
+    }).on('change', function (info) {
+        // triggered every time the data changes
+        // console.log('remote db change: ',info);
+    }).on('paused', function (err) {
+        // triggered when sync is paused (ERR is passed in if there are unresolved errors)
+        // console.log(err);
+    }).on('active', function () {
+        // triggered when synchronization resumes
+        // console.log('Sync resumed');
+    }).on('denied', function (err) {
+        // if a document cannot be copied for validation or security reasons, the denied event is triggered
+        // console.log(err);
+    }).on('complete', function (info) {
+        // triggered when synchronization is complete
+        // console.log(info);
+    }).on('error', function (err) {
+        // triggered when there is a synchronization error
+        // console.log(err);
+    });
 
     const ruleStorage = RuleStorage.getInstance(db)
     const domainStorage = DomainStorage.getInstance(db)
     const configStorage = ConfigStorage.getInstance(db)
 
+
     browser.runtime.onMessage.addListener((message, sender, sendResponse: (t: any) => void) => {
         // messages are received to manipulate the db database
         switch (message.action) {
+            case "getAccessToken":
+                let service :string = message.data.service
+                if (serviceTokenMap && serviceTokenMap.get(service) && (serviceTokenMap.get(service)?.expireTime || 0) > Date.now()) {
+                    sendResponse({status: STATUS_SUCCESS, data: serviceTokenMap.get(service)})
+                    return
+                }
+                // todo support other service
+                getMicrosoftToken().then((token) => {
+                    sendResponse({status: STATUS_SUCCESS, data: token})
+                }).catch((e) => {
+                    sendResponse({status: STATUS_FAIL, data: new Token("", 0)})
+                })
+                break
+            case "translateHtml":
+                // console.log("translateHtml", message)
+                // let service: string = message.data.service || TRANS_SERVICE.MICROSOFT
+                // //message.data.elements, message.data.targetLang, message.data.sourceLang
+                // translateHtml(service, message.texts, message.data.targetLang, message.data.sourceLang)
+                break
             case "addRule":
                 try {
                     ruleStorage.add(message.data.domain, message.data.data).then(() => {
@@ -452,4 +522,77 @@ export default defineBackground(() => {
         return true
     });
 
+    let isTranslate = false
+
+    // add context menu to translate page
+    browser.contextMenus.create({
+        id: "translate",
+        title: browser.i18n.getMessage('contextMenuTranslate'),
+        contexts: ["selection", "page"]
+    });
+    browser.contextMenus.onClicked.addListener((info, tab) => {
+        if (!tab) {
+            return
+        }
+        if (!isTranslate) {
+            browser.tabs.sendMessage(tab.id, {action: TRANS_ACTION.TRANSLATE});
+            browser.contextMenus.update("translate", {
+                title: browser.i18n.getMessage('contextMenuOriginal'),
+            });
+            isTranslate = true
+
+
+        } else {
+            browser.tabs.sendMessage(tab.id, {action: TRANS_ACTION.ORIGIN});
+            browser.contextMenus.update("translate", {
+                title: browser.i18n.getMessage('contextMenuTranslate'),
+            });
+            isTranslate = false
+        }
+
+    })
+
+    // process shortcut key command
+    browser.commands.onCommand.addListener((command) => {
+        if (command === 'shortcut-toggle') {
+            // send message to current tab, toggle translate status
+            browser.tabs.query({active: true, currentWindow: true}).then((tabs) => {
+                let tab = tabs[0]
+                if (!tab && tab.id == null) {
+                    return
+                }
+                browser.tabs.sendMessage(tab.id, {action: TRANS_ACTION.TOGGLE});
+            });
+        }
+    });
+
+    let tokenUrl = "https://edge.microsoft.com/translate/auth"
+    const mutex = new Mutex();
+    async function getMicrosoftToken() :Promise<Token> {
+        const release = await mutex.acquire(); // Acquire the lock
+        try {
+            let tokenFromDB :Token = await configStorage.getConfigItem(CONFIG_KEY.MICROSOFT_TOKEN)
+            // if token is null or "" and token is expired, get token from server
+            if (tokenFromDB == null || tokenFromDB.token == "" || tokenFromDB.expireTime < Date.now()) {
+                let token = await fetch(tokenUrl).then(response => response.text());
+                // save token to db
+                let freshToken = new Token(token, Date.now() + 10 * 60 * 1000)
+                await configStorage.setConfigItem(CONFIG_KEY.MICROSOFT_TOKEN, freshToken)
+                return freshToken
+            }
+            return tokenFromDB
+        }catch (e) {
+            console.error(e)
+            return new Token("", 0)
+            // first get token from db
+        }finally {
+            release();
+        }
+
+    }
+
+    async function initTokenMap() {
+        let token = await getMicrosoftToken()
+        serviceTokenMap.set(TRANS_SERVICE.MICROSOFT, token)
+    }
 });

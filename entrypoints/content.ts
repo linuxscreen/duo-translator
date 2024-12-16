@@ -1,30 +1,31 @@
 import {browser} from "wxt/browser";
-import {Rule, sendMessageToBackground, SubRule} from "@/entrypoints/utils";
+import {sendMessageToBackground} from "@/entrypoints/utils";
 import {split} from "sentence-splitter"
 import {
     ACTION,
     CONFIG_KEY,
     DB_ACTION,
     DOMAIN_STRATEGY,
-    STATUS_FAIL,
-    STATUS_SUCCESS, STORAGE_ACTION,
+    STORAGE_ACTION,
     TB_ACTION,
-    TRANS_ACTION, TRANS_SERVICE, VIEW_STRATEGY
+    TRANS_ACTION,
+    TRANS_SERVICE,
+    VIEW_STRATEGY
 } from "@/entrypoints/constants";
-import {
-    translateParams,
-    translationServices
-} from "@/entrypoints/translateService";
+import {TranslatedElement, translateParams, translationServices} from "@/entrypoints/translateService";
 import {getCssSelector} from 'css-selector-generator';
+import {getConfig} from "@/utils/db";
 
 export default defineContentScript({
-    matches: ['<all_urls>'],
+    // matches: ['<all_urls>'],
+    matches: ['https://*/*', 'http://*/*'],
     cssInjectionMode: 'manual',
     async main(ctx) {
         async function getGlobalSwitch() {
             let globalSwitch = await getConfig(CONFIG_KEY.GLOBAL_SWITCH)
             return globalSwitch === null ? true : globalSwitch
         }
+
         let process = false
         const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
         // record the elements before translated, for show original
@@ -121,7 +122,7 @@ export default defineContentScript({
             process = true
             setTimeout(async () => {
                 try {
-                    if (!(await getGlobalSwitch())){
+                    if (!(await getGlobalSwitch())) {
                         return
                     }
                     let notTranslated = Array.from(document.body.querySelectorAll('.duo-translated')) as HTMLElement[]
@@ -143,7 +144,7 @@ export default defineContentScript({
                             await translateCollectedElements(notTranslated, params, beforeDuoTranslate, afterDuoTranslate)
                             break
                         case VIEW_STRATEGY.SINGLE:
-                            await translateCollectedElements(notTranslated, params,undefined,afterTranslate)
+                            await translateCollectedElements(notTranslated, params, undefined, afterTranslate)
                             break
                         case VIEW_STRATEGY.BUTTON:
                             break
@@ -159,10 +160,10 @@ export default defineContentScript({
         observer.observe(document.body, {
             childList: true,
             subtree: true,
-            attributes: true,
-            characterData: true,
-            characterDataOldValue: true,
-            attributeOldValue: true
+            // attributes: true,
+            // characterData: true,
+            // characterDataOldValue: true,
+            // attributeOldValue: true
         });
 
         const getCssSelectorString = (ele: HTMLElement): string => {
@@ -217,9 +218,8 @@ export default defineContentScript({
             console.log('content script receive message:', message)
             let params: translateParams
             switch (message.action) {
+                case TRANS_ACTION.TRANSLATE:
                 case TRANS_ACTION.DOUBLE:
-                    await translateRoot(document.body)
-                    break
                 case TRANS_ACTION.SINGLE:
                     await translateRoot(document.body)
                     break
@@ -227,11 +227,10 @@ export default defineContentScript({
                     console.log('show original')
                     // restore original page
                     // observer.disconnect()
-                    await restoreOriginalPage()
-                    await sendMessageToBackground({
-                        action: STORAGE_ACTION.SESSION_SET,
-                        data: {key: "tabTranslateStatus#" + tabId, value: false}
-                    })
+                    await showOriginal()
+                    break
+                case TRANS_ACTION.TOGGLE:
+                    toggleTranslateStatus()
                     break
                 case ACTION.TOGGLE_SELECTION_MODE:
                     await toggleSelectionMode()
@@ -293,53 +292,77 @@ export default defineContentScript({
         }
 
         async function translateStrategyProcess(domainStrategy: string) {
-            console.log('translateStrategyProcess:', domainStrategy)
             // get the translation status of the current tab
             let translateStatus = await sendMessageToBackground({
                 action: STORAGE_ACTION.SESSION_GET,
                 data: {key: tabTranslateStatusKey}
             })
+            if (domainStrategy == DOMAIN_STRATEGY.ALWAYS){
+                if (translateStatus) {
+                    return true
+                }
+                await translateRoot(document.body)
+                return true
+            }else if (domainStrategy == DOMAIN_STRATEGY.NEVER) {
+                if (translateStatus) {
+                    await restoreOriginalPage()
+                }
+                return false
+            }
+            console.log('translateStrategyProcess:', domainStrategy)
+            // get default strategy
+            let defaultStrategy = await getConfig(CONFIG_KEY.DEFAULT_STRATEGY) || DOMAIN_STRATEGY.AUTO
+
             let tabLanguage = await sendMessageToBackground({action: TB_ACTION.TAB_LANG_GET})
             // If the target language is empty, set to the system language
             let targetLanguage = await getConfig(CONFIG_KEY.TARGET_LANGUAGE) || navigator.language
-            switch (domainStrategy) {
+            switch (defaultStrategy) {
                 case DOMAIN_STRATEGY.AUTO:
                     // If the language of the current page is the same as the target language, it will not be translated
-                    if (translateStatus) {
-                        return true
-                    }
                     if (tabLanguage == targetLanguage) {
                         await setSessionStorage(tabTranslateStatusKey, false)
                         return false
                     } else {
                         await setSessionStorage(tabTranslateStatusKey, true)
                         await translateRoot(document.body)
-                        observer.observe(document.body, {childList: true, subtree: true});
+                        // observer.observe(document.body, {childList: true, subtree: true});
                         return true
                     }
                 case DOMAIN_STRATEGY.ALWAYS:
-                    if (!translateStatus) {
                         await translateRoot(document.body)
                         // observer.observe(document.body, {childList: true, subtree: true});
                         await setSessionStorage(tabTranslateStatusKey, true)
                         return true
-                    }
-                    return true
                 case DOMAIN_STRATEGY.ASK:
                     // todo A dialog box pops up asking if you want to translate
                     return false
                 case DOMAIN_STRATEGY.NEVER:
-                    let status = await getSessionStorage(tabTranslateStatusKey)
-                    if (status) {
-                        // observer.disconnect()
-                        console.log('translate status:', translateStatus)
-                        await setSessionStorage(tabTranslateStatusKey, false)
-                        // restore the original page
-                        await restoreOriginalPage()
-                    }
                     return false
             }
             return false
+        }
+
+        async function showOriginal(){
+            await restoreOriginalPage()
+            await sendMessageToBackground({
+                action: STORAGE_ACTION.SESSION_SET,
+                data: {key: tabTranslateStatusKey, value: false}
+            })
+        }
+
+        function toggleTranslateStatus() {
+            getSessionStorage(tabTranslateStatusKey).then((status) => {
+                if (status) {
+                    // observer.disconnect()
+                    console.log('translate status:', status)
+                    setSessionStorage(tabTranslateStatusKey, false)
+                    // restore the original page
+                    restoreOriginalPage()
+                } else {
+                    setSessionStorage(tabTranslateStatusKey, true)
+                    translateRoot(document.body)
+                }
+            });
         }
 
         function ruleStrategyProcess(ruleStrategy: string[]) {
@@ -411,7 +434,9 @@ export default defineContentScript({
             borderStyle = borderStyle || "noneStyleSelect"
             originalBgColor = originalBgColor || '#FFECCB'
             translationBgColor = translationBgColor || '#ADD8E6'
-            highlightSwitch = highlightSwitch || true
+            if (highlightSwitch == null) {
+                highlightSwitch = true
+            }
             console.log('style:', bgColor, fontColor, borderStyle, originalBgColor, translationBgColor, highlightSwitch)
             let styleSheet: HTMLStyleElement = document.getElementById("duo-translation-style") as HTMLStyleElement;
             if (!styleSheet) {
@@ -520,6 +545,25 @@ export default defineContentScript({
             return element.nodeName.toLowerCase() === 'code' || element.classList.contains("duo-paragraph")
         }
 
+        function isEditable(element: HTMLElement): boolean {
+            // Check if the element is contenteditable
+            if (element.isContentEditable) {
+                return true;
+            }
+
+            // Check if it's an input, textarea, or select element and not disabled or readonly
+            if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+                return !element.disabled && !element.readOnly;
+            }
+
+            if (element instanceof HTMLSelectElement) {
+                return !element.disabled;
+            }
+
+            // If none of the above, it's not editable
+            return false;
+        }
+
         // search and add the duo-paragraph class to the paragraph element for marking
         function markParagraphElement(element: HTMLElement) {
             if (!(element instanceof HTMLElement)) {
@@ -532,6 +576,10 @@ export default defineContentScript({
                 return;
             }
             if (element.style.display === 'none') {
+                return;
+            }
+            // if the element is able to input, don't translate
+            if (isEditable(element)) {
                 return;
             }
             if (isParagraphElement(element)) {
@@ -614,6 +662,37 @@ export default defineContentScript({
             return false;
         }
 
+        function splitHtml(originHtml :string) :string[]{
+            let sentences = split(originHtml)
+
+            let whiteSpace :string[]= []
+            let sentenceWithWhiteSpace = []
+//
+            for (let sentence of sentences) {
+                if (sentence.type=="WhiteSpace"){
+                    whiteSpace.push(sentence.raw)
+                }else if (sentence.type=="Sentence"){
+                    sentenceWithWhiteSpace.push((whiteSpace[whiteSpace.length-1]==undefined?"":whiteSpace.pop())+sentence.raw)
+                }
+            }
+            for (let i = 0; i < sentenceWithWhiteSpace.length; i++) {
+                if (sentenceWithWhiteSpace[i].trim().startsWith("</")) {
+                    if (i>0) {
+                        sentenceWithWhiteSpace[i-1] += sentenceWithWhiteSpace[i]
+                        sentenceWithWhiteSpace.splice(i, 1)
+                    }
+                }
+            }
+            sentenceWithWhiteSpace[sentenceWithWhiteSpace.length-1] += whiteSpace[whiteSpace.length-1]==undefined?"":whiteSpace.pop()
+            console.log("splitHtml",whiteSpace)
+            return sentenceWithWhiteSpace
+        }
+
+        function startsWithIgnoringWhitespace(input: string, searchString: string): boolean {
+            // Trim the input string to ignore leading spaces and line breaks
+            const trimmedInput = input.trimStart();
+            return trimmedInput.startsWith(searchString);
+        }
 
         /**
          * Translate the DOM tree for monolingual
@@ -625,12 +704,12 @@ export default defineContentScript({
             translateCollectedElements(needTranslateElement, params, undefined, afterTranslate)
         }
 
-        function afterTranslate(needTranslateElement: HTMLElement[], res: string[]) {
+        function afterTranslate(needTranslateElement: HTMLElement[], res: TranslatedElement[]) {
             for (let i = 0; i < needTranslateElement.length; i++) {
                 console.log('res:', res[i])
                 originalElementRecords.push(needTranslateElement[i].cloneNode(true) as HTMLElement)
                 let cloneElement = needTranslateElement[i].cloneNode(true) as HTMLElement
-                cloneElement.innerHTML = res[i]
+                cloneElement.innerHTML = res[i].translatedText
                 console.log('cloneElement:', cloneElement)
                 needTranslateElement[i].innerHTML = cloneElement.firstElementChild?.innerHTML! || cloneElement.textContent || needTranslateElement[i].innerHTML
                 // identify the element that has been translated, in some cases, the translated element possibly be recovered(but attribute remained)
@@ -647,24 +726,6 @@ export default defineContentScript({
 
             }
         }
-
-        // const mutex = new Mutex();
-        class Lock {
-            private locked: boolean = false;
-
-            async acquire() {
-                while (this.locked) {
-                    await new Promise(resolve => setTimeout(resolve, 50)); // Poll every 50ms
-                }
-                this.locked = true;
-            }
-
-            release() {
-                this.locked = false;
-            }
-        }
-
-        let lock = new Lock();
 
         /**
          * Translate the DOM tree for bilingual
@@ -692,26 +753,28 @@ export default defineContentScript({
                 translateElementRecords.push(element)
                 element.setAttribute("duo-no-observer", "true")
                 // console.log('element:', element.innerHTML)
-                const sentences = split(element.innerHTML).filter((node) => node.type === 'Sentence');
+                // const sentences = split(element.innerHTML).filter((node) => node.type === 'Sentence');
+                let tagStack: string[] = []
+                console.log('element:', element.innerHTML)
+                const sentences = splitHtml(element.innerHTML)
+                console.log('sentences:', sentences)
                 element.innerHTML = ""
-                let lastTagStack: string[] = []
                 for (let i = 0; i < sentences.length; i++) {
                     let sentence = sentences[i]
                     let span = document.createElement('span');
 
                     // process the raw html to fix tag mismatch
-                    let rawHtml = sentence.raw.trim()
-                    while (rawHtml.startsWith("</")) {
+                    let rawHtml = sentence
+                    console.log('rawHtml1:', rawHtml)
+                    while (startsWithIgnoringWhitespace(rawHtml,"</")) {
                         // remove invalid closing tags at the beginning
-                        lastTagStack.pop()
-                        rawHtml = rawHtml.replace(/<\/[a-zA-Z][a-zA-Z0-9]*\s*>/, '').trim()
+                        tagStack.pop()
+                        rawHtml = rawHtml.replace(/<\/[a-zA-Z][a-zA-Z0-9]*\s*>/, '')
                     }
-                    while (lastTagStack.length > 0) {
-                        rawHtml = `<${lastTagStack.pop()}>` + rawHtml
+                    while (tagStack.length > 0) {
+                        rawHtml = `<${tagStack.pop()}>` + rawHtml
                     }
-                    let tagStack: string[] = []
                     let match
-                    let count = 0
                     while ((match = tagRegex.exec(rawHtml)) !== null) {
                         const tagName = match[1];
                         if (match[0].startsWith("</")) {
@@ -726,10 +789,13 @@ export default defineContentScript({
                         }
 
                     }
-                    lastTagStack = Array.from(tagStack)
-                    while (tagStack.length > 0) {
-                        // patch the missing closing tags
-                        rawHtml += `</${tagStack.pop()}>`
+                    // lastTagStack = Array.from(tagStack)
+                    // while (tagStack.length > 0) {
+                    //     // patch the missing closing tags
+                    //     rawHtml += `</${tagStack.pop()}>`
+                    // }
+                    for (let j = tagStack.length-1; j >= 0; j--) {
+                        rawHtml += `</${tagStack[j]}>`
                     }
                     span.setAttribute("duo-no-observer", "true")
                     span.innerHTML = rawHtml;
@@ -738,6 +804,35 @@ export default defineContentScript({
                     span.classList.add("duo-sentence")
                     // element.appendChild(span) // probably cause the page refresh all the time issue
                     element.innerHTML += span.outerHTML
+
+                }
+                // element.setAttribute("duo-no-observer", "true")
+                originalHtmlElements.push(element)
+
+            }
+            return originalHtmlElements
+        }
+
+        function afterDuoTranslate(originalHtmlElements: HTMLElement[], res: TranslatedElement[]) {
+            for (let i = 0; i < originalHtmlElements.length; i++) {
+                let element = originalHtmlElements[i]
+                let elementCloned = element.cloneNode(false) as HTMLElement
+                elementCloned.innerHTML = res[i].translatedText
+                if (elementCloned.textContent?.trim() !== "" && elementCloned.textContent !== originalHtmlElements[i].textContent) {
+                    // If the current text is longer than 40 characters, add a line break. Otherwise, add a space
+                    if (element.textContent!.length > 40) {
+                        element.appendChild(document.createElement('br'));
+                    } else {
+                        element.appendChild(document.createTextNode(' '));
+                    }
+                    let duoElement = document.createElement('font')
+                    duoElement.classList.add("duo-translation")
+                    duoElement.setAttribute("duo-no-observer", "true")
+                    element.appendChild(duoElement)
+                    duoElement.innerHTML = elementCloned.firstElementChild?.innerHTML!
+                    element.classList.add("duo-original")
+                    element.classList.add("duo-translated")
+
                     let spans = element.querySelectorAll(".duo-sentence")
                     if (spans) {
                         for (let span of spans) {
@@ -767,35 +862,7 @@ export default defineContentScript({
                             }
                         }
                     }
-
-                }
-                // element.setAttribute("duo-no-observer", "true")
-                originalHtmlElements.push(element)
-
-            }
-            return originalHtmlElements
-        }
-
-        function afterDuoTranslate(originalHtmlElements: HTMLElement[], res: string[]) {
-            for (let i = 0; i < originalHtmlElements.length; i++) {
-                let element = originalHtmlElements[i]
-                let elementCloned = element.cloneNode(false) as HTMLElement
-                elementCloned.innerHTML = res[i]
-                if (elementCloned.textContent?.trim() !== "" && elementCloned.textContent !== originalHtmlElements[i].textContent) {
-                    // If the current text is longer than 40 characters, add a line break. Otherwise, add a space
-                    if (element.textContent!.length > 40) {
-                        element.appendChild(document.createElement('br'));
-                    } else {
-                        element.appendChild(document.createTextNode(' '));
-                    }
-                    let duoElement = document.createElement('font')
-                    duoElement.classList.add("duo-translation")
-                    duoElement.setAttribute("duo-no-observer", "true")
-                    element.appendChild(duoElement)
-                    duoElement.innerHTML = elementCloned.firstElementChild?.innerHTML!
-                    element.classList.add("duo-original")
-                    element.classList.add("duo-translated")
-                    console.log('element xxx:', element.cloneNode(true))
+                    // console.log('element cloneNode:', element.cloneNode(true))
 
                     // Translation highlighting settings
                     duoElement?.querySelectorAll(".duo-sentence")?.forEach((child) => {
@@ -819,7 +886,7 @@ export default defineContentScript({
         }
 
         async function translateCollectedElements(elements: HTMLElement[], params: translateParams, beforeTranslate?: (elements: HTMLElement[]) => HTMLElement[],
-                                                  afterTranslate?: (elements: HTMLElement[], res: string[]) => void) {
+                                                  afterTranslate?: (elements: HTMLElement[], res: TranslatedElement[]) => void) {
             let originalHtmlElements: HTMLElement[] = elements
             if (beforeTranslate) {
                 console.log('beforeTranslate11:', elements)
@@ -827,13 +894,27 @@ export default defineContentScript({
             }
             console.log('originalHtmlElements:', originalHtmlElements)
             // return
-            await translationServices.get(params.serviceName)?.translateHtml?.(originalHtmlElements, params.targetLang, params.sourceLang).then((res) => {
-                // console.log('res:', res)
-                if (afterTranslate && res) {
-                    afterTranslate(originalHtmlElements, res)
-                }
+            // await translationServices.get(params.serviceName)?.translateHtml?.(originalHtmlElements, params.targetLang, params.sourceLang).then((res) => {
+            //     // console.log('res:', res)
+            //     if (afterTranslate && res) {
+            //         // don't translate the element with same source and target language
+            //         for (let i = 0; i < res.length; i++) {
+            //             if (res[i].sourceLang == params.targetLang) {
+            //                 // delete the res[i] and originalHtmlElements[i]
+            //                 res.splice(i, 1)
+            //                 originalHtmlElements.splice(i, 1)
+            //             }
+            //         }
+            //         afterTranslate(originalHtmlElements, res)
+            //     }
+            //
+            // })
 
+            let res = await sendMessageToBackground({
+                action: ACTION.TRANSLATE_HTML,
+                data: {service: params.serviceName, elements: elements, targetLang: params.targetLang, sourceLang: params.sourceLang}
             })
+            console.log('aaaa res:', res)
         }
 
         function getCSSRuleString(style: string) {

@@ -2,7 +2,7 @@
   "name": "wxt-starter",
   "description": "manifest.json description",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "wxt",
@@ -16,6 +16,7 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
+    "async-mutex": "^0.5.0",
     "axios": "^1.7.2",
     "buefy": "npm:@ntohq/buefy-next@^0.1.4",
     "css-selector-generator": "^3.6.8",

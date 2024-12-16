@@ -48,7 +48,6 @@ export enum DOMAIN_STRATEGY {
     ALWAYS = 'always',
     AUTO = 'auto',
     ASK = 'ask',
-    NON_TARGET = 'nonTarget',
 }
 
 export enum VIEW_STRATEGY {
@@ -592,6 +591,7 @@ export enum TRANS_SERVICE {
 
 // translation action
 export enum TRANS_ACTION {
+    TRANSLATE = 'translate',
     DOUBLE = 'doubleTranslate',
     SINGLE = 'singleTranslate',
     TOGGLE = 'toggleTranslate',
@@ -599,6 +599,7 @@ export enum TRANS_ACTION {
 }
 
 export enum ACTION {
+    TRANSLATE_HTML = 'translateHtml',
     STYLE_CHANGE = 'styleChange',
     DOMAIN_STRATEGY_CHANGE = 'domainStrategyChange',
     TOGGLE_SELECTION_MODE = 'toggleSelectionMode',
@@ -607,7 +608,7 @@ export enum ACTION {
 }
 
 export enum CONFIG_KEY {
-    DOMAIN_STRATEGY = 'domainStrategy',
+    DEFAULT_STRATEGY = 'defaultStrategy',
     VIEW_STRATEGY = 'viewStrategy',
     TARGET_LANG = 'targetLanguage',
     SOURCE_LANG = 'sourceLanguage',

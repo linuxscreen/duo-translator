@@ -1,0 +1,17 @@
+{
+  "extName": {
+    "message": "双语翻译"
+  },
+  "extDescription": {
+    "message": "开源免费并且开箱即用的翻译插件，具有双语、对比高亮和规则模式等功能"
+  },
+  "contextMenuTranslate": {
+    "message": "翻译此页面"
+  },
+  "contextMenuOriginal": {
+    "message": "查看原文"
+  },
+  "shortcutToggleTranslation": {
+    "message": "翻译/恢复 页面"
+  }
+}
