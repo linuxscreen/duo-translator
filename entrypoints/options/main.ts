@@ -3,7 +3,9 @@ import './style.css';
 // @ts-ignore
 import App from './App.vue';
 import '@mdi/font/css/materialdesignicons.css'
-
+import Vue from 'vue'
+import Buefy from 'buefy'
+import 'buefy/dist/buefy.css'
 
 // Vuetify
 import 'vuetify/styles'

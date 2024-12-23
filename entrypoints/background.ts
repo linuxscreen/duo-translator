@@ -8,11 +8,10 @@ import {
     TRANS_SERVICE, CONFIG_KEY
 } from "@/entrypoints/constants";
 import {Rule, SubRule} from "@/entrypoints/utils";
-import {browser} from "wxt/browser";
-import {browserSettings} from "webextension-polyfill";
-import {Events} from "webextension-polyfill/namespaces/events";
-import {translationServices} from "@/entrypoints/translateService";
+import {browser, Tabs} from "wxt/browser";
+import {Token, translationServices} from "@/entrypoints/translateService";
 import {Mutex} from "async-mutex";
+import Tab = Tabs.Tab;
 
 export class Sub {
     constructor(title: string, content: string) {
@@ -60,6 +59,7 @@ class ConfigStorage {
         }).catch(err => {
             if (err.name === 'conflict') {
                 return this.db.get(name).then(doc => {
+                    // @ts-ignore
                     doc.value = value;
                     return this.db.put(doc);
                 });
@@ -70,6 +70,7 @@ class ConfigStorage {
     }
 
     async getConfigItem(name: string) {
+        // @ts-ignore
         return this.db.get(this.prefix + name).then(doc => doc.value);
     }
 
@@ -130,9 +131,11 @@ class DomainStorage {
     public update(domain: Domain) {
         return this.db.get(this.prefix + domain.domain).then((doc) => {
             if (domain.strategy) {
+                // @ts-ignore
                 doc.strategy = domain.strategy;
             }
             if (domain.viewStrategy) {
+                // @ts-ignore
                 doc.viewStrategy = domain.viewStrategy;
             }
             // console.log(doc)
@@ -179,7 +182,7 @@ class RuleStorage {
             existingDoc.rules.push(rule);
             await this.db.put(existingDoc);
             // console.log('Rules added successfully to domain ${rule.domain}.');
-        } catch (err) {
+        } catch (err :any) {
             if (err.name == "not_found") {
                 await this.db.put({
                     _id: domain,
@@ -240,24 +243,24 @@ class RuleStorage {
             let result = allDocs.rows.map(row => row.doc);
 
             if (domain) {
-                result = result.filter(doc => doc._id.includes(domain));
+                result = result.filter(doc => doc?._id.includes(domain));
             }
 
             if (ruleTitle || ruleContent) {
-                result = result.map(doc => {
-                    let rules;
-                    if (ruleTitle && ruleContent) {
-                        rules = doc.rules.filter(rule => rule.title.includes(ruleTitle) && rule.content.includes(ruleContent));
-                    } else if (ruleTitle) {
-                        rules = doc.rules.filter(rule => rule.title.includes(ruleTitle));
-                    } else if (ruleContent) {
-                        rules = doc.rules.filter(rule => rule.content.includes(ruleContent));
-                    }
-                    return {
-                        domain: doc._id,
-                        rules: rules
-                    };
-                });
+                // result = result.map((doc) => {
+                //     let rules;
+                //     if (ruleTitle && ruleContent) {
+                //         rules = doc.rules.filter(rule => rule.includes(ruleTitle) && rule.content.includes(ruleContent));
+                //     } else if (ruleTitle) {
+                //         rules = doc.rules.filter(rule => rule.includes(ruleTitle));
+                //     } else if (ruleContent) {
+                //         rules = doc.rules.filter(rule => rule.includes(ruleContent));
+                //     }
+                //     return {
+                //         domain: doc._id,
+                //         rules: rules
+                //     };
+                // });
             }
 
             return result;
@@ -276,16 +279,6 @@ class RuleStorage {
     }
 }
 
-class Token {
-    token: string
-    expireTime: number
-
-    constructor(token: string, expireTime: number) {
-        this.token = token;
-        this.expireTime = expireTime;
-    }
-}
-
 function translateHtml(service: string, texts: string[], targetLang: string, sourceLang: string) {
     switch (service) {
         case TRANS_SERVICE.MICROSOFT:
@@ -296,6 +289,7 @@ function translateHtml(service: string, texts: string[], targetLang: string, sou
 }
 
 const serviceTokenMap = new Map<string, Token>()
+let tokenUrl = "https://edge.microsoft.com/translate/auth"
 
 export default defineBackground(() => {
     // let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1dWlkIjoiNzg3ZWY2OGItNzBmYi00YWNhLWI4NTItZDIwNDg2N2JiNWYxIiwiaWQiOjQsInVzZXJuYW1lIjoiemhlbmciLCJuaWNrTmFtZSI6InpoZW5nIiwiYXV0aG9yaXR5SWQiOjg4OCwicm9sZXMiOlsidXNlciJdLCJidWZmZXJUaW1lIjo4NjQwMCwiaXNzIjoicW1QbHVzIiwic3ViIjoiemhlbmciLCJhdWQiOlsiR1ZBIl0sImV4cCI6MTcxOTA0NDMxMCwibmJmIjoxNzE4NDM5NTEwfQ.Hcei36lYGdfG3H2DAwrpkfcGR5n_hvG4Ovjxi1avLx4"
@@ -305,7 +299,7 @@ export default defineBackground(() => {
     //     opts.headers.set('Content-Type', 'application/json');
     //     return fetch(url, opts);
     // };
-
+    const mutex = new Mutex();
     initTokenMap()
     let username = 'zheng';
     // 创建一个使用自定义fetch函数的PouchDB实例
@@ -351,6 +345,7 @@ export default defineBackground(() => {
         // messages are received to manipulate the db database
         switch (message.action) {
             case "getAccessToken":
+                // console.log("getAccessToken", serviceTokenMap.get("microsoft"))
                 let service :string = message.data.service
                 if (serviceTokenMap && serviceTokenMap.get(service) && (serviceTokenMap.get(service)?.expireTime || 0) > Date.now()) {
                     sendResponse({status: STATUS_SUCCESS, data: serviceTokenMap.get(service)})
@@ -531,7 +526,7 @@ export default defineBackground(() => {
         contexts: ["selection", "page"]
     });
     browser.contextMenus.onClicked.addListener((info, tab) => {
-        if (!tab) {
+        if (!tab || !tab.id) {
             return
         }
         if (!isTranslate) {
@@ -557,8 +552,8 @@ export default defineBackground(() => {
         if (command === 'shortcut-toggle') {
             // send message to current tab, toggle translate status
             browser.tabs.query({active: true, currentWindow: true}).then((tabs) => {
-                let tab = tabs[0]
-                if (!tab && tab.id == null) {
+                let tab :Tab = tabs[0]
+                if (!tab || !tab.id) {
                     return
                 }
                 browser.tabs.sendMessage(tab.id, {action: TRANS_ACTION.TOGGLE});
@@ -566,14 +561,12 @@ export default defineBackground(() => {
         }
     });
 
-    let tokenUrl = "https://edge.microsoft.com/translate/auth"
-    const mutex = new Mutex();
     async function getMicrosoftToken() :Promise<Token> {
         const release = await mutex.acquire(); // Acquire the lock
         try {
             let tokenFromDB :Token = await configStorage.getConfigItem(CONFIG_KEY.MICROSOFT_TOKEN)
             // if token is null or "" and token is expired, get token from server
-            if (tokenFromDB == null || tokenFromDB.token == "" || tokenFromDB.expireTime < Date.now()) {
+            if (tokenFromDB == null || tokenFromDB.token == "" || (tokenFromDB.expireTime || 0) < Date.now()) {
                 let token = await fetch(tokenUrl).then(response => response.text());
                 // save token to db
                 let freshToken = new Token(token, Date.now() + 10 * 60 * 1000)

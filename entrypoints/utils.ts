@@ -26,6 +26,7 @@ export class SubRule {
 }
 
 export class Rule {
+    _id: string | undefined;
     domain: string;
     rules: Array<string> = [];
     constructor(domain: string, rules?: Array<string>) {

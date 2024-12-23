@@ -12,7 +12,11 @@ import {
     TRANS_SERVICE,
     VIEW_STRATEGY
 } from "@/entrypoints/constants";
-import {TranslatedElement, translateParams, translationServices} from "@/entrypoints/translateService";
+import translateService, {
+    TranslatedElement,
+    translateParams,
+    translationServices
+} from "@/entrypoints/translateService";
 import {getCssSelector} from 'css-selector-generator';
 import {getConfig} from "@/utils/db";
 
@@ -42,6 +46,7 @@ export default defineContentScript({
         let ruleStrategy = await listRuleFromDB()
         ruleStrategyProcess(ruleStrategy)
         markParagraphElement(document.body)
+        let pageLanguage = detectLanguage()
         console.log('domain:', domain)
         // get the id of the current tab,which used unique defines the page
         let tabId = await sendMessageToBackground({action: TB_ACTION.TAB_ID_GET})
@@ -157,6 +162,7 @@ export default defineContentScript({
 
 
         });
+
         observer.observe(document.body, {
             childList: true,
             subtree: true,
@@ -211,6 +217,21 @@ export default defineContentScript({
             // to prevent record residual
             originalElementRecords = []
             translateElementRecords = []
+            // height and line limit restore
+            let heightBreakElements = document.querySelectorAll(".duo-height-break")
+            for (let heightBreakElement of heightBreakElements) {
+                let element = heightBreakElement as HTMLElement
+                element.style.maxHeight = element.getAttribute("duo-max-height") || ""
+                element.removeAttribute("duo-max-height")
+                element.classList.remove("duo-height-break")
+            }
+            let lineBreakElements = document.querySelectorAll(".duo-line-break")
+            for (let lineBreakElement of lineBreakElements) {
+                let element = lineBreakElement as HTMLElement
+                element.style.setProperty("-webkit-line-clamp", element.getAttribute("duo-webkit-line-clamp") || "")
+                element.removeAttribute("duo-webkit-line-clamp")
+                element.classList.remove("duo-line-break")
+            }
         }
 
         // Accept messages from popups, process the task
@@ -291,19 +312,37 @@ export default defineContentScript({
             })
         }
 
+        async function detectLanguage() {
+            // select 20 paragraph element randomly to detect the language
+            let paragraphElements = document.querySelectorAll('.duo-paragraph')
+            let paragraphList: string[] = []
+            for (let paragraphElement of paragraphElements) {
+                if (paragraphElement && paragraphElement.textContent && paragraphElement.textContent.trim() !== "") {
+                    let text = paragraphElement.textContent
+                    // judge if valid paragraph, such as pure number or pure symbol
+                    if (text.match(/^[0-9\s]*$/)) {
+                        continue
+                    }
+                    paragraphList.push(paragraphElement.textContent)
+                }
+            }
+            let randomParagraphs = paragraphList.sort(() => 0.5 - Math.random()).slice(0, 20)
+            return translationServices.get(TRANS_SERVICE.MICROSOFT)?.detectLanguage?.(randomParagraphs)
+        }
+
         async function translateStrategyProcess(domainStrategy: string) {
             // get the translation status of the current tab
             let translateStatus = await sendMessageToBackground({
                 action: STORAGE_ACTION.SESSION_GET,
                 data: {key: tabTranslateStatusKey}
             })
-            if (domainStrategy == DOMAIN_STRATEGY.ALWAYS){
+            if (domainStrategy == DOMAIN_STRATEGY.ALWAYS) {
                 if (translateStatus) {
                     return true
                 }
                 await translateRoot(document.body)
                 return true
-            }else if (domainStrategy == DOMAIN_STRATEGY.NEVER) {
+            } else if (domainStrategy == DOMAIN_STRATEGY.NEVER) {
                 if (translateStatus) {
                     await restoreOriginalPage()
                 }
@@ -312,14 +351,19 @@ export default defineContentScript({
             console.log('translateStrategyProcess:', domainStrategy)
             // get default strategy
             let defaultStrategy = await getConfig(CONFIG_KEY.DEFAULT_STRATEGY) || DOMAIN_STRATEGY.AUTO
-
-            let tabLanguage = await sendMessageToBackground({action: TB_ACTION.TAB_LANG_GET})
             // If the target language is empty, set to the system language
             let targetLanguage = await getConfig(CONFIG_KEY.TARGET_LANGUAGE) || navigator.language
             switch (defaultStrategy) {
                 case DOMAIN_STRATEGY.AUTO:
                     // If the language of the current page is the same as the target language, it will not be translated
-                    if (tabLanguage == targetLanguage) {
+                    // there modify to detect page language by use translate api
+                    let sourceLanguage = await pageLanguage
+                    if (!sourceLanguage || sourceLanguage == "" || sourceLanguage == 'und') {
+                        // if the language is not detected, get the language from the tab
+                        sourceLanguage = await sendMessageToBackground({action: TB_ACTION.TAB_LANG_GET})
+                    }
+                    console.log('sourceLanguage:', sourceLanguage, 'targetLanguage:', targetLanguage)
+                    if (sourceLanguage == targetLanguage) {
                         await setSessionStorage(tabTranslateStatusKey, false)
                         return false
                     } else {
@@ -329,10 +373,10 @@ export default defineContentScript({
                         return true
                     }
                 case DOMAIN_STRATEGY.ALWAYS:
-                        await translateRoot(document.body)
-                        // observer.observe(document.body, {childList: true, subtree: true});
-                        await setSessionStorage(tabTranslateStatusKey, true)
-                        return true
+                    await translateRoot(document.body)
+                    // observer.observe(document.body, {childList: true, subtree: true});
+                    await setSessionStorage(tabTranslateStatusKey, true)
+                    return true
                 case DOMAIN_STRATEGY.ASK:
                     // todo A dialog box pops up asking if you want to translate
                     return false
@@ -342,7 +386,7 @@ export default defineContentScript({
             return false
         }
 
-        async function showOriginal(){
+        async function showOriginal() {
             await restoreOriginalPage()
             await sendMessageToBackground({
                 action: STORAGE_ACTION.SESSION_SET,
@@ -527,8 +571,9 @@ export default defineContentScript({
 
         function isTranslateExcludedElement(element: HTMLElement): boolean {
             // todo support user defined class to exclude translation
+            // limit the element with text content that is number // last condition
             return element.classList.contains('duo-no-translate') || element.classList.contains("duo-translation") || element.classList.contains('notranslate') ||
-                element.hasAttribute("duo-no-observer")
+                element.hasAttribute("duo-no-observer") || (element.textContent!.match(/^[0-9\s]*$/) != null)
         }
 
         function ifElementWithParentMatchCondition(element: HTMLElement, condition: (element: HTMLElement) => boolean): boolean {
@@ -595,9 +640,30 @@ export default defineContentScript({
             }
             // Recursively traverses all children of the current element
             for (let i = 0; i < element.childNodes.length; i++) {
-                const currentNode = element.childNodes[i];
+                let currentNode = element.childNodes[i];
                 if (currentNode.nodeType === 1) { // check if the node is an element node
                     markParagraphElement(currentNode as HTMLElement);
+                } else if (currentNode.nodeType === 3) {
+                    // set the text node to paragraph element
+                    // create a custom element to wrap the text node
+                    let paraElement = document.createElement('duo-span')
+                    paraElement.classList.add('duo-paragraph')
+                    // paraElement.textContent = currentNode.textContent
+                    paraElement.appendChild(currentNode.cloneNode(true))
+                    // if currentNode nextSibling is not block element, merge the text node
+                    let originalNode = currentNode
+                    currentNode = currentNode.nextSibling!
+                    while (currentNode) {
+                        if ((currentNode.nodeType == 3 || !isBlockElement(currentNode as HTMLElement))) {
+                            let next = currentNode.nextSibling!
+                            paraElement.appendChild(currentNode)
+                            console.log('currentNode:', currentNode)
+                            currentNode = next
+                        } else {
+                            break
+                        }
+                    }
+                    element.replaceChild(paraElement, originalNode)
                 }
             }
 
@@ -634,15 +700,36 @@ export default defineContentScript({
             }
         }
 
+        function isBlockElement(element: HTMLElement): boolean {
+            // if the element is not HTMLElement, return false
+            if (!(element instanceof HTMLElement)) {
+                return false;
+            }
+            // Check if the element is a block element
+            const display = window.getComputedStyle(element).display;
+            return display === 'block' || display === 'flex' || display === 'grid' || display === 'table' || display === 'flow-root';
+        }
+
         function isParagraphElement(element: HTMLElement): boolean {
+            let flag = false
             // An element is considered a paragraph if its child node has a text node and the text content is not empty
+            // also the element is not block element with not empty text content
             if (element.childNodes.length > 0) {
                 for (let i = 0; i < element.childNodes.length; i++) {
+                    // judge if the child node is block element
+                    if (element.childNodes[i].nodeType == Node.ELEMENT_NODE) {
+                        let ele = element.childNodes[i] as HTMLElement
+                        if (isBlockElement(ele) && ele.textContent!.trim() !== "") {
+                            return false
+                        }
+                    }
                     if (element.childNodes[i].nodeType === Node.TEXT_NODE && element.childNodes[i].textContent!.trim() !== "") {
                         // console.log('isParagraphElement:', element)
-                        return true
+                        // need to confirm the brother element is not block element and that textContent is not empty
+                        flag = true
                     }
                 }
+                return flag
             }
             return false
         }
@@ -662,29 +749,29 @@ export default defineContentScript({
             return false;
         }
 
-        function splitHtml(originHtml :string) :string[]{
+        function splitHtml(originHtml: string): string[] {
             let sentences = split(originHtml)
 
-            let whiteSpace :string[]= []
+            let whiteSpace: string[] = []
             let sentenceWithWhiteSpace = []
 //
             for (let sentence of sentences) {
-                if (sentence.type=="WhiteSpace"){
+                if (sentence.type == "WhiteSpace") {
                     whiteSpace.push(sentence.raw)
-                }else if (sentence.type=="Sentence"){
-                    sentenceWithWhiteSpace.push((whiteSpace[whiteSpace.length-1]==undefined?"":whiteSpace.pop())+sentence.raw)
+                } else if (sentence.type == "Sentence") {
+                    sentenceWithWhiteSpace.push((whiteSpace[whiteSpace.length - 1] == undefined ? "" : whiteSpace.pop()) + sentence.raw)
                 }
             }
             for (let i = 0; i < sentenceWithWhiteSpace.length; i++) {
                 if (sentenceWithWhiteSpace[i].trim().startsWith("</")) {
-                    if (i>0) {
-                        sentenceWithWhiteSpace[i-1] += sentenceWithWhiteSpace[i]
+                    if (i > 0) {
+                        sentenceWithWhiteSpace[i - 1] += sentenceWithWhiteSpace[i]
                         sentenceWithWhiteSpace.splice(i, 1)
                     }
                 }
             }
-            sentenceWithWhiteSpace[sentenceWithWhiteSpace.length-1] += whiteSpace[whiteSpace.length-1]==undefined?"":whiteSpace.pop()
-            console.log("splitHtml",whiteSpace)
+            sentenceWithWhiteSpace[sentenceWithWhiteSpace.length - 1] += whiteSpace[whiteSpace.length - 1] == undefined ? "" : whiteSpace.pop()
+            console.log("splitHtml", whiteSpace)
             return sentenceWithWhiteSpace
         }
 
@@ -766,7 +853,7 @@ export default defineContentScript({
                     // process the raw html to fix tag mismatch
                     let rawHtml = sentence
                     console.log('rawHtml1:', rawHtml)
-                    while (startsWithIgnoringWhitespace(rawHtml,"</")) {
+                    while (startsWithIgnoringWhitespace(rawHtml, "</")) {
                         // remove invalid closing tags at the beginning
                         tagStack.pop()
                         rawHtml = rawHtml.replace(/<\/[a-zA-Z][a-zA-Z0-9]*\s*>/, '')
@@ -794,7 +881,7 @@ export default defineContentScript({
                     //     // patch the missing closing tags
                     //     rawHtml += `</${tagStack.pop()}>`
                     // }
-                    for (let j = tagStack.length-1; j >= 0; j--) {
+                    for (let j = tagStack.length - 1; j >= 0; j--) {
                         rawHtml += `</${tagStack[j]}>`
                     }
                     span.setAttribute("duo-no-observer", "true")
@@ -813,26 +900,109 @@ export default defineContentScript({
             return originalHtmlElements
         }
 
+        function cloneElementWithStyles(element: HTMLElement): HTMLElement {
+            // 克隆元素（不包括样式）
+            const clonedElement = element.cloneNode(true) as HTMLElement;
+
+            // 获取元素的所有计算样式
+            const computedStyle = window.getComputedStyle(element);
+
+            // 将所有计算样式应用到克隆元素
+            for (let i = 0; i < computedStyle.length; i++) {
+                const prop = computedStyle[i];
+                clonedElement.style[prop as any] = computedStyle.getPropertyValue(prop);
+            }
+
+            return clonedElement;
+        }
+
         function afterDuoTranslate(originalHtmlElements: HTMLElement[], res: TranslatedElement[]) {
             for (let i = 0; i < originalHtmlElements.length; i++) {
                 let element = originalHtmlElements[i]
                 let elementCloned = element.cloneNode(false) as HTMLElement
                 elementCloned.innerHTML = res[i].translatedText
                 if (elementCloned.textContent?.trim() !== "" && elementCloned.textContent !== originalHtmlElements[i].textContent) {
-                    // If the current text is longer than 40 characters, add a line break. Otherwise, add a space
-                    if (element.textContent!.length > 40) {
-                        element.appendChild(document.createElement('br'));
-                    } else {
-                        element.appendChild(document.createTextNode(' '));
-                    }
                     let duoElement = document.createElement('font')
                     duoElement.classList.add("duo-translation")
                     duoElement.setAttribute("duo-no-observer", "true")
-                    element.appendChild(duoElement)
                     duoElement.innerHTML = elementCloned.firstElementChild?.innerHTML!
+                    // If the current text is longer than 40 characters, add a line break. Otherwise, add a space
+                    if (element.textContent!.length > 40) {
+                        element.appendChild(document.createElement('br'));
+                        element.appendChild(duoElement);
+                    } else {
+                        let divide = document.createElement('span')
+                        divide.textContent = ' '
+                        element.appendChild(divide);
+                        element.appendChild(duoElement);
+                        let elementWidth = element.getBoundingClientRect().width
+                        let children = element.children
+                        let allChildrenWidth = 0
+                        for (let c of children) {
+                            allChildrenWidth += c.getBoundingClientRect().width
+                        }
+                        if (element.textContent?.includes("Examples")) {
+                            console.log('elementWidth:', elementWidth, 'width:', allChildrenWidth)
+                        }
+                        if (Math.floor(allChildrenWidth) > Math.ceil(elementWidth)) {
+                            divide.outerHTML = '<br>'
+                        }
+
+                        // need determine the length of current element whether wrap the text line
+                        // let tempElement = element.cloneNode(true) as HTMLElement
+                        // let tempElement = cloneElementWithStyles(element)
+                        // tempElement.appendChild(document.createTextNode(' '));
+                        // tempElement.appendChild(duoElement.cloneNode(true))
+                        // tempElement.style.display = 'inline'
+                        // tempElement.style.visibility = 'hidden'
+                        // tempElement.style.position = 'absolute';
+                        // tempElement.style.width = ''
+                        // // tempElement.style.overflow = 'visible'
+                        // tempElement.style.whiteSpace = ''
+                        // tempElement.style.textOverflow = ''
+                        // document.body.appendChild(tempElement);
+                        // const textWidth = tempElement.offsetWidth;
+                        // const textHeight = tempElement.offsetHeight;
+                        // element.appendChild(duoElement)
+                        // if (tempElement.textContent?.includes("Bootstrap Project")) {
+                        //     console.log('tempElement:', tempElement)
+                        //     console.log('duoElement:', duoElement)
+                        //     console.log('textWidth:', textWidth)
+                        //
+                        //     console.log('copyElement:', element)
+                        //     console.log('copyElement.offsetWidth:', element.offsetWidth)
+                        //     console.log('copyElement.offsetHeight:', element.offsetHeight)
+                        //     console.log('textHeight:', textHeight)
+                        // }
+
+                        // if (textWidth > element.offsetWidth) {
+                        //     divide.outerHTML = '<br>'
+                        // }
+                        // document.body.removeChild(tempElement);
+
+                    }
                     element.classList.add("duo-original")
                     element.classList.add("duo-translated")
-
+                    // cancel the element high limit
+                    element.style.setProperty("max-height", "none", "important")
+                    element.style.setProperty("-webkit-line-clamp", "none", "important")
+                    // recursively find the parent element with max-height and -webkit-line-clamp
+                    let operateElement :HTMLElement|null = element
+                    while (operateElement) {
+                        if (operateElement.style.maxHeight !== "") {
+                            // record the element original max-height
+                            operateElement.setAttribute("duo-max-height", operateElement.style.maxHeight)
+                            operateElement.classList.add("duo-height-break")
+                            operateElement.style.setProperty("max-height", "none", "important")
+                        }
+                        if (operateElement.style.webkitLineClamp !== ""){
+                            // record the element original -webkit-line-clamp
+                            operateElement.classList.add("duo-line-break")
+                            operateElement.setAttribute("duo-webkit-line-clamp", operateElement.style.webkitLineClamp)
+                            operateElement.style.setProperty("-webkit-line-clamp", "none", "important")
+                        }
+                        operateElement = operateElement.parentElement
+                    }
                     let spans = element.querySelectorAll(".duo-sentence")
                     if (spans) {
                         for (let span of spans) {
@@ -894,27 +1064,22 @@ export default defineContentScript({
             }
             console.log('originalHtmlElements:', originalHtmlElements)
             // return
-            // await translationServices.get(params.serviceName)?.translateHtml?.(originalHtmlElements, params.targetLang, params.sourceLang).then((res) => {
-            //     // console.log('res:', res)
-            //     if (afterTranslate && res) {
-            //         // don't translate the element with same source and target language
-            //         for (let i = 0; i < res.length; i++) {
-            //             if (res[i].sourceLang == params.targetLang) {
-            //                 // delete the res[i] and originalHtmlElements[i]
-            //                 res.splice(i, 1)
-            //                 originalHtmlElements.splice(i, 1)
-            //             }
-            //         }
-            //         afterTranslate(originalHtmlElements, res)
-            //     }
-            //
-            // })
+            await translationServices.get(params.serviceName)?.translateHtml?.(originalHtmlElements, params.targetLang, params.sourceLang).then((res :TranslatedElement[]) => {
+                console.log('res:', res,'elements length', elements.length,'res length',res.length)
+                if (afterTranslate && res) {
+                    // don't translate the element with same source and target language
+                    // traversal remove element that has the same source and target language in reverse order
+                    for (let i = res.length-1; i >= 0; i--) {
+                        if (res[i].sourceLang == params.targetLang) {
+                            // delete the res[i] and originalHtmlElements[i]
+                            res.splice(i, 1)
+                            originalHtmlElements.splice(i, 1)
+                        }
+                    }
+                    afterTranslate(originalHtmlElements, res)
+                }
 
-            let res = await sendMessageToBackground({
-                action: ACTION.TRANSLATE_HTML,
-                data: {service: params.serviceName, elements: elements, targetLang: params.targetLang, sourceLang: params.sourceLang}
             })
-            console.log('aaaa res:', res)
         }
 
         function getCSSRuleString(style: string) {

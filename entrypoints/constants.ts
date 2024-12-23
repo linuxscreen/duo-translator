@@ -599,6 +599,7 @@ export enum TRANS_ACTION {
 }
 
 export enum ACTION {
+    GET_ACCESS_TOKEN = 'getAccessToken',
     TRANSLATE_HTML = 'translateHtml',
     STYLE_CHANGE = 'styleChange',
     DOMAIN_STRATEGY_CHANGE = 'domainStrategyChange',

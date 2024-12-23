@@ -1,5 +1,16 @@
 import {getConfig, setConfig} from "@/utils/db";
-import {CONFIG_KEY} from "@/entrypoints/constants";
+import {ACTION, CONFIG_KEY, DB_ACTION} from "@/entrypoints/constants";
+import {sendMessageToBackground} from "@/entrypoints/utils";
+
+export class Token {
+    token: string
+    expireTime: number
+
+    constructor(token: string, expireTime: number) {
+        this.token = token;
+        this.expireTime = expireTime;
+    }
+}
 
 export default defineUnlistedScript(
     () => {
@@ -22,7 +33,7 @@ export class translateParams {
 }
 
 interface TranslateText {
-    (text: Array<string>, targetLang: string, sourceLang?: string, options?:any): Promise<TranslatedElement[]>;
+    (text: Array<string>, targetLang: string, sourceLang?: string, options?: any): Promise<TranslatedElement[]>;
 }
 
 interface TranslateHtml {
@@ -31,6 +42,10 @@ interface TranslateHtml {
 
 interface TranslateBatchText {
     (text: Array<string>, targetLang: string, sourceLang?: string): Promise<TranslatedElement[]>;
+}
+
+interface DetectLanguage {
+    (text: Array<string>): Promise<string>;
 }
 
 type TagMap = {
@@ -110,7 +125,8 @@ class TagReplacer {
 
 class TranslationService {
 
-    constructor(serviceName: string, baseUrl: string, requestMethod: string, authToken: string, apiKey: string, translateText: TranslateText, translateHtml?: TranslateHtml, translateBatchText?: TranslateBatchText) {
+    constructor(serviceName: string, baseUrl: string, requestMethod: string, authToken: Token, apiKey: string, translateText: TranslateText,
+                translateHtml?: TranslateHtml, translateBatchText?: TranslateBatchText, detectLanguage?: DetectLanguage) {
         this.serviceName = serviceName;
         this.baseUrl = baseUrl;
         this.requestMethod = requestMethod;
@@ -123,13 +139,17 @@ class TranslationService {
         if (translateBatchText) {
             this.translateBatchText = translateBatchText.bind(this);
         }
+        if (detectLanguage) {
+            this.detectLanguage = detectLanguage.bind(this);
+        }
         console.log("TranslationService created:", this)
     }
 
+    detectLanguage: DetectLanguage | undefined;
     serviceName: string
     baseUrl: string
     requestMethod: string
-    authToken: string
+    authToken: Token
     apiKey: string
     //translate origin text function
     translateText: TranslateText
@@ -144,7 +164,7 @@ export const googleTranslationService: TranslationService = new TranslationServi
     "google",
     "https://duo-translator.zeroflx.com/googleapis/v1/translateHtml",
     "POST",
-    "",
+    new Token("", 0),
     "",
     async function (this: TranslationService, text: Array<string>, targetLang: string, sourceLang?: string) {
         if (text.length == 0) {
@@ -170,7 +190,7 @@ export const googleTranslationService: TranslationService = new TranslationServi
             )
         });
         let data = await response.json()
-        let result :TranslatedElement[] = []
+        let result: TranslatedElement[] = []
         if (!data || data.length < 2) {
             return Promise.resolve([])
         }
@@ -183,7 +203,7 @@ export const googleTranslationService: TranslationService = new TranslationServi
     },
     async function (this: TranslationService, html: Array<HTMLElement>, targetLang: string, sourceLang?: string) {
         let tagRegex = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
-        let tagMapList :Map<string, string>[] = []
+        let tagMapList: Map<string, string>[] = []
         let texts: string[] = []
         let translatedHtmlList: string[] = []
         for (let i = 0; i < html.length; i++) {
@@ -214,11 +234,12 @@ export const googleTranslationService: TranslationService = new TranslationServi
 );
 const maxRetry = 5
 let gettingToken = false
+
 export class TranslatedElement {
     translatedText: string
     sourceLang: string
     targetLang: string
-    score :string
+    score: string
 
     constructor(translatedText: string, sourceLang: string, targetLang: string, score: string) {
         this.translatedText = translatedText;
@@ -228,7 +249,7 @@ export class TranslatedElement {
     }
 }
 
-function transferLanguageCode(language :string){
+function transferLanguageCode(language: string) {
     if (language == "zh-Hans") {
         return "zh-CN"
     }
@@ -238,47 +259,39 @@ function transferLanguageCode(language :string){
     return language
 }
 
+let detectLanguageUrl = "https://api-edge.cognitive.microsofttranslator.com/detect?api-version=3.0"
+
+async function refreshToken(service: TranslationService) {
+    if (!service.authToken || service.authToken.token == "" || service.authToken.expireTime < Date.now()) {
+        service.authToken = await sendMessageToBackground({
+            action: ACTION.GET_ACCESS_TOKEN,
+            data: {serviceName: service.serviceName}
+        })
+    }
+}
+
 export const microsoftTranslationService = new TranslationService(
     "microsoft",
     "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&includeSentenceLength=true&",
     "POST",
-    "",
+    new Token("", 0),
     "",
     // Translate text functions
-    async function (this: TranslationService, text: Array<string>, targetLang: string, sourceLang?: string,options?:any) {
+    async function (this: TranslationService, text: Array<string>, targetLang: string, sourceLang?: string, options?: any) {
         // send request to background
 
         let url: string
         url = this.baseUrl + "to=" + targetLang;
-        // if (sourceLang == undefined) {
-        //     url = this.baseUrl + "to=" + targetLang;
-        // } else {
-        //     url = this.baseUrl + "from=" + sourceLang + "&to=" + targetLang;
-        // }
-        let tokenUrl = "https://edge.microsoft.com/translate/auth"
         //token initialization
-        if (!this.authToken) {
-            console.log("get first token")
-            // get token, firstly by db and then by fetch
-            let token = await getConfig(CONFIG_KEY.MICROSOFT_TOKEN)
-            if (!token || token == "") {
-                if (gettingToken) {
-                    // delay 100ms to get token
-                    await new Promise(resolve => setTimeout(resolve, 100))
-                    return this.translateText(text, targetLang, sourceLang,options)
-                }
-                gettingToken = true
-                token = await fetch(tokenUrl).then(response => response.text());
-                console.log('fetch token:', token)
-                await setConfig(CONFIG_KEY.MICROSOFT_TOKEN, token)
-            }
-            this.authToken = token
-        }
+        // if (!this.authToken || this.authToken.token == "" || this.authToken.expireTime < Date.now()) {
+        //     this.authToken = await sendMessageToBackground({action :ACTION.GET_ACCESS_TOKEN, data: {serviceName: this.serviceName}})
+        // }
+        await refreshToken(this)
         const response = await fetch(url, {
             method: this.requestMethod,
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + this.authToken
+                'Authorization': 'Bearer ' + this.authToken.token
             },
             body: JSON.stringify(
                 text.map(t => ({text: t}))
@@ -291,23 +304,11 @@ export const microsoftTranslationService = new TranslationService(
             if (options.retryCount > maxRetry) {
                 return Promise.resolve([])
             }
-            if (options.retryCount == 1) {
-                // first time try to get token from db
-                this.authToken = await getConfig(CONFIG_KEY.MICROSOFT_TOKEN)
-                return this.translateText(text, targetLang, sourceLang,options)
-            }else {
-                // second time try to get token from fetch
-                if (gettingToken) {
-                    // delay 100ms to get token
-                    await new Promise(resolve => setTimeout(resolve, 100))
-                    return this.translateText(text, targetLang, sourceLang,options)
-                }
-                gettingToken = true
-                let token = await fetch(tokenUrl).then(response => response.text());
-                await setConfig(CONFIG_KEY.MICROSOFT_TOKEN, token)
-                this.authToken = token
-                return this.translateText(text, targetLang, sourceLang,options)
-            }
+            this.authToken = await sendMessageToBackground({
+                action: ACTION.GET_ACCESS_TOKEN,
+                data: {serviceName: this.serviceName}
+            })
+            return this.translateText(text, targetLang, sourceLang, options)
 
         }
         let data = await response.json()
@@ -359,7 +360,7 @@ export const microsoftTranslationService = new TranslationService(
             return Promise.resolve([])
         }
         // limit the max characters of text to 4500 and the max elements of text to 900
-        let texts :Array<Array<string>> = []
+        let texts: Array<Array<string>> = []
         let i = 0
         let limit = 0
         texts.push([])
@@ -368,20 +369,20 @@ export const microsoftTranslationService = new TranslationService(
                 t = t.substring(0, 4500)
             }
             limit += t.length
-            i ++
+            i++
             if (limit > 4500 || i > 900) {
                 texts.push([])
                 limit = 0
                 i = 0
                 texts[texts.length - 1].push(t)
-            }else {
+            } else {
                 texts[texts.length - 1].push(t)
             }
         }
 
         const translationPromises = texts.map((text, index) => {
             // the returned results are guaranteed to contain the original index for subsequent sorting
-            return this.translateText(text,targetLang,sourceLang,{retryCount:0}).then((translatedTexts :TranslatedElement[]) => ({
+            return this.translateText(text, targetLang, sourceLang, {retryCount: 0}).then((translatedTexts: TranslatedElement[]) => ({
                 index,
                 translatedTexts
             }));
@@ -395,13 +396,58 @@ export const microsoftTranslationService = new TranslationService(
 
         // restore the sorted results
         let sortedList = sortedResults.map(result => result.translatedTexts)
-        let result :TranslatedElement[] = []
+        let result: TranslatedElement[] = []
         for (let s of sortedList) {
             for (let ss of s) {
                 result.push(ss)
             }
         }
         return Promise.resolve(result)
+    },
+    async function (this: TranslationService, text: Array<string>) {
+        await refreshToken(this)
+        const response = await fetch(detectLanguageUrl, {
+            method: this.requestMethod,
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + this.authToken.token
+            },
+            body: JSON.stringify(
+                text.map(t => ({text: t}))
+            )
+        });
+        if (response.status !== 200) {
+            return Promise.resolve("")
+        }
+        let data = await response.json()
+        let detectLanguages = data.map((d: {
+            language: string,
+            score: number
+        }) => {
+            if (d.score > 0.5) {
+                return d.language
+            }
+        });
+        // find the most frequent language
+        let languageMap = new Map<string, number>()
+        for (let l of detectLanguages) {
+            if (languageMap.has(l)) {
+                languageMap.set(l, (languageMap.get(l) || 0) + 1)
+            } else {
+                languageMap.set(l, 1)
+            }
+        }
+        let max = 0
+        let maxLanguage = ""
+        languageMap.forEach((value, key) => {
+            if (value > max) {
+                max = value
+                maxLanguage = key
+            }
+        })
+        maxLanguage = transferLanguageCode(maxLanguage)
+        console.log('detectLanguage:', maxLanguage)
+        return maxLanguage
     }
 );
 
