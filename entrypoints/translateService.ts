@@ -19,13 +19,25 @@ export default defineUnlistedScript(
 
 export class translateParams {
     serviceName: string
-    sourceLang?: string
     targetLang: string
+    sourceLang?: string
+    defaultStrategy?: string
+    autoTrigger?: boolean
+    isBody?: boolean
 
-    constructor(serviceName: string, targetLang: string, sourceLang?: string,) {
+    constructor(serviceName: string, targetLang: string, sourceLang?: string, defaultStrategy?: string, autoTrigger?: boolean, isBody?: boolean) {
         this.serviceName = serviceName;
         if (sourceLang !== undefined && sourceLang !== null) {
             this.sourceLang = sourceLang;
+        }
+        if (defaultStrategy) {
+            this.defaultStrategy = defaultStrategy;
+        }
+        if (autoTrigger !== undefined && autoTrigger !== null) {
+            this.autoTrigger = autoTrigger;
+        }
+        if (isBody !== undefined && isBody !== null) {
+            this.isBody = isBody;
         }
         this.sourceLang = sourceLang;
         this.targetLang = targetLang;
@@ -196,12 +208,24 @@ export const googleTranslationService: TranslationService = new TranslationServi
         }
         // console.log('google translate data:', data)
         for (let i = 0; i < data?.[0].length; i++) {
-            result.push(new TranslatedElement(data[0][i], data[1][i], targetLang, "1"))
+            result.push(new TranslatedElement(data[0][i], data[1][i], targetLang, 1))
         }
-        console.log('google translate result:', result)
+        // cache the result 5s
+
+        // console.log('google translate result:', result)
         return result
     },
     async function (this: TranslationService, html: Array<HTMLElement>, targetLang: string, sourceLang?: string) {
+
+        // hook google translate api
+        // let result1: TranslatedElement[] = []
+        // for (let i = 0; i < html.length; i++) {
+        //     result1.push(new TranslatedElement("<p>测试</p>", "en", targetLang, "1"))
+        // }
+        // // mock time delay
+        // await new Promise(resolve => setTimeout(resolve, 300))
+        // return Promise.resolve(result1)
+
         let tagRegex = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
         let tagMapList: Map<string, string>[] = []
         let texts: string[] = []
@@ -239,9 +263,9 @@ export class TranslatedElement {
     translatedText: string
     sourceLang: string
     targetLang: string
-    score: string
+    score: number
 
-    constructor(translatedText: string, sourceLang: string, targetLang: string, score: string) {
+    constructor(translatedText: string, sourceLang: string, targetLang: string, score: number) {
         this.translatedText = translatedText;
         this.sourceLang = sourceLang;
         this.targetLang = targetLang;
@@ -314,7 +338,7 @@ export const microsoftTranslationService = new TranslationService(
         let data = await response.json()
         return data.map((d: {
             translations: { text: string }[],
-            detectedLanguage: { language: string, score: string }
+            detectedLanguage: { language: string, score: number }
         }) => new TranslatedElement(d.translations[0].text, transferLanguageCode(d.detectedLanguage.language), targetLang, d.detectedLanguage.score));
     },
     async function (this: TranslationService, html: Array<HTMLElement>, targetLang: string, sourceLang?: string) {
@@ -331,7 +355,7 @@ export const microsoftTranslationService = new TranslationService(
         for (let i = 0; i < html.length; i++) {
             let originalHtml = html[i]
             let originHtml = originalHtml.outerHTML
-            console.log('originHtml:', originHtml)
+            // console.log('originHtml:', originHtml)
             // remove space and line break, only process the text between > and <
             originHtml = originHtml.replace(/>([^<]+)</sg, (match, p1) => {
                 // Trim removes the left and right whitespace characters (including spaces and carriage returns) and retains a space in between
@@ -341,7 +365,7 @@ export const microsoftTranslationService = new TranslationService(
             let translatedHtml = tagReplacer.replaceTags(originHtml)
             texts.push(translatedHtml)
         }
-        console.log('texts:', texts)
+        // console.log('texts:', texts)
         // @ts-ignore
         let translatedTexts = await this.translateBatchText(texts, targetLang, sourceLang)
         // let translatedHtmlList: string[] = []

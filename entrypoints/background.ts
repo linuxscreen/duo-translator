@@ -12,6 +12,7 @@ import {browser, Tabs} from "wxt/browser";
 import {Token, translationServices} from "@/entrypoints/translateService";
 import {Mutex} from "async-mutex";
 import Tab = Tabs.Tab;
+import {getConfig} from "@/utils/db";
 
 export class Sub {
     constructor(title: string, content: string) {
@@ -182,7 +183,7 @@ class RuleStorage {
             existingDoc.rules.push(rule);
             await this.db.put(existingDoc);
             // console.log('Rules added successfully to domain ${rule.domain}.');
-        } catch (err :any) {
+        } catch (err: any) {
             if (err.name == "not_found") {
                 await this.db.put({
                     _id: domain,
@@ -340,13 +341,35 @@ export default defineBackground(() => {
     const domainStorage = DomainStorage.getInstance(db)
     const configStorage = ConfigStorage.getInstance(db)
 
+    function updateContextMenu(tabId: number) {
+        console.log('updateContextMenu', tabId)
+        let tabTranslateStatusKey = "tabTranslateStatus#" + tabId
+        // browser.contextMenus.update("translate", {
+        //     title: browser.i18n.getMessage('contextMenuOriginal'),
+        // })
+        // return
+        browser.storage.session.get(tabTranslateStatusKey).then((value) => {
+            let isTranslate = value[tabTranslateStatusKey] as boolean
+            console.log('isTranslate:', isTranslate, "value", value)
+            if (isTranslate) {
+                browser.contextMenus.update("translate", {
+                    title: browser.i18n.getMessage('contextMenuOriginal'),
+                })
+            } else {
+                browser.contextMenus.update("translate", {
+                    title: browser.i18n.getMessage('contextMenuTranslate'),
+                })
+            }
+        })
+    }
+
 
     browser.runtime.onMessage.addListener((message, sender, sendResponse: (t: any) => void) => {
         // messages are received to manipulate the db database
         switch (message.action) {
             case "getAccessToken":
                 // console.log("getAccessToken", serviceTokenMap.get("microsoft"))
-                let service :string = message.data.service
+                let service: string = message.data.service
                 if (serviceTokenMap && serviceTokenMap.get(service) && (serviceTokenMap.get(service)?.expireTime || 0) > Date.now()) {
                     sendResponse({status: STATUS_SUCCESS, data: serviceTokenMap.get(service)})
                     return
@@ -461,7 +484,7 @@ export default defineBackground(() => {
                     return
                 }
                 let url = sender.tab?.url || message.data.url
-                if (!url.startsWith('http')){
+                if (!url.startsWith('http')) {
                     sendResponse({status: STATUS_FAIL, data: "url is not http or https"});
                     return
                 }
@@ -469,7 +492,7 @@ export default defineBackground(() => {
                     sendResponse({status: STATUS_SUCCESS, data: lang});
                 })
                 break;
-                // get browser native language
+            // get browser native language
             case "getNativeLanguage":
                 // let lang = browser.i18n.getUILanguage()
                 sendResponse({status: STATUS_SUCCESS, data: navigator.language});
@@ -498,6 +521,11 @@ export default defineBackground(() => {
                 break
             case "setSessionStorage":
                 let key = message.data.key
+                if (!key || key.endsWith("null") || key.endsWith("undefined") || message.data.value == undefined || message.data.value === "" || message.data.value === "null" || message.data.value === "undefined") {
+                    console.log('value is null or empty', key, message.data.value)
+                    sendResponse({status: STATUS_FAIL, data: "value is null or empty"});
+                    return
+                }
                 browser.storage.session.set({[key]: message.data.value}).then(() => {
                     sendResponse({status: STATUS_SUCCESS, data: "insert success"});
                 }).catch((e) => {
@@ -511,12 +539,15 @@ export default defineBackground(() => {
                     sendResponse({status: STATUS_FAIL, data: e.message})
                 });
                 break
+            case "showContextMenu":
+                console.log('showContextMenu', message.data)
+                // updateContextMenu(message.data as number)
+                break
             default:
                 break
         }
         return true
     });
-
     let isTranslate = false
 
     // add context menu to translate page
@@ -525,34 +556,77 @@ export default defineBackground(() => {
         title: browser.i18n.getMessage('contextMenuTranslate'),
         contexts: ["selection", "page"]
     });
+
     browser.contextMenus.onClicked.addListener((info, tab) => {
+        console.log('contextMenus.onClicked', info, tab)
         if (!tab || !tab.id) {
             return
         }
         if (!isTranslate) {
             browser.tabs.sendMessage(tab.id, {action: TRANS_ACTION.TRANSLATE});
-            browser.contextMenus.update("translate", {
-                title: browser.i18n.getMessage('contextMenuOriginal'),
-            });
-            isTranslate = true
-
-
         } else {
             browser.tabs.sendMessage(tab.id, {action: TRANS_ACTION.ORIGIN});
-            browser.contextMenus.update("translate", {
-                title: browser.i18n.getMessage('contextMenuTranslate'),
-            });
-            isTranslate = false
         }
 
     })
+
+    browser.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName === 'session') {
+            console.log('Storage updated:', changes);
+            for (let changesKey in changes) {
+                let tabStatus = changesKey.split("#")
+                if (tabStatus.length !== 2) {
+                    continue
+                }
+                if (tabStatus[0] === "tabTranslateStatus" && activeTabId === parseInt(tabStatus[1])) {
+                    isTranslate = changes[changesKey].newValue as boolean
+                    if (isTranslate) {
+                        browser.contextMenus.update("translate", {
+                            title: browser.i18n.getMessage('contextMenuOriginal'),
+                        })
+                    } else {
+                        browser.contextMenus.update("translate", {
+                            title: browser.i18n.getMessage('contextMenuTranslate'),
+                        })
+                    }
+
+                }
+            }
+        }
+    });
+
+    let activeTabId: number = 0
+    // Listen for tab activation events
+    browser.tabs.onActivated.addListener(async (activeInfo) => {
+        // only process http or https url
+        let tab = await browser.tabs.get(activeInfo.tabId)
+        if (!tab?.url?.startsWith('http')) {
+            return
+        }
+        console.log('tabs.onActivated', activeInfo)
+        // get current tab translate status
+        let tabTranslateStatusKey = "tabTranslateStatus#" + activeInfo.tabId
+        browser.storage.session.get(tabTranslateStatusKey).then((value) => {
+            isTranslate = value[tabTranslateStatusKey] as boolean
+            if (isTranslate) {
+                browser.contextMenus.update("translate", {
+                    title: browser.i18n.getMessage('contextMenuOriginal'),
+                })
+            }else {
+                browser.contextMenus.update("translate", {
+                    title: browser.i18n.getMessage('contextMenuTranslate'),
+                })
+            }
+        })
+        activeTabId = activeInfo.tabId;
+    });
 
     // process shortcut key command
     browser.commands.onCommand.addListener((command) => {
         if (command === 'shortcut-toggle') {
             // send message to current tab, toggle translate status
             browser.tabs.query({active: true, currentWindow: true}).then((tabs) => {
-                let tab :Tab = tabs[0]
+                let tab: Tab = tabs[0]
                 if (!tab || !tab.id) {
                     return
                 }
@@ -561,10 +635,10 @@ export default defineBackground(() => {
         }
     });
 
-    async function getMicrosoftToken() :Promise<Token> {
+    async function getMicrosoftToken(): Promise<Token> {
         const release = await mutex.acquire(); // Acquire the lock
         try {
-            let tokenFromDB :Token = await configStorage.getConfigItem(CONFIG_KEY.MICROSOFT_TOKEN)
+            let tokenFromDB: Token = await configStorage.getConfigItem(CONFIG_KEY.MICROSOFT_TOKEN)
             // if token is null or "" and token is expired, get token from server
             if (tokenFromDB == null || tokenFromDB.token == "" || (tokenFromDB.expireTime || 0) < Date.now()) {
                 let token = await fetch(tokenUrl).then(response => response.text());
@@ -574,11 +648,11 @@ export default defineBackground(() => {
                 return freshToken
             }
             return tokenFromDB
-        }catch (e) {
+        } catch (e) {
             console.error(e)
             return new Token("", 0)
             // first get token from db
-        }finally {
+        } finally {
             release();
         }
 

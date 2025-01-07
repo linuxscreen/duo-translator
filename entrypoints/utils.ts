@@ -1,6 +1,7 @@
 // utils.js
 import {DB_ACTION, STATUS_SUCCESS} from "@/entrypoints/constants";
-
+import * as OpenCC from 'opencc-js';
+import content from "@/entrypoints/content";
 export default defineUnlistedScript(
     () => {
     }
@@ -39,7 +40,8 @@ export class Rule {
 
 type Message = {
     // request: string | ""
-    action: DB_ACTION | string
+    active?: boolean; // identify the active tab
+    action: string
     data?: any
 }
 
@@ -83,6 +85,40 @@ export async function sendMessageToTab(message: Message) {
     }else {
         return Promise.resolve(null)
     }
+
+}
+
+// send a message to all tabs
+// If the tab is active, set the active flag to true
+// return the response of the active tab
+export async function sendMessageToAllTabs(message: Message) {
+    let tabs = await browser.tabs.query({})
+    let activeTab = await browser.tabs.query({active: true, currentWindow: true})
+    console.log(tabs)
+    let resp :any
+    await Promise.all(tabs.map(tab => {
+        if (!tab.url?.startsWith('http')) {
+            return
+        }
+        if (tab.id == activeTab?.[0]?.id) {
+            let messageCopy = structuredClone(message)
+            messageCopy.active = true
+            resp = browser.tabs.sendMessage(Number(tab.id), messageCopy)
+            return;
+        }
+        browser.tabs.sendMessage(Number(tab.id), message)
+    }))
+    return resp
+}
+
+export function isTraditionalChinese(input: string) {
+    const converterTw = OpenCC.Converter({ from:'t', to: 'cn' });
+    // const converterHk = OpenCC.Converter({ from:'cn', to: 'hk' });
+    let convertedTw = converterTw(input)
+    // let convertedHk = converterHk(input)
+    // console.log(convertedTw)
+    // console.log(converted)
+    return convertedTw != input; // If the converted characters are different from the original characters, the characters are Simplified Chinese
 
 }
 

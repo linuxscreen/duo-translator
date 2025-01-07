@@ -2,7 +2,12 @@
 import {ref} from 'vue';
 import CustomColorPicker from "@/components/CustomColorPicker.vue";
 import CustomSwitch from "@/components/CustomSwitch.vue";
-import {sendMessageToBackground, sendMessageToTab} from "@/entrypoints/utils";
+import {
+    isTraditionalChinese,
+    sendMessageToAllTabs,
+    sendMessageToBackground,
+    sendMessageToTab
+} from "@/entrypoints/utils";
 import {
     ACTION,
     COMMON,
@@ -24,6 +29,8 @@ import {translationServices} from "@/entrypoints/translateService";
 import CustomDropdownMenu from "@/components/CustomDropdownMenu.vue";
 import axios from "axios";
 import debug from 'debug';
+import {franc, francAll} from "franc";
+import ChineseSimplifiedTraditional from "chinese-simplified-traditional";
 
 const title = import.meta.env.VITE_APP_TITLE
 const env = import.meta.env.VITE_ENV
@@ -68,6 +75,13 @@ export default {
                 action: DB_ACTION.CONFIG_SET,
                 data: {name: CONFIG_KEY.GLOBAL_SWITCH, value: newVal}
             })
+            sendMessageToAllTabs({action: ACTION.GLOBAL_SWITCH_CHANGE, data: newVal}).then((response) => {
+                // console.log('globalSwitch', response)
+                if (typeof response === 'boolean'){
+                    this.translateToggle = response
+                }
+            })
+
         },
         bgColorIndex(newVal) {
             this.setConfig(CONFIG_KEY.BG_COLOR_INDEX, newVal)
@@ -87,6 +101,8 @@ export default {
     data() {
         // const userInfo = getUserInfo
         return {
+            domainStrategyAlwaysTranslateUnWatcher: ()=>{},
+            domainStrategyNeverTranslateUnWatcher: ()=>{},
             domainStrategyAlwaysTranslate: false,
             domainStrategyNeverTranslate: false,
             nativeLanguage: 'en',
@@ -214,7 +230,9 @@ export default {
     },
     methods: {
         openHelpPage() {
-            browser.tabs.create({url: "https://duo.zeroflx.com/docs"})
+            this.test()
+
+            // browser.tabs.create({url: "https://duo.zeroflx.com/docs"})
         },
         openSettingPage() {
             browser.tabs.create({url: "options.html"})
@@ -288,6 +306,23 @@ export default {
         },
         async defaultStrategyChanged(newVal) {
             await this.setConfig(CONFIG_KEY.DEFAULT_STRATEGY, newVal)
+            // let domainStrategy = DOMAIN_STRATEGY.AUTO
+            // if (this.domainStrategyNeverTranslate) {
+            //     domainStrategy = DOMAIN_STRATEGY.NEVER
+            // }else if (this.domainStrategyAlwaysTranslate) {
+            //    domainStrategy = DOMAIN_STRATEGY.ALWAYS
+            // }
+            // await sendMessageToTab({action: ACTION.DOMAIN_STRATEGY_CHANGE,data: domainStrategy})
+            if (newVal == DOMAIN_STRATEGY.ALWAYS) {
+                this.translateToggle = true
+            }else if (newVal == DOMAIN_STRATEGY.NEVER) {
+                this.translateToggle = false
+            }
+            let resp = await sendMessageToAllTabs({action: ACTION.DEFAULT_STRATEGY_CHANGE,data: newVal})
+            console.log('defaultStrategyChanged', resp)
+            if (typeof resp === 'boolean'){
+                this.translateToggle = resp
+            }
         },
         async translateToggleChanged(newVal) {
             await sendMessageToBackground({
@@ -295,42 +330,41 @@ export default {
                 data: {key: this.tabStatusKey, value: newVal}
             })
         },
+        async processDomainStrategyChange(strategy : DOMAIN_STRATEGY) {
+            await sendMessageToBackground({
+                action: DB_ACTION.DOMAIN_UPDATE,
+                data: {domain: this.domain, strategy: strategy}
+            })
+            let res = await sendMessageToTab({
+                action: ACTION.DOMAIN_STRATEGY_CHANGE,
+                data: strategy
+            })
+            console.log('processDomainStrategyChange', res)
+            if (res === undefined || res === null) {
+                return
+            }
+            this.translateToggle = res
+        },
         async neverDomainStrategyChanged(newVal) {
             // console.log('neverDomainStrategyChanged', newVal)
             if (newVal) {
+                this.domainStrategyAlwaysTranslateUnWatcher()
                 this.domainStrategyAlwaysTranslate = false
-                await sendMessageToBackground({
-                    action: DB_ACTION.DOMAIN_UPDATE,
-                    data: {domain: this.domain, strategy: DOMAIN_STRATEGY.NEVER}
-                })
-                this.translateToggle = await sendMessageToTab({
-                    action: ACTION.DOMAIN_STRATEGY_CHANGE,
-                    data: DOMAIN_STRATEGY.NEVER
-                })
+                this.domainStrategyAlwaysTranslateUnWatcher = this.$watch('domainStrategyAlwaysTranslate', this.alwaysDomainStrategyChanged)
+                await this.processDomainStrategyChange(DOMAIN_STRATEGY.NEVER)
             }else {
-                await sendMessageToBackground({
-                    action: DB_ACTION.DOMAIN_UPDATE,
-                    data: {domain: this.domain, strategy: DOMAIN_STRATEGY.AUTO}
-                })
+                await this.processDomainStrategyChange(DOMAIN_STRATEGY.AUTO)
             }
 
         },
         async alwaysDomainStrategyChanged(newVal) {
             if (newVal) {
+                this.domainStrategyNeverTranslateUnWatcher()
                 this.domainStrategyNeverTranslate = false
-                await sendMessageToBackground({
-                    action: DB_ACTION.DOMAIN_UPDATE,
-                    data: {domain: this.domain, strategy: DOMAIN_STRATEGY.ALWAYS}
-                })
-                this.translateToggle = await sendMessageToTab({
-                    action: ACTION.DOMAIN_STRATEGY_CHANGE,
-                    data: DOMAIN_STRATEGY.ALWAYS
-                })
+                this.domainStrategyNeverTranslateUnWatcher = this.$watch('domainStrategyNeverTranslate', this.neverDomainStrategyChanged)
+                await this.processDomainStrategyChange(DOMAIN_STRATEGY.ALWAYS)
             }else {
-                await sendMessageToBackground({
-                    action: DB_ACTION.DOMAIN_UPDATE,
-                    data: {domain: this.domain, strategy: DOMAIN_STRATEGY.AUTO}
-                })
+                await this.processDomainStrategyChange(DOMAIN_STRATEGY.AUTO)
             }
         },
         async bilingualHighlightingChanged(newVal) {
@@ -385,6 +419,14 @@ export default {
         },
 
         test() {
+            let element = document.createElement('div');
+            let svg = document.createElement("link")
+            svg.textContent = 'https://duo.zeroflx.com/docs'
+
+            element.append(svg)
+            console.log('test', element,'length', element.textContent?.length,'link',svg)
+            // console.log(franc("Business Settings Privacy Images"));
+            // console.log(isTraditionalChinese("隐私权"));
         },
         changeDomainStrategy(selected) {
             // Obtain the domain name and save the policy to the database
@@ -417,26 +459,37 @@ export default {
             )
         },
         async changeTranslateService(selected) {
+            if (selected.title == this.translateService) {
+                return
+            }
             await sendMessageToBackground({
                 action: DB_ACTION.CONFIG_SET,
                 data: {name: CONFIG_KEY.TRANSLATE_SERVICE, value: selected.value}
             })
             this.translateService = selected.title
             // if current is translate status, let content script to re-translate
-            if (this.translateToggle) {
-                await sendMessageToTab({action: ACTION.TRANSLATE_CHANGE})
-            }
+            // if (this.translateToggle) {
+            //     await sendMessageToTab({action: ACTION.TRANSLATE_CHANGE})
+            // }
+            await sendMessageToAllTabs({action: ACTION.TRANSLATE_CHANGE,data:{service:selected.value}})
         },
         async changeViewStrategy(selected) {
+            if (selected.title == this.viewStrategy) {
+                return
+            }
             await sendMessageToBackground({
                 action: DB_ACTION.CONFIG_SET,
                 data: {name: CONFIG_KEY.VIEW_STRATEGY, value: selected.value}
             })
             this.viewStrategy = selected.title
-            // if current is translate status, let content script to re-translate
+            // if current is translated status, let content script to re-translate
             console.log('changeViewStrategy translateToggle', this.translateToggle)
-            if (this.translateToggle) {
-                await sendMessageToTab({action: ACTION.TRANSLATE_CHANGE})
+            // if (this.translateToggle) {
+            //     await sendMessageToTab({action: ACTION.TRANSLATE_CHANGE})
+            // }
+            let resp = await sendMessageToAllTabs({action: ACTION.VIEW_STRATEGY_CHANGE,data:selected.value})
+            if (typeof resp === 'boolean'){
+                this.translateToggle = resp
             }
         },
         async changeTargetLanguage(selected) {
@@ -449,6 +502,8 @@ export default {
             if (this.translateToggle) {
                 await sendMessageToTab({action: ACTION.TRANSLATE_CHANGE})
             }
+            await sendMessageToAllTabs({action: ACTION.TARGET_LANG_CHANGE,data:{lang:selected.value}})
+
         },
 
         async toggleSelectionMode() {
@@ -476,27 +531,14 @@ export default {
             return array.find(value => value.value == code)
         },
         async toggleTranslation(translateStatus: boolean) {
-            console.log('toggleTranslation', translateStatus)
-            // Sets the current tab translation status
-            await sendMessageToBackground({
-                action: STORAGE_ACTION.SESSION_SET,
-                data: {key: this.tabStatusKey, value: translateStatus}
-            })
+            // console.log('toggleTranslation', translateStatus)
             if (translateStatus) {
                 // send message to content script, process translation action
-                let action = this.viewStrategies.find(value => value.title == this.viewStrategy)?.action as string
-                await sendMessageToTab({
-                    action: action,
-                    // data: {
-                    //     targetLanguage: this.getItemByTitle(this.targetLanguages, this.targetLanguage)?.value,
-                    //     sourceLanguage: undefined,
-                    //     translateService: this.getItemByTitle(this.translateServices, this.translateService)?.value
-                    // }
-                })
+                await sendMessageToTab({action: TRANS_ACTION.TRANSLATE})
             } else {
                 await sendMessageToTab({action: TRANS_ACTION.ORIGIN})
             }
-
+            // console.log('toggleTranslation', data)
             // close popup
             // window.close()
         },
@@ -529,7 +571,7 @@ export default {
             console.log('tabs', this.tabs[0].id, 'domain', this.domain)
             let [targetLanguageConfigValue, tabLanguage, translateServiceConfigValue, status, domainData, viewStrategyConfigValue, nativeLanguage] = await Promise.all([
                 sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.TARGET_LANG}}),
-                sendMessageToBackground({action: TB_ACTION.TAB_LANG_GET, data: this.tabs?.[0]}),
+                sendMessageToBackground({action: TB_ACTION.LANG_GET, data: this.tabs?.[0]}),
                 sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.TRANSLATE_SERVICE}}),
                 sendMessageToBackground({
                     action: STORAGE_ACTION.SESSION_GET,
@@ -641,8 +683,8 @@ export default {
             this.$watch('translationBgColor', this.translationBgColorChanged)
 
             this.$watch('defaultStrategy', this.defaultStrategyChanged)
-            this.$watch('domainStrategyAlwaysTranslate', this.alwaysDomainStrategyChanged)
-            this.$watch('domainStrategyNeverTranslate', this.neverDomainStrategyChanged)
+            this.domainStrategyAlwaysTranslateUnWatcher = this.$watch('domainStrategyAlwaysTranslate', this.alwaysDomainStrategyChanged)
+            this.domainStrategyNeverTranslateUnWatcher = this.$watch('domainStrategyNeverTranslate', this.neverDomainStrategyChanged)
             this.$watch('translateToggle', this.translateToggleChanged)
         } catch (e) {
             // console.log(e)
@@ -657,7 +699,7 @@ export default {
         <div class="login">
             <div class="helpBtn" @click="openHelpPage">
                 <el-tooltip :content="t('helpDocument')" placement="bottom" effect="customized" :showAfter="500">
-                    <img src="@/public/icon/help.svg" alt="">
+                    <img src="/icon/help.svg" alt="">
                 </el-tooltip>
                 <div class="login-message">
 
@@ -665,7 +707,7 @@ export default {
             </div>
             <div class="setting" @click="openSettingPage">
                 <el-tooltip :content="t('setting')" placement="bottom" effect="customized" :showAfter="500">
-                    <img src="../public/icon/setting.svg" alt="">
+                    <img src="/icon/setting.svg" alt="">
                 </el-tooltip>
             </div>
             <div>
