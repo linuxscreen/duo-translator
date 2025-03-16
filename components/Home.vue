@@ -13,12 +13,15 @@ import {
     COMMON,
     CONFIG_KEY,
     DB_ACTION,
+    DEFAULT_VALUE,
     DOMAIN_STRATEGY,
     LANGUAGES,
     STORAGE_ACTION,
     TB_ACTION,
     TRANS_ACTION,
     TRANS_SERVICE,
+    TRANSLATE_SERVICES,
+    TranslateService,
     VIEW_STRATEGY
 } from "@/entrypoints/constants";
 import useI18n from "@/composables/useI18n";
@@ -152,10 +155,7 @@ export default {
                 // {title: "showToggleButton", value: VIEW_STRATEGY.BUTTON, action: TRANS_ACTION.TOGGLE},
             ],
             // translation service
-            translateServices: [
-                {title: "microsoftTranslator", value: TRANS_SERVICE.MICROSOFT},
-                {title: "googleTranslator", value: TRANS_SERVICE.GOOGLE},
-            ],
+            translateServices: TRANSLATE_SERVICES,
             targetLanguages: LANGUAGES,
             sourceLanguages: LANGUAGES,
             domainStrategy: "none",
@@ -163,7 +163,7 @@ export default {
             viewStrategy: "bilingual",
             selected: "default",
             targetLanguage: "simplifiedChinese",
-            translateService: "microsoftTranslator",
+            translateService: DEFAULT_VALUE.TRANSLATE_SERVICE_TITLE as string,
             sourceLanguage: "automaticDetection",
             switchAlwaysTranslate: false,
             switchNeverTranslate: false,
@@ -458,15 +458,15 @@ export default {
                 // todo upload an error message to the server
             )
         },
-        async changeTranslateService(selected) {
-            if (selected.title == this.translateService) {
+        async changeTranslateService(selected :TranslateService) {
+            if (selected.value == this.translateService) {
                 return
             }
             await sendMessageToBackground({
                 action: DB_ACTION.CONFIG_SET,
                 data: {name: CONFIG_KEY.TRANSLATE_SERVICE, value: selected.value}
             })
-            this.translateService = selected.title
+            this.translateService = selected.value
             // if current is translate status, let content script to re-translate
             // if (this.translateToggle) {
             //     await sendMessageToTab({action: ACTION.TRANSLATE_CHANGE})
@@ -569,7 +569,8 @@ export default {
                 this.translateToggleEnabled = false
             }
             console.log('tabs', this.tabs[0].id, 'domain', this.domain)
-            let [targetLanguageConfigValue, tabLanguage, translateServiceConfigValue, status, domainData, viewStrategyConfigValue, nativeLanguage] = await Promise.all([
+            let [targetLanguageConfigValue, tabLanguage, translateServiceConfigValue, status, domainData, 
+                viewStrategyConfigValue, nativeLanguage, disabledTranslateService] = await Promise.all([
                 sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.TARGET_LANG}}),
                 sendMessageToBackground({action: TB_ACTION.LANG_GET, data: this.tabs?.[0]}),
                 sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.TRANSLATE_SERVICE}}),
@@ -579,7 +580,8 @@ export default {
                 }),
                 sendMessageToBackground({action: DB_ACTION.DOMAIN_GET, data: {domain: this.domain}}),
                 sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.VIEW_STRATEGY}}),
-                sendMessageToBackground({action: "getNativeLanguage"})
+                sendMessageToBackground({action: "getNativeLanguage"}),
+                sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.DISABLED_TRANSLATE_SERVICE}})
             ]);
             this.nativeLanguage = nativeLanguage
             console.log('tabLanguage', tabLanguage)
@@ -599,8 +601,15 @@ export default {
                 })
             }
             this.tabLanguage = tabLanguage
+            disabledTranslateService.forEach((service :string) => {
+                this.translateServices.delete(service)
+            })
             if (translateServiceConfigValue) {
-                this.translateService = this.getItemByValue(this.translateServices, translateServiceConfigValue)?.title;
+                let service = this.translateServices.get(translateServiceConfigValue)
+                if (service) {
+                    this.translateService = service.value
+                }
+                this.translateService = this.translateServices.values()?.next()?.value?.value || DEFAULT_VALUE.TRANSLATE_SERVICE_TITLE
             }
             // page translation status
             if (status) {
@@ -842,10 +851,10 @@ export default {
                         <div class="btn-trans">
                             <div class="leading-icon2">
                                 <img
-                                    :src="'fi-brands-'+ getItemByTitle(translateServices,translateService).value + '.svg'"
+                                    :src="'fi-brands-'+ translateService + '.svg'"
                                     :alt="translateService">
                             </div>
-                            <div class="button-text-large">{{ t(translateService) }}</div>
+                            <div class="button-text-large">{{ t(translateServices.get(translateService)?.title || '') }}</div>
                             <svg
                                 class="trailing-icon3"
                                 width="20"
@@ -875,7 +884,7 @@ export default {
                         <template #dropdown>
                             <el-dropdown-menu>
                                 <el-dropdown-item :command="translateService"
-                                                  v-for="(translateService,index) in translateServices">
+                                                  v-for="(translateService,index) in translateServices.values()">
                                     {{ t(translateService.title) }}
                                 </el-dropdown-item>
                             </el-dropdown-menu>

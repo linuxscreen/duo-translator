@@ -13,5 +13,8 @@
   },
   "shortcutToggleTranslation": {
     "message": "翻译/恢复 页面"
+  },
+  "confirmCloseFloatBall": {
+    "message": "确认关闭双语翻译悬浮球？可到设置中重新开启"
   }
 }

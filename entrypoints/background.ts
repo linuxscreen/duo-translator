@@ -366,6 +366,7 @@ export default defineBackground(() => {
 
     browser.runtime.onMessage.addListener((message, sender, sendResponse: (t: any) => void) => {
         // messages are received to manipulate the db database
+        console.log('background onMessage', message)
         switch (message.action) {
             case "getAccessToken":
                 // console.log("getAccessToken", serviceTokenMap.get("microsoft"))
@@ -461,6 +462,7 @@ export default defineBackground(() => {
                 break
             // get the configuration
             case "getConfig":
+                console.log('getConfig', message.data)
                 configStorage.getConfigItem(message.data.name).then((value) => {
                     // console.log(value)
                     sendResponse({status: STATUS_SUCCESS, data: value})
@@ -543,6 +545,19 @@ export default defineBackground(() => {
                 console.log('showContextMenu', message.data)
                 // updateContextMenu(message.data as number)
                 break
+            case "contextMenuSwitch":
+                console.log('contextMenuSwitch', message.data)
+                let contextMenuSwitch = message.data.contextMenuSwitch
+                if (contextMenuSwitch) {
+                    browser.contextMenus.create({
+                        id: "translate",
+                        title: browser.i18n.getMessage('contextMenuTranslate'),
+                        contexts: ["selection", "page"]
+                    }); 
+                } else {
+                    browser.contextMenus.remove("translate")
+                }
+                break
             default:
                 break
         }
@@ -551,11 +566,17 @@ export default defineBackground(() => {
     let isTranslate = false
 
     // add context menu to translate page
-    browser.contextMenus.create({
-        id: "translate",
-        title: browser.i18n.getMessage('contextMenuTranslate'),
-        contexts: ["selection", "page"]
-    });
+    configStorage.getConfigItem(CONFIG_KEY.CONTEXT_MENU_SWITCH).then((value) => {
+        console.log("contextMenuSwitch", value);
+        value = value === undefined ? true : value
+        if (value) {
+            browser.contextMenus.create({
+                id: "translate",
+                title: browser.i18n.getMessage('contextMenuTranslate'),
+                contexts: ["selection", "page"]
+            });
+        }
+    })
 
     browser.contextMenus.onClicked.addListener((info, tab) => {
         console.log('contextMenus.onClicked', info, tab)

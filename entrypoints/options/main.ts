@@ -15,7 +15,7 @@ import * as directives from 'vuetify/directives'
 
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
-import router from "@/router";
+import router from "./router"
 // const router = createRouter({
 //     history: createWebHistory(),
 //     routes: [

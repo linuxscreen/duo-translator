@@ -24,3 +24,16 @@ web-ext.config.ts
 *.njsproj
 *.sln
 *.sw?
+
+a.html
+a.json
+b.html
+demo.ts
+index.html
+log.ts
+background.ts.back
+utils/generateI18nJsonFile.ts
+utils/messages.json
+
+# temp
+entrypoints/test

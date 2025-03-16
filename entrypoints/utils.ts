@@ -1,5 +1,5 @@
 // utils.js
-import {DB_ACTION, STATUS_SUCCESS} from "@/entrypoints/constants";
+import {CONFIG_KEY, DB_ACTION, STATUS_SUCCESS} from "@/entrypoints/constants";
 import * as OpenCC from 'opencc-js';
 import content from "@/entrypoints/content";
 export default defineUnlistedScript(
@@ -120,6 +120,20 @@ export function isTraditionalChinese(input: string) {
     // console.log(converted)
     return convertedTw != input; // If the converted characters are different from the original characters, the characters are Simplified Chinese
 
+}
+
+export async function setConfig(key: CONFIG_KEY, value: any) {
+    return sendMessageToBackground({
+        action: DB_ACTION.CONFIG_SET,
+        data: {name: key, value: value}
+    });
+}
+// configure the fetch function
+export async function getConfig(key: CONFIG_KEY): Promise<any> {
+    return sendMessageToBackground({
+        action: DB_ACTION.CONFIG_GET,
+        data: {name: key}
+    });
 }
 
 

@@ -13,5 +13,8 @@
   },
   "shortcutToggleTranslation": {
     "message": "translate/restore page"
+  },
+  "confirmCloseFloatBall": {
+    "message": "Confirm to close the bilingual translation floating ball? You can re-enable it in the settings"
   }
 }
