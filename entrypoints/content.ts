@@ -22,6 +22,7 @@ import { getCssSelector } from 'css-selector-generator';
 import { getConfig } from "@/utils/db";
 import { franc } from "franc-min";
 import Heap from "heap";
+import { log } from "loglevel";
 
 
 // import {Mutex} from "async-mutex";
@@ -124,7 +125,7 @@ class ParagraphElementTool {
         // } finally {
         //     release()
         // }
-        console.log('heap:', this.paragraphElementHeap.toArray(), this.getMaxLanguage(), this.getMaxProportion())
+        // console.log('heap:', this.paragraphElementHeap.toArray(), this.getMaxLanguage(), this.getMaxProportion())
 
     }
 
@@ -209,7 +210,9 @@ export default defineContentScript({
             return getCssSelector(ele, { selectors: ["id", "class", "tag"], blacklist: ['.duo-*'] })
         }
         let duoSwitch : HTMLElement | null = null
-        function setDuoSwitchStatus (status: boolean) {
+        let floatBallSwitch = true
+        let floatBall = document.createElement("div")
+        function setFloatBallSwitchStatus (status: boolean) {
             if (!duoSwitch) {
                 return
             }
@@ -222,13 +225,9 @@ export default defineContentScript({
         // return
         await initFloatBall()
 
-        async function initFloatBall() {
-            let floatBallSwitch = await getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH)
-            if (!floatBallSwitch) {
-                return
-            }
+        async function createFloatBall() {
+            floatBall = document.createElement("div")
             // float ball
-            let floatBall = document.createElement("div")
             let shadowRoot = floatBall.attachShadow({ mode: 'open' })
             shadowRoot.innerHTML = floatBallHtml
             let styleSheet = document.createElement("style");
@@ -297,7 +296,7 @@ export default defineContentScript({
                 let confirm = window.confirm(browser.i18n.getMessage('confirmCloseFloatBall'));
                 if (confirm) {
                     // remove the float ball
-                    document.body.removeChild(floatBall);
+                    removeFloatBall()
                     // save the config
                     setConfig(CONFIG_KEY.FLOAT_BALL_SWITCH, false)
                     console.log('close');
@@ -401,12 +400,26 @@ export default defineContentScript({
             });
         }
 
+        async function removeFloatBall() {
+            document.body.removeChild(floatBall);
+            floatBallSwitch = false
+        }
+
+        async function initFloatBall() {
+            floatBallSwitch = await getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH)
+            if (!floatBallSwitch) {
+                return
+            }
+            await createFloatBall()
+        }
+
         // ======================== floating ball ========================
 
         // return
         let paragraphElementTool = new ParagraphElementTool()
         let translateStatus = false
-        let manualTranslateTrigger = false
+
+        let manualTrigger = false
         const ignoreMutationElements = new WeakSet();
         let translatedOriginalMap = new Map<HTMLElement, HTMLElement>()
         let paragraphShadowElements: Map<string, HTMLElement> = new Map()
@@ -447,16 +460,16 @@ export default defineContentScript({
         console.log("tabId: ", tabId)
         switch (domainStrategy) {
             case DOMAIN_STRATEGY.NEVER:
-                await setPersistTranslateStatus(false)
+                await persistTranslateStatus(false)
                 break
             case DOMAIN_STRATEGY.ALWAYS:
-                await setPersistTranslateStatus(true)
+                await persistTranslateStatus(true)
                 break
             case DOMAIN_STRATEGY.AUTO:
                 if (defaultStrategy == DOMAIN_STRATEGY.NEVER) {
-                    await setPersistTranslateStatus(false)
+                    await persistTranslateStatus(false)
                 } else if (defaultStrategy == DOMAIN_STRATEGY.ALWAYS) {
-                    await setPersistTranslateStatus(true)
+                    await persistTranslateStatus(true)
                 }
                 break
         }
@@ -502,14 +515,14 @@ export default defineContentScript({
                     });
                     let parent = mutation.target as HTMLElement;
                     if (ignoreMutationElements.has(parent)) {
-                        console.log('ignore mutation:', parent);
+                        // console.log('ignore mutation:', parent);
                         return;
                     }
                     // console.log('parent mutation:', parent, mutation.type)
                     let collect = markParagraphElement(parent, undefined, [], true);
-                    if (parent.textContent?.includes("Ask questions and post articles about the Go programming")) {
-                        console.log('collect:', parent)
-                    }
+                    // if (parent.textContent?.includes("Ask questions and post articles about the Go programming")) {
+                    //     console.log('collect:', parent)
+                    // }
                     // let collect = []
                     if (collect.length > 0) {
                         translateElements.add(parent);
@@ -609,7 +622,7 @@ export default defineContentScript({
                     }
                 }
             }
-            setDuoSwitchStatus(translateStatus)
+            setFloatBallSwitchStatus(translateStatus)
         }
 
 
@@ -632,21 +645,33 @@ export default defineContentScript({
         document.head.appendChild(ruleModeStyle)
         await processStyleChangeAction()
 
-        async function translateWholePage(manualTrigger: boolean) {
+        async function translateWholePage() {
             if (manualTrigger) {
-                manualTranslateTrigger = true
-                await setPersistTranslateStatus(true)
+                // if manually trigger, we can determine the translate status 
+                await persistTranslateStatus(true)
             }
+            await translateAllElements()
+        }
+
+        async function translateAllElements() {
             let elements = document.querySelectorAll(".duo-needs-translate")
             let elementsArray = Array.from(elements) as HTMLElement[]
             await translateParagraphElements(elementsArray)
         }
 
-        async function setPersistTranslateStatus(status: boolean) {
+        async function persistTranslateStatus(status: boolean) {
             await setSessionStorage(tabTranslateStatusKey, status).then(() => {
                 translateStatus = status
-                setDuoSwitchStatus(status)
+                setFloatBallSwitchStatus(status)
             })
+            // notify the home page
+            browser.runtime.sendMessage({
+                action: TB_ACTION.LANG_GET,
+                data: {
+                    tabId: tabId,
+                    status: status
+                }
+            });
         }
 
         document.addEventListener('contextmenu', (event) => {
@@ -654,15 +679,16 @@ export default defineContentScript({
         });
 
         async function translateAction() {
-            await translateWholePage(true)
+            await translateWholePage()
         }
         async function originAction() {
-            manualTranslateTrigger = true
-            await setPersistTranslateStatus(false)
+            manualTrigger = true
+            await persistTranslateStatus(false)
             // restore original page
             await showOriginalPage()
         }
         // Accept messages from popups, process the task
+        // todo
         browser.runtime.onMessage.addListener(async (message, sender, sendResponse: (t: any) => void) => {
             console.log('content script receive message:', message)
             let params: translateParams
@@ -670,10 +696,12 @@ export default defineContentScript({
                 case TRANS_ACTION.TRANSLATE:
                     // await translateRoot(document.body)
                     console.log('translate page')
+                    manualTrigger = true
                     await translateAction()
                     break
                 case TRANS_ACTION.ORIGIN:
                     console.log('show original')
+                    manualTrigger = true
                     await originAction()
                     break
                 case TRANS_ACTION.DOUBLE:
@@ -697,19 +725,20 @@ export default defineContentScript({
                     console.log('aaaa:', message)
                     if (message && message.data && typeof message.data === "string") {
                         domainStrategy = message.data || DOMAIN_STRATEGY.AUTO
+                        manualTrigger = true
                         switch (domainStrategy) {
                             case DOMAIN_STRATEGY.AUTO:
                                 switch (defaultStrategy) {
                                     case DOMAIN_STRATEGY.AUTO:
-                                        manualTranslateTrigger = false
+                                        manualTrigger = false
                                         if (!translateStatus) {
-                                            await translateWholePage(false)
+                                            await translateWholePage()
                                             return translateStatus
                                         } else {
                                             let pageLang = paragraphElementTool.getMaxLanguage()
                                             if (pageLang == "und") {
                                                 await restoreOriginalPage(false)
-                                                await translateWholePage(false)
+                                                await translateWholePage()
                                                 return translateStatus
                                             } else {
                                                 if (targetLanguage == paragraphElementTool.getMaxLanguage()) {
@@ -726,8 +755,8 @@ export default defineContentScript({
                                         return false
                                     case DOMAIN_STRATEGY.ALWAYS:
                                         if (!translateStatus) {
-                                            await setPersistTranslateStatus(true)
-                                            await translateWholePage(false)
+                                            await persistTranslateStatus(true)
+                                            await translateWholePage()
                                         }
                                         return true
                                 }
@@ -740,8 +769,8 @@ export default defineContentScript({
                                 return false
                             case DOMAIN_STRATEGY.ALWAYS:
                                 if (!translateStatus) {
-                                    await setPersistTranslateStatus(true)
-                                    await translateWholePage(false)
+                                    await persistTranslateStatus(true)
+                                    await translateWholePage()
                                 }
                                 return true
                         }
@@ -756,8 +785,10 @@ export default defineContentScript({
                         translateService = service
                     }
                     if (message.active) {
-                        await restoreOriginalPage()
-                        await translateRoot(document.body)
+                        if (translateStatus) {
+                            await restoreOriginalPage()
+                            await translateAction()
+                        }
                     }
 
                     // restore original page
@@ -770,11 +801,14 @@ export default defineContentScript({
                     if (typeof message.data === "string") {
                         defaultStrategy = message.data
                     }
+                    manualTrigger = true // other condition always true
                     switch (defaultStrategy) {
                         case DOMAIN_STRATEGY.AUTO:
-                            manualTranslateTrigger = false
+                            if (domainStrategy == DOMAIN_STRATEGY.AUTO) {
+                                manualTrigger = false
+                            }
                             if (!translateStatus) {
-                                await translateWholePage(false)
+                                await translateWholePage()
                             }
                             console.log('default strategy:', translateStatus)
                             return translateStatus;
@@ -785,8 +819,8 @@ export default defineContentScript({
                             return false
                         case DOMAIN_STRATEGY.ALWAYS:
                             if (!translateStatus) {
-                                await setPersistTranslateStatus(true)
-                                await translateWholePage(false)
+                                await persistTranslateStatus(true)
+                                await translateWholePage()
                             }
                             return true
                         default:
@@ -806,7 +840,7 @@ export default defineContentScript({
                             await restoreOriginalPage()
                             return false
                         } else {
-                            return translatePage()
+                            return translateWholePage()
                         }
                     }
                     // return undefined
@@ -841,6 +875,18 @@ export default defineContentScript({
                     }
                     // process the target language change
                     break
+                case TB_ACTION.FLOAT_BALL_SWITCH:
+                    if (typeof message.data === "boolean") {
+                        console.log('float ball switch:', message.data,"floatBallSwitch:",floatBallSwitch)
+                        let newFloatBallSwitch :boolean = message.data
+                        if (newFloatBallSwitch && !floatBallSwitch) {
+                            await createFloatBall()
+                        }else{
+                            console.log('remove float ball')
+                            await removeFloatBall()
+                        }
+                        floatBallSwitch = newFloatBallSwitch
+                    }
                 default:
                     break
             }
@@ -865,22 +911,9 @@ export default defineContentScript({
          */
         async function restoreOriginalPage(setStatus: boolean = true) {
             if (setStatus) {
-                try {
-                    await setSessionStorage(tabTranslateStatusKey, false)
-                    translateStatus = false
-                } finally {
-                }
+                persistTranslateStatus(false)
             }
-            console.log('restore original page', originalElementRecords, translateElementRecords)
-            // for (let i = 0; i < translateElementRecords.length; i++) {
-            //     let ele = translateElementRecords[i]
-            //     let originalEle = originalElementRecords[i]
-            //     if (ele && originalEle) {
-            //         ele.innerHTML = originalEle?.innerHTML
-            //         ele.removeAttribute("duo-no-observer")
-            //         ele.classList.remove("duo-translated")
-            //     }
-            // }
+            console.log('restore original page', translatedOriginalMap)
             for (let element of translatedOriginalMap) {
                 let [translatedElement, originalElement] = element
                 ignoreMutationElements.add(translatedElement)
@@ -1021,72 +1054,11 @@ export default defineContentScript({
             return true
         }
 
-        function detectPageLanguage() {
-            // let allElements = document.querySelectorAll(".duo-paragraph");
-            // for (let element of allElements) {
-            //
-            // }
-            // let langCountMap = new Map<string, number>()
-            // let totalTextLen = 0
-            // let count = 0
-            // for (let htmlElement of allParagraphElementSet) {
-            //     if (document.contains(htmlElement)) {
-            //         count++
-            //     } else {
-            //         console.log('element not in document:', htmlElement)
-            //     }
-            //     let textLen = htmlElement.textContent?.length || 0
-            //     totalTextLen += textLen
-            //     let lang = htmlElement.getAttribute("duo-lang")
-            //     if (lang) {
-            //         if (langCountMap.has(lang)) {
-            //             langCountMap.set(lang, (langCountMap.get(lang) || 0) + textLen)
-            //         } else {
-            //             langCountMap.set(lang, textLen)
-            //         }
-            //     }
-            // }
-            // let maxCount = 0
-            // let maxLang = ""
-            // langCountMap.forEach((value, key) => {
-            //     if (value > maxCount) {
-            //         maxCount = value
-            //         maxLang = key
-            //     }
-            // })
-            // console.log('detectPageLanguage:', langCountMap, 'maxLang:', maxLang, 'maxCount:', maxCount, 'totalTextLen:', totalTextLen, 'proportion:', maxCount / totalTextLen, 'allParagraphElementSet size:', allParagraphElementSet.size, 'count:', count)
-            // // if (maxCount/totalTextLen >= 0.7) {
-            // //     return maxLang
-            // // }
-            // return maxLang
-        }
-
-        // function detectPageLanguageScore() {
-        //     let scoreMap = new Map<string, number>()
-        //     let totalScore = 0
-        //     for (let htmlElement of allParagraphElementSet) {
-        //         let lang = htmlElement[0].getAttribute("duo-lang")
-        //         let len = getByteLength(htmlElement[0].textContent)
-        //         totalScore += len
-        //         if (lang) {
-        //             if (scoreMap.has(lang)) {
-        //                 scoreMap.set(lang, (scoreMap.get(lang) || 0) + len)
-        //             } else {
-        //                 scoreMap.set(lang, len)
-        //             }
-        //         }
-        //     }
-        //     let maxScore = 0
-        //     let maxLang = ""
-        //     scoreMap.forEach((value, key) => {
-        //         if (value > maxScore) {
-        //             maxScore = value
-        //             maxLang = key
-        //         }
-        //     })
-        //     return {lang: maxLang, score: maxScore / totalScore}
-        // }
-
+        /**
+         * translate page with strategy
+         * @returns 
+         * @deprecated
+         */
         async function translatePage() {
             console.log("translatePage:", allParagraphElementSet)
             if (domainStrategy == DOMAIN_STRATEGY.ALWAYS) {
@@ -1267,8 +1239,15 @@ export default defineContentScript({
 
         }
 
-        // translate the root DOM tree
-        // if translate success, return true, otherwise return false
+        /**
+         * translate the root DOM tree
+         * if translate success, return true, otherwise return false
+         * @deprecated
+         * @param root 
+         * @param autoTrigger 
+         * @param context 
+         * @returns 
+         */
         async function translateRoot(root: HTMLElement, autoTrigger?: boolean, context?: any) {
             // console.log('translateRoot:', root)
             if (defaultStrategy == DOMAIN_STRATEGY.AUTO) {
@@ -1630,7 +1609,7 @@ export default defineContentScript({
                 element.classList.add('duo-paragraph')
                 if (!notTranslate) {
                     if (collectElements && !element.querySelector('.duo-translation')) {
-                        console.log('push collect element:', element)
+                        // console.log('push collect element:', element)
                         collectElements.push(element)
                     }
                     element.classList.add("duo-needs-translate")
@@ -2081,10 +2060,10 @@ export default defineContentScript({
                     //     }
                     //     continue
                     // }
-                    console.log('element after:', element)
+                    // console.log('element after:', element)
                     let elementCloned = element.cloneNode(false) as HTMLElement
                     elementCloned.innerHTML = res[i].translatedText
-                    console.log('elementCloned:', elementCloned.innerHTML)
+                    // console.log('elementCloned:', elementCloned.innerHTML)
                     if (elementCloned.textContent?.trim() !== "" && elementCloned.textContent !== originalHtmlElements[i].textContent) {
                         let duoElement = document.createElement('font')
                         duoElement.classList.add("duo-translation")
@@ -2093,7 +2072,7 @@ export default defineContentScript({
                         // If the current text is longer than 40 characters, add a line break. Otherwise, add a space
                         if (element.textContent!.length > 40) {
                             element.appendChild(document.createElement('br'));
-                            console.log('duoElement element:', duoElement)
+                            // console.log('duoElement element:', duoElement)
                             element.appendChild(duoElement);
                         } else {
                             let divide = document.createElement('span')
@@ -2192,12 +2171,16 @@ export default defineContentScript({
             return translatedElements
         }
 
-        function whetherTranslate() {
+        /**
+         * judge whether translate the page according to the strategy
+         * @returns boolean
+         */
+        function whetherTranslate() :boolean {
             if (!globalSwitch) {
                 return false
             }
-            if (manualTranslateTrigger) {
-                console.log('manualTranslateTrigger:', manualTranslateTrigger, translateStatus)
+            if (manualTrigger) {
+                console.log('manualTriggerTranslate:', manualTrigger, translateStatus)
                 return translateStatus;
             }
             if (domainStrategy == DOMAIN_STRATEGY.NEVER) {
@@ -2221,18 +2204,22 @@ export default defineContentScript({
 
         /**
          * Translate the paragraph elements
+         * will 
          * @param elements
          * @param context hasDuplicated is true, indicate that the element has been duplicated
          */
         async function translateParagraphElements(elements: HTMLElement[], context?: any) {
             console.log('translateParagraphElements:', elements.length)
             let translatedOriginalMapTemp = new Map<HTMLElement, HTMLElement>()
-            for (let i = 0; i < elements.length; i++) {
-                console.log('translateParagraphElements element:', elements[i].cloneNode(true))
-            }
+            // for (let i = 0; i < elements.length; i++) {
+            //     console.log('translateParagraphElements element:', elements[i].cloneNode(true))
+            // }
             if (!whetherTranslate()) {
                 return
             }
+            // if (!translateStatus) {
+            //     persistTranslateStatus(true)
+            // }
             if (context && typeof context.hasDuplicated === 'boolean' && !context.hasDuplicated) {
                 // remove duplicate elements
                 elements = Array.from(new Set(elements))
@@ -2246,7 +2233,7 @@ export default defineContentScript({
                 ignoreMutationElements.add(element)
             }
             let ignoreTranslateElements: HTMLElement[] = []
-            console.log('translateParagraphElements:', elements)
+            // console.log('translateParagraphElements:', elements)
             let service = translateService
             if (context && typeof context.targetTranslateService === "string" && context.targetTranslateService) {
                 service = context.targetTranslateService
@@ -2275,7 +2262,7 @@ export default defineContentScript({
                 if (elements.length == 0) {
                     return;
                 }
-                if (defaultStrategy == DOMAIN_STRATEGY.AUTO && !manualTranslateTrigger && domainStrategy == DOMAIN_STRATEGY.AUTO) {
+                if (defaultStrategy == DOMAIN_STRATEGY.AUTO && !manualTrigger && domainStrategy == DOMAIN_STRATEGY.AUTO) {
                     console.log('translateParagraph language after:', paragraphElementTool.getMaxLanguage(), paragraphElementTool.getMaxProportion())
                     if (paragraphElementTool.getMaxLanguage() == targetLanguage) {
                         return
@@ -2299,7 +2286,8 @@ export default defineContentScript({
                     ignoreMutationElements.delete(ignoreTranslateElement)
                 }
             })
-            if (defaultStrategy == DOMAIN_STRATEGY.AUTO && !manualTranslateTrigger && domainStrategy == DOMAIN_STRATEGY.AUTO) {
+            console.log('111defaultStrategy:', defaultStrategy, 'manualTrigger:', manualTrigger, 'domainStrategy:', domainStrategy)
+            if (defaultStrategy == DOMAIN_STRATEGY.AUTO && !manualTrigger && domainStrategy == DOMAIN_STRATEGY.AUTO) {
                 await setTranslateStatusByTranslatedElement()
             }
         }
@@ -2386,7 +2374,7 @@ export default defineContentScript({
                         if (originalHtmlElements.length == 0) {
                             return;
                         }
-                        console.log('originalHtmlElements:', originalHtmlElements)
+                        // console.log('originalHtmlElements:', originalHtmlElements)
                         let notTranslatedElements = afterTranslate(originalHtmlElements, res)
                         for (let originalHtmlElement of originalHtmlElements) {
                             originalHtmlElement.removeAttribute("duo-no-observer")

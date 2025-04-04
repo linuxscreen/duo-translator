@@ -14,7 +14,7 @@ const viewStrategy = ref('')
 const targetLang = ref('')
 const translateService = ref('')
 const targetLangOptions = LANGUAGES
-let translateServiceOptions :TranslateService[] = []
+const translateServiceOptions = ref<TranslateService[]>([])
 const viewStrategyOptions = VIEW_STRATEGIES
 
 // store globalSwitch when it is changed
@@ -28,6 +28,10 @@ watch(bilingualHighlightingSwitch, (newVal) => {
 
 watch(floatBallSwitch, (newVal) => {
     setConfig(CONFIG_KEY.FLOAT_BALL_SWITCH, newVal)
+    sendMessageToAllTabs({
+        action: TB_ACTION.FLOAT_BALL_SWITCH,
+        data: newVal
+    })
 })
 
 watch(contextMenuSwitch, (newVal) => {
@@ -76,7 +80,7 @@ onMounted(async () => {
     translateService.value = translateServiceValue === undefined ? DEFAULT_VALUE.TRANSLATE_SERVICE : translateServiceValue
     TRANSLATE_SERVICES.forEach((item) => {
         if (!disabledTranslateServiceValue?.includes(item.value)) {
-            translateServiceOptions.push(item)
+            translateServiceOptions.value.push(item)
         }
     })
     console.log(targetLangOptions)

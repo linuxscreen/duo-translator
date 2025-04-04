@@ -38,7 +38,6 @@ export enum DEFAULT_VALUE {
     VIEW_STRATEGY = 'double',
     TARGET_LANG = 'zh-CN',
     TRANSLATE_SERVICE = 'microsoft',
-    TRANSLATE_SERVICE_TITLE = 'Microsoft',
 }
 
 export enum DB_ACTION {
@@ -70,6 +69,7 @@ export enum TB_ACTION {
     ID_GET = 'getTabId',
     CONTEXT_MENU_SHOW = 'showContextMenu',
     CONTEXT_MENU_SWITCH = 'contextMenuSwitch',
+    FLOAT_BALL_SWITCH = "floatBallSwitch",
 }
 
 export enum DOMAIN_STRATEGY {

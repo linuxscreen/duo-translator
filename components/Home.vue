@@ -544,8 +544,9 @@ export default {
         },
     },
     async mounted() {
-        console.log("aaa", title)
-        debug.log('debug test mounted')
+        browser.runtime.onMessage.addListener((message) => {
+            console.log('home onMessage', message)
+        });
         // Add a style setting Unstyled
         let element = document.querySelector("#noneStyleSelect")
         if (element) {
@@ -574,10 +575,7 @@ export default {
                 sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.TARGET_LANG}}),
                 sendMessageToBackground({action: TB_ACTION.LANG_GET, data: this.tabs?.[0]}),
                 sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.TRANSLATE_SERVICE}}),
-                sendMessageToBackground({
-                    action: STORAGE_ACTION.SESSION_GET,
-                    data: {key: this.tabStatusKey}
-                }),
+                sendMessageToBackground({action: STORAGE_ACTION.SESSION_GET, data: {key: this.tabStatusKey}}),
                 sendMessageToBackground({action: DB_ACTION.DOMAIN_GET, data: {domain: this.domain}}),
                 sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.VIEW_STRATEGY}}),
                 sendMessageToBackground({action: "getNativeLanguage"}),
@@ -608,11 +606,12 @@ export default {
                 let service = this.translateServices.get(translateServiceConfigValue)
                 if (service) {
                     this.translateService = service.value
+                }else {
+                    this.translateService = this.translateServices.values()?.next()?.value?.value || DEFAULT_VALUE.TRANSLATE_SERVICE
                 }
-                this.translateService = this.translateServices.values()?.next()?.value?.value || DEFAULT_VALUE.TRANSLATE_SERVICE_TITLE
             }
             // page translation status
-            if (status) {
+            if (typeof status === "boolean") {
                 this.translateToggle = status
             }
             console.log('tabs', this.tabs[0], 'tabLanguage', this.tabLanguage, 'status', status)
