@@ -1,16 +1,14 @@
 <script lang="ts">
-import {ref} from 'vue';
+import { ref } from 'vue';
 import CustomColorPicker from "@/components/CustomColorPicker.vue";
 import CustomSwitch from "@/components/CustomSwitch.vue";
 import {
-    isTraditionalChinese,
     sendMessageToAllTabs,
     sendMessageToBackground,
     sendMessageToTab
 } from "@/entrypoints/utils";
 import {
     ACTION,
-    COMMON,
     CONFIG_KEY,
     DB_ACTION,
     DEFAULT_VALUE,
@@ -19,25 +17,21 @@ import {
     STORAGE_ACTION,
     TB_ACTION,
     TRANS_ACTION,
-    TRANS_SERVICE,
     TRANSLATE_SERVICES,
+    TRANSLATE_STATUS_KEY,
     TranslateService,
     VIEW_STRATEGY
 } from "@/entrypoints/constants";
 import useI18n from "@/composables/useI18n";
-import {browser} from "wxt/browser";
+import { browser } from "wxt/browser";
+import { ElMessage } from "element-plus";
 import MarqueeText from "@/components/MarqueeText.vue";
-import {translationServices} from "@/entrypoints/translateService";
-// import {franc} from 'franc'
+import { translationServices } from "@/entrypoints/translateService";
 import CustomDropdownMenu from "@/components/CustomDropdownMenu.vue";
-import axios from "axios";
-import debug from 'debug';
-import {franc, francAll} from "franc";
-import ChineseSimplifiedTraditional from "chinese-simplified-traditional";
 
-const title = import.meta.env.VITE_APP_TITLE
-const env = import.meta.env.VITE_ENV
-const enableDebug = import.meta.env.VITE_DEBUG
+// const title = import.meta.env.VITE_APP_TITLE
+// const env = import.meta.env.VITE_ENV
+// const enableDebug = import.meta.env.VITE_DEBUG
 
 export default {
     computed: {
@@ -54,12 +48,12 @@ export default {
     setup() {
         const isFirstLoad = ref(true); // flag, which is used to determine whether it is the first load
         const bgColorIndex = ref(0); // The index of the selected color is selected by default
-        const {t} = useI18n();
-        const colorPickerComponent = ref(null)
+        const { t } = useI18n();
+        const colorPickerComponent = ref<InstanceType<typeof CustomColorPicker> | null>(null);
         const padding = ref(3)
         const callInternalMethod = () => {
             if (colorPickerComponent.value) {
-                colorPickerComponent.value.show();
+                colorPickerComponent.value.showColorPicker();
             }
         };
         return {
@@ -76,14 +70,10 @@ export default {
             // console.log("globalSwitch", newVal)
             sendMessageToBackground({
                 action: DB_ACTION.CONFIG_SET,
-                data: {name: CONFIG_KEY.GLOBAL_SWITCH, value: newVal}
+                data: { name: CONFIG_KEY.GLOBAL_SWITCH, value: newVal }
             })
-            sendMessageToAllTabs({action: ACTION.GLOBAL_SWITCH_CHANGE, data: newVal}).then((response) => {
-                // console.log('globalSwitch', response)
-                if (typeof response === 'boolean'){
-                    this.translateToggle = response
-                }
-            })
+            sendMessageToAllTabs({ action: ACTION.GLOBAL_SWITCH_CHANGE, data: newVal })
+            sendMessageToBackground({ action: ACTION.GLOBAL_SWITCH_CHANGE, data: newVal})
 
         },
         bgColorIndex(newVal) {
@@ -100,27 +90,27 @@ export default {
         },
 
     },
-    components: {CustomDropdownMenu, MarqueeText, CustomSwitch, CustomColorPicker},
+    components: { CustomDropdownMenu, MarqueeText, CustomSwitch, CustomColorPicker },
     data() {
         // const userInfo = getUserInfo
         return {
-            domainStrategyAlwaysTranslateUnWatcher: ()=>{},
-            domainStrategyNeverTranslateUnWatcher: ()=>{},
+            domainStrategyAlwaysTranslateUnWatcher: () => { },
+            domainStrategyNeverTranslateUnWatcher: () => { },
             domainStrategyAlwaysTranslate: false,
             domainStrategyNeverTranslate: false,
             nativeLanguage: 'en',
             translateToggleEnabled: true, // used to determine whether the current page can be translated(e.g. not a chrome:// page)
             isScrollable: false,
             maxHeight: 200,
-            currentMenu: {icon: 'account-group', text: 'People'},
+            currentMenu: { icon: 'account-group', text: 'People' },
             menus: [
-                {icon: 'account-group', text: 'People'},
-                {icon: 'shopping-search', text: 'Orders'},
-                {icon: 'credit-card-multiple', text: 'Payments'},
-                {icon: 'dolly', text: 'Logistics'},
-                {icon: 'clock-check', text: 'Jobs'},
-                {icon: 'cart-arrow-right', text: 'Cart'},
-                {icon: 'settings', text: 'Configuration'}
+                { icon: 'account-group', text: 'People' },
+                { icon: 'shopping-search', text: 'Orders' },
+                { icon: 'credit-card-multiple', text: 'Payments' },
+                { icon: 'dolly', text: 'Logistics' },
+                { icon: 'clock-check', text: 'Jobs' },
+                { icon: 'cart-arrow-right', text: 'Cart' },
+                { icon: 'settings', text: 'Configuration' }
             ],
 
             globalSwitch: true,
@@ -130,27 +120,27 @@ export default {
             translationBgColorIndex: -1,
             fontColorIndex: -1,
             tabLanguage: undefined,
-            tabs: [],
+            tabs: [] as Browser.tabs.Tab[],
             tabStatusKey: '',
             domain: "",
             message: '',
 
             // Website translation strategy
             domainStrategies: [
-                {title: "automaticallyDetermineWhetherToTranslate", value: DOMAIN_STRATEGY.AUTO},
-                {title: "neverTranslateThisSite", value: DOMAIN_STRATEGY.NEVER},
-                {title: "alwaysTranslateThisSite", value: DOMAIN_STRATEGY.ALWAYS},
+                { title: "automaticallyDetermineWhetherToTranslate", value: DOMAIN_STRATEGY.AUTO },
+                { title: "neverTranslateThisSite", value: DOMAIN_STRATEGY.NEVER },
+                { title: "alwaysTranslateThisSite", value: DOMAIN_STRATEGY.ALWAYS },
                 // {title: "alwaysAskToTranslateThisSite", value: DOMAIN_STRATEGY.ASK},
             ],
             defaultStrategies: [
-                {title: "automaticallyDetermineWhetherToTranslate", value: DOMAIN_STRATEGY.AUTO},
-                {title: "notTranslateAllWebsites", value: DOMAIN_STRATEGY.NEVER},
-                {title: "translateAllWebsites", value: DOMAIN_STRATEGY.ALWAYS},
+                { title: "automaticallyDetermineWhetherToTranslate", value: DOMAIN_STRATEGY.AUTO },
+                { title: "notTranslateAllWebsites", value: DOMAIN_STRATEGY.NEVER },
+                { title: "translateAllWebsites", value: DOMAIN_STRATEGY.ALWAYS },
             ],
             // Translate the view strategy
             viewStrategies: [
-                {title: "bilingual", value: VIEW_STRATEGY.DOUBLE, action: TRANS_ACTION.DOUBLE},
-                {title: "monolingual", value: VIEW_STRATEGY.SINGLE, action: TRANS_ACTION.SINGLE},
+                { title: "bilingual", value: VIEW_STRATEGY.DOUBLE, action: TRANS_ACTION.DOUBLE },
+                { title: "monolingual", value: VIEW_STRATEGY.SINGLE, action: TRANS_ACTION.SINGLE },
                 // todo show a dialog to ask user whether to translate
                 // {title: "showToggleButton", value: VIEW_STRATEGY.BUTTON, action: TRANS_ACTION.TOGGLE},
             ],
@@ -162,8 +152,8 @@ export default {
             defaultStrategy: "auto",
             viewStrategy: "bilingual",
             selected: "default",
-            targetLanguage: "simplifiedChinese",
-            translateService: DEFAULT_VALUE.TRANSLATE_SERVICE_TITLE as string,
+            targetLanguage: navigator.language,
+            translateService: DEFAULT_VALUE.TRANSLATE_SERVICE as string,
             sourceLanguage: "automaticDetection",
             switchAlwaysTranslate: false,
             switchNeverTranslate: false,
@@ -235,21 +225,21 @@ export default {
             // browser.tabs.create({url: "https://duo.zeroflx.com/docs"})
         },
         openSettingPage() {
-            browser.tabs.create({url: "options.html"})
+            browser.tabs.create({ url: "options.html" })
             // browser.runtime.openOptionsPage()
         },
         getNativeLanguage() {
-            sendMessageToBackground({action: "getNativeLanguage"})
+            sendMessageToBackground({ action: TB_ACTION.NATIVE_LANGUAGE_GET })
         },
-        async bgColorChanged(newVal) {
+        async bgColorChanged(newVal: string) {
             console.log('bgColorChanged', newVal)
             await this.setConfig(CONFIG_KEY.BG_COLOR, newVal)
-            sendMessageToTab({action: ACTION.STYLE_CHANGE})
+            sendMessageToTab({ action: ACTION.STYLE_CHANGE })
             let ele = document.querySelector("#showDemoTranslated") as HTMLElement
             console.log('bgColorChanged', ele)
             ele.style.backgroundColor = newVal
         },
-        async styleChanged(newVal) {
+        async styleChanged(newVal: string) {
             await this.setConfig(CONFIG_KEY.STYLE, newVal)
             let ele = document.querySelector("#showDemoTranslated") as HTMLElement
             ele.style.border = ''
@@ -288,23 +278,23 @@ export default {
             } else {
                 ele.style.padding = `${this.padding}px`
             }
-            await sendMessageToTab({action: ACTION.STYLE_CHANGE})
+            await sendMessageToTab({ action: ACTION.STYLE_CHANGE })
         },
-        async fontColorChanged(newVal) {
+        async fontColorChanged(newVal: string) {
             await this.setConfig(CONFIG_KEY.FONT_COLOR, newVal)
-            sendMessageToTab({action: ACTION.STYLE_CHANGE})
+            sendMessageToTab({ action: ACTION.STYLE_CHANGE })
             let ele = document.querySelector("#showDemoTranslated") as HTMLElement
             ele.style.color = newVal
         },
-        async originalBgColorChanged(newVal) {
+        async originalBgColorChanged(newVal: string) {
             await this.setConfig(CONFIG_KEY.ORIGINAL_BG_COLOR, newVal)
-            await sendMessageToTab({action: ACTION.STYLE_CHANGE})
+            await sendMessageToTab({ action: ACTION.STYLE_CHANGE })
         },
-        async translationBgColorChanged(newVal) {
+        async translationBgColorChanged(newVal: string) {
             await this.setConfig(CONFIG_KEY.TRANSLATION_BG_COLOR, newVal)
-            await sendMessageToTab({action: ACTION.STYLE_CHANGE})
+            await sendMessageToTab({ action: ACTION.STYLE_CHANGE })
         },
-        async defaultStrategyChanged(newVal) {
+        async defaultStrategyChanged(newVal: string) {
             await this.setConfig(CONFIG_KEY.DEFAULT_STRATEGY, newVal)
             // let domainStrategy = DOMAIN_STRATEGY.AUTO
             // if (this.domainStrategyNeverTranslate) {
@@ -313,27 +303,27 @@ export default {
             //    domainStrategy = DOMAIN_STRATEGY.ALWAYS
             // }
             // await sendMessageToTab({action: ACTION.DOMAIN_STRATEGY_CHANGE,data: domainStrategy})
-            if (newVal == DOMAIN_STRATEGY.ALWAYS) {
-                this.translateToggle = true
-            }else if (newVal == DOMAIN_STRATEGY.NEVER) {
-                this.translateToggle = false
-            }
-            let resp = await sendMessageToAllTabs({action: ACTION.DEFAULT_STRATEGY_CHANGE,data: newVal})
+            // if (newVal == DOMAIN_STRATEGY.ALWAYS) {
+            //     this.translateToggle = true
+            // }else if (newVal == DOMAIN_STRATEGY.NEVER) {
+            //     this.translateToggle = false
+            // }
+            let resp = await sendMessageToAllTabs({ action: ACTION.DEFAULT_STRATEGY_CHANGE, data: newVal })
             console.log('defaultStrategyChanged', resp)
-            if (typeof resp === 'boolean'){
-                this.translateToggle = resp
-            }
+            // if (typeof resp === 'boolean'){
+            //     this.translateToggle = resp
+            // }
         },
-        async translateToggleChanged(newVal) {
+        async translateToggleChanged(newVal: boolean) {
             await sendMessageToBackground({
                 action: STORAGE_ACTION.SESSION_SET,
-                data: {key: this.tabStatusKey, value: newVal}
+                data: { key: this.tabStatusKey, value: newVal }
             })
         },
-        async processDomainStrategyChange(strategy : DOMAIN_STRATEGY) {
+        async processDomainStrategyChange(strategy: DOMAIN_STRATEGY) {
             await sendMessageToBackground({
                 action: DB_ACTION.DOMAIN_UPDATE,
-                data: {domain: this.domain, strategy: strategy}
+                data: { domain: this.domain, strategy: strategy }
             })
             let res = await sendMessageToTab({
                 action: ACTION.DOMAIN_STRATEGY_CHANGE,
@@ -343,46 +333,46 @@ export default {
             if (res === undefined || res === null) {
                 return
             }
-            this.translateToggle = res
+            // this.translateToggle = res
         },
-        async neverDomainStrategyChanged(newVal) {
+        async neverDomainStrategyChanged(newVal: boolean) {
             // console.log('neverDomainStrategyChanged', newVal)
             if (newVal) {
                 this.domainStrategyAlwaysTranslateUnWatcher()
                 this.domainStrategyAlwaysTranslate = false
                 this.domainStrategyAlwaysTranslateUnWatcher = this.$watch('domainStrategyAlwaysTranslate', this.alwaysDomainStrategyChanged)
                 await this.processDomainStrategyChange(DOMAIN_STRATEGY.NEVER)
-            }else {
+            } else {
                 await this.processDomainStrategyChange(DOMAIN_STRATEGY.AUTO)
             }
 
         },
-        async alwaysDomainStrategyChanged(newVal) {
+        async alwaysDomainStrategyChanged(newVal: boolean) {
             if (newVal) {
                 this.domainStrategyNeverTranslateUnWatcher()
                 this.domainStrategyNeverTranslate = false
                 this.domainStrategyNeverTranslateUnWatcher = this.$watch('domainStrategyNeverTranslate', this.neverDomainStrategyChanged)
                 await this.processDomainStrategyChange(DOMAIN_STRATEGY.ALWAYS)
-            }else {
+            } else {
                 await this.processDomainStrategyChange(DOMAIN_STRATEGY.AUTO)
             }
         },
-        async bilingualHighlightingChanged(newVal) {
+        async bilingualHighlightingChanged(newVal: boolean) {
             await this.setConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH, newVal)
-            await sendMessageToTab({action: ACTION.STYLE_CHANGE})
+            await sendMessageToTab({ action: ACTION.STYLE_CHANGE })
         },
         // configure access functions
         async setConfig(key: CONFIG_KEY, value: any) {
             return sendMessageToBackground({
                 action: DB_ACTION.CONFIG_SET,
-                data: {name: key, value: value}
+                data: { name: key, value: value }
             });
         },
         // configure the fetch function
         async getConfig(key: CONFIG_KEY): Promise<any> {
             return sendMessageToBackground({
                 action: DB_ACTION.CONFIG_GET,
-                data: {name: key}
+                data: { name: key }
             });
         },
         highlightMouseLeaveDemo(event: Event) {
@@ -424,21 +414,21 @@ export default {
             svg.textContent = 'https://duo.zeroflx.com/docs'
 
             element.append(svg)
-            console.log('test', element,'length', element.textContent?.length,'link',svg)
+            console.log('test', element, 'length', element.textContent?.length, 'link', svg)
             // console.log(franc("Business Settings Privacy Images"));
             // console.log(isTraditionalChinese("隐私权"));
         },
-        changeDomainStrategy(selected) {
+        changeDomainStrategy(selected: string) {
             // Obtain the domain name and save the policy to the database
             let selectedValue = this.getItemByTitle(this.domainStrategies, selected)?.value
             sendMessageToBackground({
                 action: DB_ACTION.DOMAIN_UPDATE,
-                data: {domain: this.domain, strategy: selectedValue}
+                data: { domain: this.domain, strategy: selectedValue }
             }).then(async (response) => {
                 // Modify the policy displayed on the frontend
                 this.domainStrategy = selected;
                 // send msg to content script, determine what to do with the current page
-                this.translateToggle = await sendMessageToTab({
+                await sendMessageToTab({
                     action: ACTION.DOMAIN_STRATEGY_CHANGE,
                     data: selectedValue
                 })
@@ -446,11 +436,11 @@ export default {
                 // todo upload an error message to the server
             )
         },
-        changeDefaultStrategy(selected) {
+        changeDefaultStrategy(selected: string) {
             // Obtain the domain name and save the policy to the database
             sendMessageToBackground({
                 action: DB_ACTION.CONFIG_SET,
-                data: {name: CONFIG_KEY.DEFAULT_STRATEGY, value: selected}
+                data: { name: CONFIG_KEY.DEFAULT_STRATEGY, value: selected }
             }).then(async (response) => {
                 // Modify the policy displayed on the frontend
                 this.defaultStrategy = selected;
@@ -458,28 +448,28 @@ export default {
                 // todo upload an error message to the server
             )
         },
-        async changeTranslateService(selected :TranslateService) {
+        async changeTranslateService(selected: TranslateService) {
             if (selected.value == this.translateService) {
                 return
             }
             await sendMessageToBackground({
                 action: DB_ACTION.CONFIG_SET,
-                data: {name: CONFIG_KEY.TRANSLATE_SERVICE, value: selected.value}
+                data: { name: CONFIG_KEY.TRANSLATE_SERVICE, value: selected.value }
             })
             this.translateService = selected.value
             // if current is translate status, let content script to re-translate
             // if (this.translateToggle) {
             //     await sendMessageToTab({action: ACTION.TRANSLATE_CHANGE})
             // }
-            await sendMessageToAllTabs({action: ACTION.TRANSLATE_CHANGE,data:{service:selected.value}})
+            await sendMessageToAllTabs({ action: ACTION.TRANSLATE_SERVICE_CHANGE, data: { service: selected.value } })
         },
-        async changeViewStrategy(selected) {
+        async changeViewStrategy(selected: { title: string, value: string }) {
             if (selected.title == this.viewStrategy) {
                 return
             }
             await sendMessageToBackground({
                 action: DB_ACTION.CONFIG_SET,
-                data: {name: CONFIG_KEY.VIEW_STRATEGY, value: selected.value}
+                data: { name: CONFIG_KEY.VIEW_STRATEGY, value: selected.value }
             })
             this.viewStrategy = selected.title
             // if current is translated status, let content script to re-translate
@@ -487,38 +477,40 @@ export default {
             // if (this.translateToggle) {
             //     await sendMessageToTab({action: ACTION.TRANSLATE_CHANGE})
             // }
-            let resp = await sendMessageToAllTabs({action: ACTION.VIEW_STRATEGY_CHANGE,data:selected.value})
-            if (typeof resp === 'boolean'){
-                this.translateToggle = resp
-            }
+            let resp = await sendMessageToAllTabs({ action: ACTION.VIEW_STRATEGY_CHANGE, data: selected.value })
+            // if (typeof resp === 'boolean'){
+            //     this.translateToggle = resp
+            // }
         },
-        async changeTargetLanguage(selected) {
+        async changeTargetLanguage(selected: { title: string, value: string }) {
             await sendMessageToBackground({
                 action: DB_ACTION.CONFIG_SET,
-                data: {name: CONFIG_KEY.TARGET_LANG, value: selected.value}
+                data: { name: CONFIG_KEY.TARGET_LANG, value: selected.value }
             })
-            this.targetLanguage = selected.title
-            // if current is translate status, let content script to re-translate
-            if (this.translateToggle) {
-                await sendMessageToTab({action: ACTION.TRANSLATE_CHANGE})
-            }
-            await sendMessageToAllTabs({action: ACTION.TARGET_LANG_CHANGE,data:{lang:selected.value}})
-
+            this.targetLanguage = selected.value
+            await sendMessageToAllTabs({ action: ACTION.TARGET_LANG_CHANGE, data: { lang: selected.value } })
         },
 
         async toggleSelectionMode() {
             // if not in selection mode or not in translated status
             let status = await sendMessageToBackground({
                 action: STORAGE_ACTION.SESSION_GET,
-                data: {key: this.tabStatusKey}
+                data: { key: this.tabStatusKey }
             })
+            if (!this.globalSwitch) {
+                ElMessage({
+                    message: this.t('openGlobalSwitch'),
+                    type: 'warning'
+                });
+                return
+            }
             if (!status) {
-                await sendMessageToTab({action: ACTION.TOGGLE_SELECTION_MODE})
+                await sendMessageToTab({ action: ACTION.TOGGLE_SELECTION_MODE })
                 window.close()
             } else {
                 console.log('restoreOriginalFirst')
                 // popup a message dialog
-                this.$message({
+                ElMessage({
                     message: this.t('restoreOriginalFirst'),
                     type: 'warning'
                 });
@@ -534,9 +526,9 @@ export default {
             // console.log('toggleTranslation', translateStatus)
             if (translateStatus) {
                 // send message to content script, process translation action
-                await sendMessageToTab({action: TRANS_ACTION.TRANSLATE})
+                await sendMessageToTab({ action: TRANS_ACTION.TRANSLATE })
             } else {
-                await sendMessageToTab({action: TRANS_ACTION.ORIGIN})
+                await sendMessageToTab({ action: TRANS_ACTION.ORIGIN })
             }
             // console.log('toggleTranslation', data)
             // close popup
@@ -546,6 +538,11 @@ export default {
     async mounted() {
         browser.runtime.onMessage.addListener((message) => {
             console.log('home onMessage', message)
+            if (message.action == TRANS_ACTION.TRANSLATE_STATUS_CHANGE) {
+                if (typeof message.data.status === "boolean") {
+                    this.translateToggle = message.data.status
+                }
+            }
         });
         // Add a style setting Unstyled
         let element = document.querySelector("#noneStyleSelect")
@@ -553,60 +550,54 @@ export default {
             element.textContent = this.t('none');
         }
         // send message to content script to leave selection mode
-        sendMessageToTab({action: ACTION.LEAVE_SELECTION_MODE})
+        sendMessageToTab({ action: ACTION.LEAVE_SELECTION_MODE })
         try {
             // Gets the currently active tab
-            this.tabs = await browser.tabs.query({active: true, currentWindow: true})
-            this.tabStatusKey = "tabTranslateStatus#" + this.tabs?.[0]?.id
+            this.tabs = await browser.tabs.query({ active: true, currentWindow: true })
+            this.tabStatusKey = TRANSLATE_STATUS_KEY + this.tabs?.[0]?.id
             let originUrl = this.tabs?.[0]?.url
-            let url = new URL(originUrl)
-            if (url.port != '80' && url.port != '443') {
-                this.domain = url.hostname + ":" + url.port
-            } else {
-                this.domain = url.hostname
-            }
-            if (!originUrl.startsWith("http")) {
-                // not a normal page, set translate toggle to disable
-                this.translateToggleEnabled = false
+            if (originUrl) {
+                let url = new URL(originUrl)
+                if (url.port != '80' && url.port != '443') {
+                    this.domain = url.hostname + ":" + url.port
+                } else {
+                    this.domain = url.hostname
+                }
             }
             console.log('tabs', this.tabs[0].id, 'domain', this.domain)
-            let [targetLanguageConfigValue, tabLanguage, translateServiceConfigValue, status, domainData, 
+            let [targetLanguageConfigValue, tabLanguage, translateServiceConfigValue, status, domainData,
                 viewStrategyConfigValue, nativeLanguage, disabledTranslateService] = await Promise.all([
-                sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.TARGET_LANG}}),
-                sendMessageToBackground({action: TB_ACTION.LANG_GET, data: this.tabs?.[0]}),
-                sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.TRANSLATE_SERVICE}}),
-                sendMessageToBackground({action: STORAGE_ACTION.SESSION_GET, data: {key: this.tabStatusKey}}),
-                sendMessageToBackground({action: DB_ACTION.DOMAIN_GET, data: {domain: this.domain}}),
-                sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.VIEW_STRATEGY}}),
-                sendMessageToBackground({action: "getNativeLanguage"}),
-                sendMessageToBackground({action: DB_ACTION.CONFIG_GET, data: {name: CONFIG_KEY.DISABLED_TRANSLATE_SERVICE}})
-            ]);
+                    sendMessageToBackground({ action: DB_ACTION.CONFIG_GET, data: { name: CONFIG_KEY.TARGET_LANG } }),
+                    sendMessageToBackground({ action: TB_ACTION.LANG_GET, data: this.tabs?.[0] }),
+                    sendMessageToBackground({ action: DB_ACTION.CONFIG_GET, data: { name: CONFIG_KEY.TRANSLATE_SERVICE } }),
+                    sendMessageToBackground({ action: STORAGE_ACTION.SESSION_GET, data: { key: this.tabStatusKey } }),
+                    sendMessageToBackground({ action: DB_ACTION.DOMAIN_GET, data: { domain: this.domain } }),
+                    sendMessageToBackground({ action: DB_ACTION.CONFIG_GET, data: { name: CONFIG_KEY.VIEW_STRATEGY } }),
+                    sendMessageToBackground({ action: TB_ACTION.NATIVE_LANGUAGE_GET }),
+                    sendMessageToBackground({ action: DB_ACTION.CONFIG_GET, data: { name: CONFIG_KEY.DISABLED_TRANSLATE_SERVICE } })
+                ]);
+            if (!originUrl!.startsWith("http")) {
+                // not a normal page, set translate toggle to disable
+                this.translateToggleEnabled = false
+                status = false
+            }
             this.nativeLanguage = nativeLanguage
             console.log('tabLanguage', tabLanguage)
+            console.log('targetLanguageConfigValue', targetLanguageConfigValue, translateServiceConfigValue)
             if (targetLanguageConfigValue) {
                 // obtain the title based on the code, which is used to set the front-end display
-                this.targetLanguages.forEach(language => {
-                    if (language.value == targetLanguageConfigValue) {
-                        this.targetLanguage = language.title;
-                    }
-                })
-            } else {
-                this.targetLanguages.forEach(language => {
-                    // get default browser language
-                    if (language.value == navigator.language) {
-                        this.targetLanguage = language.title;
-                    }
-                })
-            }
+                this.targetLanguage = targetLanguageConfigValue
+            } 
             this.tabLanguage = tabLanguage
-            disabledTranslateService.forEach((service :string) => {
+            disabledTranslateService?.forEach((service: string) => {
                 this.translateServices.delete(service)
             })
+            console.log('translateServiceConfigValue', translateServiceConfigValue)
             if (translateServiceConfigValue) {
                 let service = this.translateServices.get(translateServiceConfigValue)
                 if (service) {
                     this.translateService = service.value
-                }else {
+                } else {
                     this.translateService = this.translateServices.values()?.next()?.value?.value || DEFAULT_VALUE.TRANSLATE_SERVICE
                 }
             }
@@ -614,7 +605,7 @@ export default {
             if (typeof status === "boolean") {
                 this.translateToggle = status
             }
-            console.log('tabs', this.tabs[0], 'tabLanguage', this.tabLanguage, 'status', status)
+            console.log('tabs11', this.tabs[0], 'tabLanguage', this.tabLanguage, 'status', status, this.translateService)
             // get the display policy
             if (viewStrategyConfigValue) {
                 this.viewStrategy = this.getItemByValue(this.viewStrategies, viewStrategyConfigValue)?.title;
@@ -672,7 +663,8 @@ export default {
             this.fontColorIndex = fontColorIndexConfig != undefined ? Number(fontColorIndexConfig) : 0;
             this.originalBgColorIndex = originalBgColorIndexConfig != undefined ? Number(originalBgColorIndexConfig) : 0;
             this.translationBgColorIndex = translationBgColorIndexConfig != undefined ? Number(translationBgColorIndexConfig) : 1;
-            this.globalSwitch = globalSwitch == undefined ? true : globalSwitch;
+            console.log('globalSwitch', globalSwitch)
+            this.globalSwitch = globalSwitch === undefined ? true : globalSwitch;
             // padding
             this.padding = paddingConfig || '';
             this.bilingualHighlighting = bilingualHighlighting == undefined ? true : bilingualHighlighting;
@@ -695,7 +687,7 @@ export default {
             this.domainStrategyNeverTranslateUnWatcher = this.$watch('domainStrategyNeverTranslate', this.neverDomainStrategyChanged)
             this.$watch('translateToggle', this.translateToggleChanged)
         } catch (e) {
-            // console.log(e)
+            console.error("popup mounted error", e)
         }
         this.isFirstLoad = false;
     },
@@ -714,17 +706,13 @@ export default {
                 </div>
             </div>
             <div class="setting" @click="openSettingPage">
-                <el-tooltip :content="t('setting')" placement="bottom" effect="customized" :showAfter="500">
+                <el-tooltip :content="t('settings')" placement="bottom" effect="customized" :showAfter="500">
                     <img src="/icon/setting.svg" alt="">
                 </el-tooltip>
             </div>
             <div>
                 <el-tooltip :content="t('globalSwitch')" placement="top" effect="customized" :showAfter="200">
-                    <el-switch
-
-                        v-model="globalSwitch"
-                        size="large"
-                    >
+                    <el-switch v-model="globalSwitch" size="large">
                         <template #active-action>
                             <span class="custom-active-action">G</span>
                         </template>
@@ -736,25 +724,17 @@ export default {
             </div>
 
             <el-tooltip :content="t('specifyAreasNotToBeTranslated')" placement="top" effect="customized"
-                        :showAfter='500'>
+                :showAfter='500'>
                 <div class="btn-rule" @click="toggleSelectionMode">
                     <div class="leading-icon">
-                        <svg
-                            class="group"
-                            width="16"
-                            height="13"
-                            viewBox="0 0 16 13"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                        >
+                        <svg class="group" width="16" height="13" viewBox="0 0 16 13" fill="none"
+                            xmlns="http://www.w3.org/2000/svg">
                             <path
                                 d="M8.00029 9.16532C9.4725 9.16532 10.666 7.97186 10.666 6.49965C10.666 5.02744 9.4725 3.83398 8.00029 3.83398C6.52809 3.83398 5.33463 5.02744 5.33463 6.49965C5.33463 7.97186 6.52809 9.16532 8.00029 9.16532Z"
-                                fill="white"
-                            />
+                                fill="white" />
                             <path
                                 d="M15.5112 4.77983C14.4776 3.09645 12.1265 0.272156 7.99998 0.272156C3.87352 0.272156 1.52239 3.09645 0.488772 4.77983C-0.162924 5.8339 -0.162924 7.16578 0.488772 8.21989C1.52239 9.90327 3.87352 12.7276 7.99998 12.7276C12.1265 12.7276 14.4776 9.90327 15.5112 8.21989C16.1629 7.16578 16.1629 5.8339 15.5112 4.77983ZM7.99998 10.4984C5.79168 10.4984 4.00147 8.70815 4.00147 6.49984C4.00147 4.29154 5.79168 2.50133 7.99998 2.50133C10.2083 2.50133 11.9985 4.29154 11.9985 6.49984C11.9963 8.70724 10.2074 10.4961 7.99998 10.4984Z"
-                                fill="white"
-                            />
+                                fill="white" />
                         </svg>
                     </div>
                     <div class="button-text">
@@ -771,31 +751,24 @@ export default {
                         <el-dropdown @command="changeViewStrategy" trigger="click" size="large">
                             <div class="select-strategy">
                                 <div class="button-text">{{ t(viewStrategy) }}</div>
-                                <svg
-                                    class="trailing-icon"
-                                    width="16"
-                                    height="16"
-                                    viewBox="0 0 16 16"
-                                    fill="none"
-                                    xmlns="http://www.w3.org/2000/svg"
-                                >
+                                <svg class="trailing-icon" width="16" height="16" viewBox="0 0 16 16" fill="none"
+                                    xmlns="http://www.w3.org/2000/svg">
                                     <g clip-path="url(#clip0_86_5059)">
                                         <path
                                             d="M1.00695 4.05283C1.13828 4.05266 1.26833 4.07849 1.38962 4.12883C1.51091 4.17918 1.62103 4.25305 1.71362 4.34617L6.82895 9.46083C6.98372 9.61565 7.16748 9.73845 7.36971 9.82224C7.57195 9.90602 7.78871 9.94915 8.00762 9.94915C8.22653 9.94915 8.44329 9.90602 8.64553 9.82224C8.84777 9.73845 9.03152 9.61565 9.18629 9.46083L14.2936 4.35283C14.3859 4.25732 14.4962 4.18114 14.6182 4.12873C14.7402 4.07632 14.8714 4.04874 15.0042 4.04758C15.137 4.04643 15.2687 4.07173 15.3916 4.12201C15.5145 4.17229 15.6261 4.24655 15.72 4.34044C15.8139 4.43433 15.8882 4.54598 15.9384 4.66888C15.9887 4.79178 16.014 4.92346 16.0129 5.05624C16.0117 5.18901 15.9841 5.32024 15.9317 5.44224C15.8793 5.56424 15.8031 5.67459 15.7076 5.76683L10.6003 10.8748C9.91223 11.5616 8.97978 11.9473 8.00762 11.9473C7.03546 11.9473 6.10302 11.5616 5.41495 10.8748L0.299621 5.76017C0.159677 5.62031 0.064363 5.44209 0.0257402 5.24805C-0.0128825 5.05401 0.00692157 4.85287 0.0826466 4.67009C0.158372 4.48731 0.286614 4.3311 0.451146 4.22122C0.615679 4.11134 0.809107 4.05274 1.00695 4.05283Z"
-                                            fill="white"
-                                        />
+                                            fill="white" />
                                     </g>
                                     <defs>
                                         <clipPath id="clip0_86_5059">
-                                            <rect width="16" height="16" fill="white"/>
+                                            <rect width="16" height="16" fill="white" />
                                         </clipPath>
                                     </defs>
                                 </svg>
                             </div>
                             <template #dropdown>
                                 <el-dropdown-menu>
-                                    <el-dropdown-item v-for="(viewStrategy,index) in viewStrategies"
-                                                      :command="viewStrategy">
+                                    <el-dropdown-item v-for="(viewStrategy, index) in viewStrategies"
+                                        :command="viewStrategy">
                                         {{ t(viewStrategy.title) }}
                                     </el-dropdown-item>
                                 </el-dropdown-menu>
@@ -808,32 +781,25 @@ export default {
                     <div class="btn-target">
                         <el-dropdown @command="changeTargetLanguage" trigger="click" size="large" max-height="420px">
                             <div class="select-target">
-                                <div class="button-text">{{ t(targetLanguage) }}</div>
-                                <svg
-                                    class="trailing-icon2"
-                                    width="16"
-                                    height="16"
-                                    viewBox="0 0 16 16"
-                                    fill="none"
-                                    xmlns="http://www.w3.org/2000/svg"
-                                >
+                                <div class="button-text">{{ t(targetLanguages.find(lang => lang.value === targetLanguage)?.title || '') }}</div>
+                                <svg class="trailing-icon2" width="16" height="16" viewBox="0 0 16 16" fill="none"
+                                    xmlns="http://www.w3.org/2000/svg">
                                     <g clip-path="url(#clip0_86_5065)">
                                         <path
                                             d="M1.00698 4.05283C1.13831 4.05266 1.26836 4.07849 1.38965 4.12883C1.51094 4.17918 1.62106 4.25305 1.71365 4.34617L6.82898 9.46083C6.98375 9.61565 7.16751 9.73845 7.36974 9.82224C7.57198 9.90602 7.78874 9.94915 8.00765 9.94915C8.22656 9.94915 8.44332 9.90602 8.64556 9.82224C8.8478 9.73845 9.03155 9.61565 9.18632 9.46083L14.2937 4.35283C14.3859 4.25732 14.4962 4.18114 14.6182 4.12873C14.7403 4.07632 14.8715 4.04874 15.0043 4.04758C15.137 4.04643 15.2687 4.07173 15.3916 4.12201C15.5145 4.17229 15.6262 4.24655 15.72 4.34044C15.8139 4.43433 15.8882 4.54598 15.9385 4.66888C15.9888 4.79178 16.0141 4.92346 16.0129 5.05624C16.0117 5.18901 15.9842 5.32024 15.9318 5.44224C15.8793 5.56424 15.8032 5.67459 15.7077 5.76683L10.6003 10.8748C9.91226 11.5616 8.97981 11.9473 8.00765 11.9473C7.03549 11.9473 6.10305 11.5616 5.41498 10.8748L0.299651 5.76017C0.159707 5.62031 0.0643935 5.44209 0.0257707 5.24805C-0.012852 5.05401 0.00695209 4.85287 0.0826771 4.67009C0.158402 4.48731 0.286644 4.3311 0.451177 4.22122C0.61571 4.11134 0.809137 4.05274 1.00698 4.05283Z"
-                                            fill="white"
-                                        />
+                                            fill="white" />
                                     </g>
                                     <defs>
                                         <clipPath id="clip0_86_5065">
-                                            <rect width="16" height="16" fill="white"/>
+                                            <rect width="16" height="16" fill="white" />
                                         </clipPath>
                                     </defs>
                                 </svg>
                             </div>
                             <template #dropdown>
                                 <el-dropdown-menu>
-                                    <el-dropdown-item v-for="(targetLanguage,index) in targetLanguages"
-                                                      :command="targetLanguage">
+                                    <el-dropdown-item v-for="(targetLanguage, index) in targetLanguages"
+                                        :command="targetLanguage">
                                         {{ t(targetLanguage.title) }}
                                     </el-dropdown-item>
                                 </el-dropdown-menu>
@@ -849,33 +815,20 @@ export default {
 
                         <div class="btn-trans">
                             <div class="leading-icon2">
-                                <img
-                                    :src="'fi-brands-'+ translateService + '.svg'"
-                                    :alt="translateService">
+                                <img :src="'fi-brands-' + translateService + '.svg'" :alt="translateService">
                             </div>
-                            <div class="button-text-large">{{ t(translateServices.get(translateService)?.title || '') }}</div>
-                            <svg
-                                class="trailing-icon3"
-                                width="20"
-                                height="21"
-                                viewBox="0 0 20 21"
-                                fill="none"
-                                xmlns="http://www.w3.org/2000/svg"
-                            >
+                            <div class="button-text-large">{{ t(translateServices.get(translateService)?.title || '') }}
+                            </div>
+                            <svg class="trailing-icon3" width="20" height="21" viewBox="0 0 20 21" fill="none"
+                                xmlns="http://www.w3.org/2000/svg">
                                 <g clip-path="url(#clip0_86_5071)">
                                     <path
                                         d="M1.25868 5.566C1.42284 5.56578 1.58541 5.59806 1.73702 5.661C1.88863 5.72393 2.02628 5.81626 2.14202 5.93266L8.53618 12.326C8.72965 12.5195 8.95934 12.673 9.21213 12.7777C9.46493 12.8825 9.73588 12.9364 10.0095 12.9364C10.2832 12.9364 10.5541 12.8825 10.8069 12.7777C11.0597 12.673 11.2894 12.5195 11.4829 12.326L17.867 5.941C17.9823 5.82161 18.1203 5.72638 18.2728 5.66087C18.4253 5.59536 18.5893 5.56088 18.7553 5.55943C18.9212 5.55799 19.0858 5.58962 19.2395 5.65247C19.3931 5.71532 19.5326 5.80814 19.65 5.9255C19.7674 6.04287 19.8602 6.18243 19.923 6.33605C19.9859 6.48968 20.0175 6.65427 20.0161 6.82025C20.0146 6.98622 19.9802 7.15025 19.9146 7.30275C19.8491 7.45526 19.7539 7.59319 19.6345 7.7085L13.2504 14.0935C12.3903 14.952 11.2247 15.4341 10.0095 15.4341C8.79432 15.4341 7.62876 14.952 6.76868 14.0935L0.374518 7.70016C0.199588 7.52535 0.0804461 7.30257 0.0321676 7.06002C-0.0161108 6.81746 0.00864433 6.56604 0.103301 6.33757C0.197957 6.10909 0.35826 5.91382 0.563925 5.77648C0.769591 5.63914 1.01138 5.56589 1.25868 5.566Z"
-                                        fill="white"
-                                    />
+                                        fill="white" />
                                 </g>
                                 <defs>
                                     <clipPath id="clip0_86_5071">
-                                        <rect
-                                            width="20"
-                                            height="20"
-                                            fill="white"
-                                            transform="translate(0 0.5)"
-                                        />
+                                        <rect width="20" height="20" fill="white" transform="translate(0 0.5)" />
                                     </clipPath>
                                 </defs>
                             </svg>
@@ -883,7 +836,7 @@ export default {
                         <template #dropdown>
                             <el-dropdown-menu>
                                 <el-dropdown-item :command="translateService"
-                                                  v-for="(translateService,index) in translateServices.values()">
+                                    v-for="(translateService, index) in translateServices.values()">
                                     {{ t(translateService.title) }}
                                 </el-dropdown-item>
                             </el-dropdown-menu>
@@ -892,14 +845,9 @@ export default {
                 </div>
             </el-tooltip>
             <div class="translate-toggle">
-                <custom-switch v-model="translateToggle" class="my-custom-class" :swidth="'60'"
-                               size="large"
-                               :active-text="t('translate')"
-                               :inactive-text="t('original')"
-                               :bgColor="'#FFF8F7'"
-                               :disabled="!globalSwitch||!translateToggleEnabled"
-                               @change="toggleTranslation"
-                ></custom-switch>
+                <custom-switch v-model="translateToggle" class="my-custom-class" :swidth="'60'" size="large"
+                    :active-text="t('translate')" :inactive-text="t('original')" :bgColor="'#FFF8F7'"
+                    :disabled="!globalSwitch || !translateToggleEnabled" @change="toggleTranslation"></custom-switch>
             </div>
         </div>
         <div class="style">
@@ -910,21 +858,12 @@ export default {
                 <marquee-text :text="t('border')" width="148px"></marquee-text>
             </div>
             <el-select v-model="style" placeholder="Select">
-                <el-option-group
-                    v-for="group in options"
-                    :key="group.label"
-                    :label="group.label"
-                    :id="group.value"
-                >
-                    <el-option
-                        v-for="item in group.options"
-                        :key="item.value"
-                        :label="item.label"
-                        :value="item.value"
-                        :class="item.value"
-                    >
+                <el-option-group v-for="group in options" :key="group.label" :label="group.label" :id="group.value">
+                    <el-option v-for="item in group.options" :key="item.value" :label="item.label" :value="item.value"
+                        :class="item.value">
 
-                        <span style="float: left" :id="item.value">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+                        <span style="float: left"
+                            :id="item.value">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
                     </el-option>
                 </el-option-group>
             </el-select>
@@ -937,8 +876,7 @@ export default {
             <div class="styleSetting">
                 <marquee-text :text="t('fontColor')" width="148px"></marquee-text>
             </div>
-            <custom-color-picker :class="'color-conflict'" v-model="fontColor"
-                                 v-model:selectedIndex="fontColorIndex">
+            <custom-color-picker :class="'color-conflict'" v-model="fontColor" v-model:selectedIndex="fontColorIndex">
 
             </custom-color-picker>
         </div>
@@ -951,7 +889,7 @@ export default {
             </div>
 
             <custom-color-picker v-model="originalBgColor" v-model:selectedIndex="originalBgColorIndex"
-                                 :color-items="['#FFF4E1', '#C8E6F5', '#CDC4B9', '#C4E0CA','#E8C3BD']">
+                :color-items="['#FFF4E1', '#C8E6F5', '#CDC4B9', '#C4E0CA', '#E8C3BD']">
 
             </custom-color-picker>
 
@@ -959,8 +897,8 @@ export default {
                 <marquee-text :text="t('translationBgColor')" width="136px"></marquee-text>
             </div>
             <custom-color-picker :class="'color-conflict'" v-model="translationBgColor"
-                                 v-model:selectedIndex="translationBgColorIndex"
-                                 :color-items="['#FFF4E1', '#C8E6F5', '#CDC4B9', '#C4E0CA','#E8C3BD']">
+                v-model:selectedIndex="translationBgColorIndex"
+                :color-items="['#FFF4E1', '#C8E6F5', '#CDC4B9', '#C4E0CA', '#E8C3BD']">
 
             </custom-color-picker>
         </div>
@@ -969,57 +907,53 @@ export default {
 
             <div class="flex items-center text-sm">
                 <el-radio-group v-model="defaultStrategy" class="ml-0">
-                    <el-radio @change="changeDefaultStrategy" v-for="(strategy,index) in defaultStrategies"
-                              :value="strategy.value" size="default">
+                    <el-radio @change="changeDefaultStrategy" v-for="(strategy, index) in defaultStrategies"
+                        :value="strategy.value" size="default">
                         <marquee-text :text="t(strategy.title)" width="135px"></marquee-text>
 
                     </el-radio>
                 </el-radio-group>
                 <div class="domainStrategy">
-                    <marquee-text :text="t('neverTranslateThisSite')" width="130px"></marquee-text>
-                    <el-switch v-model="domainStrategyNeverTranslate">
+                    <marquee-text :text="t('neverTranslateThisSite')" width="112px"></marquee-text>
+                    <el-switch :disabled="!globalSwitch || !translateToggleEnabled" v-model="domainStrategyNeverTranslate">
 
                     </el-switch>
                 </div>
                 <div class="domainStrategy">
-                    <marquee-text :text="t('alwaysTranslateThisSite')" width="100px"></marquee-text>
-                    <el-switch v-model="domainStrategyAlwaysTranslate">
+                    <marquee-text :text="t('alwaysTranslateThisSite')" width="112px"></marquee-text>
+                    <el-switch :disabled="!globalSwitch || !translateToggleEnabled" v-model="domainStrategyAlwaysTranslate">
                     </el-switch>
                 </div>
 
                 <div class="domainStrategy">
-                    <marquee-text :text="t('bilingualHighlighting')" width="100px"></marquee-text>
-                    <el-switch
-                        v-model="bilingualHighlighting"
-                        size=""/>
+                    <marquee-text :text="t('bilingualHighlighting')" width="112px"></marquee-text>
+                    <el-switch v-model="bilingualHighlighting" size="" />
                 </div>
 
 
             </div>
-            <div class="this-is-text"><p><span id="origin-1" @mouseover="highlightMouseOverDemo"
-                                               @mouseleave="highlightMouseLeaveDemo">
-                {{
-                    nativeLanguage.startsWith('en') ? "Donne du temps à la civilisation." : "give time to civilization. "
-                }}</span>
-                <span
-                    @mouseover="highlightMouseOverDemo" @mouseleave="highlightMouseLeaveDemo"
-                    id="origin-2">{{
-                        nativeLanguage.startsWith('en') ? 'et non la civilisation au temps.' : 'not civilization to time.'
-                    }}</span>
-            </p></div>
+            <div class="this-is-text">
+                <p><span id="origin-1" @mouseover="highlightMouseOverDemo" @mouseleave="highlightMouseLeaveDemo">
+                        {{
+                            targetLanguage.startsWith('en') ? "Donne du temps à la civilisation." : "Give time to civilization. "
+                        }}</span>
+                    <span @mouseover="highlightMouseOverDemo" @mouseleave="highlightMouseLeaveDemo" id="origin-2">{{
+                        targetLanguage.startsWith('en') ? 'et non la civilisation au temps.' : 'not civilization to time.'
+                        }}</span>
+                </p>
+            </div>
             <div class="show this-is-text">
 
                 <p id="showDemoTranslated">
-              <span id="translation-1" @mouseover="highlightMouseOverDemo" @mouseleave="highlightMouseLeaveDemo">
-          {{ t('giveTimeToCivilization') }}
-                 </span>
+                    <span id="translation-1" @mouseover="highlightMouseOverDemo" @mouseleave="highlightMouseLeaveDemo">
+                        {{  //@ts-ignore 
+                            t('giveTimeToCivilization',"" ,{locale : targetLanguage}) }} 
+                    </span>
                     <span id="translation-2" @mouseover="highlightMouseOverDemo" @mouseleave="highlightMouseLeaveDemo">
-          {{ t('notCivilizationToTime') }}
-                 </span>
+                        {{  //@ts-ignore 
+                            t('notCivilizationToTime',"", {locale : targetLanguage}) }}
+                    </span>
                 </p>
-
-                <!--                test button-->
-                <!--                <v-btn @click="test">test</v-btn>-->
             </div>
         </div>
     </div>
@@ -1029,8 +963,10 @@ export default {
 
 <style>
 * {
-    user-select: none; /* disable text is selected */
-    -moz-user-select: none; /* for Firefox */
+    user-select: none;
+    /* disable text is selected */
+    -moz-user-select: none;
+    /* for Firefox */
 }
 
 .el-popper.is-customized {
@@ -1180,7 +1116,7 @@ export default {
 
 .main {
     background: linear-gradient(to left, #eaf2f5, #eaf2f5),
-    linear-gradient(to left, #ffffff, #ffffff);
+        linear-gradient(to left, #ffffff, #ffffff);
     height: 600px;
     position: relative;
     overflow: hidden;
@@ -1303,11 +1239,9 @@ export default {
     user-select: none;
     color: var(--component-text-component-text-light-fixed, #ffffff);
     text-align: center;
-    font-family: var(
-        --body-xs-regular-normal-font-family,
-        "Poppins-Regular",
-        sans-serif
-    );
+    font-family: var(--body-xs-regular-normal-font-family,
+            "Poppins-Regular",
+            sans-serif);
     font-size: var(--body-xs-regular-normal-font-size, 14px);
     line-height: var(--body-xs-regular-normal-line-height, 20px);
     font-weight: var(--body-xs-regular-normal-font-weight, 400);
@@ -1324,11 +1258,9 @@ export default {
     user-select: none;
     color: var(--component-text-component-text-light-fixed, #ffffff);
     text-align: center;
-    font-family: var(
-        --body-xs-regular-normal-font-family,
-        "Poppins-Regular",
-        sans-serif
-    );
+    font-family: var(--body-xs-regular-normal-font-family,
+            "Poppins-Regular",
+            sans-serif);
     font-size: var(--body-xs-regular-normal-font-size, 14px);
     line-height: var(--body-xs-regular-normal-line-height, 20px);
     font-weight: var(--body-xs-regular-normal-font-weight, 400);
@@ -1478,11 +1410,9 @@ export default {
 .button-text2 {
     color: var(--component-text-component-text-light-fixed, #ffffff);
     text-align: center;
-    font-family: var(
-        --body-sm-regular-normal-font-family,
-        "Poppins-Regular",
-        sans-serif
-    );
+    font-family: var(--body-sm-regular-normal-font-family,
+            "Poppins-Regular",
+            sans-serif);
     font-size: var(--body-sm-regular-normal-font-size, 16px);
     line-height: var(--body-sm-regular-normal-line-height, 24px);
     font-weight: var(--body-sm-regular-normal-font-weight, 400);
@@ -1521,11 +1451,9 @@ export default {
 .div2 {
     color: #000000;
     text-align: left;
-    font-family: var(
-        --typography-typeface-change-font-here-body,
-        "Poppins-Regular",
-        sans-serif
-    );
+    font-family: var(--typography-typeface-change-font-here-body,
+            "Poppins-Regular",
+            sans-serif);
     font-size: 16px;
     line-height: var(--typography-height-2xs, 20px);
     font-weight: var(--typography-weight-regular, 400);
@@ -1554,20 +1482,16 @@ export default {
     width: 20px;
     height: 20px;
     position: relative;
-    box-shadow: var(
-        --shadow-background-xsm-box-shadow,
-        0px 2px 2px 2px rgba(0, 0, 0, 0.16)
-    );
+    box-shadow: var(--shadow-background-xsm-box-shadow,
+            0px 2px 2px 2px rgba(0, 0, 0, 0.16));
 }
 
 .div3 {
     color: #3994ff;
     text-align: left;
-    font-family: var(
-        --typography-typeface-change-font-here-body,
-        "Poppins-Regular",
-        sans-serif
-    );
+    font-family: var(--typography-typeface-change-font-here-body,
+            "Poppins-Regular",
+            sans-serif);
     font-size: 16px;
     line-height: var(--typography-height-2xs, 20px);
     font-weight: var(--typography-weight-regular, 400);
@@ -1641,11 +1565,9 @@ export default {
 .icon {
     color: var(--text-secondary, #484644);
     text-align: left;
-    font-family: var(
-        --icon-medium-stroke-font-family,
-        "TeamsAssets-Light",
-        sans-serif
-    );
+    font-family: var(--icon-medium-stroke-font-family,
+            "TeamsAssets-Light",
+            sans-serif);
     font-size: var(--icon-medium-stroke-font-size, 16px);
     line-height: var(--icon-medium-stroke-line-height, 16px);
     font-weight: var(--icon-medium-stroke-font-weight, 300);
@@ -1713,7 +1635,7 @@ export default {
     height: 270px;
     position: absolute;
     left: 196px;
-    top: 297px;
+    top: 285px;
 }
 
 .bilingual-highlighting {
@@ -1769,10 +1691,8 @@ export default {
 .base {
     border-radius: 16px;
     border-style: solid;
-    border-color: var(
-        --light-theme-rest-foreground-default-foreground-2,
-        #616161
-    );
+    border-color: var(--light-theme-rest-foreground-default-foreground-2,
+            #616161);
     border-width: 1px;
     flex-shrink: 0;
     width: 16px;
@@ -1792,11 +1712,12 @@ export default {
 }
 
 .this-is-text {
+    hyphens: auto;
     color: #000000;
     width: 170px !important;
     text-align: left;
     font-family: var(--presets-body2-font-family, "Inter-Regular", sans-serif);
-    font-size: var(--presets-body2-font-size, 15px);
+    font-size: var(--presets-body2-font-size, 13px);
     line-height: var(--presets-body2-line-height, 24px);
     font-weight: var(--presets-body2-font-weight, 400);
     position: relative;
@@ -1841,12 +1762,11 @@ export default {
 }
 
 #showDemoTranslated {
-    margin-top: 6px;
-    font-size: 14px;
+    /* margin-top: 6px; */
+    font-size: 13px;
     /*white-space: nowrap;*/
     overflow: hidden;
     text-overflow: ellipsis;
     text-align: left;
 }
-
 </style>

@@ -72,9 +72,9 @@ onMounted(async () => {
             getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICE)
         ])
     globalSwitch.value = switchValue === undefined ? true : switchValue
-    bilingualHighlightingSwitch.value = bilingualHighlightingSwitchValue === undefined ? false : bilingualHighlightingSwitchValue
-    floatBallSwitch.value = floatBallSwitchValue === undefined ? false : floatBallSwitchValue
-    contextMenuSwitch.value = contextMenuSwitchValue === undefined ? false : contextMenuSwitchValue
+    bilingualHighlightingSwitch.value = bilingualHighlightingSwitchValue === undefined ? true : bilingualHighlightingSwitchValue
+    floatBallSwitch.value = floatBallSwitchValue === undefined ? true : floatBallSwitchValue
+    contextMenuSwitch.value = contextMenuSwitchValue === undefined ? true : contextMenuSwitchValue
     viewStrategy.value = viewStrategyValue === undefined ? DEFAULT_VALUE.VIEW_STRATEGY : viewStrategyValue
     targetLang.value = targetLangValue === undefined ? DEFAULT_VALUE.TARGET_LANG : targetLangValue
     translateService.value = translateServiceValue === undefined ? DEFAULT_VALUE.TRANSLATE_SERVICE : translateServiceValue

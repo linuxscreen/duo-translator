@@ -1,7 +1,6 @@
 import {defineConfig} from 'wxt';
 import vue from '@vitejs/plugin-vue';
 import vueI18n from '@intlify/unplugin-vue-i18n/vite';
-import {browser} from "wxt/browser";
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -19,11 +18,33 @@ export default defineConfig({
         commands: {
             "shortcut-toggle": {
                 "suggested_key": {
-                    "default": "Ctrl+Shift+T"
+                    "default": "Ctrl+Shift+G",
+                    "linux": "Ctrl+Shift+G"
                 },
                 "description": '__MSG_shortcutToggleTranslation__'
+            },
+            "shortcut-translate": {
+                "suggested_key": {
+                    "default": "Ctrl+Shift+T",
+                    "linux": "Ctrl+Shift+T"
+                },
+                "description": '__MSG_shortcutTranslate__'
+            },
+            "shortcut-restore": {
+                "suggested_key": {
+                    "default": "Ctrl+Shift+R",
+                    "linux": "Ctrl+Shift+R"
+                },
+                "description": '__MSG_shortcutRestore__'
+            },
+        },
+        // fix chrome load extension error: DevTools failed to load source map: Could not load:ERR_BLOCKED_BY_CLIENT
+        web_accessible_resources: [
+            {
+              "resources": ["*/*"],
+              "matches": ["<all_urls>"]
             }
-        }
+        ]
     },
     imports: {
         addons: {
@@ -41,9 +62,9 @@ export default defineConfig({
             // 'import.meta.env.VITE_ENV': JSON.stringify(process.env.VITE_ENV)
         },
         build: {
-            minify: 'terser',
+            // minify: 'terser',
             // Enabling sourcemaps with Vue during development is known to cause problems with Vue
-            sourcemap: false,
+            sourcemap: true,
             terserOptions: {
                 // compress: {
                 //     // production env will remove all console.* calls
@@ -58,7 +79,7 @@ export default defineConfig({
         //     }
         // }
     }),
-    runner: {
+    webExt: {
         disabled: true,
     },
 });

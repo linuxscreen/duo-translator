@@ -1,7 +1,7 @@
 <script lang="ts">
-import {ref, defineComponent, nextTick} from 'vue';
-import {rgbToHex} from "@/entrypoints/utils";
-import {ElMessage} from "element-plus";
+import { ref, defineComponent, nextTick } from 'vue';
+import { rgbToHex } from "@/entrypoints/utils";
+import { ElMessage, ElColorPicker } from "element-plus";
 import useI18n from "@/composables/useI18n";
 
 export default {
@@ -45,8 +45,8 @@ export default {
         };
     },
     setup() {
-        const {t} = useI18n();
-        const colorPickerComponent = ref(null)
+        const { t } = useI18n();
+        const colorPickerComponent = ref<InstanceType<typeof ElColorPicker> | null>(null)
         const callInternalMethod = () => {
             if (colorPickerComponent.value) {
                 colorPickerComponent.value.show();
@@ -173,10 +173,9 @@ export default {
 <template>
     <section v-bind="$attrs" class="bg-color-pick-list" :class="customClass">
         <span class="color-item" v-for="(colorItem) in colorItems" @click="checkedColor($event)"
-              :style="{color: colorItem}"></span>
+            :style="{ color: colorItem }"></span>
         <span class="color-item" id="colorPickBox" :data-custom-color="colorPicked" @click="showColorPicker()">
-  <el-color-picker id="colorPicker" ref="colorPickerComponent" v-bind="$attrs"
-                   @change="onColorChange"/>
+            <el-color-picker id="colorPicker" ref="colorPickerComponent" v-bind="$attrs" @change="onColorChange" />
         </span>
     </section>
 
@@ -224,5 +223,4 @@ export default {
     background-color: currentcolor;
 
 }
-
 </style>

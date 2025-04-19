@@ -288,7 +288,7 @@ let detectLanguageUrl = "https://api-edge.cognitive.microsofttranslator.com/dete
 async function refreshToken(service: TranslationService) {
     if (!service.authToken || service.authToken.token == "" || service.authToken.expireTime < Date.now()) {
         service.authToken = await sendMessageToBackground({
-            action: ACTION.GET_ACCESS_TOKEN,
+            action: ACTION.ACCESS_TOKEN_GET,
             data: {serviceName: service.serviceName}
         })
     }
@@ -329,7 +329,7 @@ export const microsoftTranslationService = new TranslationService(
                 return Promise.resolve([])
             }
             this.authToken = await sendMessageToBackground({
-                action: ACTION.GET_ACCESS_TOKEN,
+                action: ACTION.ACCESS_TOKEN_GET,
                 data: {serviceName: this.serviceName}
             })
             return this.translateText(text, targetLang, sourceLang, options)

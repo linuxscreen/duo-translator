@@ -11,6 +11,7 @@ import {
     TB_ACTION,
     TRANS_ACTION,
     TRANS_SERVICE,
+    TRANSLATE_STATUS_KEY,
     VIEW_STRATEGY
 } from "@/entrypoints/constants";
 import translateService, {
@@ -22,7 +23,6 @@ import { getCssSelector } from 'css-selector-generator';
 import { getConfig } from "@/utils/db";
 import { franc } from "franc-min";
 import Heap from "heap";
-import { log } from "loglevel";
 
 
 // import {Mutex} from "async-mutex";
@@ -73,6 +73,7 @@ class ParagraphElementTool {
         } else {
             let len = this.getElementTextLength(element)
             this.allParagraphElements.set(element, new LanguageScore(lang, len))
+            // console.log('tools update:', element, lang, len) 
             this.updateLanguageScore(lang, len)
         }
     }
@@ -105,9 +106,6 @@ class ParagraphElementTool {
     }
 
     updateLanguageScore(language: string, changedScore: number) {
-        if (language == "de") {
-            console.log('updateLanguageScore:', language, changedScore)
-        }
         // const release = await mutex.acquire();
         // try {
         let l = this.languageScoreMap.get(language)
@@ -186,11 +184,19 @@ class ParagraphElementTool {
         return this.getByteLength(text); // Calculate byte length
     }
 
+    clear() {
+        this.totalScore = 0
+        this.languageScoreMap.clear()
+        this.paragraphElementHeap.clear()
+        this.allParagraphElements.clear()
+    }
+
 }
 
 export default defineContentScript({
     // matches: ['<all_urls>'],
     matches: ['https://*/*', 'http://*/*'],
+    // runAt: "document_start",
     cssInjectionMode: 'manual',
     async main(ctx) {
         // get the id of the current tab,which used unique defines the page
@@ -198,6 +204,7 @@ export default defineContentScript({
         if (!tabId) {
             return
         }
+        let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + tabId
         // Get the domain name and port of the current page
         let currentUrl = window.location.href;
         const domain = getDomainFromUrl(currentUrl);
@@ -209,10 +216,8 @@ export default defineContentScript({
             // ignore the elements with class start with duo
             return getCssSelector(ele, { selectors: ["id", "class", "tag"], blacklist: ['.duo-*'] })
         }
-        let duoSwitch : HTMLElement | null = null
-        let floatBallSwitch = true
-        let floatBall = document.createElement("div")
-        function setFloatBallSwitchStatus (status: boolean) {
+        let duoSwitch: HTMLElement | null = null
+        function setFloatBallSwitchStatus(status: boolean) {
             if (!duoSwitch) {
                 return
             }
@@ -222,11 +227,210 @@ export default defineContentScript({
                 duoSwitch.classList.remove('active')
             }
         }
+
         // return
-        await initFloatBall()
+        let paragraphElementTool = new ParagraphElementTool()
+        // set translate status to false when the page is loaded
+        let translateStatus = false
+        persistTranslateStatus(false)
+
+        let manualTrigger = false
+        const ignoreMutationElements = new WeakSet();
+        let translatedOriginalMap = new Map<HTMLElement, HTMLElement>()
+        let subSelectedOriginalElementMap = new Map<HTMLElement, HTMLElement>()
+        let pureOriginalElementMap = new Map<HTMLElement, HTMLElement>()
+        let paragraphShadowElements: Map<string, HTMLElement> = new Map()
+        const hasShadowElements = new WeakSet()
+        // get all config from storage
+        let [ruleStrategy, viewStrategy, targetLanguage, translateService, globalSwitch, defaultStrategy,
+            rawDomainStrategy, floatBallSwitch]
+            : [string[], string, string, string, boolean, string, any, boolean] = await Promise.all(
+                [
+                    listRuleFromDB(),
+                    getConfig(CONFIG_KEY.VIEW_STRATEGY),
+                    getConfig(CONFIG_KEY.TARGET_LANGUAGE),
+                    getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
+                    getConfig(CONFIG_KEY.GLOBAL_SWITCH),
+                    getConfig(CONFIG_KEY.DEFAULT_STRATEGY),
+                    sendMessageToBackground({ action: DB_ACTION.DOMAIN_GET, data: { domain: domainWithPort } }),
+                    getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH)
+                ]
+            )
+        viewStrategy = viewStrategy || VIEW_STRATEGY.DOUBLE
+        globalSwitch = globalSwitch === undefined ? true : globalSwitch
+        floatBallSwitch = floatBallSwitch === undefined ? true : floatBallSwitch
+        translateService = translateService || TRANS_SERVICE.MICROSOFT
+        targetLanguage = targetLanguage || navigator.language
+        defaultStrategy = defaultStrategy || DOMAIN_STRATEGY.AUTO
+        let domainStrategy = (rawDomainStrategy?.strategy || DOMAIN_STRATEGY.AUTO) as string
+        let allParagraphElementSet = new Map<HTMLElement, LanguageScore>()
+        const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
+        console.debug("get config:", "ruleStrategy: ", ruleStrategy, "viewStrategy: ", viewStrategy,
+            "targetLanguage: ", targetLanguage, "translateService: ", translateService, "globalSwitch: ",
+            globalSwitch, "defaultStrategy: ", defaultStrategy, "domainStrategy: ", domainStrategy)
+
+        let timer: number | null = null
+        let translateElements: Set<HTMLElement> = new Set()
+
+        // observe the dom change, translate the new added elements
+        let observer = new MutationObserver(async mutations => {
+            mutations.forEach(mutation => {
+                if (mutation.type === 'childList') {
+                    if (mutation.target.nodeType != 1) {
+                        return;
+                    }
+                    let element = mutation.target as HTMLElement;
+                    // if (element.textContent === "Prerequisites"){
+                    //     console.log('prerequisites:', element)
+                    // }
+                    // check the removed nodes
+                    mutation.removedNodes.forEach((removedNode) => {
+                        if (removedNode.nodeType == 1) {
+                            let element = removedNode as HTMLElement;
+                            // console.log('remove element:', element)
+                            if (element.classList.contains("duo-paragraph")) {
+                                paragraphElementTool.remove(element);
+                                translatedOriginalMap.delete(element);
+                                pureOriginalElementMap.delete(element);
+                            } else {
+                                element.querySelectorAll(".duo-paragraph").forEach((ele) => {
+                                    if (ele.nodeType == 1) {
+                                        let element = ele as HTMLElement;
+                                        paragraphElementTool.remove(element) // this line must be
+                                        translatedOriginalMap.delete(element)
+                                        pureOriginalElementMap.delete(element)
+                                    }
+                                });
+                            }
+                        }
+
+                    });
+                    let parent = mutation.target as HTMLElement;
+                    if (ignoreMutationElements.has(parent)) {
+                        // console.log('ignore mutation:', parent);
+                        return;
+                    }
+                    // console.log('parent mutation:', parent, mutation.type)
+                    // check the added nodes
+                    let collect = markParagraphElement(parent, undefined, [], true);
+                    if (collect.length > 0) {
+                        translateElements.add(parent);
+                    } else {
+                        mutation.addedNodes.forEach((addedNode) => {
+                            if (addedNode.nodeType == 1 && addedNode instanceof HTMLElement) {
+                                let element = addedNode as HTMLElement;
+                                if (ignoreMutationElements.has(element)) {
+                                    return;
+                                }
+                                markParagraphElement(element, undefined, [], false, 0, 100).forEach((ele) => {
+                                    translateElements.add(ele);
+                                });
+                            }
+                        });
+                    }
+                    // console.log("paragraphShadowElements:", paragraphShadowElements)
+                    if (translateElements.size >= 50) {
+                        if (timer !== null) {
+                            clearTimeout(timer);
+                            timer = null;
+                        }
+                        translateParagraphElements(Array.from(translateElements), { hasDuplicated: true });
+                        translateElements = new Set();
+                    } else if (timer === null) {
+                        // if there is no timer, start a timer, wait for at most timeoutLimit milliseconds
+                        timer = window.setTimeout(() => {
+                            if (timer !== null) {
+                                clearTimeout(timer);
+                                timer = null;
+                            }
+                            translateParagraphElements(Array.from(translateElements), { hasDuplicated: true });
+                            translateElements = new Set();
+                        }, 50);
+                    }
+                } else {
+                    // listen the text content change
+                    console.log('Text content changed:', mutation.target);
+                }
+            }
+            );
+        });
+
+        if (globalSwitch) {
+            await init()
+        }
+
+        async function init() {
+            ruleStrategyProcess(ruleStrategy)
+            initCSS()
+            await initFloatBall()
+            await initTranslate()
+            startObserveDom()
+        }
+
+        async function unload() {
+            removeCSS()
+            observer.disconnect()
+            removeFloatBall()
+            restoreOriginalPage(true, true)
+            paragraphElementTool.clear()
+        }
+
+        async function initTranslate() {
+            switch (domainStrategy) {
+                case DOMAIN_STRATEGY.NEVER:
+                    await persistTranslateStatus(false)
+                    break
+                case DOMAIN_STRATEGY.ALWAYS:
+                    await persistTranslateStatus(true)
+                    break
+                case DOMAIN_STRATEGY.AUTO:
+                    if (defaultStrategy == DOMAIN_STRATEGY.NEVER) {
+                        await persistTranslateStatus(false)
+                    } else if (defaultStrategy == DOMAIN_STRATEGY.ALWAYS) {
+                        await persistTranslateStatus(true)
+                    }
+                    break
+            }
+            let htmlElements = markParagraphElement(document.body, undefined, [], false, 0, 100);
+            translateParagraphElements(htmlElements)
+        }
+
+        async function initCSS() {
+            // set rule mode css style
+            let ruleModeStyle = document.createElement('style') as HTMLStyleElement
+            ruleModeStyle.id = "rule-mode-style"
+            ruleModeStyle.innerText += ".duo-selected {outline: 2px solid yellow !important;}"
+            document.head.appendChild(ruleModeStyle)
+            await processStyleChangeAction()
+        }
+
+        async function removeCSS() {
+            document.getElementById('rule-mode-style')?.remove()
+            document.getElementById('duo-translation-style')?.remove()
+            // document.head.removeChild(document.getElementById('rule-mode-style') as HTMLStyleElement)
+            // document.head.removeChild(document.getElementById('duo-translation-style') as HTMLStyleElement)
+        }
+
+        function startObserveDom() {
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                characterData: true,// text content change
+                // attributes: true,
+                // characterDataOldValue: true,
+                // attributeOldValue: true
+            });
+        }
+        // return
+        // ======================== floating ball start ========================
 
         async function createFloatBall() {
-            floatBall = document.createElement("div")
+            if (document.getElementById("duo-float-ball-outer")) {
+                return
+            }
+            console.log("start createFloatBall")
+            let floatBall = document.createElement("div")
+            floatBall.id = "duo-float-ball-outer"
             // float ball
             let shadowRoot = floatBall.attachShadow({ mode: 'open' })
             shadowRoot.innerHTML = floatBallHtml
@@ -238,29 +442,49 @@ export default defineContentScript({
             // Screen range
             let screenWidth = document.documentElement.clientWidth;
             let screenHeight = document.documentElement.clientHeight;
+            let xPercent = 0
+            let yPercent = 0
             const floatingBall = shadowRoot.getElementById('duo-float-ball') as HTMLElement;
             let position = await getConfig(CONFIG_KEY.FLOAT_BALL_POSITION)
-            let initialPositionX = 0
+            let initialPositionX = screenWidth - floatingBall.offsetWidth
             let initialPositionY = 0
             if (position) {
-                initialPositionX = position.x
-                initialPositionY = position.y
+                xPercent = position.x || 0
+                yPercent = position.y || 0
+                initialPositionX = xPercent * screenWidth / 100 - floatingBall.offsetWidth
+                initialPositionY = yPercent * screenHeight / 100 - floatingBall.offsetHeight
+                if (initialPositionX > screenWidth - floatingBall.offsetWidth) {
+                    initialPositionX = screenWidth - floatingBall.offsetWidth
+                }
+                if (initialPositionY > screenHeight - floatingBall.offsetHeight) {
+                    initialPositionY = screenHeight - floatingBall.offsetHeight
+                }
+                if (initialPositionX < 0) {
+                    initialPositionX = 0
+                }
+                if (initialPositionY < 0) {
+                    initialPositionY = 0
+                }
             } else {
-                initialPositionX = screenWidth - floatingBall.offsetWidth - 20
-                initialPositionY = 100
+                if (screenWidth > floatingBall.offsetWidth * 2) {
+                    initialPositionX = screenWidth - floatingBall.offsetWidth * 2
+                }
+                if (screenHeight > floatingBall.offsetHeight * 5) {
+                    initialPositionY = screenHeight - floatingBall.offsetHeight * 5
+                }
             }
             floatingBall.style.left = initialPositionX + "px"
             floatingBall.style.top = initialPositionY + "px"
             floatingBall.style.opacity = "1"
             // script for floating ball
-            let ballTimer: NodeJS.Timeout | null = null;
+            let ballTimer: NodeJS.Timeout | undefined = undefined;
             duoSwitch = shadowRoot.querySelector('.duo-switch') as HTMLElement;
             let duoTool = shadowRoot.querySelector('.duo-tool') as HTMLElement;
             let duoTooltip = shadowRoot.querySelector('.duo-tooltip') as HTMLElement;
             let duoClose = shadowRoot.querySelector('.duo-close-button') as HTMLElement;
             let closeBtn = shadowRoot.querySelector('.duo-close-button') as HTMLElement;
             duoSwitch?.addEventListener('click', () => {
-                console.log('click');
+                console.log('click, moved:', moved);
                 if (moved) {
                     return;
                 }
@@ -337,7 +561,7 @@ export default defineContentScript({
             // Dragging
             window.addEventListener('mousemove', (e) => {
                 if (!isDragging) return;
-                if (Math.abs(e.clientX - startX) > 1 || Math.abs(e.clientY - startY) > 1) {
+                if (Math.abs(e.clientX - startX) > 5 || Math.abs(e.clientY - startY) > 5) {
                     moved = true; // Mark moved
                 }
                 // Calculate new position
@@ -362,6 +586,8 @@ export default defineContentScript({
                 isDragging = false;
                 document.body.style.userSelect = 'auto'; // Restore mouse selection
                 // remember the position
+                // get the width by percentage
+
                 let x = parseFloat(floatingBall.style.left.substring(0, floatingBall.style.left.length - 2));
                 let y = parseFloat(floatingBall.style.top.substring(0, floatingBall.style.top.length - 2));
                 if (x < 0) {
@@ -376,253 +602,83 @@ export default defineContentScript({
                 if (y + floatingBall.offsetHeight > screenHeight) {
                     y = screenHeight - floatingBall.offsetHeight
                 }
-                if (initialPositionX != x || initialPositionY != y) {
+                xPercent = Math.round((x + floatingBall.offsetWidth) / screenWidth * 100)
+                yPercent = Math.round((y + floatingBall.offsetHeight) / screenHeight * 100)
+                if (initialPositionX != xPercent || initialPositionY != yPercent) {
                     // save
-                    setConfig(CONFIG_KEY.FLOAT_BALL_POSITION, { x: x, y: y })
+                    setConfig(CONFIG_KEY.FLOAT_BALL_POSITION, { x: xPercent, y: yPercent })
                 }
             });
 
             window.addEventListener('resize', () => {
-                screenWidth = window.innerWidth;
-                screenHeight = window.innerHeight;
+                // console.log('resize...')
+                screenWidth = document.documentElement.clientWidth;
+                screenHeight = document.documentElement.clientHeight;
                 // judge if the floating ball is out of the screen
-                let rect = floatingBall.getBoundingClientRect()
-                let x = rect.left
-                let y = rect.top
-                if (x + rect.width > screenWidth) {
-                    x = screenWidth - rect.width
+                let left = xPercent * screenWidth / 100 - floatingBall.offsetWidth
+                let top = yPercent * screenHeight / 100 - floatingBall.offsetHeight
+                if (top < 0) {
+                    top = 0
                 }
-                if (y + rect.height > screenHeight) {
-                    y = screenHeight - rect.height
+                if (top + floatingBall.offsetHeight > screenHeight) {
+                    top = screenHeight - floatingBall.offsetHeight
                 }
-                floatingBall.style.left = `${x}px`;
-                floatingBall.style.top = `${y}px`;
+                if (left < 0) {
+                    left = 0
+                }
+                if (left + floatingBall.offsetWidth > screenWidth) {
+                    left = screenWidth - floatingBall.offsetWidth
+                }
+                // console.log("resize left:", left, "top:", top, "offsetX:", floatingBall.offsetWidth, "offsetY:",
+                //     floatingBall.offsetHeight, "xPercent:", xPercent, "yPercent:", yPercent,
+                //     "screenWidth:", screenWidth, "screenHeight:", screenHeight)
+
+                floatingBall.style.left = `${left}px`;
+                floatingBall.style.top = `${top}px`;
             });
         }
 
         async function removeFloatBall() {
-            document.body.removeChild(floatBall);
+            document.getElementById('duo-float-ball-outer')?.remove()
+            // document.body.removeChild(floatBall);
             floatBallSwitch = false
         }
 
         async function initFloatBall() {
-            floatBallSwitch = await getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH)
+            if (!globalSwitch) {
+                return
+            }
             if (!floatBallSwitch) {
                 return
             }
             await createFloatBall()
-        }
-
-        // ======================== floating ball ========================
-
-        // return
-        let paragraphElementTool = new ParagraphElementTool()
-        let translateStatus = false
-
-        let manualTrigger = false
-        const ignoreMutationElements = new WeakSet();
-        let translatedOriginalMap = new Map<HTMLElement, HTMLElement>()
-        let paragraphShadowElements: Map<string, HTMLElement> = new Map()
-        const hasShadowElements = new WeakSet()
-        // get all config from storage
-        let [ruleStrategy, viewStrategy, targetLanguage, translateService, globalSwitch, defaultStrategy, rawDomainStrategy]
-            : [string[], string, string, string, boolean, string, any] = await Promise.all(
-                [
-                    listRuleFromDB(),
-                    getConfig(CONFIG_KEY.VIEW_STRATEGY),
-                    getConfig(CONFIG_KEY.TARGET_LANGUAGE),
-                    getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
-                    getConfig(CONFIG_KEY.GLOBAL_SWITCH),
-                    getConfig(CONFIG_KEY.DEFAULT_STRATEGY),
-                    sendMessageToBackground({ action: DB_ACTION.DOMAIN_GET, data: { domain: domainWithPort } })
-                ]
-            )
-        viewStrategy = viewStrategy || VIEW_STRATEGY.DOUBLE
-        globalSwitch = globalSwitch === null ? true : globalSwitch
-        translateService = translateService || TRANS_SERVICE.MICROSOFT
-        targetLanguage = targetLanguage || navigator.language
-        defaultStrategy = defaultStrategy || DOMAIN_STRATEGY.AUTO
-        let domainStrategy = (rawDomainStrategy?.strategy || DOMAIN_STRATEGY.AUTO) as string
-        let allParagraphElementSet = new Map<HTMLElement, LanguageScore>()
-        const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
-        // record the elements before translated, for show original
-        let originalElementRecords: HTMLElement[] = []
-        let translateElementRecords: HTMLElement[] = []
-        // collect all the paragraph elements, by the way add duo-paragraph class
-        ruleStrategyProcess(ruleStrategy)
-        // console.log(document.body.innerHTML)
-        // }
-        // let pageLanguage = detectLanguageByFranc()
-        // console.log('domain:', domain, 'pageLanguage:', pageLanguage)
-        let tabTranslateStatusKey = "tabTranslateStatus#" + tabId
-        let globalStyleSheet = document.createElement("style");
-        await processStyleChangeAction()
-        console.log("tabId: ", tabId)
-        switch (domainStrategy) {
-            case DOMAIN_STRATEGY.NEVER:
-                await persistTranslateStatus(false)
-                break
-            case DOMAIN_STRATEGY.ALWAYS:
-                await persistTranslateStatus(true)
-                break
-            case DOMAIN_STRATEGY.AUTO:
-                if (defaultStrategy == DOMAIN_STRATEGY.NEVER) {
-                    await persistTranslateStatus(false)
-                } else if (defaultStrategy == DOMAIN_STRATEGY.ALWAYS) {
-                    await persistTranslateStatus(true)
+            // check every 200ms if the float ball is created, totally check 5 times
+            // fix when page throw (Uncaught Error: Minified React error #418), the float ball is not created successfully
+            async function checkFloatBall() {
+                for (let i = 0; i < 10; i++) {
+                    await new Promise(resolve => setTimeout(async () => {
+                        await createFloatBall()
+                        resolve(true)
+                    }, 200));
                 }
-                break
-        }
-        let htmlElements = markParagraphElement(document.body, undefined, [], false, 0, 100);
-        await translateParagraphElements(htmlElements)
-        let timer: number | null = null
-        let translateElements: Set<HTMLElement> = new Set()
-        // let e= document.querySelector('#left-sidebar > nav > left-nav-top-section')
-        // // let selector = e?.querySelector(".text-14");
-        // let t = e?.shadowRoot?.querySelector(".text-14")
-        // t.classList.add("duo-paragraph")
-        // t.textContent = "new"
-        // console.log('shadow element:',e?.shadowRoot?.innerHTML)
-        // selector.textContent = "nenew"
-        // observe the dom change, translate the new added elements
-        let observer = new MutationObserver(async mutations => {
-            mutations.forEach(mutation => {
-                if (mutation.type === 'childList') {
-                    if (mutation.target.nodeType != 1) {
-                        return;
-                    }
-                    // 监听子节点的添加或删除
-                    // 检查删除的节点
-                    mutation.removedNodes.forEach((removedNode) => {
-                        //
-                        if (removedNode.nodeType == 1) {
-                            let element = removedNode as HTMLElement;
-                            // console.log('remove element:', element)
-                            if (element.classList.contains("duo-paragraph")) {
-                                paragraphElementTool.remove(element);
-                                translatedOriginalMap.delete(element);
-                            } else {
-                                element.querySelectorAll(".duo-paragraph").forEach((ele) => {
-                                    if (ele.nodeType == 1) {
-                                        let element = ele as HTMLElement;
-                                        paragraphElementTool.remove(element) // 这一行必须要有
-                                        translatedOriginalMap.delete(element)
-                                    }
-                                });
-                            }
-                        }
-
-                    });
-                    let parent = mutation.target as HTMLElement;
-                    if (ignoreMutationElements.has(parent)) {
-                        // console.log('ignore mutation:', parent);
-                        return;
-                    }
-                    // console.log('parent mutation:', parent, mutation.type)
-                    let collect = markParagraphElement(parent, undefined, [], true);
-                    // if (parent.textContent?.includes("Ask questions and post articles about the Go programming")) {
-                    //     console.log('collect:', parent)
-                    // }
-                    // let collect = []
-                    if (collect.length > 0) {
-                        translateElements.add(parent);
-                    } else {
-                        mutation.addedNodes.forEach((addedNode) => {
-                            if (addedNode.nodeType == 1 && addedNode instanceof HTMLElement) {
-                                let element = addedNode as HTMLElement;
-                                if (ignoreMutationElements.has(element)) {
-                                    return;
-                                }
-                                markParagraphElement(element, undefined, [], false, 0, 100).forEach((ele) => {
-                                    translateElements.add(ele);
-                                });
-                            }
-                        });
-                    }
-                    // console.log("paragraphShadowElements:", paragraphShadowElements)
-                    if (translateElements.size >= 50) {
-                        if (timer !== null) {
-                            clearTimeout(timer);
-                            timer = null;
-                        }
-                        translateParagraphElements(Array.from(translateElements), { hasDuplicated: true });
-                        translateElements = new Set();
-                    } else if (timer === null) {
-                        // 如果还没有定时器，则启动一个定时器，最多等待 timeoutLimit 毫秒
-                        timer = window.setTimeout(() => {
-                            if (timer !== null) {
-                                clearTimeout(timer);
-                                timer = null;
-                            }
-                            translateParagraphElements(Array.from(translateElements), { hasDuplicated: true });
-                            translateElements = new Set();
-                        }, 50);
-                    }
-                    setTranslateStatusByTranslatedElement()
-
-
-                } else if (mutation.type === 'characterData') {
-                    // 监听文本内容的变化
-                    console.log('Text content changed:', mutation.target);
-                    // if (mutation.target.nodeType == 1) {
-                    //     let element = mutation.target as HTMLElement
-                    //     markParagraphElement(element)
-                    // }
-                }
-
-
-                // let element = mutation.target as HTMLElement
-                // if (!(element instanceof HTMLElement)) {
-                //     return
-                // }
-                // // if (element.textContent == "Prerequisites") {
-                // //     console.log('Prerequisites mutation:', element, mutation.type)
-                // // }
-                // markParagraphElement(element)
-                // // console.log('mutation:', mutation, 'translateStatus:', translateStatus)
-                // // todo
-                // if (translateStatus) {
-                //     translateRoot(element)
-                // }
-                // return;
-                // if (ele.textContent=="Prerequisites") {
-                //     console.log('Prerequisites mutation:', ele,mutation.type)
-                // }
-                // }
-                // console.log('mutation root:', mutation)
             }
-            );
-        });
+            checkFloatBall()
+        }
 
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            // characterData: true,// text content change
-            // attributes: true,
-            // characterDataOldValue: true,
-            // attributeOldValue: true
-        });
+        // ======================== floating ball end ========================
 
         // set translate status true when the page has a translated element, otherwise set false
         async function setTranslateStatusByTranslatedElement() {
+            console.log("set translate status by translated element", translatedOriginalMap.size);
             if (translatedOriginalMap.size == 0) {
                 if (translateStatus) {
-                    try {
-                        await setSessionStorage(tabTranslateStatusKey, false)
-                        translateStatus = false
-                    } finally {
-                    }
+                    persistTranslateStatus(false)
                 }
             } else {
                 if (!translateStatus) {
-                    try {
-                        await setSessionStorage(tabTranslateStatusKey, true)
-                        translateStatus = true
-                    } finally {
-                    }
+                    persistTranslateStatus(true)
                 }
             }
-            setFloatBallSwitchStatus(translateStatus)
         }
 
 
@@ -637,13 +693,6 @@ export default defineContentScript({
         // Create a data URL for the cursor
         const cursorAddUrl = `url('data:image/svg+xml;base64,${svgAddBase64}'), auto`;
         const cursorTrashUrl = `url('data:image/svg+xml;base64,${svgTrashBase64}'), auto`;
-
-        // set rule mode css style
-        let ruleModeStyle = document.createElement('style') as HTMLStyleElement
-        ruleModeStyle.id = "rule-mode-style"
-        ruleModeStyle.innerText += ".duo-selected {outline: 2px solid yellow !important;}"
-        document.head.appendChild(ruleModeStyle)
-        await processStyleChangeAction()
 
         async function translateWholePage() {
             if (manualTrigger) {
@@ -660,13 +709,14 @@ export default defineContentScript({
         }
 
         async function persistTranslateStatus(status: boolean) {
+            console.log("persist translate status", status);
             await setSessionStorage(tabTranslateStatusKey, status).then(() => {
                 translateStatus = status
                 setFloatBallSwitchStatus(status)
             })
-            // notify the home page
+            // notify the home page and background to set translate status
             browser.runtime.sendMessage({
-                action: TB_ACTION.LANG_GET,
+                action: TRANS_ACTION.TRANSLATE_STATUS_CHANGE,
                 data: {
                     tabId: tabId,
                     status: status
@@ -674,14 +724,21 @@ export default defineContentScript({
             });
         }
 
-        document.addEventListener('contextmenu', (event) => {
-            sendMessageToBackground({ action: TB_ACTION.CONTEXT_MENU_SHOW, data: tabId })
-        });
+        // document.addEventListener('contextmenu', (event) => {
+        //     sendMessageToBackground({ action: TB_ACTION.CONTEXT_MENU_SHOW, data: tabId })
+        // });
 
         async function translateAction() {
+            if (translateStatus) {
+                return
+            }
+            manualTrigger = true
             await translateWholePage()
         }
         async function originAction() {
+            if (!translateStatus) {
+                return
+            }
             manualTrigger = true
             await persistTranslateStatus(false)
             // restore original page
@@ -689,6 +746,7 @@ export default defineContentScript({
         }
         // Accept messages from popups, process the task
         // todo
+        // =============================  message listener start  ===================================
         browser.runtime.onMessage.addListener(async (message, sender, sendResponse: (t: any) => void) => {
             console.log('content script receive message:', message)
             let params: translateParams
@@ -696,12 +754,10 @@ export default defineContentScript({
                 case TRANS_ACTION.TRANSLATE:
                     // await translateRoot(document.body)
                     console.log('translate page')
-                    manualTrigger = true
                     await translateAction()
                     break
                 case TRANS_ACTION.ORIGIN:
                     console.log('show original')
-                    manualTrigger = true
                     await originAction()
                     break
                 case TRANS_ACTION.DOUBLE:
@@ -778,28 +834,28 @@ export default defineContentScript({
 
                     }
                     break
-                case ACTION.TRANSLATE_CHANGE:
-                    console.log('translate change:', message.data)
+                case ACTION.TRANSLATE_SERVICE_CHANGE:
+                    console.log('translate service change:', message.data)
                     let service = message.data.service as string
                     if (service && service != "") {
                         translateService = service
                     }
                     if (message.active) {
                         if (translateStatus) {
-                            await restoreOriginalPage()
-                            await translateAction()
+                            await restoreOriginalPage(false)
+                            await translateWholePage()
                         }
                     }
-
-                    // restore original page
-                    // observer.disconnect()
-                    // await restoreOriginalPage()
-                    // await translateRoot(document.body)
-                    // document.body.innerHTML = domContent
                     break
                 case ACTION.DEFAULT_STRATEGY_CHANGE:
                     if (typeof message.data === "string") {
                         defaultStrategy = message.data
+                    }
+                    if (!globalSwitch) {
+                        return
+                    }
+                    if (domainStrategy == DOMAIN_STRATEGY.ALWAYS || domainStrategy == DOMAIN_STRATEGY.NEVER) {
+                        return
                     }
                     manualTrigger = true // other condition always true
                     switch (defaultStrategy) {
@@ -813,16 +869,15 @@ export default defineContentScript({
                             console.log('default strategy:', translateStatus)
                             return translateStatus;
                         case DOMAIN_STRATEGY.NEVER:
-                            if (translateStatus) {
+                            if (translateStatus && domainStrategy != DOMAIN_STRATEGY.ALWAYS) {
                                 await restoreOriginalPage(true)
                             }
                             return false
                         case DOMAIN_STRATEGY.ALWAYS:
                             if (!translateStatus) {
-                                await persistTranslateStatus(true)
                                 await translateWholePage()
                             }
-                            return true
+                            return true // deprecated, return translate status to notify the home page
                         default:
                             break
 
@@ -837,10 +892,10 @@ export default defineContentScript({
                             return
                         }
                         if (!globalSwitch) {
-                            await restoreOriginalPage()
+                            await unload()
                             return false
                         } else {
-                            return translateWholePage()
+                            await init()
                         }
                     }
                     // return undefined
@@ -850,12 +905,15 @@ export default defineContentScript({
                     if (message.data && message.data != "") {
                         viewStrategy = message.data
                     }
-                    if (!message.active || !globalSwitch) {
+                    if (!message.active) {
                         return
                     }
                     // process the view strategy change
-                    await restoreOriginalPage(false)
-                    return translatePage()
+                    if (translateStatus) {
+                        await restoreOriginalPage(false)
+                        await translateWholePage()
+                    }
+
                     // if (viewStrategy == VIEW_STRATEGY.DOUBLE) {
                     //    if (translateStatus) {
                     //         await restoreOriginalPage(false)
@@ -870,22 +928,28 @@ export default defineContentScript({
                     // }
                     break
                 case ACTION.TARGET_LANG_CHANGE:
-                    if (message.data && message.data != "") {
-                        targetLanguage = message.data
+                    let oldTargetLanguage = targetLanguage
+                    let newLang = message!.data!.lang
+                    if (typeof newLang === "string" && newLang != "") {
+                        targetLanguage = newLang
+                    }
+                    if (message.active && oldTargetLanguage != targetLanguage) {
+                        await restoreOriginalPage(false)
+                        await translateWholePage()
                     }
                     // process the target language change
                     break
                 case TB_ACTION.FLOAT_BALL_SWITCH:
                     if (typeof message.data === "boolean") {
-                        console.log('float ball switch:', message.data,"floatBallSwitch:",floatBallSwitch)
-                        let newFloatBallSwitch :boolean = message.data
-                        if (newFloatBallSwitch && !floatBallSwitch) {
-                            await createFloatBall()
-                        }else{
-                            console.log('remove float ball')
+                        console.log('float ball switch:', message.data, "floatBallSwitch:", floatBallSwitch)
+                        let newFloatBallSwitch: boolean = message.data
+                        floatBallSwitch = newFloatBallSwitch
+                        if (newFloatBallSwitch) {
+                            await initFloatBall()
+                        } else {
                             await removeFloatBall()
                         }
-                        floatBallSwitch = newFloatBallSwitch
+
                     }
                 default:
                     break
@@ -909,9 +973,19 @@ export default defineContentScript({
          * restore the original page
          * @param setStatus set the translation status to false and persist to storage
          */
-        async function restoreOriginalPage(setStatus: boolean = true) {
+        async function restoreOriginalPage(setStatus: boolean = true, pure: boolean = false) {
             if (setStatus) {
                 persistTranslateStatus(false)
+            }
+            if (pure) {
+                // restore element with pure original element, added attribute and class will be removed
+                pureOriginalElementMap.forEach((originalElement, translatedElement) => {
+                    let div = document.createElement("div")
+                    div.innerHTML = originalElement.outerHTML
+                    translatedElement.outerHTML = div.innerHTML
+                })
+                pureOriginalElementMap.clear()
+                return
             }
             console.log('restore original page', translatedOriginalMap)
             for (let element of translatedOriginalMap) {
@@ -922,14 +996,19 @@ export default defineContentScript({
                 translatedElement.classList.remove("duo-translated")
                 translatedOriginalMap.delete(translatedElement)
             }
+            for (let element of subSelectedOriginalElementMap) {
+                let [translatedElement, originalElement] = element
+                ignoreMutationElements.add(translatedElement)
+                translatedElement.innerHTML = originalElement.innerHTML
+                translatedElement.removeAttribute("duo-no-observer")
+                translatedElement.classList.remove("duo-translated")
+                subSelectedOriginalElementMap.delete(translatedElement)
+            }
             Promise.resolve().then(() => {
                 for (let element of translatedOriginalMap) {
                     ignoreMutationElements.delete(element?.[0])
                 }
             })
-            // to prevent record residual
-            originalElementRecords = []
-            translateElementRecords = []
             // height and line limit restore
             let heightBreakElements = document.querySelectorAll(".duo-height-break")
             for (let heightBreakElement of heightBreakElements) {
@@ -1177,18 +1256,12 @@ export default defineContentScript({
         }
 
         function toggleTranslateStatus() {
-            getSessionStorage(tabTranslateStatusKey).then((status) => {
-                if (status) {
-                    // observer.disconnect()
-                    console.log('translate status:', status)
-                    setSessionStorage(tabTranslateStatusKey, false)
-                    // restore the original page
-                    restoreOriginalPage()
-                } else {
-                    setSessionStorage(tabTranslateStatusKey, true)
-                    translateRoot(document.body)
-                }
-            });
+            manualTrigger = true
+            if (translateStatus) {
+                restoreOriginalPage(true)
+            } else {
+                translateWholePage()
+            }
         }
 
         function ruleStrategyProcess(ruleStrategy: string[]) {
@@ -1262,7 +1335,7 @@ export default defineContentScript({
             if (root == document.body) {
                 console.log('translate body:', root)
                 params.isBody = true
-                originalElementRecords = []
+                // originalElementRecords = []
             }
             console.log('viewStrategy:', viewStrategy, 'tabLanguage:', targetLanguage, 'translateService:', translateService, 'globalSwitch:', globalSwitch)
             // ruleStrategyProcess(ruleStrategy)
@@ -1323,60 +1396,60 @@ export default defineContentScript({
                 styleSheet.innerText += `.duo-highlight-translation { background-color: ${translationBgColor}; }`;
                 styleSheet.innerText += `.duo-highlight-original { background-color: ${originalBgColor}; }`;
             }
-            globalStyleSheet = styleSheet
             console.log('styleSheet:', styleSheet)
         }
 
         function convertToPx(value: string, element: HTMLElement) {
-            // 使用正则表达式来分离数值和单位
+            // use regex to separate the value and the unit
             const match = value.match(/^([+-]?\d*\.?\d+)([a-z%]*)$/);
 
             if (match) {
                 const number = parseFloat(match[1]);
                 const unit = match[2];
 
-                // 如果单位是 'px'，直接返回值
                 if (unit === 'px') {
                     return number;
                 }
 
-                // 如果单位是 'em' 或 'rem'
                 if (unit === 'em' || unit === 'rem') {
                     const fontSize = parseFloat(window.getComputedStyle(element).fontSize);
-                    return number * fontSize; // em 或 rem 转换为 px
+                    return number * fontSize;
                 }
 
-                // 如果单位是 '%'
                 if (unit === '%') {
                     const parentElement = element.parentElement || document.body;
                     const parentWidth = parentElement.offsetWidth;
-                    return (number / 100) * parentWidth; // % 转换为 px
+                    return (number / 100) * parentWidth;
                 }
 
-                // 如果单位是 'vh' 或 'vw' 等视口单位
                 if (unit === 'vh' || unit === 'vw') {
                     const viewportSize = unit === 'vh' ? window.innerHeight : window.innerWidth;
-                    return (number / 100) * viewportSize; // vh 或 vw 转换为 px
+                    return (number / 100) * viewportSize;
                 }
-
-                // 如果其他单位，直接返回原数值（可以根据需求扩展）
                 return number;
             }
 
-            return 0; // 如果无法匹配到任何值
+            return 0;
         }
 
+        function isVisible(element: HTMLElement) {
+            const rect = element.getBoundingClientRect();
+            if (rect.left == 0 && rect.right == 0 && rect.top == 0 && rect.bottom == 0) {
+                return false
+            }
+            const visible =
+                rect.top >= 0 &&
+                rect.left >= 0 &&
+                rect.bottom <= document.documentElement.scrollHeight &&
+                rect.right <= document.documentElement.scrollWidth
+            const isStyleVisible = window.getComputedStyle(element).display !== 'none' &&
+                window.getComputedStyle(element).visibility !== 'hidden' &&
+                window.getComputedStyle(element).opacity !== '0';
+            // console.log('visible:', visible, rect, element)
+            return isStyleVisible && visible
+        }
 
         function isElementInViewport(element: HTMLElement) {
-            // const rect = element.getBoundingClientRect();
-            // let t = rect.top >= 0 &&
-            //     rect.left >= 0
-            //     &&
-            //     rect.bottom <= (document.documentElement.clientHeight) &&
-            //     rect.right <= (document.documentElement.clientWidth);
-            // if (!t) {
-            //     console.log('element in viewport:', element, rect, document.documentElement.clientHeight, document.documentElement.clientWidth)
-            // }
             let textIndex = window.getComputedStyle(element).textIndent
             // console.log('textIndex:', textIndex, 'element:', element)
             if (textIndex && textIndex != "" && !textIndex.startsWith("0") && textIndex != "auto") {
@@ -1586,16 +1659,20 @@ export default defineContentScript({
             //     }
             //     return []
             // }
-
-            if (element.style.display === 'none') {
-                return [];
-            }
             // if the element is able to input, don't translate
             if (isEditable(element)) {
                 return [];
             }
             if (isParagraphElement(element)) {
+                // judge element whether in viewport
+                if (!isVisible(element)) {
+                    return []
+                }
+                pureOriginalElementMap.set(element, element.cloneNode(true) as HTMLElement)
                 // judge whether visible
+                // if (!isVisible(element)) {
+                //     return []
+                // }
                 if (!isElementInViewport(element)) {
                     return []
                 }
@@ -1631,6 +1708,7 @@ export default defineContentScript({
                         markParagraphElement(currentNode as HTMLElement, notTranslate, collectElements, false, deep + 1, maxDeep)
                     }
                 } else if (currentNode.nodeType === 3 && currentNode.textContent!.trim() !== "") {
+                    pureOriginalElementMap.set(element, element.cloneNode(true) as HTMLElement)
                     // set the text node to paragraph element
                     // create a custom element to wrap the text node
                     let paraElement = document.createElement('duo-span')
@@ -1674,53 +1752,6 @@ export default defineContentScript({
                 }
             }
             return collectElements || [];
-        }
-
-        // function getByteLength(str: string | undefined | null) {
-        //     if (!str) {
-        //         return 0
-        //     }
-        //     return encoder.encode(str.trim()).length
-        // }
-        //
-        // function getElementTextLength(element: HTMLElement): number {
-        //     let text = "";
-        //
-        //     function traverse(node: Node) {
-        //         if (node.nodeType === Node.TEXT_NODE) {
-        //             text += node.textContent || ""; // 获取文本节点内容
-        //         } else if (node.nodeType === Node.ELEMENT_NODE) {
-        //             if (isExcludedNodeType(node)) {
-        //                 return;
-        //             }
-        //             // 递归处理子元素
-        //             for (let child of node.childNodes) {
-        //                 traverse(child);
-        //             }
-        //         }
-        //     }
-        //
-        //     traverse(element);
-        //     return getByteLength(text); // 计算字节长度
-        // }
-
-        function detectParagraphLanguage(element: HTMLElement) {
-            let text = element.textContent
-            if (!text) {
-                return "und"
-            }
-            let lang = franc(text, { minLength: 5 })
-            if (lang == "cmn") {
-                if (isTraditionalChinese(text)) {
-                    lang = 'zh-TW'
-                } else {
-                    lang = 'zh-CN'
-                }
-            } else {
-                lang = iso6393To1Map.get(lang) || "und"
-            }
-            // element.setAttribute("duo-lang", lang)
-            return lang;
         }
 
         /**
@@ -1846,28 +1877,49 @@ export default defineContentScript({
             return translateCollectedElements(needTranslateElement, params, undefined, afterTranslate, 0, 3)
         }
 
-        function afterTranslate(needTranslateElement: HTMLElement[], res: TranslatedElement[]): HTMLElement[] {
-            for (let i = 0; i < needTranslateElement.length; i++) {
+        function afterTranslate(originalHtmlElements: HTMLElement[], res: TranslatedElement[]): HTMLElement[] {
+            for (let i = 0; i < originalHtmlElements.length; i++) {
                 // console.log('res:', res[i])
-                originalElementRecords.push(needTranslateElement[i].cloneNode(true) as HTMLElement)
-                let cloneElement = needTranslateElement[i].cloneNode(true) as HTMLElement
+                // originalElementRecords.push(needTranslateElement[i].cloneNode(true) as HTMLElement)
+                let cloneElement = originalHtmlElements[i].cloneNode(true) as HTMLElement
                 cloneElement.innerHTML = res[i].translatedText
+
+                let translatedTextNodes: HTMLElement[] = []
+                let originalTextNodes: HTMLElement[] = []
+                cloneElement.firstElementChild?.childNodes.forEach((child) => {
+                    if (child.nodeType === Node.TEXT_NODE) {
+                        translatedTextNodes.push(child as HTMLElement)
+                    }
+                })
+                originalHtmlElements[i].childNodes.forEach((child) => {
+                    if (child.nodeType === Node.TEXT_NODE) {
+                        originalTextNodes.push(child as HTMLElement)
+                    }
+                })
+                for (let index = 0; index < translatedTextNodes.length; index++) {
+                    const translatedTextNode = translatedTextNodes[index];
+                    const originalTextNode = originalTextNodes[index];
+                    if (originalTextNode) {
+                        originalTextNode.textContent = translatedTextNode?.textContent
+                    }
+                }
+
                 // console.log('cloneElement:', cloneElement)
-                needTranslateElement[i].innerHTML = cloneElement.firstElementChild?.innerHTML! || cloneElement.textContent || needTranslateElement[i].innerHTML
+                // originalHtmlElements[i].innerHTML = cloneElement.firstElementChild?.innerHTML! || cloneElement.textContent || originalHtmlElements[i].innerHTML
                 // identify the element that has been translated, in some cases, the translated element possibly be recovered(but attribute remained)
                 let translation = document.createElement('duo-translation')
                 translation.classList.add("duo-translation")
                 translation.style.display = 'none'
-                needTranslateElement[i].appendChild(translation)
-                translateElementRecords.push(needTranslateElement[i])
+                originalHtmlElements[i].appendChild(translation)
+                // translateElementRecords.push(needTranslateElement[i])
                 // when translated, set duo-no-observer attribute
                 // needTranslateElement[i].setAttribute("duo-no-observer", "true")
-                needTranslateElement[i].classList.add("duo-translated")
+                originalHtmlElements[i].classList.add("duo-translated")
                 // console.log('needTranslateElement:', needTranslateElement[i].textContent)
                 // needTranslateElement[i].classList.add("duo-translated")
 
             }
-            return []
+            return originalHtmlElements
         }
 
         /**
@@ -1943,11 +1995,6 @@ export default defineContentScript({
                 // }
                 // remove all comment nodes recursively
                 removeCommentNodesRecursively(element)
-                // console.log('translateDuoDOM element:', element.cloneNode(true))
-                originalElementRecords.push(element.cloneNode(true) as HTMLElement)
-                translateElementRecords.push(element)
-                // console.log('element:', element.innerHTML)
-                // const sentences = split(element.innerHTML).filter((node) => node.type === 'Sentence');
                 let tagStack: string[] = []
                 if (element.textContent?.includes("From Scratch")) {
                     console.log('xxelement:', element.innerHTML)
@@ -1987,11 +2034,6 @@ export default defineContentScript({
                         }
 
                     }
-                    // lastTagStack = Array.from(tagStack)
-                    // while (tagStack.length > 0) {
-                    //     // patch the missing closing tags
-                    //     rawHtml += `</${tagStack.pop()}>`
-                    // }
                     for (let j = tagStack.length - 1; j >= 0; j--) {
                         rawHtml += `</${tagStack[j]}>`
                     }
@@ -2014,31 +2056,11 @@ export default defineContentScript({
             return originalHtmlElements
         }
 
-        function cloneElementWithStyles(element: HTMLElement): HTMLElement {
-            // 克隆元素（不包括样式）
-            const clonedElement = element.cloneNode(true) as HTMLElement;
-
-            // 获取元素的所有计算样式
-            const computedStyle = window.getComputedStyle(element);
-
-            // 将所有计算样式应用到克隆元素
-            for (let i = 0; i < computedStyle.length; i++) {
-                const prop = computedStyle[i];
-                clonedElement.style[prop as any] = computedStyle.getPropertyValue(prop);
-            }
-
-            return clonedElement;
-        }
-
         function afterDuoTranslate(originalHtmlElements: HTMLElement[], res: TranslatedElement[]) {
             let translatedElements: HTMLElement[] = []
             // console.log('afterDuoTranslate:', originalHtmlElements.length, res.length)
             try {
                 for (let i = 0; i < originalHtmlElements.length; i++) {
-                    // if (!originalHtmlElements[i].textContent?.includes("services today are all based on Spring Boot")) {
-                    //     // console.log('originalHtmlElements:', originalHtmlElements[i].innerHTML)
-                    //     continue
-                    // }
                     let element = originalHtmlElements[i]
                     // if (element.tagName==="TEXTAREA"){
                     //     try {
@@ -2061,109 +2083,111 @@ export default defineContentScript({
                     //     continue
                     // }
                     // console.log('element after:', element)
+
+                    // bilingual elements had been updated,
+                    // so we need to push the element to the translatedElements array
                     let elementCloned = element.cloneNode(false) as HTMLElement
                     elementCloned.innerHTML = res[i].translatedText
                     // console.log('elementCloned:', elementCloned.innerHTML)
-                    if (elementCloned.textContent?.trim() !== "" && elementCloned.textContent !== originalHtmlElements[i].textContent) {
-                        let duoElement = document.createElement('font')
-                        duoElement.classList.add("duo-translation")
-                        duoElement.setAttribute("duo-no-observer", "true")
-                        duoElement.innerHTML = elementCloned.firstElementChild?.innerHTML!
-                        // If the current text is longer than 40 characters, add a line break. Otherwise, add a space
-                        if (element.textContent!.length > 40) {
-                            element.appendChild(document.createElement('br'));
-                            // console.log('duoElement element:', duoElement)
-                            element.appendChild(duoElement);
-                        } else {
-                            let divide = document.createElement('span')
-                            divide.textContent = ' '
-                            element.appendChild(divide);
-                            element.appendChild(duoElement);
-                            let elementWidth = element.getBoundingClientRect().width
-                            let children = element.children
-                            let allChildrenWidth = 0
-                            for (let c of children) {
-                                allChildrenWidth += c.getBoundingClientRect().width
-                            }
-                            // if (element.textContent?.includes("Examples")) {
-                            //     console.log('elementWidth:', elementWidth, 'width:', allChildrenWidth)
-                            // }
-                            if (Math.floor(allChildrenWidth) > Math.ceil(elementWidth)) {
-                                divide.outerHTML = '<br>'
-                            }
+                    translatedElements.push(element)
+                    let duoElement = document.createElement('font')
+                    duoElement.classList.add("duo-translation")
+                    duoElement.setAttribute("duo-no-observer", "true")
+                    duoElement.innerHTML = elementCloned.firstElementChild?.innerHTML!
+                    // If the current text is longer than 30 characters, add a line break. Otherwise, add a space
+                    if (element.textContent!.length > 30) {
+                        element.appendChild(document.createElement('br'));
+                        // console.log('duoElement element:', duoElement)
+                        element.appendChild(duoElement);
+                    } else {
+                        let divide = document.createElement('span')
+                        divide.innerHTML = '&nbsp;'
+                        element.appendChild(divide);
+                        element.appendChild(duoElement);
+                        let elementWidth = element.getBoundingClientRect().width
+                        let children = element.children
+                        let allChildrenWidth = 0
+                        for (let c of children) {
+                            allChildrenWidth += c.getBoundingClientRect().width
                         }
-                        element.classList.add("duo-original")
-                        element.classList.add("duo-translated")
-                        translatedElements.push(element)
-                        // console.log('element after:', element.innerHTML, element, document.contains(element))
-                        // cancel the element high limit
-                        element.style.setProperty("max-height", "none", "important")
-                        element.style.setProperty("-webkit-line-clamp", "none", "important")
-                        // recursively find the parent element with max-height and -webkit-line-clamp
-                        let operateElement: HTMLElement | null = element
-                        while (operateElement) {
-                            if (operateElement.style.maxHeight !== "") {
-                                // record the element original max-height
-                                operateElement.setAttribute("duo-max-height", operateElement.style.maxHeight)
-                                operateElement.classList.add("duo-height-break")
-                                operateElement.style.setProperty("max-height", "none", "important")
-                            }
-                            if (operateElement.style.webkitLineClamp !== "") {
-                                // record the element original -webkit-line-clamp
-                                operateElement.classList.add("duo-line-break")
-                                operateElement.setAttribute("duo-webkit-line-clamp", operateElement.style.webkitLineClamp)
-                                operateElement.style.setProperty("-webkit-line-clamp", "none", "important")
-                            }
-                            operateElement = operateElement.parentElement
+                        // if (element.textContent?.includes("Examples")) {
+                        //     console.log('elementWidth:', elementWidth, 'width:', allChildrenWidth)
+                        // }
+                        if (Math.floor(allChildrenWidth) > Math.ceil(elementWidth)) {
+                            divide.outerHTML = '<br>'
                         }
-                        let spans = element.querySelectorAll(".duo-sentence")
-                        if (spans) {
-                            for (let span of spans) {
-                                let spanElement = span as HTMLElement
-                                // original vs. highlight settings
-                                spanElement.onmouseover = function () {
-                                    let sequence = parseInt(span.getAttribute("duo-sequence")!)
-                                    span.classList.add("duo-highlight-original")
-                                    // get all elements with the same sequence number
-                                    let sequenceElements = span.parentElement?.querySelectorAll('.duo-translation > span[duo-sequence="' + sequence + '"]');
-                                    // console.log('sequenceElements:', sequenceElements)
-                                    if (sequenceElements) {
-                                        for (let sequenceElement of sequenceElements) {
-                                            sequenceElement.classList.add("duo-highlight-translation")
-                                        }
-                                    }
-                                }
-                                spanElement.onmouseleave = function () {
-                                    span.classList.remove("duo-highlight-original")
-                                    let sequence = parseInt(span.getAttribute("duo-sequence")!)
-                                    let sequenceElements = span.parentElement?.querySelectorAll('.duo-translation > span[duo-sequence="' + sequence + '"]');
-                                    if (sequenceElements) {
-                                        for (let sequenceElement of sequenceElements) {
-                                            sequenceElement.classList.remove("duo-highlight-translation")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // console.log('element cloneNode:', element.cloneNode(true))
-
-                        // Translation highlighting settings
-                        duoElement?.querySelectorAll(".duo-sentence")?.forEach((child) => {
-                            let span = child as HTMLElement
-                            span.onmouseover = function () {
-                                span.classList.add("duo-highlight-translation")
-                                let querySelectorAll = element.querySelectorAll(".duo-sentence");
-                                let originalSpan = querySelectorAll![parseInt(span.getAttribute("duo-sequence")!)] as HTMLElement;
-                                originalSpan.classList.add("duo-highlight-original")
-                            }
-                            span.onmouseleave = function () {
-                                span.classList.remove("duo-highlight-translation")
-                                let querySelectorAll = element.querySelectorAll(".duo-sentence");
-                                let originalSpan = querySelectorAll![parseInt(span.getAttribute("duo-sequence")!)] as HTMLElement;
-                                originalSpan.classList.remove("duo-highlight-original")
-                            }
-                        })
                     }
+                    element.classList.add("duo-original")
+                    element.classList.add("duo-translated")
+                    // console.log('element after:', element.innerHTML, element, document.contains(element))
+
+                    // cancel the element high limit
+                    // recursively find the parent element with max-height and -webkit-line-clamp
+                    let operateElement: HTMLElement | null = element
+                    while (operateElement) {
+                        if (operateElement.style.maxHeight !== "") {
+                            // record the element original max-height
+                            operateElement.setAttribute("duo-max-height", operateElement.style.maxHeight)
+                            operateElement.classList.add("duo-height-break")
+                            operateElement.style.setProperty("max-height", "none", "important")
+                        }
+                        if (operateElement.style.webkitLineClamp !== "") {
+                            // record the element original -webkit-line-clamp
+                            operateElement.classList.add("duo-line-break")
+                            operateElement.setAttribute("duo-webkit-line-clamp", operateElement.style.webkitLineClamp)
+                            operateElement.style.setProperty("-webkit-line-clamp", "none", "important")
+                        }
+                        operateElement = operateElement.parentElement
+                    }
+                    let spans = element.querySelectorAll(".duo-sentence")
+
+                    if (spans) {
+                        for (let span of spans) {
+                            let spanElement = span as HTMLElement
+                            // original vs. highlight settings
+                            spanElement.onmouseover = function () {
+                                let sequence = parseInt(span.getAttribute("duo-sequence")!)
+                                span.classList.add("duo-highlight-original")
+                                // get all elements with the same sequence number
+                                let sequenceElements = span.parentElement?.querySelectorAll('.duo-translation > span[duo-sequence="' + sequence + '"]');
+                                // console.log('sequenceElements:', sequenceElements)
+                                if (sequenceElements) {
+                                    for (let sequenceElement of sequenceElements) {
+                                        sequenceElement.classList.add("duo-highlight-translation")
+                                    }
+                                }
+                            }
+                            spanElement.onmouseleave = function () {
+                                span.classList.remove("duo-highlight-original")
+                                let sequence = parseInt(span.getAttribute("duo-sequence")!)
+                                let sequenceElements = span.parentElement?.querySelectorAll('.duo-translation > span[duo-sequence="' + sequence + '"]');
+                                if (sequenceElements) {
+                                    for (let sequenceElement of sequenceElements) {
+                                        sequenceElement.classList.remove("duo-highlight-translation")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // console.log('element cloneNode:', element.cloneNode(true))
+
+                    // Translation highlighting settings
+                    duoElement?.querySelectorAll(".duo-sentence")?.forEach((child) => {
+                        let span = child as HTMLElement
+                        span.onmouseover = function () {
+                            span.classList.add("duo-highlight-translation")
+                            let querySelectorAll = element.querySelectorAll(".duo-sentence");
+                            let originalSpan = querySelectorAll![parseInt(span.getAttribute("duo-sequence")!)] as HTMLElement;
+                            originalSpan.classList.add("duo-highlight-original")
+                        }
+                        span.onmouseleave = function () {
+                            span.classList.remove("duo-highlight-translation")
+                            let querySelectorAll = element.querySelectorAll(".duo-sentence");
+                            let originalSpan = querySelectorAll![parseInt(span.getAttribute("duo-sequence")!)] as HTMLElement;
+                            originalSpan.classList.remove("duo-highlight-original")
+                        }
+                    })
+
                 }
             } catch (e) {
                 console.error('afterDuoTranslate error:', e)
@@ -2175,7 +2199,7 @@ export default defineContentScript({
          * judge whether translate the page according to the strategy
          * @returns boolean
          */
-        function whetherTranslate() :boolean {
+        function whetherTranslate(): boolean {
             if (!globalSwitch) {
                 return false
             }
@@ -2209,7 +2233,13 @@ export default defineContentScript({
          * @param context hasDuplicated is true, indicate that the element has been duplicated
          */
         async function translateParagraphElements(elements: HTMLElement[], context?: any) {
+            if (elements.length == 0) {
+                return
+            }
             console.log('translateParagraphElements:', elements.length)
+            // elements.forEach((element) => {
+            //     console.log('translateParagraphElements element:', element)
+            // })
             let translatedOriginalMapTemp = new Map<HTMLElement, HTMLElement>()
             // for (let i = 0; i < elements.length; i++) {
             //     console.log('translateParagraphElements element:', elements[i].cloneNode(true))
@@ -2217,16 +2247,18 @@ export default defineContentScript({
             if (!whetherTranslate()) {
                 return
             }
-            // if (!translateStatus) {
-            //     persistTranslateStatus(true)
-            // }
             if (context && typeof context.hasDuplicated === 'boolean' && !context.hasDuplicated) {
                 // remove duplicate elements
                 elements = Array.from(new Set(elements))
             }
             // remove had translated elements
             elements = elements.filter((element) => {
-                return !translatedOriginalMap.has(element);
+                let original = translatedOriginalMap.get(element)
+                // text content is the same, not translate
+                if (original && original.textContent === element.textContent) {
+                    return false
+                }
+                return true
             })
             for (let element of elements) {
                 translatedOriginalMapTemp.set(element, element.cloneNode(true) as HTMLElement)
@@ -2247,28 +2279,33 @@ export default defineContentScript({
             }
             let translatedElements: HTMLElement[] = []
             await translationServices.get(service)?.translateHtml?.(elements, targetLanguage, "").then((res: TranslatedElement[]) => {
-                if (!res) {
+                if (!res || res.length != elements.length) {
                     return;
                 }
                 for (let i = res.length - 1; i >= 0; i--) {
                     let r = res[i]
+                    let elementCloned = elements[i].cloneNode(false) as HTMLElement
+                    elementCloned.innerHTML = r.translatedText
                     paragraphElementTool.update(elements[i], r.sourceLang)
-                    if (res[i].sourceLang == targetLanguage) {
+                    if (res[i].sourceLang == targetLanguage || elementCloned.textContent?.trim() == "" ||
+                        elementCloned.textContent?.trim() == elements[i].textContent?.trim()) {
                         res.splice(i, 1)
                         ignoreTranslateElements.push(elements[i])
+                        if (viewStrategy == VIEW_STRATEGY.DOUBLE) {
+                            subSelectedOriginalElementMap.set(elements[i], translatedOriginalMapTemp.get(elements[i])!)
+                        }
                         elements.splice(i, 1)
+                    }
+                }
+                if (defaultStrategy == DOMAIN_STRATEGY.AUTO && !manualTrigger && domainStrategy == DOMAIN_STRATEGY.AUTO) {
+                    console.log('translateParagraph language after getMaxProportion:', paragraphElementTool.getMaxLanguage(), paragraphElementTool.getMaxProportion())
+                    if (paragraphElementTool.getMaxLanguage() == targetLanguage) {
+                        return
                     }
                 }
                 if (elements.length == 0) {
                     return;
                 }
-                if (defaultStrategy == DOMAIN_STRATEGY.AUTO && !manualTrigger && domainStrategy == DOMAIN_STRATEGY.AUTO) {
-                    console.log('translateParagraph language after:', paragraphElementTool.getMaxLanguage(), paragraphElementTool.getMaxProportion())
-                    if (paragraphElementTool.getMaxLanguage() == targetLanguage) {
-                        return
-                    }
-                }
-
                 if (viewStrategy == VIEW_STRATEGY.DOUBLE) {
                     translatedElements = afterDuoTranslate(elements, res)
                 } else if (viewStrategy == VIEW_STRATEGY.SINGLE) {
@@ -2375,16 +2412,10 @@ export default defineContentScript({
                             return;
                         }
                         // console.log('originalHtmlElements:', originalHtmlElements)
-                        let notTranslatedElements = afterTranslate(originalHtmlElements, res)
+                        afterTranslate(originalHtmlElements, res)
                         for (let originalHtmlElement of originalHtmlElements) {
                             originalHtmlElement.removeAttribute("duo-no-observer")
                         }
-                        // console.log('notTranslatedElements:', notTranslatedElements)
-                        // if (params.isBody) {
-                        //     // go here means the page is translated
-                        //     setSessionStorage(tabTranslateStatusKey, true)
-                        //     tabTranslateStatus = true
-                        // }
                     }
                 })
                 return translateFlag
@@ -2673,6 +2704,8 @@ export default defineContentScript({
             }
             return path.join(" > ");
         }
+
+        splitElements()
 
         /**
          * Split the array into multiple arrays of the specified size

@@ -5,14 +5,18 @@ import {
     DOMAIN_STRATEGY,
     VIEW_STRATEGY,
     TRANS_ACTION,
-    TRANS_SERVICE, CONFIG_KEY
+    TRANS_SERVICE, CONFIG_KEY,
+    TRANSLATE_STATUS_KEY,
+    TB_ACTION,
+    DB_ACTION,
+    STORAGE_ACTION,
+    ACTION
 } from "@/entrypoints/constants";
-import {Rule, SubRule} from "@/entrypoints/utils";
-import {browser, Tabs} from "wxt/browser";
-import {Token, translationServices} from "@/entrypoints/translateService";
-import {Mutex} from "async-mutex";
-import Tab = Tabs.Tab;
-import {getConfig} from "@/utils/db";
+import { Rule, SubRule } from "@/entrypoints/utils";
+import { browser } from "wxt/browser";
+import { Token, translationServices } from "@/entrypoints/translateService";
+import { Mutex } from "async-mutex";
+import { getConfig } from "@/utils/db";
 
 export class Sub {
     constructor(title: string, content: string) {
@@ -71,8 +75,28 @@ class ConfigStorage {
     }
 
     async getConfigItem(name: string) {
-        // @ts-ignore
-        return this.db.get(this.prefix + name).then(doc => doc.value);
+        return this.db.get(this.prefix + name)
+            // @ts-ignore
+            .then(doc => doc.value)
+            .catch(err => {
+                if (err?.name === 'not_found') {
+                    if (name === CONFIG_KEY.GLOBAL_SWITCH) {
+                        return true
+                    }
+                    if (name === CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH) {
+                        return true
+                    }
+                    if (name === CONFIG_KEY.FLOAT_BALL_SWITCH) {
+                        return true
+                    }
+                    if (name === CONFIG_KEY.CONTEXT_MENU_SWITCH) {
+                        return true
+                    }
+                    return undefined;
+                }
+                console.error(`Error getting config item ${name}:`, err);
+                return undefined; // Return null if document not found or any other error
+            });
     }
 
 
@@ -109,13 +133,7 @@ class DomainStorage {
 
     public get(domain: string): Promise<any> {
         domain = this.prefix + domain;
-        return this.db.get(domain).then((doc) => {
-            // console.log(`Domain found: ${domain}`);
-            // console.log(`doc ${doc._id}`)
-            return doc;
-        }).catch((err) => {
-            console.error(`Error finding domain: ${domain}`, err);
-        });
+        return this.db.get(domain)
     }
 
     public delete(domain: string) {
@@ -210,12 +228,9 @@ class RuleStorage {
 
     async list(domain: string) {
         domain = this.prefix + domain;
-        try {
-            const doc: Rule = await this.db.get(domain);
-            return doc.rules
-        } catch (err) {
-            console.error(`Error list rule from domain ${domain}: `, err);
-        }
+        const doc: Rule = await this.db.get(domain);
+        return doc.rules
+
     }
 
     async deleteList(domain: string, rules: string[]) {
@@ -272,7 +287,7 @@ class RuleStorage {
 
     async getAll() {
         try {
-            const result = await this.db.allDocs({include_docs: true, startkey: this.prefix});
+            const result = await this.db.allDocs({ include_docs: true, startkey: this.prefix });
             return result.rows.map(row => row.doc);
         } catch (err) {
             console.error('Error getting all rules: ', err);
@@ -341,211 +356,178 @@ export default defineBackground(() => {
     const domainStorage = DomainStorage.getInstance(db)
     const configStorage = ConfigStorage.getInstance(db)
 
-    function updateContextMenu(tabId: number) {
-        console.log('updateContextMenu', tabId)
-        let tabTranslateStatusKey = "tabTranslateStatus#" + tabId
-        // browser.contextMenus.update("translate", {
-        //     title: browser.i18n.getMessage('contextMenuOriginal'),
-        // })
-        // return
-        browser.storage.session.get(tabTranslateStatusKey).then((value) => {
-            let isTranslate = value[tabTranslateStatusKey] as boolean
-            console.log('isTranslate:', isTranslate, "value", value)
-            if (isTranslate) {
-                browser.contextMenus.update("translate", {
-                    title: browser.i18n.getMessage('contextMenuOriginal'),
-                })
-            } else {
-                browser.contextMenus.update("translate", {
-                    title: browser.i18n.getMessage('contextMenuTranslate'),
-                })
-            }
-        })
-    }
-
 
     browser.runtime.onMessage.addListener((message, sender, sendResponse: (t: any) => void) => {
         // messages are received to manipulate the db database
+        function errorResponse(e: any) {
+            if (e?.name === 'not_found') {
+                sendResponse({ status: STATUS_SUCCESS, data: undefined })
+            } else {
+                sendResponse({ status: STATUS_FAIL, data: { name: e.name, message: e.message, recieved: message } })
+            }
+        }
         console.log('background onMessage', message)
         switch (message.action) {
-            case "getAccessToken":
+            case ACTION.ACCESS_TOKEN_GET:
                 // console.log("getAccessToken", serviceTokenMap.get("microsoft"))
                 let service: string = message.data.service
                 if (serviceTokenMap && serviceTokenMap.get(service) && (serviceTokenMap.get(service)?.expireTime || 0) > Date.now()) {
-                    sendResponse({status: STATUS_SUCCESS, data: serviceTokenMap.get(service)})
+                    sendResponse({ status: STATUS_SUCCESS, data: serviceTokenMap.get(service) })
                     return
                 }
                 // todo support other service
                 getMicrosoftToken().then((token) => {
-                    sendResponse({status: STATUS_SUCCESS, data: token})
+                    sendResponse({ status: STATUS_SUCCESS, data: token })
                 }).catch((e) => {
-                    sendResponse({status: STATUS_FAIL, data: new Token("", 0)})
+                    sendResponse({ status: STATUS_FAIL, data: new Token("", 0) })
                 })
                 break
-            case "translateHtml":
+            case ACTION.TRANSLATE_HTML:
                 // console.log("translateHtml", message)
                 // let service: string = message.data.service || TRANS_SERVICE.MICROSOFT
                 // //message.data.elements, message.data.targetLang, message.data.sourceLang
                 // translateHtml(service, message.texts, message.data.targetLang, message.data.sourceLang)
                 break
-            case "addRule":
-                try {
+            case DB_ACTION.RULES_ADD:
                     ruleStorage.add(message.data.domain, message.data.data).then(() => {
-                        sendResponse({status: STATUS_SUCCESS, data: "add success"});
+                        sendResponse({ status: STATUS_SUCCESS, data: "add success" });
+                    }).catch((e)=>{
+                        errorResponse(e)
                     })
-                } catch (e) {
-                    sendResponse({status: STATUS_FAIL, data: "add fail"});
-                }
                 break
-            case "deleteRule":
+            case DB_ACTION.RULES_DEL:
                 try {
                     ruleStorage.delete(message.data.domain, message.data.data).then(() => {
-                        sendResponse({status: STATUS_SUCCESS, data: "delete success"});
+                        sendResponse({ status: STATUS_SUCCESS, data: "delete success" });
                     })
                 } catch (e) {
-                    sendResponse({status: '500', data: "delete fail"});
+                    sendResponse({ status: STATUS_FAIL, data: "delete fail" });
                 }
                 break
-            case "listRule":
-                try {
-                    ruleStorage.list(message.data.domain).then((data) => {
-                        sendResponse({status: STATUS_SUCCESS, data: data});
-                    })
-                } catch (e) {
-                    sendResponse({status: '500', data: "list fail"});
-                }
-                break
-            case "deleteRuleList":
-                try {
-                    ruleStorage.deleteList(message.data.domain, message.data.data).then(() => {
-                        sendResponse({status: STATUS_SUCCESS, data: "delete success"});
-                    })
-                } catch (e) {
-                    sendResponse({status: '500', data: "delete fail"});
-                }
-                break
-            case "getAllRule":
-                try {
-                    let allRule = ruleStorage.getAll().then(value => {
-                        sendResponse({status: '200', data: value})
-                    });
-                    // sendResponse(allRule)
-
-                    // sendResponse.bind({ status: '200', data: allRule  });
-                } catch (e) {
-                    // console.log(e)
-                    sendResponse({status: '500', data: null});
-                }
-                break
-            case "searchRule":
-                ruleStorage.search(message.data.domain).then(value => {
-                    sendResponse({status: '200', data: value})
+            case DB_ACTION.RULES_LIST:
+                console.debug("list rule from domain", message.data.domain)
+                ruleStorage.list(message.data.domain).then((data) => {
+                    sendResponse({ status: STATUS_SUCCESS, data: data });
                 }).catch((e) => {
-                    sendResponse({status: '500', data: e.message})
+                    errorResponse(e)
+                })
+                break
+            case DB_ACTION.RULES_GET_ALL:
+                ruleStorage.getAll().then((value) => {
+                    sendResponse({ status: STATUS_SUCCESS, data: value })
+                }).catch((e) => {
+                    errorResponse(e)
+                })
+                break
+            case DB_ACTION.RULES_SEARCH:
+                ruleStorage.search(message.data.domain).then(value => {
+                    sendResponse({ status: STATUS_SUCCESS, data: value })
+                }).catch((e) => {
+                    sendResponse({ status: STATUS_FAIL, data: e.message })
                 });
                 break
-            case "getDomain":
+            case DB_ACTION.DOMAIN_GET:
                 domainStorage.get(message.data.domain).then(data => {
-                    sendResponse({status: STATUS_SUCCESS, data: data})
+                    sendResponse({ status: STATUS_SUCCESS, data: data })
                 }).catch((e) => {
-                    sendResponse({status: STATUS_FAIL, data: e.message})
+                    errorResponse(e)
                 })
 
                 // sendResponse({status: STATUS_SUCCESS, data: data})
                 break
-            case "updateDomain":
+            case DB_ACTION.DOMAIN_UPDATE:
                 domainStorage.update(message.data).then(() => {
-                    sendResponse({status: STATUS_SUCCESS, data: "insert success"});
+                    sendResponse({ status: STATUS_SUCCESS, data: "insert success" });
                 }).catch((e) => {
-                    sendResponse({status: STATUS_FAIL, data: "insert fail"});
+                    sendResponse({ status: STATUS_FAIL, data: "insert fail" });
                 });
                 break
             // get the configuration
-            case "getConfig":
+            case DB_ACTION.CONFIG_GET:
                 console.log('getConfig', message.data)
                 configStorage.getConfigItem(message.data.name).then((value) => {
                     // console.log(value)
-                    sendResponse({status: STATUS_SUCCESS, data: value})
+                    sendResponse({ status: STATUS_SUCCESS, data: value })
                 }).catch((e) => {
-                    sendResponse({status: STATUS_FAIL, data: e.message})
+                    errorResponse(e)
                 })
                 break
-            case "setConfig":
+            case DB_ACTION.CONFIG_SET:
                 configStorage.setConfigItem(message.data.name, message.data.value).then(() => {
-                    sendResponse({status: STATUS_SUCCESS, data: "insert success"});
+                    sendResponse({ status: STATUS_SUCCESS, data: "insert success" });
                 }).catch((e) => {
-                    sendResponse({status: STATUS_FAIL, data: "insert fail"});
+                    sendResponse({ status: STATUS_FAIL, data: "insert fail" });
                 });
                 break
             // get the language of the tab
-            case "getTabLanguage":
+            case TB_ACTION.LANG_GET:
                 // try get tabId from message data and sender tab
                 let tabId = sender.tab?.id || message.data.id
                 if (!tabId) {
-                    sendResponse({status: STATUS_FAIL, data: "tabId is null"});
+                    sendResponse({ status: STATUS_FAIL, data: "tabId is null" });
                     return
                 }
                 let url = sender.tab?.url || message.data.url
                 if (!url.startsWith('http')) {
-                    sendResponse({status: STATUS_FAIL, data: "url is not http or https"});
+                    sendResponse({ status: STATUS_FAIL, data: "url is not http or https" });
                     return
                 }
-                browser.tabs.detectLanguage(tabId).then((lang) => {
-                    sendResponse({status: STATUS_SUCCESS, data: lang});
+                browser.tabs.detectLanguage((lang: string)=>{
+                    sendResponse({ status: STATUS_SUCCESS, data: lang });
                 })
                 break;
             // get browser native language
-            case "getNativeLanguage":
+            case TB_ACTION.NATIVE_LANGUAGE_GET:
                 // let lang = browser.i18n.getUILanguage()
-                sendResponse({status: STATUS_SUCCESS, data: navigator.language});
+                sendResponse({ status: STATUS_SUCCESS, data: navigator.language });
                 break
-            case "getTabDomain":
-                browser.tabs.query({active: true, currentWindow: true}).then((tabs) => {
+            case TB_ACTION.TAB_DOMAIN_GET:
+                browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
                     let urlString = tabs?.[0]?.url
                     if (!urlString) {
-                        sendResponse({status: STATUS_FAIL, data: "url is null"});
+                        sendResponse({ status: STATUS_FAIL, data: "url is null" });
                         return
                     }
                     let url = new URL(urlString)
                     // console.log(url)
-                    sendResponse({status: STATUS_SUCCESS, data: url.hostname})
+                    sendResponse({ status: STATUS_SUCCESS, data: url.hostname })
                 }).catch((e) => {
-                    sendResponse({status: STATUS_FAIL, data: e.message})
+                    sendResponse({ status: STATUS_FAIL, data: e.message })
                 });
                 break
-            case "getTabId":
-                browser.tabs.query({active: true, currentWindow: true}).then((tabs) => {
+            case TB_ACTION.ID_GET:
+                browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
                     let tab = tabs[0].id
-                    sendResponse({status: STATUS_SUCCESS, data: tab})
+                    sendResponse({ status: STATUS_SUCCESS, data: tab })
                 }).catch((e) => {
-                    sendResponse({status: STATUS_FAIL, data: e.message})
+                    sendResponse({ status: STATUS_FAIL, data: e.message })
                 });
                 break
-            case "setSessionStorage":
+            case STORAGE_ACTION.SESSION_SET:
                 let key = message.data.key
                 if (!key || key.endsWith("null") || key.endsWith("undefined") || message.data.value == undefined || message.data.value === "" || message.data.value === "null" || message.data.value === "undefined") {
                     console.log('value is null or empty', key, message.data.value)
-                    sendResponse({status: STATUS_FAIL, data: "value is null or empty"});
+                    sendResponse({ status: STATUS_FAIL, data: "value is null or empty" });
                     return
                 }
-                browser.storage.session.set({[key]: message.data.value}).then(() => {
-                    sendResponse({status: STATUS_SUCCESS, data: "insert success"});
+                browser.storage.session.set({ [key]: message.data.value }).then(() => {
+                    sendResponse({ status: STATUS_SUCCESS, data: "insert success" });
                 }).catch((e) => {
-                    sendResponse({status: STATUS_FAIL, data: e.message})
+                    sendResponse({ status: STATUS_FAIL, data: e.message })
                 });
                 break
-            case "getSessionStorage":
+            case STORAGE_ACTION.SESSION_GET:
                 browser.storage.session.get(message.data.key).then((value) => {
-                    sendResponse({status: STATUS_SUCCESS, data: value[message.data.key]});
+                    sendResponse({ status: STATUS_SUCCESS, data: value[message.data.key] });
                 }).catch((e) => {
-                    sendResponse({status: STATUS_FAIL, data: e.message})
+                    sendResponse({ status: STATUS_FAIL, data: e.message })
                 });
                 break
-            case "showContextMenu":
+            case TB_ACTION.CONTEXT_MENU_SHOW:
                 console.log('showContextMenu', message.data)
                 // updateContextMenu(message.data as number)
                 break
-            case "contextMenuSwitch":
+            case TB_ACTION.CONTEXT_MENU_SWITCH:
                 console.log('contextMenuSwitch', message.data)
                 let contextMenuSwitch = message.data.contextMenuSwitch
                 if (contextMenuSwitch) {
@@ -553,9 +535,28 @@ export default defineBackground(() => {
                         id: "translate",
                         title: browser.i18n.getMessage('contextMenuTranslate'),
                         contexts: ["selection", "page"]
-                    }); 
+                    });
                 } else {
                     browser.contextMenus.remove("translate")
+                }
+                break
+            case TRANS_ACTION.TRANSLATE_STATUS_CHANGE:
+                console.log('translateStatusChange', message.data)
+                if (typeof message.data.status === 'boolean') {
+                    updateContextMenu(message.data.status)
+                }
+                break
+            case ACTION.GLOBAL_SWITCH_CHANGE:
+                console.log('globalSwitchChange', message.data)
+                let globalSwitch = message.data
+                if (typeof globalSwitch === 'boolean') {
+                    if (globalSwitch) {
+                        initContextMenu()
+                        initShortcutKey()
+                    } else {
+                        removeContextMenu()
+                        removeShortcutKey()
+                    }
                 }
                 break
             default:
@@ -563,104 +564,160 @@ export default defineBackground(() => {
         }
         return true
     });
-    let isTranslate = false
 
+    let trasnlateStatus = false
     // add context menu to translate page
     configStorage.getConfigItem(CONFIG_KEY.CONTEXT_MENU_SWITCH).then((value) => {
         console.log("contextMenuSwitch", value);
-        value = value === undefined ? true : value
-        if (value) {
-            browser.contextMenus.create({
-                id: "translate",
-                title: browser.i18n.getMessage('contextMenuTranslate'),
-                contexts: ["selection", "page"]
-            });
-        }
+        let contextMenuSwitch = value === undefined ? true : value
+        // judge global switch
+        configStorage.getConfigItem(CONFIG_KEY.GLOBAL_SWITCH).then((globalSwitch) => {
+            globalSwitch = globalSwitch === undefined ? true : globalSwitch
+            if (contextMenuSwitch && globalSwitch) {
+                console.log('initContextMenu')
+                initContextMenu()
+            }
+            if (globalSwitch) {
+                initShortcutKey()
+            }
+        })
     })
 
-    browser.contextMenus.onClicked.addListener((info, tab) => {
+    // @ts-ignore
+    let contextMenuClickLister = (info, tab) => {
         console.log('contextMenus.onClicked', info, tab)
         if (!tab || !tab.id) {
             return
         }
-        if (!isTranslate) {
-            browser.tabs.sendMessage(tab.id, {action: TRANS_ACTION.TRANSLATE});
+        if (!trasnlateStatus) {
+            browser.tabs.sendMessage(tab.id, { action: TRANS_ACTION.TRANSLATE });
         } else {
-            browser.tabs.sendMessage(tab.id, {action: TRANS_ACTION.ORIGIN});
+            browser.tabs.sendMessage(tab.id, { action: TRANS_ACTION.ORIGIN });
         }
 
-    })
+    }
 
-    browser.storage.onChanged.addListener((changes, areaName) => {
-        if (areaName === 'session') {
-            console.log('Storage updated:', changes);
-            for (let changesKey in changes) {
-                let tabStatus = changesKey.split("#")
-                if (tabStatus.length !== 2) {
-                    continue
-                }
-                if (tabStatus[0] === "tabTranslateStatus" && activeTabId === parseInt(tabStatus[1])) {
-                    isTranslate = changes[changesKey].newValue as boolean
-                    if (isTranslate) {
-                        browser.contextMenus.update("translate", {
-                            title: browser.i18n.getMessage('contextMenuOriginal'),
-                        })
-                    } else {
-                        browser.contextMenus.update("translate", {
-                            title: browser.i18n.getMessage('contextMenuTranslate'),
-                        })
-                    }
-
-                }
+    function initContextMenu() {
+        let t: string = 'contextMenuTranslate'
+        if (trasnlateStatus) {
+            t = 'contextMenuOriginal'
+        }
+        browser.contextMenus.create({
+            id: "translate",
+            // @ts-ignore
+            title: browser.i18n.getMessage(t),
+            contexts: ["selection", "page"]
+        });
+        browser.contextMenus.onClicked.addListener(contextMenuClickLister)
+        // Listen for tab activation events
+        browser.tabs.onActivated.addListener(async (activeInfo) => {
+            // only process http or https url
+            let tab = await browser.tabs.get(activeInfo.tabId)
+            if (!tab?.url?.startsWith('http')) {
+                return
             }
-        }
-    });
+            console.log('tabs.onActivated', activeInfo)
+            // get current tab translate status
+            let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + activeInfo.tabId
+            browser.storage.session.get(tabTranslateStatusKey).then((value) => {
+                trasnlateStatus = value[tabTranslateStatusKey] as boolean
+                if (trasnlateStatus) {
+                    browser.contextMenus.update("translate", {
+                        title: browser.i18n.getMessage('contextMenuOriginal'),
+                    })
+                } else {
+                    browser.contextMenus.update("translate", {
+                        title: browser.i18n.getMessage('contextMenuTranslate'),
+                    })
+                }
+            })
+        });
+    }
 
-    let activeTabId: number = 0
-    // Listen for tab activation events
-    browser.tabs.onActivated.addListener(async (activeInfo) => {
-        // only process http or https url
-        let tab = await browser.tabs.get(activeInfo.tabId)
-        if (!tab?.url?.startsWith('http')) {
-            return
-        }
-        console.log('tabs.onActivated', activeInfo)
-        // get current tab translate status
-        let tabTranslateStatusKey = "tabTranslateStatus#" + activeInfo.tabId
-        browser.storage.session.get(tabTranslateStatusKey).then((value) => {
-            isTranslate = value[tabTranslateStatusKey] as boolean
-            if (isTranslate) {
-                browser.contextMenus.update("translate", {
-                    title: browser.i18n.getMessage('contextMenuOriginal'),
-                })
-            }else {
-                browser.contextMenus.update("translate", {
-                    title: browser.i18n.getMessage('contextMenuTranslate'),
-                })
-            }
-        })
-        activeTabId = activeInfo.tabId;
-    });
+    function removeContextMenu() {
+        browser.contextMenus.remove("translate")
+        browser.contextMenus.onClicked.removeListener(() => { })
+        browser.tabs.onActivated.removeListener(() => { })
+    }
 
-    // process shortcut key command
-    browser.commands.onCommand.addListener((command) => {
+    let shortcutKeyListener = (command: string) => {
+        let action = ""
         if (command === 'shortcut-toggle') {
             // send message to current tab, toggle translate status
-            browser.tabs.query({active: true, currentWindow: true}).then((tabs) => {
-                let tab: Tab = tabs[0]
-                if (!tab || !tab.id) {
-                    return
-                }
-                browser.tabs.sendMessage(tab.id, {action: TRANS_ACTION.TOGGLE});
-            });
+            action = TRANS_ACTION.TOGGLE
+        } else if (command === 'shortcut-translate') {
+            // send message to current tab, toggle translate status
+            action = TRANS_ACTION.TRANSLATE
+        } else if (command === 'shortcut-restore') {
+            // send message to current tab, restore page
+            action = TRANS_ACTION.ORIGIN
         }
-    });
+        browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
+            let tab = tabs[0]
+            if (!tab || !tab.id) {
+                return
+            }
+            browser.tabs.sendMessage(tab.id, { action: action });
+        });
+    }
+
+    function initShortcutKey() {
+        // process shortcut key command
+        browser.commands.onCommand.addListener(shortcutKeyListener);
+    }
+
+    function removeShortcutKey() {
+        browser.commands.onCommand.removeListener(shortcutKeyListener)
+    }
+
+
+
+
+    function updateContextMenu(translateStatus: boolean) {
+        trasnlateStatus = translateStatus
+
+        if (translateStatus) {
+            browser.contextMenus.update("translate", {
+                title: browser.i18n.getMessage('contextMenuOriginal'),
+            })
+        } else {
+            browser.contextMenus.update("translate", {
+                title: browser.i18n.getMessage('contextMenuTranslate'),
+            })
+        }
+    }
+
+    // browser.storage.onChanged.addListener((changes, areaName) => {
+    //     if (areaName === 'session') {
+    //         console.log('Storage updated:', changes, activeTabId);
+    //         for (let changesKey in changes) {
+    //             let tabStatus = changesKey.split("#")
+    //             if (tabStatus.length !== 2) {
+    //                 continue
+    //             }
+    //             if (tabStatus[0] === "tabTranslateStatus" && activeTabId === parseInt(tabStatus[1])) {
+    //                 isTranslate = changes[changesKey].newValue as boolean
+    //                 if (isTranslate) {
+    //                     browser.contextMenus.update("translate", {
+    //                         title: browser.i18n.getMessage('contextMenuOriginal'),
+    //                     })
+    //                 } else {
+    //                     browser.contextMenus.update("translate", {
+    //                         title: browser.i18n.getMessage('contextMenuTranslate'),
+    //                     })
+    //                 }
+
+    //             }
+    //         }
+    //     }
+    // });
 
     async function getMicrosoftToken(): Promise<Token> {
         const release = await mutex.acquire(); // Acquire the lock
         try {
             let tokenFromDB: Token = await configStorage.getConfigItem(CONFIG_KEY.MICROSOFT_TOKEN)
             // if token is null or "" and token is expired, get token from server
+            console.debug("getMicrosoftToken tokenFromDB", tokenFromDB)
             if (tokenFromDB == null || tokenFromDB.token == "" || (tokenFromDB.expireTime || 0) < Date.now()) {
                 let token = await fetch(tokenUrl).then(response => response.text());
                 // save token to db
@@ -670,7 +727,7 @@ export default defineBackground(() => {
             }
             return tokenFromDB
         } catch (e) {
-            console.error(e)
+            console.error("getMicrosoftToken error", e)
             return new Token("", 0)
             // first get token from db
         } finally {

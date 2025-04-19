@@ -30,6 +30,8 @@ export class TranslateService {
 export const STATUS_SUCCESS = '200';
 export const STATUS_FAIL = '500';
 
+export const TRANSLATE_STATUS_KEY = 'tabTranslateStatus#'
+
 export enum DEFAULT_VALUE {
     GLOBAL_SWITCH = 1,
     BILINGUAL_HIGHLIGHTING_SWITCH = 0,
@@ -38,6 +40,7 @@ export enum DEFAULT_VALUE {
     VIEW_STRATEGY = 'double',
     TARGET_LANG = 'zh-CN',
     TRANSLATE_SERVICE = 'microsoft',
+    TRANSLATE_SERVICE_TITLE = 'microsoftTranslator',
 }
 
 export enum DB_ACTION {
@@ -70,6 +73,8 @@ export enum TB_ACTION {
     CONTEXT_MENU_SHOW = 'showContextMenu',
     CONTEXT_MENU_SWITCH = 'contextMenuSwitch',
     FLOAT_BALL_SWITCH = "floatBallSwitch",
+    NATIVE_LANGUAGE_GET = "getNativeLanguage",
+
 }
 
 export enum DOMAIN_STRATEGY {
@@ -109,10 +114,11 @@ export enum TRANS_ACTION {
     SINGLE = 'singleTranslate',
     TOGGLE = 'toggleTranslate',
     ORIGIN = 'showOrigin',
+    TRANSLATE_STATUS_CHANGE = "translateStatusChange",
 }
 
 export enum ACTION {
-    GET_ACCESS_TOKEN = 'getAccessToken',
+    ACCESS_TOKEN_GET = 'getAccessToken',
     TRANSLATE_HTML = 'translateHtml',
     STYLE_CHANGE = 'styleChange',
     DOMAIN_STRATEGY_CHANGE = 'domainStrategyChange',
@@ -121,7 +127,7 @@ export enum ACTION {
     VIEW_STRATEGY_CHANGE = 'viewStrategyChange',
     TARGET_LANG_CHANGE = 'targetLangChange',
     TOGGLE_SELECTION_MODE = 'toggleSelectionMode',
-    TRANSLATE_CHANGE = 'translateChange',
+    TRANSLATE_SERVICE_CHANGE = 'translateChange',
     LEAVE_SELECTION_MODE = 'leaveSelectionMode',
 }
 

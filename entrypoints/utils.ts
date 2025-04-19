@@ -62,14 +62,14 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
                 if (response.status === STATUS_SUCCESS) {
                     resolve(response.data);
                 } else {
-                    resolve(null)
+                    resolve(undefined)
                     console.warn(`sendMessageToBackground ${message.action} ${response.data}`);
                 }
             });
         }),
         new Promise((resolve) => {
             timeoutId = setTimeout(() => {
-                resolve(null)
+                resolve(undefined)
                 console.warn(`sendMessageToBackground ${message.action} Request timeout`)
             }, timeout)
         })
