@@ -104,7 +104,7 @@ export enum TRANS_SERVICE {
 
 export const TRANSLATE_SERVICES: Map<string, TranslateService> = new Map([
     ["microsoft", new TranslateService("Microsoft","microsoft", "microsoftTranslator","MicrosoftTranslateDescription",false)],
-    ["google", new TranslateService("Google","google", "googleTranslator", "GoogleTranslateDescription",false)],        
+    ["google", new TranslateService("Google","google", "googleTranslator", "GoogleTranslateDescription",false)],
 ]);
 
 // translation action
