@@ -566,7 +566,7 @@ export default {
             let [targetLanguageConfigValue, tabLanguage, translateServiceConfigValue, status, domainData,
                 viewStrategyConfigValue, nativeLanguage, disabledTranslateService] = await Promise.all([
                     sendMessageToBackground({ action: DB_ACTION.CONFIG_GET, data: { name: CONFIG_KEY.TARGET_LANG } }),
-                    sendMessageToBackground({ action: TB_ACTION.LANG_GET, data: this.tabs?.[0] }),
+                    sendMessageToBackground({ action: TB_ACTION.LANG_GET, data: this.tabs?.[0]?.id }),
                     sendMessageToBackground({ action: DB_ACTION.CONFIG_GET, data: { name: CONFIG_KEY.TRANSLATE_SERVICE } }),
                     sendMessageToBackground({ action: STORAGE_ACTION.SESSION_GET, data: { key: this.tabStatusKey } }),
                     sendMessageToBackground({ action: DB_ACTION.DOMAIN_GET, data: { domain: this.domain } }),

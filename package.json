@@ -1,8 +1,8 @@
 {
-  "name": "wxt-starter",
+  "name": "duo-translator",
   "description": "manifest.json description",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.1.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",

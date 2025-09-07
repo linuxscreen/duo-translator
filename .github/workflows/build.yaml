@@ -1,0 +1,68 @@
+name: duo-translator
+
+on:
+  workflow_dispatch:
+
+
+jobs:
+  build-duo:
+    permissions: write-all
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout duo-translator
+      uses: actions/checkout@v4
+      with:
+        path: duo-translator
+    - name: Get version from package.json
+      id: get-version
+      run: |
+        cd duo-translator
+        VERSION=$(node -p "require('./package.json').version")
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Package version: $VERSION"
+    - name: install & build
+      run: |
+        cd duo-translator
+        echo "Building version: $VERSION"
+        npm install
+        npm i -D wxt
+        npm run zip
+        echo "Build completed for version: $VERSION"
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: duo-translator
+        path: duo-translator/.output/duo-translator-${{ env.VERSION }}-chrome.zip
+    - name: Create Tag
+      uses: mathieudutour/github-tag-action@v5.6
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        custom_tag: ${{ env.VERSION }}
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ env.VERSION }}
+        name: Release ${{ env.VERSION }}
+        body: |
+          🚀 Duo Translator ${{ env.VERSION }} Release
+
+          ## Changes
+          - New features, including:
+            - Shortcut keys and context menu to toggle translation on/off
+            - Float ball to toggle translation on/off
+            - Auto determine whether to translate by detecting page language
+            - Global switch to enable/disable extension
+            - "Options Page" for more settings and customization
+          - Bug fixes and optimizations
+            - Bug fixes and performance improvements
+            - User interface of translate strategy options optimization
+
+          ## Installation
+          Download the extension zip file and install manually in your browser.
+        files: duo-translator/.output/duo-translator-${{ env.VERSION }}-chrome.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

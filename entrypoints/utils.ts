@@ -57,7 +57,12 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
     return Promise.race([
         new Promise((resolve) => {
             browser.runtime.sendMessage(message).then((response) => {
+                console.log("sendMessageToBackground response:", response, message);
                 clearTimeout(timeoutId)
+                if (!response) {
+                    resolve(undefined)
+                    return
+                }
                 if (response.status === STATUS_SUCCESS) {
                     resolve(response.data);
                 } else {
@@ -83,7 +88,7 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
  */
 export async function sendMessageToTab(message: Message) {
     let tabs = await browser.tabs.query({active: true, currentWindow: true})
-    console.log(tabs)
+    console.log("sendMessageToTab:", tabs[0]?.id, tabs[0]?.url, tabs?.[0].id);
     if (tabs?.[0].url?.startsWith('http')) {
         return browser.tabs.sendMessage(Number(tabs?.[0].id), message)
     }else {
