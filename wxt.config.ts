@@ -66,11 +66,11 @@ export default defineConfig({
             // Enabling sourcemaps with Vue during development is known to cause problems with Vue
             sourcemap: true,
             terserOptions: {
-                // compress: {
-                //     // production env will remove all console.* calls
-                //     drop_console: true,
-                //     drop_debugger: true,
-                // }
+                compress: {
+                    // production env will remove all console.* calls
+                    drop_console: true,
+                    drop_debugger: true,
+                }
             }
         },
         // resolve: {
