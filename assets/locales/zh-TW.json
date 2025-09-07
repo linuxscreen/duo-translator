@@ -6,7 +6,7 @@
   "GoogleTranslateDescription": "Google 提供翻譯服務，採用統計機器翻譯技術",
   "giveTimeToCivilization": "給歲月以文明。",
   "notCivilizationToTime": "而不是給文明以歲月",
-  "translationColorPropNotSame": "翻譯顏色屬性不能相同！",
+  "translationColorPropNotSame": "背景顏色和字體顏色不能相同！",
   "helpDocument": "幫助文檔",
   "settings": "設定",
   "restoreOriginalFirst": "請先恢復原文，因為頁面是翻譯的",

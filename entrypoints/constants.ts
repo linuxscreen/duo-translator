@@ -87,7 +87,6 @@ export enum DOMAIN_STRATEGY {
 export enum VIEW_STRATEGY {
     DOUBLE = 'double',
     SINGLE = 'single',
-    BUTTON = 'button',
 }
 
 export enum COMMON {
@@ -688,7 +687,6 @@ export const VIEW_STRATEGIES = [
         "title": "bilingual",
         "value": "double"
     },
-    
 ]
 
 export const iso6393To1 = {
@@ -895,7 +893,7 @@ export const EXCLUDE_TAGS = [
     'progress',
     'meter',
     'summary',
-    // 'textarea',
+    // 'textarea', // todo
     "iron-a11y-announcer" // accessibility-labels
     // 'form',
     // 'datalist',

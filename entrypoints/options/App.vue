@@ -9,9 +9,9 @@ const router = useRouter()
 
 onMounted(() => {
   // Check if we're not already on a valid route
-  if (router.currentRoute.value.path === '/') {
-    router.push('/settings')
-  }
+    if (router.currentRoute.value.path === '/') {
+        router.push('/settings')
+    }
 })
 
 import {ref} from 'vue'

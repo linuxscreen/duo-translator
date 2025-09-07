@@ -6,10 +6,11 @@
   "GoogleTranslateDescription": "Hāʻawi ʻo Google i nā lawelawe unuhi, hoʻohana ʻia ka ʻenehana unuhi mīkini helu",
   "giveTimeToCivilization": "Hāʻawi manawa i ka civilization.",
   "notCivilizationToTime": "ʻaʻole civilization i ka manawa.",
-  "translationColorPropNotSame": "ʻAʻole hiki ke like ka waiwai kala unuhi!",
+  "translationColorPropNotSame": "ʻAʻole hiki ke ʻano like ke kala hope a me ka waihoʻoluʻu!",
   "helpDocument": "palapala kōkua",
   "settings": "hoʻonohonoho",
   "restoreOriginalFirst": "e ʻoluʻolu e hoʻihoʻi i ke kumu mua no ka mea ua unuhi ʻia ka ʻaoʻao",
+  "openGlobalSwitch": "e ʻoluʻolu e wehe mua i ka hoʻololi honua",
   "unstyled": "kaila ʻole",
   "wrap": "kāʻei",
   "none": "ʻaʻohe",
@@ -207,7 +208,7 @@
   "vietnamese": "Vietnamese",
   "welsh": "Welsh",
   "xhosa": "ʻŌlelo Xhosa",
-  "yiddish": "Yiddish",
+  "yiddish": "ʻōlelo Yiddish",
   "yoruba": "Yoruba",
   "zulu": "Zulu"
 }

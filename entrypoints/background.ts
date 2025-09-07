@@ -12,11 +12,10 @@ import {
     STORAGE_ACTION,
     ACTION
 } from "@/entrypoints/constants";
-import { Rule, SubRule } from "@/entrypoints/utils";
+import { Rule } from "@/entrypoints/utils";
 import { browser } from "wxt/browser";
-import { Token, translationServices } from "@/entrypoints/translateService";
+import { Token } from "@/entrypoints/translateService";
 import { Mutex } from "async-mutex";
-import { getConfig } from "@/utils/db";
 
 export class Sub {
     constructor(title: string, content: string) {
@@ -295,62 +294,13 @@ class RuleStorage {
     }
 }
 
-function translateHtml(service: string, texts: string[], targetLang: string, sourceLang: string) {
-    switch (service) {
-        case TRANS_SERVICE.MICROSOFT:
-            break
-        case TRANS_SERVICE.GOOGLE:
-            break
-    }
-}
-
 const serviceTokenMap = new Map<string, Token>()
 let tokenUrl = "https://edge.microsoft.com/translate/auth"
 
 export default defineBackground(() => {
-    // let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1dWlkIjoiNzg3ZWY2OGItNzBmYi00YWNhLWI4NTItZDIwNDg2N2JiNWYxIiwiaWQiOjQsInVzZXJuYW1lIjoiemhlbmciLCJuaWNrTmFtZSI6InpoZW5nIiwiYXV0aG9yaXR5SWQiOjg4OCwicm9sZXMiOlsidXNlciJdLCJidWZmZXJUaW1lIjo4NjQwMCwiaXNzIjoicW1QbHVzIiwic3ViIjoiemhlbmciLCJhdWQiOlsiR1ZBIl0sImV4cCI6MTcxOTA0NDMxMCwibmJmIjoxNzE4NDM5NTEwfQ.Hcei36lYGdfG3H2DAwrpkfcGR5n_hvG4Ovjxi1avLx4"
-    // // 创建一个新的fetch函数，该函数在每个请求中添加Authorization头
-    // const authFetch = (url, opts) => {
-    //     opts.headers.set('Authorization', `Bearer ${token}`);
-    //     opts.headers.set('Content-Type', 'application/json');
-    //     return fetch(url, opts);
-    // };
     const mutex = new Mutex();
     initTokenMap()
-    let username = 'zheng';
-    // 创建一个使用自定义fetch函数的PouchDB实例
-    // const remoteDb = new PouchDB('http://localhost:5984/userdb-' + username, {fetch: authFetch});
-    const remoteDb = new PouchDB('http://localhost:5984/userdb-' + username, {
-        auth: {
-            username: 'admin',
-            password: 'wang'
-        }
-    });
     let db = new PouchDB('userdb');
-    // const remoteDb = new PouchDB('http://localhost:5984/userdb-' + "username", {auth:{username:'admin',password:'password'}});
-    // todo synchronize with the remote database
-    db.sync(remoteDb, {
-        live: true,  // real time synchronization
-        retry: true  // If the connection drops, it is automatically retried
-    }).on('change', function (info) {
-        // triggered every time the data changes
-        // console.log('remote db change: ',info);
-    }).on('paused', function (err) {
-        // triggered when sync is paused (ERR is passed in if there are unresolved errors)
-        // console.log(err);
-    }).on('active', function () {
-        // triggered when synchronization resumes
-        // console.log('Sync resumed');
-    }).on('denied', function (err) {
-        // if a document cannot be copied for validation or security reasons, the denied event is triggered
-        // console.log(err);
-    }).on('complete', function (info) {
-        // triggered when synchronization is complete
-        // console.log(info);
-    }).on('error', function (err) {
-        // triggered when there is a synchronization error
-        // console.log(err);
-    });
 
     const ruleStorage = RuleStorage.getInstance(db)
     const domainStorage = DomainStorage.getInstance(db)
@@ -383,10 +333,7 @@ export default defineBackground(() => {
                 })
                 break
             case ACTION.TRANSLATE_HTML:
-                // console.log("translateHtml", message)
-                // let service: string = message.data.service || TRANS_SERVICE.MICROSOFT
-                // //message.data.elements, message.data.targetLang, message.data.sourceLang
-                // translateHtml(service, message.texts, message.data.targetLang, message.data.sourceLang)
+                // todo
                 break
             case DB_ACTION.RULES_ADD:
                     ruleStorage.add(message.data.domain, message.data.data).then(() => {
@@ -510,6 +457,7 @@ export default defineBackground(() => {
                     sendResponse({ status: STATUS_FAIL, data: "value is null or empty" });
                     return
                 }
+                console.log('set session storage', key, message.data.value)
                 browser.storage.session.set({ [key]: message.data.value }).then(() => {
                     sendResponse({ status: STATUS_SUCCESS, data: "insert success" });
                 }).catch((e) => {
@@ -565,7 +513,7 @@ export default defineBackground(() => {
         return true
     });
 
-    let trasnlateStatus = false
+    let translateStatus = false
     // add context menu to translate page
     configStorage.getConfigItem(CONFIG_KEY.CONTEXT_MENU_SWITCH).then((value) => {
         console.log("contextMenuSwitch", value);
@@ -585,11 +533,11 @@ export default defineBackground(() => {
 
     // @ts-ignore
     let contextMenuClickLister = (info, tab) => {
-        console.log('contextMenus.onClicked', info, tab)
+        console.log('contextMenus.onClicked', info, tab, translateStatus)
         if (!tab || !tab.id) {
             return
         }
-        if (!trasnlateStatus) {
+        if (!translateStatus) {
             browser.tabs.sendMessage(tab.id, { action: TRANS_ACTION.TRANSLATE });
         } else {
             browser.tabs.sendMessage(tab.id, { action: TRANS_ACTION.ORIGIN });
@@ -599,7 +547,7 @@ export default defineBackground(() => {
 
     function initContextMenu() {
         let t: string = 'contextMenuTranslate'
-        if (trasnlateStatus) {
+        if (translateStatus) {
             t = 'contextMenuOriginal'
         }
         browser.contextMenus.create({
@@ -620,8 +568,8 @@ export default defineBackground(() => {
             // get current tab translate status
             let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + activeInfo.tabId
             browser.storage.session.get(tabTranslateStatusKey).then((value) => {
-                trasnlateStatus = value[tabTranslateStatusKey] as boolean
-                if (trasnlateStatus) {
+                translateStatus = value[tabTranslateStatusKey] as boolean
+                if (translateStatus) {
                     browser.contextMenus.update("translate", {
                         title: browser.i18n.getMessage('contextMenuOriginal'),
                     })
@@ -673,8 +621,9 @@ export default defineBackground(() => {
 
 
 
-    function updateContextMenu(translateStatus: boolean) {
-        trasnlateStatus = translateStatus
+    function updateContextMenu(status: boolean) {
+        console.log('updateContextMenu', status)
+        translateStatus = status
 
         if (translateStatus) {
             browser.contextMenus.update("translate", {
@@ -686,31 +635,6 @@ export default defineBackground(() => {
             })
         }
     }
-
-    // browser.storage.onChanged.addListener((changes, areaName) => {
-    //     if (areaName === 'session') {
-    //         console.log('Storage updated:', changes, activeTabId);
-    //         for (let changesKey in changes) {
-    //             let tabStatus = changesKey.split("#")
-    //             if (tabStatus.length !== 2) {
-    //                 continue
-    //             }
-    //             if (tabStatus[0] === "tabTranslateStatus" && activeTabId === parseInt(tabStatus[1])) {
-    //                 isTranslate = changes[changesKey].newValue as boolean
-    //                 if (isTranslate) {
-    //                     browser.contextMenus.update("translate", {
-    //                         title: browser.i18n.getMessage('contextMenuOriginal'),
-    //                     })
-    //                 } else {
-    //                     browser.contextMenus.update("translate", {
-    //                         title: browser.i18n.getMessage('contextMenuTranslate'),
-    //                     })
-    //                 }
-
-    //             }
-    //         }
-    //     }
-    // });
 
     async function getMicrosoftToken(): Promise<Token> {
         const release = await mutex.acquire(); // Acquire the lock

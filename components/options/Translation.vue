@@ -22,7 +22,7 @@
                     style="--el-switch-on-color: #13ce66; --el-switch-off-color: #ff4949"
                 />
                 <el-button :disabled="!scope.row.editable" @click="handleEdit(scope.$index, scope.row)"
-                           style="margin-left: 10px">
+                    style="margin-left: 10px">
                     {{ t('edit') }}
                 </el-button>
             </template>
@@ -66,7 +66,6 @@ async function serviceSwitch(index :number, row: TranslateService) {
         disableServices.add(row.value)
         console.log('disableServices',disableServices)
         await setConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICE, Array.from(disableServices))
-        
     }else {
         if (disableServices.has(row.value)) {
             disableServices.delete(row.value)

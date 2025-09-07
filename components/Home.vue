@@ -142,7 +142,6 @@ export default {
                 { title: "bilingual", value: VIEW_STRATEGY.DOUBLE, action: TRANS_ACTION.DOUBLE },
                 { title: "monolingual", value: VIEW_STRATEGY.SINGLE, action: TRANS_ACTION.SINGLE },
                 // todo show a dialog to ask user whether to translate
-                // {title: "showToggleButton", value: VIEW_STRATEGY.BUTTON, action: TRANS_ACTION.TOGGLE},
             ],
             // translation service
             translateServices: TRANSLATE_SERVICES,
@@ -220,9 +219,8 @@ export default {
     },
     methods: {
         openHelpPage() {
-            this.test()
-
-            // browser.tabs.create({url: "https://duo.zeroflx.com/docs"})
+            // this.test()
+            browser.tabs.create({url: "https://duo.zeroflx.com/docs"})
         },
         openSettingPage() {
             browser.tabs.create({ url: "options.html" })
@@ -587,7 +585,7 @@ export default {
             if (targetLanguageConfigValue) {
                 // obtain the title based on the code, which is used to set the front-end display
                 this.targetLanguage = targetLanguageConfigValue
-            } 
+            }
             this.tabLanguage = tabLanguage
             disabledTranslateService?.forEach((service: string) => {
                 this.translateServices.delete(service)

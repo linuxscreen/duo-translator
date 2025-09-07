@@ -6,7 +6,7 @@
   "GoogleTranslateDescription": "Google provides translation services, Statistical machine translation technique is used",
   "giveTimeToCivilization": "Give time to civilization. ",
   "notCivilizationToTime": "not civilization to time.",
-  "translationColorPropNotSame": "translation color property cannot be the same!",
+  "translationColorPropNotSame": "The background color and the font color cannot be the same!",
   "helpDocument": "help document",
   "settings": "settings",
   "restoreOriginalFirst": "please restore the original first because page is translated",

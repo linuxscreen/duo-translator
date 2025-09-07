@@ -1,6 +1,6 @@
-import {getConfig, setConfig} from "@/utils/db";
-import {ACTION, CONFIG_KEY, DB_ACTION} from "@/entrypoints/constants";
-import {sendMessageToBackground} from "@/entrypoints/utils";
+import { getConfig, setConfig } from "@/utils/db";
+import { ACTION, CONFIG_KEY, DB_ACTION, VIEW_STRATEGY } from "@/entrypoints/constants";
+import { sendMessageToBackground } from "@/entrypoints/utils";
 
 export class Token {
     token: string
@@ -99,7 +99,7 @@ class TagReplacer {
                 return `</b${lastTag.index}>`;
             } else {
                 // open label handling
-                const currentTag = {match, tagName, index: this.tagCounter};
+                const currentTag = { match, tagName, index: this.tagCounter };
                 this.tagStack.push(currentTag);
 
                 // Document the mapping of the custom label to the original label
@@ -138,7 +138,7 @@ class TagReplacer {
 class TranslationService {
 
     constructor(serviceName: string, baseUrl: string, requestMethod: string, authToken: Token, apiKey: string,
-        translateText: TranslateText,translateHtml?: TranslateHtml,translateBatchText?: TranslateBatchText,
+        translateText: TranslateText, translateHtml?: TranslateHtml, translateBatchText?: TranslateBatchText,
         detectLanguage?: DetectLanguage) {
         this.serviceName = serviceName;
         this.baseUrl = baseUrl;
@@ -179,13 +179,13 @@ export const googleTranslationService: TranslationService = new TranslationServi
     "POST",
     new Token("", 0),
     "",
-    async function (this: TranslationService, texts: Array<string>, targetLang: string, sourceLang?: string) {
+    async function (this: TranslationService, texts: Array<string>, targetLang: string, sourceLang?: string) : Promise<TranslateResult[]> {
         if (texts.length == 0) {
             return Promise.resolve([])
         }
         texts = texts.map((text) => {
-            text = text.replaceAll("<b","<a i=")
-            text = text.replaceAll("</b\d+>","</a>")
+            text = text.replaceAll("<b", "<a i=")
+            text = text.replaceAll("</b\d+>", "</a>")
             return text
         })
 
@@ -208,6 +208,10 @@ export const googleTranslationService: TranslationService = new TranslationServi
                 ]
             )
         });
+        if (response.status !== 200) {
+            console.error("Google Translate API error:", response.statusText);
+            return Promise.resolve([]);
+        }
         let data = await response.json()
         let result: TranslateResult[] = []
         if (!data || data.length < 2) {
@@ -276,8 +280,9 @@ export class TranslateResult {
     rawText?: string // like <b0>original text</b0>
     translatedText?: string // like <p>translated text</p>
     targetLang?: string
+    textNodes?: Text[]
 
-    constructor(rawTranslatedText : string,sourceLang: string,score: number,originalElement?: HTMLElement[], translatedText?: string, targetLang?: string) {
+    constructor(rawTranslatedText: string, sourceLang: string, score: number, originalElement?: HTMLElement[], translatedText?: string, targetLang?: string, textNodes?: Text[]) {
         this.rawTranslatedText = rawTranslatedText;
         this.sourceLang = sourceLang;
         this.score = score;
@@ -289,6 +294,9 @@ export class TranslateResult {
         }
         if (targetLang) {
             this.targetLang = targetLang;
+        }
+        if (textNodes) {
+            this.textNodes = textNodes;
         }
     }
 }
@@ -309,7 +317,7 @@ async function refreshToken(service: TranslationService) {
     if (!service.authToken || service.authToken.token == "" || service.authToken.expireTime < Date.now()) {
         service.authToken = await sendMessageToBackground({
             action: ACTION.ACCESS_TOKEN_GET,
-            data: {serviceName: service.serviceName}
+            data: { serviceName: service.serviceName }
         })
     }
 }
@@ -321,7 +329,7 @@ export const microsoftTranslationService = new TranslationService(
     new Token("", 0),
     "",
     // Translate text functions
-    async function (this: TranslationService, text: Array<string>, targetLang: string, sourceLang?: string, options?: any) {
+    async function (this: TranslationService, text: Array<string>, targetLang: string, sourceLang?: string, options?: any) :Promise<TranslateResult[]> {
         // send request to background
 
         let url: string
@@ -338,7 +346,7 @@ export const microsoftTranslationService = new TranslationService(
                 'Authorization': 'Bearer ' + this.authToken.token
             },
             body: JSON.stringify(
-                text.map(t => ({text: t}))
+                text.map(t => ({ text: t }))
             )
         });
         // if the response status is 401, the token is invalid and the token is re-obtained
@@ -350,16 +358,20 @@ export const microsoftTranslationService = new TranslationService(
             }
             this.authToken = await sendMessageToBackground({
                 action: ACTION.ACCESS_TOKEN_GET,
-                data: {serviceName: this.serviceName}
+                data: { serviceName: this.serviceName }
             })
             return this.translateText(text, targetLang, sourceLang, options)
 
         }
+        if (response.status !== 200) {
+            console.error("Microsoft Translate API error:", response.statusText);
+            return Promise.resolve([]);
+        }
         let data = await response.json()
-        return data.map((d: {
+        return data?.map((d: {
             translations: { text: string }[],
             detectedLanguage: { language: string, score: number }
-        }) => new TranslateResult(d.translations[0].text, transferLanguageCode(d.detectedLanguage.language), targetLang, d.detectedLanguage.score));
+        }) => new TranslateResult(d.translations[0].text, transferLanguageCode(d.detectedLanguage.language), d.detectedLanguage.score));
     },
     async function (this: TranslationService, html: Array<HTMLElement>, targetLang: string, sourceLang?: string) {
         if (html.length == 0) {
@@ -428,7 +440,7 @@ export const microsoftTranslationService = new TranslationService(
 
         const translationPromises = texts.map((text, index) => {
             // the returned results are guaranteed to contain the original index for subsequent sorting
-            return this.translateText(text, targetLang, sourceLang, {retryCount: 0}).then((translatedTexts: TranslateResult[]) => ({
+            return this.translateText(text, targetLang, sourceLang, { retryCount: 0 }).then((translatedTexts: TranslateResult[]) => ({
                 index,
                 translatedTexts
             }));
@@ -459,7 +471,7 @@ export const microsoftTranslationService = new TranslationService(
                 'Authorization': 'Bearer ' + this.authToken.token
             },
             body: JSON.stringify(
-                text.map(t => ({text: t}))
+                text.map(t => ({ text: t }))
             )
         });
         if (response.status !== 200) {
@@ -497,11 +509,11 @@ export const microsoftTranslationService = new TranslationService(
     }
 );
 
-function getPreProcessResult(element: HTMLElement): { elements: HTMLElement[], text: string, deleteTextNodes: Text[]} {
+function getPreProcessResult(element: HTMLElement): { elements: HTMLElement[], text: string, deleteTextNodes: Text[] } {
     let i = 0
     let elements: HTMLElement[] = []
     let processParent: HTMLElement = document.createElement("div")
-    let deleteTextNodes : Text[] = []
+    let deleteTextNodes: Text[] = []
     let process = (node: Node, parent: HTMLElement) => {
         if (!node) {
             return
@@ -550,7 +562,7 @@ function updateTranslateElementContent(rawTranslatedHtml: string, originalElemen
             if (!parent) {
                 return
             }
-            let num :number = parseInt(parent.tagName.replace("B", ""))
+            let num: number = parseInt(parent.tagName.replace("B", ""))
             if (isNaN(num) || num >= originalElements.length) {
                 return
             }
@@ -560,7 +572,7 @@ function updateTranslateElementContent(rawTranslatedHtml: string, originalElemen
         }
         if (node.nodeType === 1) {
             let ele = node as HTMLElement
-            let num :number = parseInt(ele.tagName.replace("B", ""))
+            let num: number = parseInt(ele.tagName.replace("B", ""))
             if (isNaN(num) || num >= originalElements.length) {
                 return
             }
@@ -577,7 +589,7 @@ function updateTranslateElementContent(rawTranslatedHtml: string, originalElemen
             }
             let parent = ele.parentElement
             if (parent) {
-                let num :number = parseInt(parent.tagName.replace("B", ""))
+                let num: number = parseInt(parent.tagName.replace("B", ""))
                 if (isNaN(num) || num >= originalElements.length) {
                     return
                 }
@@ -591,7 +603,7 @@ function updateTranslateElementContent(rawTranslatedHtml: string, originalElemen
     }
 
     translate(translatedElement.firstElementChild)
-    console.log(originalElements[0].outerHTML);
+    // console.log(originalElements[0].outerHTML);
 }
 
 
@@ -634,7 +646,7 @@ export function convertAToBTags(html: string): string {
     let index = finalResult.indexOf("<b0>");
     if (index > 0) {
         let contentBefore = finalResult.substring(0, index);
-        finalResult = finalResult.substring(index+4);
+        finalResult = finalResult.substring(index + 4);
         finalResult = `<b0>${contentBefore}${finalResult}`;
     }
 
@@ -654,10 +666,13 @@ export function convertAToBTags(html: string): string {
     return finalResult;
 }
 
-export async function getTranslateResult(service: string, elements: HTMLElement[], targetLang: string) : Promise<TranslateResult[]> {
-    let texts : string[] = []
-    let sliceElements : HTMLElement[][] = []
-    let deleteTextNodesList : Text[][] = []
+export async function getTranslateResult(service: string, elements: HTMLElement[], targetLang: string, viewStrategy: VIEW_STRATEGY): Promise<TranslateResult[]> {
+    if (!elements || elements.length === 0) {
+        return Promise.resolve([]);
+    }
+    let texts: string[] = []
+    let sliceElements: HTMLElement[][] = []
+    let deleteTextNodesList: Text[][] = []
     for (let i = 0; i < elements.length; i++) {
         let element = elements[i]
         let result = getPreProcessResult(element)
@@ -667,7 +682,7 @@ export async function getTranslateResult(service: string, elements: HTMLElement[
         deleteTextNodesList.push(result.deleteTextNodes)
     }
 
-    let results = await translationServices.get(service)?.translateText(texts,targetLang)
+    let results = await translationServices.get(service)?.translateText(texts, targetLang)
     if (!results) {
         return []
     }
@@ -675,21 +690,27 @@ export async function getTranslateResult(service: string, elements: HTMLElement[
         let result = results[i]
         result.originalSliceElement = sliceElements[i]
         result.rawText = texts[i]
-        deleteTextNodesList[i]?.forEach(textNode => {
-            textNode?.remove()
-        })
+        if (viewStrategy == VIEW_STRATEGY.DOUBLE) {
+            // we are merely handling the copy of element in the view strategy of DOUBLE, text nodes can be removed directly
+            deleteTextNodesList[i]?.forEach(textNode => {
+                textNode?.remove()
+            })
+        } else {
+            // we need to keep text nodes because the element may not be translated in SINGLE strategy
+            result.textNodes = deleteTextNodesList[i]
+        }
     }
     return results
 }
 
-export async function translate(results: TranslateResult[]) : Promise<void> {
+export async function translate(results: TranslateResult[]): Promise<void> {
     for (let i = 0; i < results.length; i++) {
         let result = results[i]
         updateTranslateElementContent(result.rawTranslatedText, result.originalSliceElement || [])
     }
 }
 
-export async function restore(results: TranslateResult[]) : Promise<void> {
+export async function restore(results: TranslateResult[]): Promise<void> {
     for (let i = 0; i < results.length; i++) {
         let result = results[i]
         if (!result.rawText) {

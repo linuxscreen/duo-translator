@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue';
-import { CONFIG_KEY, DEFAULT_VALUE, LANGUAGES, TRANSLATE_SERVICES, VIEW_STRATEGIES, TB_ACTION, TranslateService } from '@/entrypoints/constants';    
+import { CONFIG_KEY, DEFAULT_VALUE, LANGUAGES, TRANSLATE_SERVICES, VIEW_STRATEGIES, TB_ACTION, TranslateService } from '@/entrypoints/constants';
 import { getConfig, sendMessageToAllTabs, sendMessageToBackground, setConfig } from '@/entrypoints/utils';
 import useI18n from '@/composables/useI18n';
-import { get } from 'node:http';
 
 const { t } = useI18n();
 const globalSwitch = ref(false)
@@ -60,17 +59,17 @@ watch(translateService, (newVal) => {
 onMounted(async () => {
     // get globalSwitch from db
     const [switchValue, bilingualHighlightingSwitchValue, floatBallSwitchValue, contextMenuSwitchValue, viewStrategyValue,
-           targetLangValue, translateServiceValue, disabledTranslateServiceValue] =
-        await Promise.all([
-            getConfig(CONFIG_KEY.GLOBAL_SWITCH),
-            getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
-            getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
-            getConfig(CONFIG_KEY.CONTEXT_MENU_SWITCH),
-            getConfig(CONFIG_KEY.VIEW_STRATEGY),
-            getConfig(CONFIG_KEY.TARGET_LANG),
-            getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
-            getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICE)
-        ])
+        targetLangValue, translateServiceValue, disabledTranslateServiceValue] =
+    await Promise.all([
+        getConfig(CONFIG_KEY.GLOBAL_SWITCH),
+        getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
+        getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
+        getConfig(CONFIG_KEY.CONTEXT_MENU_SWITCH),
+        getConfig(CONFIG_KEY.VIEW_STRATEGY),
+        getConfig(CONFIG_KEY.TARGET_LANG),
+        getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
+        getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICE)
+    ])
     globalSwitch.value = switchValue === undefined ? true : switchValue
     bilingualHighlightingSwitch.value = bilingualHighlightingSwitchValue === undefined ? true : bilingualHighlightingSwitchValue
     floatBallSwitch.value = floatBallSwitchValue === undefined ? true : floatBallSwitchValue
@@ -125,7 +124,7 @@ onMounted(async () => {
         </el-col>
         <el-col :span="12">
             <div class="grid-content ep-bg-purple-light">
-                <el-switch size="large" v-model="floatBallSwitch"></el-switch>    
+                <el-switch size="large" v-model="floatBallSwitch"></el-switch>
             </div>
         </el-col>
     </el-row>
@@ -138,7 +137,7 @@ onMounted(async () => {
         </el-col>
         <el-col :span="12">
             <div class="grid-content ep-bg-purple-light">
-                <el-switch size="large" v-model="contextMenuSwitch"></el-switch>    
+                <el-switch size="large" v-model="contextMenuSwitch"></el-switch>
             </div>
         </el-col>
     </el-row>

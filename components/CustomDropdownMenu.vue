@@ -1,7 +1,7 @@
 <template>
     <el-dropdown-menu>
         <el-dropdown-item v-for="(item,index) in data"
-                          :command="commandValue">
+            :command="commandValue">
             {{ t(item.title) }}
         </el-dropdown-item>
     </el-dropdown-menu>

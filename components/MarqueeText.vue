@@ -60,7 +60,7 @@ export default {
       // insert style
       styleSheet.sheet.insertRule(keyframes, styleSheet.sheet.cssRules.length);
       const animation = `
-         #data-${this.uuid}:hover  {
+          #data-${this.uuid}:hover  {
             animation: marquee-${this.uuid} ${totalTime}s linear infinite both;
         }
       `;

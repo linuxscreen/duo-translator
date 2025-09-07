@@ -18,8 +18,8 @@ export default defineConfig({
         commands: {
             "shortcut-toggle": {
                 "suggested_key": {
-                    "default": "Ctrl+Shift+G",
-                    "linux": "Ctrl+Shift+G"
+                    "default": "Ctrl+Shift+E",
+                    "linux": "Ctrl+Shift+E"
                 },
                 "description": '__MSG_shortcutToggleTranslation__'
             },
@@ -41,8 +41,8 @@ export default defineConfig({
         // fix chrome load extension error: DevTools failed to load source map: Could not load:ERR_BLOCKED_BY_CLIENT
         web_accessible_resources: [
             {
-              "resources": ["*/*"],
-              "matches": ["<all_urls>"]
+                "resources": ["*/*"],
+                "matches": ["<all_urls>"]
             }
         ]
     },

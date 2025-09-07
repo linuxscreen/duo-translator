@@ -1,7 +1,6 @@
 // utils.js
 import {CONFIG_KEY, DB_ACTION, STATUS_SUCCESS} from "@/entrypoints/constants";
 import * as OpenCC from 'opencc-js';
-import content from "@/entrypoints/content";
 export default defineUnlistedScript(
     () => {
     }
@@ -40,7 +39,7 @@ export class Rule {
 
 type Message = {
     // request: string | ""
-    active?: boolean; // identify the active tab
+    active?: boolean; // identify the active status of tab
     action: string
     data?: any
 }
@@ -76,7 +75,12 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
     ]);
 }
 
-// Send a message to the currently active and valid tab
+/**
+ * Sends a message to the currently active and valid tab.
+ *
+ * @param message The message to send.
+ * @returns A promise that resolves with the response data.
+ */
 export async function sendMessageToTab(message: Message) {
     let tabs = await browser.tabs.query({active: true, currentWindow: true})
     console.log(tabs)
@@ -88,9 +92,12 @@ export async function sendMessageToTab(message: Message) {
 
 }
 
-// send a message to all tabs
-// If the tab is active, set the active flag to true
-// return the response of the active tab
+/**
+ * send a message to all tabs.
+ * If the tab is active, set the active flag to true.
+ * @param message The message to send.
+ * @returns the response of the active tab.
+ */
 export async function sendMessageToAllTabs(message: Message) {
     let tabs = await browser.tabs.query({})
     let activeTab = await browser.tabs.query({active: true, currentWindow: true})

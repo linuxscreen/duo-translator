@@ -4,7 +4,9 @@
 </h1>
 
 <div align="center">
-<img style="width: 384px" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/duo-zh.png" alt="">
+<img style="width: 384px" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/pop-cn.png" alt="">
+<img src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/option-cn.png" alt="">
+<img src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/translate-page.png" alt="">
 </div>
 
 简单易用的翻译插件,支持双语和对比高亮等功能。

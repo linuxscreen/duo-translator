@@ -6,7 +6,7 @@
   "GoogleTranslateDescription": "谷歌提供翻译服务，使用统计机器翻译技术",
   "giveTimeToCivilization": "给岁月以文明。",
   "notCivilizationToTime": "而不是给文明以岁月。",
-  "translationColorPropNotSame": "译文颜色属性不能相同！",
+  "translationColorPropNotSame": "背景颜色和字体颜色不能相同！",
   "helpDocument": "帮助文档",
   "settings": "设置",
   "restoreOriginalFirst": "页面已经被翻译,请先恢复原文",
