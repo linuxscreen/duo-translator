@@ -62,14 +62,14 @@ export default defineConfig({
             // 'import.meta.env.VITE_ENV': JSON.stringify(process.env.VITE_ENV)
         },
         build: {
-            // minify: 'terser',
+            minify: 'terser',
             // Enabling sourcemaps with Vue during development is known to cause problems with Vue
-            sourcemap: true,
+            sourcemap: process.env.NODE_ENV !== 'production',
             terserOptions: {
                 compress: {
                     // production env will remove all console.* calls
-                    drop_console: true,
-                    drop_debugger: true,
+                    drop_console: process.env.NODE_ENV == 'production',
+                    drop_debugger: process.env.NODE_ENV == 'production',
                 }
             }
         },
