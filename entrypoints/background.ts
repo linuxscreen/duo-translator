@@ -298,6 +298,8 @@ const serviceTokenMap = new Map<string, Token>()
 let tokenUrl = "https://edge.microsoft.com/translate/auth"
 
 export default defineBackground(() => {
+    // console.log('background script loaded');
+    // return;
     const mutex = new Mutex();
     initTokenMap()
     let db = new PouchDB('userdb');

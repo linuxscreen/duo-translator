@@ -1,6 +1,8 @@
-import {defineConfig} from 'wxt';
+import { defineConfig } from 'wxt';
 import vue from '@vitejs/plugin-vue';
 import vueI18n from '@intlify/unplugin-vue-i18n/vite';
+import { nodePolyfills } from 'vite-plugin-node-polyfills';
+import { resolve } from 'node:path';
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -8,7 +10,7 @@ export default defineConfig({
         name: '__MSG_extName__',
         description: '__MSG_extDescription__',
         default_locale: 'en',
-        permissions: ['storage', 'tabs', 'activeTab','contextMenus','commands'],
+        permissions: ['storage', 'tabs', 'activeTab', 'contextMenus', 'commands'],
         content_scripts: [
             {
                 matches: ['https://*/*', 'http://*/*'],
@@ -53,13 +55,38 @@ export default defineConfig({
     },
     vite: () => ({
         plugins: [
+            // Must run before Vite's built-in resolver so we win against
+            // the `browser` field in `immediate/package.json` which maps
+            // `./lib/nextTick` to `false`. In Vite 8 that mapping produces
+            // a Proxy stub that throws on any property access, breaking
+            // immediate's strategy probe (`mod && mod.test && mod.test()`).
+            {
+                name: 'fix-immediate-nextTick',
+                enforce: 'pre',
+                resolveId(id, importer) {
+                    if (
+                        (id === './nextTick' || id === './nextTick.js') &&
+                        importer && /[\\/]immediate[\\/]lib[\\/]/.test(importer)
+                    ) {
+                        return resolve(__dirname, 'shims/empty-module.js');
+                    }
+                    return null;
+                },
+            },
             vue(),
             vueI18n({
                 include: 'assets/locales/*.json',
             }),
+            nodePolyfills({
+                include: ['process'],
+                globals: { process: true },
+            }),
         ],
         define: {
             // 'import.meta.env.VITE_ENV': JSON.stringify(process.env.VITE_ENV)
+            // pouchdb and other Node-style deps reference `global`; vite 8 no longer
+            // polyfills this implicitly, so map it to globalThis for SW/browser runtime.
+            global: 'globalThis',
         },
         build: {
             minify: 'terser',
@@ -80,6 +107,14 @@ export default defineConfig({
         // }
     }),
     webExt: {
-        disabled: true,
+        disabled: false,
+        binaries: {
+            chrome: "C:\\Program Files\\Google\\Chrome Dev\\Application\\chrome.exe",
+        },
+        chromiumProfile: resolve('F:\\code\\duo-translator\\.wxt\\chrome-data'),
+        keepProfileChanges: true,
+        chromiumArgs: [
+            '--remote-debugging-port=9222'
+        ]
     },
 });

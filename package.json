@@ -41,21 +41,22 @@
     "vuetify": "^3.5.16"
   },
   "devDependencies": {
-    "@intlify/unplugin-vue-i18n": "^1.4.0",
+    "@intlify/unplugin-vue-i18n": "^4.0.0",
     "@mdi/font": "^7.4.47",
     "@types/debug": "^4.1.12",
     "@types/heap": "^0.2.34",
     "@types/js-cookie": "^3.0.6",
     "@types/pouchdb": "^6.4.2",
-    "@vitejs/plugin-vue": "^5.0.4",
+    "@vitejs/plugin-vue": "^6.0.6",
     "@vue/test-utils": "^2.4.6",
     "events": "^3.3.0",
     "franc": "^6.2.0",
     "pouchdb": "^8.0.1",
     "terser": "^5.36.0",
-    "typescript": "^5.3.3",
-    "vitest": "^1.5.0",
-    "vue-tsc": "^2.0.6",
-    "wxt": "^0.20.0"
+    "typescript": "^5.9.3",
+    "vite-plugin-node-polyfills": "0.26.0",
+    "vitest": "^4.1.5",
+    "vue-tsc": "^3.2.8",
+    "wxt": "^0.20.25"
   }
 }
