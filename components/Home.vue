@@ -127,13 +127,13 @@ export default {
 
             // Website translation strategy
             domainStrategies: [
-                { title: "automaticallyDetermineWhetherToTranslate", value: DOMAIN_STRATEGY.AUTO },
-                { title: "neverTranslateThisSite", value: DOMAIN_STRATEGY.NEVER },
-                { title: "alwaysTranslateThisSite", value: DOMAIN_STRATEGY.ALWAYS },
+                { title: "automaticallyDetermine", value: DOMAIN_STRATEGY.AUTO },
+                { title: "neverTranslateThisWebsite", value: DOMAIN_STRATEGY.NEVER },
+                { title: "alwaysTranslateThisWebsite", value: DOMAIN_STRATEGY.ALWAYS },
                 // {title: "alwaysAskToTranslateThisSite", value: DOMAIN_STRATEGY.ASK},
             ],
             defaultStrategies: [
-                { title: "automaticallyDetermineWhetherToTranslate", value: DOMAIN_STRATEGY.AUTO },
+                { title: "automaticallyDetermine", value: DOMAIN_STRATEGY.AUTO },
                 { title: "notTranslateAllWebsites", value: DOMAIN_STRATEGY.NEVER },
                 { title: "translateAllWebsites", value: DOMAIN_STRATEGY.ALWAYS },
             ],
@@ -164,7 +164,7 @@ export default {
             originalBgColor: '',
             fontColor: '',
             style: 'noneStyleSelect',
-            bilingualHighlighting: true,
+            bilingualComparisonHighlighting: true,
             options: [
                 {
                     label: this.t('wrap'),
@@ -355,7 +355,7 @@ export default {
                 await this.processDomainStrategyChange(DOMAIN_STRATEGY.AUTO)
             }
         },
-        async bilingualHighlightingChanged(newVal: boolean) {
+        async bilingualComparisonHighlightingChanged(newVal: boolean) {
             await this.setConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH, newVal)
             await sendMessageToTab({ action: ACTION.STYLE_CHANGE })
         },
@@ -374,7 +374,7 @@ export default {
             });
         },
         highlightMouseLeaveDemo(event: Event) {
-            if (!this.bilingualHighlighting) {
+            if (!this.bilingualComparisonHighlighting) {
                 return
             }
             let eventElement = event.target as HTMLElement
@@ -390,7 +390,7 @@ export default {
             }
         },
         highlightMouseOverDemo(event: Event) {
-            if (!this.bilingualHighlighting) {
+            if (!this.bilingualComparisonHighlighting) {
                 return
             }
             const eventElement = event.target as HTMLElement
@@ -631,7 +631,7 @@ export default {
                 originalBgColorIndexConfig,
                 translationBgColorConfig,
                 translationBgColorIndexConfig,
-                bilingualHighlighting,
+                bilingualComparisonHighlighting,
                 globalSwitch,
                 defaultStrategy,
             ] = await Promise.all([
@@ -665,7 +665,7 @@ export default {
             this.globalSwitch = globalSwitch === undefined ? true : globalSwitch;
             // padding
             this.padding = paddingConfig || '';
-            this.bilingualHighlighting = bilingualHighlighting == undefined ? true : bilingualHighlighting;
+            this.bilingualComparisonHighlighting = bilingualComparisonHighlighting == undefined ? true : bilingualComparisonHighlighting;
             this.defaultStrategy = defaultStrategy || 'auto';
             console.log('defaultStrategy', defaultStrategy)
             // set translation demo style
@@ -676,7 +676,7 @@ export default {
             this.$watch('bgColor', this.bgColorChanged)
             this.$watch('fontColor', this.fontColorChanged)
             this.$watch('style', this.styleChanged)
-            this.$watch('bilingualHighlighting', this.bilingualHighlightingChanged)
+            this.$watch('bilingualComparisonHighlighting', this.bilingualComparisonHighlightingChanged)
             this.$watch('originalBgColor', this.originalBgColorChanged)
             this.$watch('translationBgColor', this.translationBgColorChanged)
 
@@ -880,7 +880,7 @@ export default {
         </div>
 
         <div class="style-highlight">
-            <marquee-text style="font-weight: bold" :text="t('bilingualHighlighting')">
+            <marquee-text style="font-weight: bold" :text="t('bilingualComparisonHighlighting')">
             </marquee-text>
             <div class="styleSetting">
                 <marquee-text :text="t('originalBgColor')" width="136px"></marquee-text>
@@ -912,20 +912,20 @@ export default {
                     </el-radio>
                 </el-radio-group>
                 <div class="domainStrategy">
-                    <marquee-text :text="t('neverTranslateThisSite')" width="112px"></marquee-text>
+                    <marquee-text :text="t('neverTranslateThisWebsite')" width="112px"></marquee-text>
                     <el-switch :disabled="!globalSwitch || !translateToggleEnabled" v-model="domainStrategyNeverTranslate">
 
                     </el-switch>
                 </div>
                 <div class="domainStrategy">
-                    <marquee-text :text="t('alwaysTranslateThisSite')" width="112px"></marquee-text>
+                    <marquee-text :text="t('alwaysTranslateThisWebsite')" width="112px"></marquee-text>
                     <el-switch :disabled="!globalSwitch || !translateToggleEnabled" v-model="domainStrategyAlwaysTranslate">
                     </el-switch>
                 </div>
 
                 <div class="domainStrategy">
-                    <marquee-text :text="t('bilingualHighlighting')" width="112px"></marquee-text>
-                    <el-switch v-model="bilingualHighlighting" size="" />
+                    <marquee-text :text="t('bilingualComparisonHighlighting')" width="112px"></marquee-text>
+                    <el-switch v-model="bilingualComparisonHighlighting" size="" />
                 </div>
 
 

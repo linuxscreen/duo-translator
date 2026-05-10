@@ -6,7 +6,7 @@ import useI18n from '@/composables/useI18n';
 
 const { t } = useI18n();
 const globalSwitch = ref(false)
-const bilingualHighlightingSwitch = ref(false)
+const bilingualComparisonHighlightingSwitch = ref(false)
 const floatBallSwitch = ref(false)
 const contextMenuSwitch = ref(false)
 const viewStrategy = ref('')
@@ -21,7 +21,7 @@ watch(globalSwitch, (newVal) => {
     setConfig(CONFIG_KEY.GLOBAL_SWITCH, newVal)
 })
 
-watch(bilingualHighlightingSwitch, (newVal) => {
+watch(bilingualComparisonHighlightingSwitch, (newVal) => {
     setConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH, newVal)
 })
 
@@ -58,7 +58,7 @@ watch(translateService, (newVal) => {
 
 onMounted(async () => {
     // get globalSwitch from db
-    const [switchValue, bilingualHighlightingSwitchValue, floatBallSwitchValue, contextMenuSwitchValue, viewStrategyValue,
+    const [switchValue, bilingualComparisonHighlightingSwitchValue, floatBallSwitchValue, contextMenuSwitchValue, viewStrategyValue,
         targetLangValue, translateServiceValue, disabledTranslateServiceValue] =
     await Promise.all([
         getConfig(CONFIG_KEY.GLOBAL_SWITCH),
@@ -71,7 +71,7 @@ onMounted(async () => {
         getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICE)
     ])
     globalSwitch.value = switchValue === undefined ? true : switchValue
-    bilingualHighlightingSwitch.value = bilingualHighlightingSwitchValue === undefined ? true : bilingualHighlightingSwitchValue
+    bilingualComparisonHighlightingSwitch.value = bilingualComparisonHighlightingSwitchValue === undefined ? true : bilingualComparisonHighlightingSwitchValue
     floatBallSwitch.value = floatBallSwitchValue === undefined ? true : floatBallSwitchValue
     contextMenuSwitch.value = contextMenuSwitchValue === undefined ? true : contextMenuSwitchValue
     viewStrategy.value = viewStrategyValue === undefined ? DEFAULT_VALUE.VIEW_STRATEGY : viewStrategyValue
@@ -106,12 +106,12 @@ onMounted(async () => {
     <el-row>
         <el-col :span="12">
             <div class="grid-content ep-bg-purple">
-                <h1>{{ t('bilingualHighlighting') }}</h1>
+                <h1>{{ t('bilingualComparisonHighlighting') }}</h1>
             </div>
         </el-col>
         <el-col :span="12">
             <div class="grid-content ep-bg-purple-light">
-                <el-switch size="large" v-model="bilingualHighlightingSwitch"></el-switch>
+                <el-switch size="large" v-model="bilingualComparisonHighlightingSwitch"></el-switch>
             </div>
         </el-col>
     </el-row>

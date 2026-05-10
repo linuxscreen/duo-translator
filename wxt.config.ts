@@ -1,7 +1,9 @@
 import { defineConfig } from 'wxt';
 import vue from '@vitejs/plugin-vue';
+import react from '@vitejs/plugin-react';
 import vueI18n from '@intlify/unplugin-vue-i18n/vite';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
+import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'node:path';
 
 // See https://wxt.dev/api/config.html
@@ -73,7 +75,9 @@ export default defineConfig({
                     return null;
                 },
             },
-            vue(),
+            vue({ include: [/\.vue$/] }),
+            react({ include: [/\.[jt]sx$/] }),
+            tailwindcss(),
             vueI18n({
                 include: 'assets/locales/*.json',
             }),

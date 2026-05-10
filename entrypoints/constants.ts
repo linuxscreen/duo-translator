@@ -145,7 +145,7 @@ export enum CONFIG_KEY {
     ORIGINAL_BG_COLOR_INDEX = 'originalBgColorIndex',
     TRANSLATION_BG_COLOR = 'translationBgColor',
     TRANSLATION_BG_COLOR_INDEX = 'translationBgColorIndex',
-    BILINGUAL_HIGHLIGHTING_SWITCH = 'bilingualHighlightingSwitch',
+    BILINGUAL_HIGHLIGHTING_SWITCH = 'bilingualComparisonHighlightingSwitch',
     GLOBAL_SWITCH = 'globalSwitch',
     TARGET_LANGUAGE = 'targetLanguage',
     TRANSLATE_SERVICE = 'translateService',

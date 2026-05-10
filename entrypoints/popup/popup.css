@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+/* Design tokens — dark theme with calm cyan accent */
+@theme {
+  --color-bg: #0b0d12;
+  --color-surface: #11141b;
+  --color-surface-2: #161a23;
+  --color-surface-hi: #1c2230;
+  --color-ink: #e7eaf2;
+  --color-ink-soft: #8c93a6;
+  --color-ink-mute: #5b6275;
+  --color-line: rgba(255, 255, 255, 0.06);
+  --color-line-strong: rgba(255, 255, 255, 0.14);
+  --color-hover: rgba(255, 255, 255, 0.04);
+  --color-accent: oklch(0.78 0.14 200);
+  --color-accent-strong: oklch(0.85 0.14 200);
+  --color-accent-soft: oklch(0.3 0.08 200 / 0.25);
+  --color-accent-glow: oklch(0.78 0.18 200 / 0.5);
+  --color-toggle-off: rgba(255, 255, 255, 0.12);
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 380px;
+  font-family: var(--font-sans);
+  background: var(--color-bg);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11", "ss01";
+  overflow-x: hidden;
+}
+
+#root {
+  width: 380px;
+}
