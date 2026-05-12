@@ -1,22 +1,22 @@
 @import "tailwindcss";
 
-/* Design tokens — dark theme with calm cyan accent */
+/* Design tokens — deep navy theme with vivid cyan accent */
 @theme {
-  --color-bg: #0b0d12;
-  --color-surface: #11141b;
-  --color-surface-2: #161a23;
-  --color-surface-hi: #1c2230;
-  --color-ink: #e7eaf2;
-  --color-ink-soft: #8c93a6;
-  --color-ink-mute: #5b6275;
-  --color-line: rgba(255, 255, 255, 0.06);
-  --color-line-strong: rgba(255, 255, 255, 0.14);
-  --color-hover: rgba(255, 255, 255, 0.04);
-  --color-accent: oklch(0.78 0.14 200);
-  --color-accent-strong: oklch(0.85 0.14 200);
-  --color-accent-soft: oklch(0.3 0.08 200 / 0.25);
-  --color-accent-glow: oklch(0.78 0.18 200 / 0.5);
-  --color-toggle-off: rgba(255, 255, 255, 0.12);
+  --color-bg: #070b14;
+  --color-surface: #0f1623;
+  --color-surface-2: #141d2e;
+  --color-surface-hi: #1a2438;
+  --color-ink: #eef1f8;
+  --color-ink-soft: #8a93a8;
+  --color-ink-mute: #545d75;
+  --color-line: rgba(120, 160, 220, 0.08);
+  --color-line-strong: rgba(140, 180, 230, 0.18);
+  --color-hover: rgba(120, 200, 230, 0.05);
+  --color-accent: oklch(0.86 0.16 195);
+  --color-accent-strong: oklch(0.92 0.15 190);
+  --color-accent-soft: oklch(0.5 0.12 195 / 0.22);
+  --color-accent-glow: oklch(0.85 0.2 195 / 0.55);
+  --color-toggle-off: rgba(255, 255, 255, 0.1);
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;

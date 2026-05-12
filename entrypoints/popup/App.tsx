@@ -6,6 +6,7 @@ import {
   ACTION,
   CONFIG_KEY,
   DB_ACTION,
+  DEFAULT_STRATEGY,
   DEFAULT_VALUE,
   DOMAIN_STRATEGY,
   LANGUAGES,
@@ -15,23 +16,16 @@ import {
   TRANSLATE_SERVICES,
   TRANSLATE_STATUS_KEY,
   VIEW_STRATEGY,
-} from '@/entrypoints/constants';
-import { sendMessageToBackground, sendMessageToTab } from '@/entrypoints/utils';
+} from '@/main/constants';
+import { sendMessageToBackground, sendMessageToTab } from '@/utils/message';
 import { cn } from '@/lib/cn';
 import { Card, CardDivider, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ServiceMark } from '@/components/ui/service-mark';
 import { Switch } from '@/components/ui/switch';
-
-type Mode = 'bilingual' | 'translation';
-type Rule = DOMAIN_STRATEGY.AUTO | DOMAIN_STRATEGY.ALWAYS | DOMAIN_STRATEGY.NEVER;
+import { browser } from 'wxt/browser';
+import { Button } from '@/components/ui/button';
 
 const getConfig = (name: string) =>
   sendMessageToBackground({ action: DB_ACTION.CONFIG_GET, data: { name } });
@@ -49,14 +43,15 @@ export default function App() {
   const { t } = useTranslation();
 
   const [globalOn, setGlobalOn] = useState(true);
-  const [mode, setMode] = useState<Mode>('bilingual');
+  const [mode, setMode] = useState<VIEW_STRATEGY>(VIEW_STRATEGY.DOUBLE);
   const [target, setTarget] = useState('zh-CN');
   const [service, setService] = useState<string>(DEFAULT_VALUE.TRANSLATE_SERVICE);
   const [translateActive, setTranslateActive] = useState(false);
-  const [globalRule, setGlobalRule] = useState<Rule>(DOMAIN_STRATEGY.AUTO);
-  const [siteRule, setSiteRule] = useState<Rule>(DOMAIN_STRATEGY.AUTO);
+  const [defaultStrategy, setDefaultStrategy] = useState<DEFAULT_STRATEGY>(DEFAULT_STRATEGY.AUTO);
+  const [siteRule, setSiteRule] = useState<DOMAIN_STRATEGY>(DOMAIN_STRATEGY.AUTO);
   const [highlight, setHighlight] = useState(true);
   const [domain, setDomain] = useState('');
+  const [ready, setReady] = useState(false);
 
   // Hydrate from background storage on mount
   useEffect(() => {
@@ -75,8 +70,8 @@ export default function App() {
       if (cancelled) return;
 
       if (typeof gs === 'boolean') setGlobalOn(gs);
-      if (vs === VIEW_STRATEGY.SINGLE) setMode('translation');
-      else if (vs === VIEW_STRATEGY.DOUBLE) setMode('bilingual');
+      if (vs === VIEW_STRATEGY.SINGLE) setMode(VIEW_STRATEGY.SINGLE);
+      else if (vs === VIEW_STRATEGY.DOUBLE) setMode(VIEW_STRATEGY.DOUBLE);
       if (typeof tl === 'string') setTarget(tl);
       if (typeof ts === 'string') setService(ts);
       if (
@@ -84,7 +79,7 @@ export default function App() {
         ds === DOMAIN_STRATEGY.NEVER ||
         ds === DOMAIN_STRATEGY.AUTO
       ) {
-        setGlobalRule(ds);
+        setDefaultStrategy(ds);
       }
       if (typeof bh === 'boolean') setHighlight(bh);
       if (typeof d === 'string') setDomain(d);
@@ -109,6 +104,8 @@ export default function App() {
         });
         if (!cancelled && typeof status === 'boolean') setTranslateActive(status);
       }
+
+      if (!cancelled) setReady(true);
     })();
     return () => {
       cancelled = true;
@@ -125,11 +122,10 @@ export default function App() {
     void sendMessageToBackground({ action: ACTION.GLOBAL_SWITCH_CHANGE, data: v });
   };
 
-  const onModeChange = (v: Mode) => {
+  const onModeChange = (v: VIEW_STRATEGY) => {
     setMode(v);
-    const vs = v === 'bilingual' ? VIEW_STRATEGY.DOUBLE : VIEW_STRATEGY.SINGLE;
-    void setConfig(CONFIG_KEY.VIEW_STRATEGY, vs);
-    void sendMessageToTab({ action: ACTION.VIEW_STRATEGY_CHANGE, data: vs });
+    void setConfig(CONFIG_KEY.VIEW_STRATEGY, v);
+    void sendMessageToTab({ action: ACTION.VIEW_STRATEGY_CHANGE, data: v });
   };
 
   const onTargetChange = (v: string) => {
@@ -149,13 +145,12 @@ export default function App() {
     void sendMessageToTab({ action: active ? TRANS_ACTION.TRANSLATE : TRANS_ACTION.ORIGIN });
   };
 
-  const onGlobalRuleChange = (v: Rule) => {
-    setGlobalRule(v);
+  const onDefaultStrategyChange = (v: DEFAULT_STRATEGY) => {
+    setDefaultStrategy(v);
     void setConfig(CONFIG_KEY.DEFAULT_STRATEGY, v);
-    void sendMessageToBackground({ action: ACTION.DEFAULT_STRATEGY_CHANGE, data: v });
   };
 
-  const onSiteRuleChange = (v: Rule) => {
+  const onDomainStrategyChange = (v: DOMAIN_STRATEGY) => {
     setSiteRule(v);
     if (!domain) return;
     void sendMessageToBackground({
@@ -190,10 +185,14 @@ export default function App() {
   const version =
     browser.runtime?.getManifest?.()?.version || '';
 
+  if (!ready) {
+    return <div className="w-95 min-h-120 bg-bg" />;
+  }
+
   return (
     <div className="relative w-[380px] overflow-hidden bg-bg text-ink before:pointer-events-none before:absolute before:inset-0 before:opacity-50 before:bg-[radial-gradient(ellipse_80%_30%_at_50%_0%,var(--color-accent-soft),transparent_70%)]">
       {/* Header */}
-      <div className="relative z-10 flex items-center justify-between border-b border-line bg-surface px-3 py-1">
+      <div className="relative z-10 flex items-center justify-between border-b border-line bg-surface px-3 py-2">
         <button type="button" className="flex items-center gap-2.5 text-left">
           <span
             className="block h-5 w-5 shrink-0 rounded-full border border-line-strong"
@@ -218,54 +217,60 @@ export default function App() {
           <button
             type="button"
             className={iconBtnCls}
-            title={t('settings', 'Settings')}
+            title={t('settings', 'settings')}
             onClick={openOptions}
           >
             <SettingsIcon className="h-4 w-4" strokeWidth={1.6} />
           </button>
           <span className="mx-0.5 h-4 w-px bg-line-strong" />
-          <Switch checked={globalOn} onCheckedChange={onGlobalToggle} size="sm" />
+          <Switch title={t('globalSwitch', 'global switch')} checked={globalOn} onCheckedChange={onGlobalToggle} size="sm" />
         </div>
       </div>
 
       {/* Body */}
       <div
         className={cn(
-          'relative z-10 flex flex-col gap-2 px-3 py-2.5 transition-opacity duration-200',
+          'relative z-10 flex flex-col gap-3 px-3 py-2.5 transition-opacity duration-200',
           !globalOn && 'pointer-events-none opacity-40',
         )}
       >
         {/* Mode + Target */}
-        <div className="flex items-center gap-2">
-          <Select value={mode} onValueChange={(v) => onModeChange(v as Mode)}>
-            <SelectTrigger className="flex-1">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="bilingual">{t('bilingual', 'Bilingual')}</SelectItem>
-              <SelectItem value="translation">{t('translationOnly', 'Translation only')}</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={target} onValueChange={onTargetChange}>
-            <SelectTrigger className="flex-1">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {LANGUAGES.map((l) => (
-                <SelectItem key={l.value} value={l.value}>
-                  {t(l.title, l.title)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex items-center gap-4 justify-between">
+          <div title={t('displayMode', 'display mode')} className="flex items-center gap-1 w-1/2">
+            <Select
+              value={mode}
+              onValueChange={(v) => onModeChange(v as VIEW_STRATEGY)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={VIEW_STRATEGY.DOUBLE}>{t('bilingual', 'Bilingual')}</SelectItem>
+                <SelectItem value={VIEW_STRATEGY.SINGLE}>{t('translationOnly', 'Translation only')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div title={t('targetLanguage', 'target language')} className="flex items-center gap-1 w-1/2">
+            <Select
+              value={target}
+              onValueChange={onTargetChange}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LANGUAGES.map((l) => (
+                  <SelectItem key={l.value} value={l.value}>
+                    {t(l.title, l.title)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
         </div>
 
         {/* Service */}
-        <div className="flex flex-col gap-2">
-          <div className={sectionLabelCls}>
-            <Globe className="h-3 w-3 text-accent/80" strokeWidth={1.6} />
-            <span>{t('translationService', 'Translation service')}</span>
-          </div>
+        <div className="flex flex-col gap-2" title='translate service'>
           <Select value={service} onValueChange={onServiceChange}>
             <SelectTrigger>
               <SelectValue />
@@ -316,20 +321,20 @@ export default function App() {
           </button>
         </div>
 
-        {/* Default translate rule */}
+        {/* Default translate strategy */}
         <Card>
-          <CardTitle>{t('defaultTranslateRule', 'Default translate rule')}</CardTitle>
-          <RadioGroup value={globalRule} onValueChange={(v) => onGlobalRuleChange(v as Rule)}>
+          <CardTitle>{t('defaultTranslateStrategy', 'Default translate strategy')}</CardTitle>
+          <RadioGroup value={defaultStrategy} onValueChange={(v) => onDefaultStrategyChange(v as DEFAULT_STRATEGY)}>
             <RadioGroupItem
-              value={DOMAIN_STRATEGY.AUTO}
+              value={DEFAULT_STRATEGY.AUTO}
               label={t('automaticallyDetermine', 'Automatically determine')}
             />
             <RadioGroupItem
-              value={DOMAIN_STRATEGY.ALWAYS}
+              value={DEFAULT_STRATEGY.ALWAYS}
               label={t('translateAllWebsites', 'Translate all websites')}
             />
             <RadioGroupItem
-              value={DOMAIN_STRATEGY.NEVER}
+              value={DEFAULT_STRATEGY.NEVER}
               label={t('notTranslateAllWebsites', "Don't translate all websites")}
             />
           </RadioGroup>
@@ -337,17 +342,31 @@ export default function App() {
 
         {/* For this website */}
         <Card>
-          <CardTitle>{t('forThisWebsite', 'For this website')}</CardTitle>
-          <RadioGroup value={siteRule} onValueChange={(v) => onSiteRuleChange(v as Rule)}>
-            <RadioGroupItem
-              value={DOMAIN_STRATEGY.NEVER}
-              label={t('neverTranslateThisWebsite', 'Never translate this website')}
+          {/* <CardTitle>{t('forThisWebsite', 'For this website')}</CardTitle> */}
+          <div className="flex items-center justify-between gap-3 px-2 py-1.5">
+            <div className="min-w-0 text-[12.5px] text-ink">
+              {t('neverTranslateThisWebsite', 'Never translate this website')}
+            </div>
+            <Switch
+              checked={siteRule === DOMAIN_STRATEGY.NEVER}
+              onCheckedChange={(v) =>
+                onDomainStrategyChange(v ? DOMAIN_STRATEGY.NEVER : DOMAIN_STRATEGY.AUTO)
+              }
+              size="sm"
             />
-            <RadioGroupItem
-              value={DOMAIN_STRATEGY.ALWAYS}
-              label={t('alwaysTranslateThisWebsite', 'Always translate this website')}
+          </div>
+          <div className="flex items-center justify-between gap-3 px-2 py-1.5">
+            <div className="min-w-0 text-[12.5px] text-ink">
+              {t('alwaysTranslateThisWebsite', 'Always translate this website')}
+            </div>
+            <Switch
+              checked={siteRule === DOMAIN_STRATEGY.ALWAYS}
+              onCheckedChange={(v) =>
+                onDomainStrategyChange(v ? DOMAIN_STRATEGY.ALWAYS : DOMAIN_STRATEGY.AUTO)
+              }
+              size="sm"
             />
-          </RadioGroup>
+          </div>
           <CardDivider />
           <div className="flex items-center justify-between gap-3 px-2 py-1.5">
             <div className="min-w-0">
@@ -399,7 +418,7 @@ export default function App() {
               {t('aiWriting', 'AI Writing')}
             </span>
             <span className="text-[11px] text-ink-soft">
-              {t('aiWritingSub', 'Rewrite, polish, translate as you type')}
+              {t('aiWritingSub', 'Translate, rewrite, polish as you type')}
             </span>
           </span>
           <span className="relative z-10 rounded border border-accent bg-accent-soft px-1.5 py-[3px] font-mono text-[9.5px] font-semibold uppercase tracking-[0.08em] text-accent">
@@ -409,16 +428,22 @@ export default function App() {
       </div>
 
       {/* Footer */}
-      <div className="relative z-10 flex items-center gap-2 border-t border-line bg-surface px-3.5 py-2 font-mono text-[10px] tracking-[0.04em] text-ink-mute">
-        <span>v{version}</span>
-        <span className="opacity-50">·</span>
-        <a className="cursor-pointer text-ink-soft hover:text-accent">
-          {t('shortcuts', 'Shortcuts')}
-        </a>
-        <span className="opacity-50">·</span>
-        <a className="cursor-pointer text-ink-soft hover:text-accent">
-          {t('feedback', 'Feedback')}
-        </a>
+      <div className="relative z-10 flex justify-between border-t border-line bg-surface px-3.5 py-2 font-mono text-[10px] tracking-[0.04em] text-ink-mute">
+        <div className=' flex gap-2'>
+          <span>v{version}</span>
+          <span className="opacity-50">·</span>
+          <a className="cursor-pointer text-ink-soft hover:text-accent">
+            {t('shortcuts', 'Shortcuts')}
+          </a>
+          <span className="opacity-50">·</span>
+          <a className="cursor-pointer text-ink-soft hover:text-accent">
+            {t('feedback', 'Feedback')}
+          </a>
+        </div>
+        <div>
+          <a className="cursor-pointer text-ink-soft hover:text-accent">More</a>
+        </div>
+
       </div>
     </div>
   );

@@ -1,10 +1,9 @@
 import { defineConfig } from 'wxt';
-import vue from '@vitejs/plugin-vue';
 import react from '@vitejs/plugin-react';
-import vueI18n from '@intlify/unplugin-vue-i18n/vite';
 import { nodePolyfills } from 'vite-plugin-node-polyfills';
 import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'node:path';
+import { inline } from '@floating-ui/dom';
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
@@ -43,18 +42,14 @@ export default defineConfig({
             },
         },
         // fix chrome load extension error: DevTools failed to load source map: Could not load:ERR_BLOCKED_BY_CLIENT
-        web_accessible_resources: [
-            {
-                "resources": ["*/*"],
-                "matches": ["<all_urls>"]
-            }
-        ]
+        // web_accessible_resources: [
+        //     {
+        //         "resources": ["*/*"],
+        //         "matches": ["<all_urls>"]
+        //     }
+        // ]
     },
-    imports: {
-        addons: {
-            vueTemplate: true,
-        },
-    },
+    imports: false, // auto import cause sourcemap error, unable to set breakpoint into function
     vite: () => ({
         plugins: [
             // Must run before Vite's built-in resolver so we win against
@@ -75,12 +70,8 @@ export default defineConfig({
                     return null;
                 },
             },
-            vue({ include: [/\.vue$/] }),
             react({ include: [/\.[jt]sx$/] }),
             tailwindcss(),
-            vueI18n({
-                include: 'assets/locales/*.json',
-            }),
             nodePolyfills({
                 include: ['process'],
                 globals: { process: true },
@@ -93,9 +84,10 @@ export default defineConfig({
             global: 'globalThis',
         },
         build: {
-            minify: 'terser',
-            // Enabling sourcemaps with Vue during development is known to cause problems with Vue
-            sourcemap: process.env.NODE_ENV !== 'production',
+            // minify: 'terser',
+            minify: false,
+            // sourcemap: process.env.NODE_ENV !== 'production',
+            sourcemap: 'inline',
             terserOptions: {
                 compress: {
                     // production env will remove all console.* calls
