@@ -47,3 +47,7 @@ entrypoints/test
 .env.production
 
 .dev
+
+# AI
+CLAUDE.local.md
+.codex

@@ -1,6 +1,6 @@
 // utils.js
 import { browser } from "wxt/browser"
-import { STATUS_SUCCESS } from "@/main/constants";
+import { APP_NAME_WITH_SUFFIX, STATUS_SUCCESS } from "@/main/constants";
 
 type Message = {
     // request: string | ""
@@ -32,14 +32,14 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
                     resolve(response.data);
                 } else {
                     resolve(undefined)
-                    console.warn(`sendMessageToBackground ${message.action} ${response.data}`);
+                    console.warn(APP_NAME_WITH_SUFFIX, `sendMessageToBackground ${message.action} ${response.data}`);
                 }
             });
         }),
         new Promise((resolve) => {
             timeoutId = setTimeout(() => {
                 resolve(undefined)
-                console.warn(`sendMessageToBackground ${message.action} Request timeout`)
+                console.warn(APP_NAME_WITH_SUFFIX, `sendMessageToBackground ${message.action} Request timeout`)
             }, timeout)
         })
     ]);
@@ -53,6 +53,9 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
  */
 export async function sendMessageToTab(message: Message) {
     let tabs = await browser.tabs.query({ active: true, currentWindow: true })
+    if (tabs.length === 0) {
+        return Promise.resolve(null)
+    }
     console.log("sendMessageToTab:", tabs[0]?.id, tabs[0]?.url, tabs?.[0].id);
     if (tabs?.[0].url?.startsWith('http')) {
         return browser.tabs.sendMessage(Number(tabs?.[0].id), message)
@@ -71,7 +74,9 @@ export async function sendMessageToTab(message: Message) {
 export async function sendMessageToAllTabs(message: Message) {
     let tabs = await browser.tabs.query({})
     let activeTab = await browser.tabs.query({ active: true, currentWindow: true })
-    console.log(tabs)
+    if (activeTab.length !== 1) {
+        return
+    }
     let resp: any
     await Promise.all(tabs.map(tab => {
         if (!tab.url?.startsWith('http')) {

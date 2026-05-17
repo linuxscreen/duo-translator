@@ -5,12 +5,6 @@
   "extDescription": {
     "message": "open-source translation extension with bilingual display, contrast highlighting, and rule mode features"
   },
-  "contextMenuTranslate": {
-    "message": "Translate this page"
-  },
-  "contextMenuOriginal": {
-    "message": "View original"
-  },
   "shortcutToggleTranslation": {
     "message": "translate/restore page"
   },
@@ -19,6 +13,9 @@
   },
   "shortcutRestore": {
     "message": "restore page"
+  },
+  "shortcutAiWorkbench": {
+    "message": "open AI writing workbench"
   },
   "confirmCloseFloatBall": {
     "message": "Confirm to close the bilingual translation floating ball? You can re-enable it in the settings"

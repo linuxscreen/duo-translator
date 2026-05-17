@@ -40,6 +40,13 @@ export default defineConfig({
                 },
                 "description": '__MSG_shortcutRestore__'
             },
+            "shortcut-ai-workbench": {
+                "suggested_key": {
+                    "default": "Ctrl+Shift+W",
+                    "linux": "Ctrl+Shift+W"
+                },
+                "description": '__MSG_shortcutAiWorkbench__'
+            },
         },
         // fix chrome load extension error: DevTools failed to load source map: Could not load:ERR_BLOCKED_BY_CLIENT
         // web_accessible_resources: [
@@ -84,14 +91,13 @@ export default defineConfig({
             global: 'globalThis',
         },
         build: {
-            // minify: 'terser',
-            minify: false,
-            // sourcemap: process.env.NODE_ENV !== 'production',
-            sourcemap: 'inline',
+            minify: process.env.NODE_ENV !== 'production' ? false : 'terser',
+            sourcemap: process.env.NODE_ENV !== 'production' && 'inline',
             terserOptions: {
                 compress: {
+                    pure_funcs: ['console.log', 'console.debug', 'console.info', 'console.trace'], // retain warn and error
                     // production env will remove all console.* calls
-                    drop_console: process.env.NODE_ENV == 'production',
+                    // drop_console: process.env.NODE_ENV == 'production',
                     drop_debugger: process.env.NODE_ENV == 'production',
                 }
             }
@@ -102,15 +108,5 @@ export default defineConfig({
         //     }
         // }
     }),
-    webExt: {
-        disabled: false,
-        binaries: {
-            chrome: "C:\\Program Files\\Google\\Chrome Dev\\Application\\chrome.exe",
-        },
-        chromiumProfile: resolve('F:\\code\\duo-translator\\.wxt\\chrome-data'),
-        keepProfileChanges: true,
-        chromiumArgs: [
-            '--remote-debugging-port=9222'
-        ]
-    },
+    outDir: process.env.WXT_OUTDIR || '.output'
 });

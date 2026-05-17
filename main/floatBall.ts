@@ -1,5 +1,6 @@
 import { browser } from "wxt/browser";
 import {
+    APP_NAME_WITH_SUFFIX,
     CONFIG_KEY,
 } from "@/main/constants";
 import { getConfig, setConfig } from "@/utils/db";
@@ -55,7 +56,7 @@ export async function mountFloatBall(deps: FloatBallDeps): Promise<FloatBallCont
 
     function clearDisposers() {
         for (const dispose of disposers) {
-            try { dispose(); } catch (e) { console.warn("float ball dispose error", e); }
+            try { dispose(); } catch (e) { console.warn(APP_NAME_WITH_SUFFIX, "float ball dispose error", e); }
         }
         disposers = [];
     }

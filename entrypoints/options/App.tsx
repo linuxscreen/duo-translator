@@ -1,13 +1,16 @@
-import { ExternalLink, Globe, KeyRound, Languages, SlidersHorizontal } from 'lucide-react';
+import { ExternalLink, Globe, KeyRound, Languages, SlidersHorizontal, Sparkles, Component } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { Translation, useTranslation } from 'react-i18next';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
 import { SettingsPage } from './pages/SettingsPage';
 import { ShortcutsPage } from './pages/ShortcutsPage';
 import { TranslationPage } from './pages/TranslationPage';
+import { AiWritingPage } from './pages/AiWritingPage';
+import { browser } from 'wxt/browser';
+import { ServicesPage } from './pages/ServicesPage';
 
-type TabId = 'settings' | 'translation' | 'shortcuts';
+type TabId = 'settings' | 'services' | 'translation' | 'aiWriting' | 'shortcuts';
 
 type Tab = {
   id: TabId;
@@ -26,9 +29,19 @@ export default function App() {
       icon: <SlidersHorizontal className="h-4 w-4" strokeWidth={1.6} />,
     },
     {
+      id: 'services',
+      label: t('services', 'Services'),
+      icon: <Component className="h-4 w-4" strokeWidth={1.6} />,
+    },
+    {
       id: 'translation',
-      label: t('translationService', 'Translation Service'),
+      label: t('translation', 'Translation'),
       icon: <Languages className="h-4 w-4" strokeWidth={1.6} />,
+    },
+    {
+      id: 'aiWriting',
+      label: t('aiWriting', 'AI Writing'),
+      icon: <Sparkles className="h-4 w-4" strokeWidth={1.6} />,
     },
     {
       id: 'shortcuts',
@@ -113,7 +126,9 @@ export default function App() {
             {tabs.find((x) => x.id === tab)?.label}
           </h1>
           {tab === 'settings' && <SettingsPage />}
+          {tab === 'services' && <ServicesPage />}
           {tab === 'translation' && <TranslationPage />}
+          {tab === 'aiWriting' && <AiWritingPage />}
           {tab === 'shortcuts' && <ShortcutsPage />}
         </main>
       </div>

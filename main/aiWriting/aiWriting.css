@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/* Pin Tailwind's spacing scale to absolute px. Default is 0.25rem, which is
+ * resolved against the host document's <html> font-size — Shadow DOM does
+ * not re-anchor rem. On sites that bump html font-size for accessibility,
+ * every h/w/p/gap utility scales up and the floating dot blows up to several
+ * times its intended size. Locking the unit to px keeps the Shadow DOM UI
+ * visually identical across every host. */
+@theme {
+  --spacing: 4px;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-3xl: 24px;
+  --radius-4xl: 32px;
+}
+
+/* Reset host bleed-through. Shadow DOM already isolates most things but
+ * some inherited properties (color, font, line-height) leak via `inherit`. */
+:host {
+  all: initial;
+  color-scheme: dark;
+}
+
+/* Re-establish a font baseline inside the shadow root since :host { all:
+ * initial } strips inherited font. */
+.duo-ai-root {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #eef1f8;
+}
+
+/* Defensive baseline: Tailwind v4 ships a Preflight rule that sets
+ * border-style on every element so that the `border` utility (which only
+ * sets `border-width`) actually renders. When the compiled CSS is injected
+ * into a Shadow DOM via adoptedStyleSheets, some Chrome builds skip the
+ * Preflight selector — so borders disappear. Re-asserting it here is
+ * cheap insurance. */
+*, ::before, ::after {
+  border-style: solid;
+}
+
+/* Primary gradient button — bypasses Tailwind's gradient utilities, which
+ * rely on `@property`-registered custom properties (`--tw-gradient-from`,
+ * etc.). Those registrations are unreliable inside a Shadow DOM stylesheet
+ * across Chromium versions; the symptom is the button rendering as
+ * "transparent background, dark text" — i.e. invisible-on-dark. Using a
+ * direct `linear-gradient()` value sidesteps the variable system entirely
+ * and renders identically on every host site. */
+.duo-ai-primary {
+  background: linear-gradient(to bottom right, oklch(0.92 0.15 190), oklch(0.86 0.16 195));
+  color: #04060a;
+  font-weight: 500;
+}
+.duo-ai-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Diff visualization — kept here so both DiffView and any future renderer
+ * share one source of truth. */
+.duo-ai-ins {
+  background: #d4f8d4;
+  color: #06371b;
+  border-radius: 2px;
+  padding: 0 2px;
+  text-decoration: none;
+}
+.duo-ai-del {
+  background: #ffd4d4;
+  color: #7a0e0e;
+  border-radius: 2px;
+  padding: 0 2px;
+  text-decoration: line-through;
+}

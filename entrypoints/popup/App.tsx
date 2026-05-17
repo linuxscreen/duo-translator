@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Globe, HelpCircle, PenLine, Settings as SettingsIcon } from 'lucide-react';
+import { Globe, HelpCircle, PenLine, Settings as SettingsIcon, Sparkles } from 'lucide-react';
 
 import {
   ACTION,
@@ -17,7 +17,8 @@ import {
   TRANSLATE_STATUS_KEY,
   VIEW_STRATEGY,
 } from '@/main/constants';
-import { sendMessageToBackground, sendMessageToTab } from '@/utils/message';
+import type { AiProvider } from '@/main/aiService';
+import { sendMessageToAllTabs, sendMessageToBackground, sendMessageToTab } from '@/utils/message';
 import { cn } from '@/lib/cn';
 import { Card, CardDivider, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -44,7 +45,8 @@ export default function App() {
 
   const [globalOn, setGlobalOn] = useState(true);
   const [mode, setMode] = useState<VIEW_STRATEGY>(VIEW_STRATEGY.DOUBLE);
-  const [target, setTarget] = useState('zh-CN');
+  let lang = navigator.language.split('-')[0];
+  const [targetLanguage, setTargetLanguage] = useState(lang);
   const [service, setService] = useState<string>(DEFAULT_VALUE.TRANSLATE_SERVICE);
   const [translateActive, setTranslateActive] = useState(false);
   const [defaultStrategy, setDefaultStrategy] = useState<DEFAULT_STRATEGY>(DEFAULT_STRATEGY.AUTO);
@@ -52,12 +54,15 @@ export default function App() {
   const [highlight, setHighlight] = useState(true);
   const [domain, setDomain] = useState('');
   const [ready, setReady] = useState(false);
+  // Enabled AI providers (filtered by the per-card Use-for-page toggle).
+  // Appended below the built-in translation services in the dropdown.
+  const [aiProviders, setAiProviders] = useState<AiProvider[]>([]);
 
   // Hydrate from background storage on mount
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [gs, vs, tl, ts, ds, bh, d, id] = await Promise.all([
+      const [gs, vs, tl, ts, ds, bh, d, id, aiList, aiUseForPage] = await Promise.all([
         getConfig(CONFIG_KEY.GLOBAL_SWITCH),
         getConfig(CONFIG_KEY.VIEW_STRATEGY),
         getConfig(CONFIG_KEY.TARGET_LANG),
@@ -66,13 +71,25 @@ export default function App() {
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
         sendMessageToBackground({ action: TB_ACTION.TAB_DOMAIN_GET }),
         sendMessageToBackground({ action: TB_ACTION.ID_GET }),
+        getConfig(CONFIG_KEY.AI_PROVIDERS),
+        getConfig(CONFIG_KEY.AI_USE_FOR_TRANSLATE_PAGE),
       ]);
       if (cancelled) return;
+      console.log("domain: ", d)
+
+      // Surface AI providers in the service dropdown only when:
+      //  (a) the global "use for translate page" toggle is on (default true)
+      //  (b) the provider itself is enabled (legacy records without `enabled`
+      //      are treated as enabled).
+      const useForPage = aiUseForPage === undefined ? !!DEFAULT_VALUE.AI_USE_FOR_TRANSLATE_PAGE : !!aiUseForPage;
+      if (useForPage && Array.isArray(aiList)) {
+        setAiProviders((aiList as AiProvider[]).filter((p) => p?.enabled !== false));
+      }
 
       if (typeof gs === 'boolean') setGlobalOn(gs);
       if (vs === VIEW_STRATEGY.SINGLE) setMode(VIEW_STRATEGY.SINGLE);
       else if (vs === VIEW_STRATEGY.DOUBLE) setMode(VIEW_STRATEGY.DOUBLE);
-      if (typeof tl === 'string') setTarget(tl);
+      if (typeof tl === 'string') setTargetLanguage(tl);
       if (typeof ts === 'string') setService(ts);
       if (
         ds === DOMAIN_STRATEGY.ALWAYS ||
@@ -116,38 +133,40 @@ export default function App() {
     browser.tabs.create({ url: "https://duotranslator.com/docs" });
   };
 
-  const onGlobalToggle = (v: boolean) => {
+  const onGlobalSwitchToggle = (v: boolean) => {
     setGlobalOn(v);
     void setConfig(CONFIG_KEY.GLOBAL_SWITCH, v);
+    sendMessageToAllTabs({ action: ACTION.GLOBAL_SWITCH_CHANGE, data: v })
     void sendMessageToBackground({ action: ACTION.GLOBAL_SWITCH_CHANGE, data: v });
   };
 
-  const onModeChange = (v: VIEW_STRATEGY) => {
+  const onViewStrategyChange = (v: VIEW_STRATEGY) => {
     setMode(v);
     void setConfig(CONFIG_KEY.VIEW_STRATEGY, v);
-    void sendMessageToTab({ action: ACTION.VIEW_STRATEGY_CHANGE, data: v });
+    void sendMessageToAllTabs({ action: ACTION.VIEW_STRATEGY_CHANGE, data: v });
   };
 
-  const onTargetChange = (v: string) => {
-    setTarget(v);
+  const onTargetLanguageChange = (v: string) => {
+    setTargetLanguage(v);
     void setConfig(CONFIG_KEY.TARGET_LANG, v);
-    void sendMessageToTab({ action: ACTION.TARGET_LANG_CHANGE, data: v });
+    void sendMessageToAllTabs({ action: ACTION.TARGET_LANG_CHANGE, data: v });
   };
 
   const onServiceChange = (v: string) => {
     setService(v);
     void setConfig(CONFIG_KEY.TRANSLATE_SERVICE, v);
-    void sendMessageToTab({ action: ACTION.TRANSLATE_SERVICE_CHANGE, data: v });
+    void sendMessageToAllTabs({ action: ACTION.TRANSLATE_SERVICE_CHANGE, data: v })
   };
 
   const onTranslateToggle = (active: boolean) => {
     setTranslateActive(active);
-    void sendMessageToTab({ action: active ? TRANS_ACTION.TRANSLATE : TRANS_ACTION.ORIGIN });
+    void sendMessageToTab({ action: active ? TRANS_ACTION.TRANSLATE : TRANS_ACTION.SHOW_ORIGINAL });
   };
 
   const onDefaultStrategyChange = (v: DEFAULT_STRATEGY) => {
     setDefaultStrategy(v);
     void setConfig(CONFIG_KEY.DEFAULT_STRATEGY, v);
+    void sendMessageToAllTabs({ action: ACTION.DEFAULT_STRATEGY_CHANGE, data: v })
   };
 
   const onDomainStrategyChange = (v: DOMAIN_STRATEGY) => {
@@ -170,17 +189,26 @@ export default function App() {
     browser.tabs.create({ url: "options.html" });
   };
 
+  const openAiWorkbench = async () => {
+    await sendMessageToTab({ action: ACTION.AI_OPEN_WORKBENCH });
+    window.close();
+  };
+
   const baseServiceList = Array.from(TRANSLATE_SERVICES.values()).map((svc) => ({
     value: svc.value,
     label: t(svc.title, svc.name),
+    type: "default",
+    isAi: false,
   }));
-  const serviceList = [...baseServiceList];
-  for (const extra of [
-    { value: 'deepl', label: 'DeepL' },
-    { value: 'openai', label: 'OpenAI' },
-  ]) {
-    if (!serviceList.some((o) => o.value === extra.value)) serviceList.push(extra);
-  }
+  // AI provider entries use the `ai:<id>` value scheme — the same key the
+  // background's AI_TRANSLATE port handler and resolveTranslateService consume.
+  const aiServiceList = aiProviders.map((p) => ({
+    value: `ai:${p.id}`,
+    label: p.name,
+    type: p.type as string,
+    isAi: true,
+  }));
+  const serviceList = [...baseServiceList, ...aiServiceList];
 
   const version =
     browser.runtime?.getManifest?.()?.version || '';
@@ -211,6 +239,14 @@ export default function App() {
           </span>
         </button>
         <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            className={iconBtnCls}
+            onClick={openAiWorkbench}
+            title={t('aiWorkbench', 'AI Workbench')}
+          >
+            <Sparkles className="h-4 w-4" strokeWidth={1.6} />
+          </button>
           <button type="button" className={iconBtnCls} onClick={openHelpPage} title={t('helpDocument', 'Help')}>
             <HelpCircle className="h-4 w-4" strokeWidth={1.6} />
           </button>
@@ -223,7 +259,7 @@ export default function App() {
             <SettingsIcon className="h-4 w-4" strokeWidth={1.6} />
           </button>
           <span className="mx-0.5 h-4 w-px bg-line-strong" />
-          <Switch title={t('globalSwitch', 'global switch')} checked={globalOn} onCheckedChange={onGlobalToggle} size="sm" />
+          <Switch title={t('globalSwitch', 'global switch')} checked={globalOn} onCheckedChange={onGlobalSwitchToggle} size="sm" />
         </div>
       </div>
 
@@ -236,11 +272,11 @@ export default function App() {
       >
         {/* Mode + Target */}
         <div className="flex items-center gap-4 justify-between">
-          <div title={t('displayMode', 'display mode')} className="flex items-center gap-1 w-1/2">
+          <div title={t('displayMode', 'display mode')} className="flex items-center gap-1 w-1/2 justify-center">
             <Select
               value={mode}
-              onValueChange={(v) => onModeChange(v as VIEW_STRATEGY)}>
-              <SelectTrigger>
+              onValueChange={(v) => onViewStrategyChange(v as VIEW_STRATEGY)}>
+              <SelectTrigger className=''>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -252,8 +288,8 @@ export default function App() {
 
           <div title={t('targetLanguage', 'target language')} className="flex items-center gap-1 w-1/2">
             <Select
-              value={target}
-              onValueChange={onTargetChange}>
+              value={targetLanguage}
+              onValueChange={onTargetLanguageChange}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -270,16 +306,23 @@ export default function App() {
         </div>
 
         {/* Service */}
-        <div className="flex flex-col gap-2" title='translate service'>
+        <div className="flex flex-col gap-2" title={t('translationService', 'Translation Service')}>
           <Select value={service} onValueChange={onServiceChange}>
-            <SelectTrigger>
+            <SelectTrigger className='items-center justify-center'>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {serviceList.map((s) => (
                 <SelectItem key={s.value} value={s.value}>
-                  <span className="flex items-center gap-2">
-                    <ServiceMark id={s.value} />
+                  <span className="flex items-center gap-3">
+                    {/* AI entries have no service-icon mark — fall back to a
+                        small inline Sparkles glyph for visual parity. */}
+                    {s.isAi ? (
+                      // <Sparkles className="h-3.5 w-3.5 text-accent" strokeWidth={1.8} />
+                      <ServiceMark id={s.type} />
+                    ) : (
+                      <ServiceMark id={s.value} />
+                    )}
                     {s.label}
                   </span>
                 </SelectItem>
@@ -345,24 +388,24 @@ export default function App() {
           {/* <CardTitle>{t('forThisWebsite', 'For this website')}</CardTitle> */}
           <div className="flex items-center justify-between gap-3 px-2 py-1.5">
             <div className="min-w-0 text-[12.5px] text-ink">
-              {t('neverTranslateThisWebsite', 'Never translate this website')}
-            </div>
-            <Switch
-              checked={siteRule === DOMAIN_STRATEGY.NEVER}
-              onCheckedChange={(v) =>
-                onDomainStrategyChange(v ? DOMAIN_STRATEGY.NEVER : DOMAIN_STRATEGY.AUTO)
-              }
-              size="sm"
-            />
-          </div>
-          <div className="flex items-center justify-between gap-3 px-2 py-1.5">
-            <div className="min-w-0 text-[12.5px] text-ink">
               {t('alwaysTranslateThisWebsite', 'Always translate this website')}
             </div>
             <Switch
               checked={siteRule === DOMAIN_STRATEGY.ALWAYS}
               onCheckedChange={(v) =>
                 onDomainStrategyChange(v ? DOMAIN_STRATEGY.ALWAYS : DOMAIN_STRATEGY.AUTO)
+              }
+              size="sm"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-3 px-2 py-1.5">
+            <div className="min-w-0 text-[12.5px] text-ink">
+              {t('neverTranslateThisWebsite', 'Never translate this website')}
+            </div>
+            <Switch
+              checked={siteRule === DOMAIN_STRATEGY.NEVER}
+              onCheckedChange={(v) =>
+                onDomainStrategyChange(v ? DOMAIN_STRATEGY.NEVER : DOMAIN_STRATEGY.AUTO)
               }
               size="sm"
             />
@@ -418,7 +461,7 @@ export default function App() {
               {t('aiWriting', 'AI Writing')}
             </span>
             <span className="text-[11px] text-ink-soft">
-              {t('aiWritingSub', 'Translate, rewrite, polish as you type')}
+              {t('aiWritingSub', 'Rewrite, polish, translate as you type')}
             </span>
           </span>
           <span className="relative z-10 rounded border border-accent bg-accent-soft px-1.5 py-[3px] font-mono text-[9.5px] font-semibold uppercase tracking-[0.08em] text-accent">
@@ -441,7 +484,7 @@ export default function App() {
           </a>
         </div>
         <div>
-          <a className="cursor-pointer text-ink-soft hover:text-accent">More</a>
+          <a className="cursor-pointer text-ink-soft hover:text-accent">{t('more', 'More')}</a>
         </div>
 
       </div>

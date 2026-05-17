@@ -1,145 +1,252 @@
-import { Search } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CONFIG_KEY, TRANSLATE_SERVICES } from '@/main/constants';
-import { getConfig, setConfig } from '@/utils/message';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import {
+  ACTION,
+  CONFIG_KEY,
+  DB_ACTION,
+  DEFAULT_STRATEGY,
+  DEFAULT_VALUE,
+  DOMAIN_STRATEGY,
+  LANGUAGES,
+  TB_ACTION,
+  TRANSLATE_SERVICES,
+  VIEW_STRATEGIES,
+  type TranslateServiceMeta,
+} from '@/main/constants';
+import {
+  sendMessageToAllTabs,
+  sendMessageToBackground,
+} from '@/utils/message';
+import { getConfig, setConfig } from '@/utils/db';
+import { SettingRow } from '@/components/options/SettingRow';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { DomainListSection, type DomainItem } from '@/components/options/DomainListSection';
 
-type Row = {
-  value: string;
-  name: string;
-  description: string;
-  editable: boolean;
-  enabled: boolean;
-};
+const DEFAULT_STRATEGY_OPTIONS: { value: DEFAULT_STRATEGY; title: string; fallback: string }[] = [
+  { value: DEFAULT_STRATEGY.AUTO, title: 'automaticallyDetermine', fallback: 'Automatically determine' },
+  { value: DEFAULT_STRATEGY.ALWAYS, title: 'translateAllWebsites', fallback: 'Translate all websites' },
+  { value: DEFAULT_STRATEGY.NEVER, title: 'notTranslateAllWebsites', fallback: "Don't translate all websites" },
+];
 
 export function TranslationPage() {
   const { t } = useTranslation();
-  const [rows, setRows] = useState<Row[]>([]);
-  const [disabled, setDisabled] = useState<Set<string>>(new Set());
-  const [search, setSearch] = useState('');
+
+  // Settings (migrated from SettingsPage)
+  const [highlight, setHighlight] = useState(true);
+  const [floatBall, setFloatBall] = useState(true);
+  const [viewStrategy, setViewStrategy] = useState<string>(DEFAULT_VALUE.VIEW_STRATEGY);
+  const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.TARGET_LANG);
+  const [translateService, setTranslateService] = useState<string>(DEFAULT_VALUE.TRANSLATE_SERVICE);
+  const [services, setServices] = useState<TranslateServiceMeta[]>([]);
+  const [defaultStrategy, setDefaultStrategy] = useState<DEFAULT_STRATEGY>(DEFAULT_STRATEGY.AUTO);
+
+  // Domain lists
+  const [alwaysList, setAlwaysList] = useState<DomainItem[]>([]);
+  const [neverList, setNeverList] = useState<DomainItem[]>([]);
+  const [alwaysOpen, setAlwaysOpen] = useState(false);
+  const [neverOpen, setNeverOpen] = useState(false);
+
   const [ready, setReady] = useState(false);
+
+  const refreshDomains = async () => {
+    const [a, n] = await Promise.all([
+      sendMessageToBackground({
+        action: DB_ACTION.DOMAIN_LIST,
+        data: { strategy: DOMAIN_STRATEGY.ALWAYS },
+      }),
+      sendMessageToBackground({
+        action: DB_ACTION.DOMAIN_LIST,
+        data: { strategy: DOMAIN_STRATEGY.NEVER },
+      }),
+    ]);
+    setAlwaysList(Array.isArray(a) ? a : []);
+    setNeverList(Array.isArray(n) ? n : []);
+  };
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const ds: string[] | undefined = await getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICE);
+      const [bh, fb, vs, tl, ts, disabled, ds] = await Promise.all([
+        getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
+        getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
+        getConfig(CONFIG_KEY.VIEW_STRATEGY),
+        getConfig(CONFIG_KEY.TARGET_LANG),
+        getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
+        getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICE),
+        getConfig(CONFIG_KEY.DEFAULT_STRATEGY),
+      ]);
       if (cancelled) return;
-      const set = new Set(Array.isArray(ds) ? ds : []);
-      setDisabled(set);
-      setRows(
-        Array.from(TRANSLATE_SERVICES.values()).map((svc) => ({
-          value: svc.value,
-          name: t(svc.name, svc.name),
-          description: t(svc.description, svc.description),
-          editable: svc.editable,
-          enabled: !set.has(svc.value),
-        })),
+      setHighlight(bh === undefined ? true : bh);
+      setFloatBall(fb === undefined ? true : fb);
+      setViewStrategy(vs === undefined ? DEFAULT_VALUE.VIEW_STRATEGY : vs);
+      setTargetLang(tl === undefined ? DEFAULT_VALUE.TARGET_LANG : tl);
+      setTranslateService(ts === undefined ? DEFAULT_VALUE.TRANSLATE_SERVICE : ts);
+      const disabledSet = new Set<string>(Array.isArray(disabled) ? disabled : []);
+      setServices(
+        Array.from(TRANSLATE_SERVICES.values()).filter((s) => !disabledSet.has(s.value)),
       );
-      setReady(true);
+      if (ds === DEFAULT_STRATEGY.ALWAYS || ds === DEFAULT_STRATEGY.NEVER || ds === DEFAULT_STRATEGY.AUTO) {
+        setDefaultStrategy(ds);
+      }
+      await refreshDomains();
+      if (!cancelled) setReady(true);
     })();
     return () => {
       cancelled = true;
     };
-  }, [t]);
+  }, []);
 
-  const filtered = useMemo(
-    () => rows.filter((r) => !search || r.name.toLowerCase().includes(search.toLowerCase())),
-    [rows, search],
-  );
+  const onHighlight = (v: boolean) => {
+    setHighlight(v);
+    void setConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH, v);
+  };
 
-  const toggleService = async (row: Row, next: boolean) => {
-    if (!next) {
-      const enabledCount = rows.filter((r) => r.enabled).length;
-      if (enabledCount <= 1) {
-        alert(t('keepAtLeastOneTranslationService', 'Keep at least one translation service'));
-        return;
-      }
-      const current = (await getConfig(CONFIG_KEY.TRANSLATE_SERVICE)) as string | undefined;
-      if (current && current.includes(row.value)) {
-        alert(
-          t('useTranslationServiceCannotBeDisabled', 'The translation service in use cannot be disabled'),
-        );
-        return;
-      }
-    }
+  const onFloatBall = (v: boolean) => {
+    setFloatBall(v);
+    void setConfig(CONFIG_KEY.FLOAT_BALL_SWITCH, v);
+    void sendMessageToAllTabs({ action: TB_ACTION.FLOAT_BALL_SWITCH, data: v });
+  };
 
-    const nextDisabled = new Set(disabled);
-    if (next) nextDisabled.delete(row.value);
-    else nextDisabled.add(row.value);
-    setDisabled(nextDisabled);
-    setRows((prev) => prev.map((r) => (r.value === row.value ? { ...r, enabled: next } : r)));
-    await setConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICE, Array.from(nextDisabled));
+  const onViewStrategy = (v: string) => {
+    setViewStrategy(v);
+    void setConfig(CONFIG_KEY.VIEW_STRATEGY, v);
+    void sendMessageToAllTabs({ action: ACTION.VIEW_STRATEGY_CHANGE, data: v });
+  };
+
+  const onTargetLang = (v: string) => {
+    setTargetLang(v);
+    void setConfig(CONFIG_KEY.TARGET_LANG, v);
+    void sendMessageToAllTabs({ action: ACTION.TARGET_LANG_CHANGE, data: v });
+  };
+
+  const onTranslateService = (v: string) => {
+    setTranslateService(v);
+    void setConfig(CONFIG_KEY.TRANSLATE_SERVICE, v);
+    void sendMessageToAllTabs({ action: ACTION.TRANSLATE_SERVICE_CHANGE, data: v });
+  };
+
+  const onDefaultStrategyChange = (v: DEFAULT_STRATEGY) => {
+    setDefaultStrategy(v);
+    void setConfig(CONFIG_KEY.DEFAULT_STRATEGY, v);
+    void sendMessageToAllTabs({ action: ACTION.DEFAULT_STRATEGY_CHANGE, data: v });
   };
 
   if (!ready) {
-    return <div className="h-[260px] rounded-xl border border-line bg-surface/60 backdrop-blur-sm" />;
+    return <div className="h-[480px] rounded-xl border border-line bg-surface/60 backdrop-blur-sm" />;
   }
 
   return (
-    <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
-      {/* Header / search */}
-      <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-        <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-mute">
-          {t('translationService', 'Translation service')}
-        </div>
-        <div className="relative w-64">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-mute"
-            strokeWidth={1.6}
-          />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t('typeToSearch', 'Type to search')}
-            className="pl-8"
-          />
-        </div>
+    <div className="flex flex-col gap-4">
+      <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
+        <SettingRow
+          label={t('bilingualComparisonHighlighting', 'Bilingual comparison highlighting')}
+          control={<Switch checked={highlight} onCheckedChange={onHighlight} />}
+        />
+        <SettingRow
+          label={t('floatBall', 'Float ball')}
+          control={<Switch checked={floatBall} onCheckedChange={onFloatBall} />}
+        />
+        <SettingRow
+          label={t('displayMode', 'Display mode')}
+          control={
+            <Select value={viewStrategy} onValueChange={onViewStrategy}>
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {VIEW_STRATEGIES.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {t(item.title, item.title)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
+        <SettingRow
+          label={t('targetLanguage', 'Target language')}
+          control={
+            <Select value={targetLang} onValueChange={onTargetLang}>
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LANGUAGES.map((l) => (
+                  <SelectItem key={l.value} value={l.value}>
+                    {t(l.title, l.title)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
+        <SettingRow
+          label={t('translateService', 'Translate service')}
+          control={
+            <Select value={translateService} onValueChange={onTranslateService}>
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {services.map((s) => (
+                  <SelectItem key={s.value} value={s.value}>
+                    {t(s.title, s.name)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
+        <SettingRow
+          label={t('defaultTranslateStrategy', 'Default translate strategy')}
+          control={
+            <Select
+              value={defaultStrategy}
+              onValueChange={(v) => onDefaultStrategyChange(v as DEFAULT_STRATEGY)}
+            >
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DEFAULT_STRATEGY_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {t(opt.title, opt.fallback)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
       </div>
 
-      {/* Column header */}
-      <div className="grid grid-cols-[1fr_2fr_auto] items-center gap-4 border-b border-line px-4 py-2.5 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">
-        <div>{t('name', 'Name')}</div>
-        <div>{t('description', 'Description')}</div>
-        <div className="w-[180px] text-right">{/* Actions */}</div>
-      </div>
+      <DomainListSection
+        title={t('alwaysTranslateWebsites', 'Always translate websites')}
+        emptyHint={t('noDomainsConfigured', 'No websites configured.')}
+        open={alwaysOpen}
+        onToggle={() => setAlwaysOpen((o) => !o)}
+        items={alwaysList}
+        otherItems={neverList}
+        kind={{ field: 'strategy', strategy: DOMAIN_STRATEGY.ALWAYS }}
+        onChanged={refreshDomains}
+      />
 
-      {/* Rows */}
-      {filtered.length === 0 ? (
-        <div className="px-4 py-10 text-center text-[13px] text-ink-soft">—</div>
-      ) : (
-        filtered.map((row) => (
-          <div
-            key={row.value}
-            className="grid grid-cols-[1fr_2fr_auto] items-center gap-4 border-b border-line px-4 py-3 last:border-b-0"
-          >
-            <div className="flex items-center gap-2.5">
-              <img
-                src={`/${row.value}-translate.svg`}
-                alt=""
-                className="h-6 w-6 shrink-0 rounded-sm object-contain"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).style.visibility = 'hidden';
-                }}
-              />
-              <span className="truncate text-[13px] font-medium text-ink">{row.name}</span>
-            </div>
-            <div className="text-[12.5px] text-ink-soft">{row.description}</div>
-            <div className="flex w-[180px] items-center justify-end gap-2">
-              <Switch
-                checked={row.enabled}
-                onCheckedChange={(v) => void toggleService(row, v)}
-                size="sm"
-              />
-              <Button size="sm" variant="outline" disabled={!row.editable}>
-                {t('edit', 'Edit')}
-              </Button>
-            </div>
-          </div>
-        ))
-      )}
+      <DomainListSection
+        title={t('neverTranslateWebsites', 'Never translate websites')}
+        emptyHint={t('noDomainsConfigured', 'No websites configured.')}
+        open={neverOpen}
+        onToggle={() => setNeverOpen((o) => !o)}
+        items={neverList}
+        otherItems={alwaysList}
+        kind={{ field: 'strategy', strategy: DOMAIN_STRATEGY.NEVER }}
+        onChanged={refreshDomains}
+      />
     </div>
   );
 }

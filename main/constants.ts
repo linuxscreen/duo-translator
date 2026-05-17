@@ -19,6 +19,9 @@ export class TranslateServiceMeta {
     }
 }
 
+export const APP_NAME = 'DuoTranslator';
+export const APP_NAME_WITH_SUFFIX = APP_NAME + ' - ';
+
 export const STATUS_SUCCESS = '200';
 export const STATUS_FAIL = '500';
 
@@ -30,9 +33,14 @@ export enum DEFAULT_VALUE {
     FLOAT_BALL_SWITCH = 1,
     CONTEXT_MENU_SWITCH = 1,
     VIEW_STRATEGY = 'double',
-    TARGET_LANG = 'zh-CN',
+    TARGET_LANG = 'en',
     TRANSLATE_SERVICE = 'microsoft',
     TRANSLATE_SERVICE_TITLE = 'microsoftTranslator',
+    AI_WRITING_DOT_SWITCH = 1,
+    AI_TARGET_LANG = 'en',
+    AI_DEFAULT_ENHANCE_MODE = 'polish',
+    AI_DOT_TRANSLATE_SERVICE = 'microsoft',
+    AI_USE_FOR_TRANSLATE_PAGE = 1,
 }
 
 export enum DB_ACTION {
@@ -44,6 +52,8 @@ export enum DB_ACTION {
     DOMAIN_INSERT = 'insertDomain',
     DOMAIN_UPDATE = 'updateDomain',
     DOMAIN_GET = 'getDomain',
+    DOMAIN_DELETE = 'deleteDomain',
+    DOMAIN_LIST = 'listDomain',
     CONFIG_GET = 'getConfig',
     CONFIG_SET = 'setConfig',
 }
@@ -109,7 +119,7 @@ export enum TRANS_SERVICE {
 export const TRANSLATE_SERVICES: Map<string, TranslateServiceMeta> = new Map([
     ["microsoft", new TranslateServiceMeta("Microsoft", "microsoft", "microsoftTranslator", "MicrosoftTranslateDescription", false)],
     ["google", new TranslateServiceMeta("Google", "google", "googleTranslator", "GoogleTranslateDescription", false)],
-    ["deepl", new TranslateServiceMeta("DeepL", "deepl", "deeplTranslator", "DeeplTranslateDescription", false)],
+    ["deepl", new TranslateServiceMeta("DeepL", "deepl", "deeplTranslator", "DeeplTranslateDescription", true)],
 ]);
 
 // translation action
@@ -118,8 +128,11 @@ export enum TRANS_ACTION {
     DOUBLE = 'doubleTranslate',
     SINGLE = 'singleTranslate',
     TOGGLE = 'toggleTranslate',
-    ORIGIN = 'showOrigin',
+    SHOW_ORIGINAL = 'showOriginal',
     TRANSLATE_STATUS_CHANGE = "translateStatusChange",
+    TRANSLATE_TEXT_BOX = 'translateTextBox',
+    TRANSLATE_PARA = 'translatePara',
+    SHOW_ORIGINAL_PARA = 'showOriginalPara',
 }
 
 export enum ACTION {
@@ -134,6 +147,41 @@ export enum ACTION {
     TOGGLE_SELECTION_MODE = 'toggleSelectionMode',
     TRANSLATE_SERVICE_CHANGE = 'translateChange',
     LEAVE_SELECTION_MODE = 'leaveSelectionMode',
+    AI_OPEN_WORKBENCH = 'aiOpenWorkbench',
+    AI_PROVIDER_TEST = 'aiProviderTest',
+    OPEN_OPTIONS_PAGE = 'openOptionsPage',
+    // Broadcast from Options when the user picks a UI language. Background
+    // listens to update context menu; other extension UIs listen to swap i18n.
+    INTERFACE_LANG_CHANGE = 'interfaceLangChange',
+    SHOW_TRANSLATE_RESTORE_PARA_MENU = 'showTranslateRestoreParaMenu',
+    HIDE_TRANSLATE_RESTORE_PARA_MENU = 'hideTranslateRestoreParaMenu',
+}
+
+/**
+ * Long-lived port names used for streaming background <-> content traffic.
+ * For OpenAI-compatible SSE we tunnel deltas over a runtime port instead of
+ * one-shot sendMessage so the content side can consume with `for await`.
+ */
+export enum PORT_NAME {
+    AI_CHAT_STREAM = 'aiChatStream',
+    // Page-translation request to an AI provider. Port-based (not sendMessage)
+    // so the content script can disconnect to abort the in-flight fetch in
+    // background — `runtime.sendMessage` has no native cancellation path.
+    AI_TRANSLATE = 'aiTranslate',
+}
+
+/** What the AI writing pipeline is being asked to do. */
+export enum AI_TASK {
+    TRANSLATE = 'translate',
+    GRAMMAR = 'grammar',
+    POLISH = 'polish',
+    FORMAL = 'formal',
+    CASUAL = 'casual',
+    CUSTOM = 'custom',
+    /** Page-translation: AI receives a JSON-stringified array of paragraph
+     *  texts (with <bN> placeholder tags) and must return a JSON array of the
+     *  same length with translations preserving the placeholders. */
+    PAGE_TRANSLATE = 'pageTranslate',
 }
 
 export enum CONFIG_KEY {
@@ -160,527 +208,689 @@ export enum CONFIG_KEY {
     FLOAT_BALL_SWITCH = 'floatBallSwitch',
     CONTEXT_MENU_SWITCH = 'contextMenuSwitch',
     DISABLED_TRANSLATE_SERVICE = 'disabledTranslateService',
+    // AI Writing
+    AI_WRITING_DOT_SWITCH = 'aiWritingDotSwitch',
+    AI_PROVIDERS = 'aiProviders',
+    AI_ACTIVE_PROVIDER_ID = 'aiActiveProviderId',
+    AI_TARGET_LANG = 'aiTargetLang',
+    AI_WRITING_DISABLED_DOMAINS = 'aiWritingDisabledDomains',
+    // When true, the floating dot only mounts on domains explicitly added to
+    // the enabled list (DomainStorage.aiWritingEnabled). When false (default),
+    // it mounts everywhere except domains on the disabled list.
+    AI_WRITING_WHITELIST_MODE = 'aiWritingWhitelistMode',
+    AI_DEFAULT_ENHANCE_MODE = 'aiDefaultEnhanceMode',
+    // Per-task service selection for the floating dot.
+    // AI_DOT_TRANSLATE_SERVICE: either a TRANS_SERVICE value ('microsoft' |
+    // 'google' | 'deepl') or `ai:<providerId>` to route translate through an
+    // AI provider. Default: 'microsoft'.
+    AI_DOT_TRANSLATE_SERVICE = 'aiDotTranslateService',
+    // AI_DOT_ENHANCE_PROVIDER_ID: which AI provider Better-Writing uses.
+    // Falls back to AI_ACTIVE_PROVIDER_ID when unset.
+    AI_DOT_ENHANCE_PROVIDER_ID = 'aiDotEnhanceProviderId',
+    // UI language override for popup/options/context menu. Empty/undefined
+    // means "auto-detect from browser UI language".
+    INTERFACE_LANG = 'interfaceLang',
+    // When enabled, configured AI providers also surface as page-translation
+    // services (in the popup/options Translation Service picker). Off ⇒ AI
+    // providers are only usable inside the AI Writing flows.
+    AI_USE_FOR_TRANSLATE_PAGE = 'aiUseForTranslatePage',
 }
+
+export type InterfaceLang = 'en' | 'zh-CN';
+
+export const INTERFACE_LANGUAGES: { value: InterfaceLang; title: string }[] = [
+    { value: 'en', title: 'English' },
+    { value: 'zh-CN', title: '简体中文' },
+];
 
 export const LANGUAGES = [
     {
+        "name": "Simplified Chinese",
         "title": "simplifiedChinese",
         "value": "zh-CN"
     },
     {
+        "name": "Traditional Chinese",
         "title": "traditionalChinese",
         "value": "zh-TW"
     },
     {
+        "name": "English",
         "title": "english",
         "value": "en"
     },
     {
+        "name": "French",
         "title": "french",
         "value": "fr"
     },
     {
+        "name": "Russian",
         "title": "russian",
         "value": "ru"
     },
     {
+        "name": "German",
         "title": "german",
         "value": "de"
     },
     {
+        "name": "Japanese",
         "title": "japanese",
         "value": "ja"
     },
     {
+        "name": "Italian",
         "title": "italian",
         "value": "it"
     },
     {
+        "name": "Spanish",
         "title": "spanish",
         "value": "es"
     },
     {
+        "name": "Korean",
         "title": "korean",
         "value": "ko"
     },
     {
+        "name": "Portuguese",
         "title": "portuguese",
         "value": "pt"
     },
     {
+        "name": "Indonesian",
         "title": "indonesian",
         "value": "id"
     },
     {
+        "name": "Arabic",
         "title": "arabic",
         "value": "ar"
     },
     {
+        "name": "Bengali",
         "title": "bengali",
         "value": "bn"
     },
     {
+        "name": "Hindi",
         "title": "hindi",
         "value": "hi"
     },
     {
+        "name": "Afrikaans",
         "title": "afrikaans",
         "value": "af"
     },
     {
+        "name": "Albanian",
         "title": "albanian",
         "value": "sq"
     },
     {
+        "name": "Amharic",
         "title": "amharic",
         "value": "am"
     },
     {
+        "name": "Armenian",
         "title": "armenian",
         "value": "hy"
     },
     {
+        "name": "Assamese",
         "title": "assamese",
         "value": "as"
     },
     {
+        "name": "Aymara",
         "title": "aymara",
         "value": "ay"
     },
     {
+        "name": "Azerbaijani",
         "title": "azerbaijani",
         "value": "az"
     },
     {
+        "name": "Bambara",
         "title": "bambara",
         "value": "bm"
     },
     {
+        "name": "Basque",
         "title": "basque",
         "value": "eu"
     },
     {
+        "name": "Belarusian",
         "title": "belarusian",
         "value": "be"
     },
     {
+        "name": "Bhojpuri",
         "title": "bhojpuri",
         "value": "bho"
     },
     {
+        "name": "Bosnian",
         "title": "bosnian",
         "value": "bs"
     },
     {
+        "name": "Bulgarian",
         "title": "bulgarian",
         "value": "bg"
     },
     {
+        "name": "Catalan",
         "title": "catalan",
         "value": "ca"
     },
     {
+        "name": "Cebuano",
         "title": "cebuano",
         "value": "ceb"
     },
     {
+        "name": "Corsican",
         "title": "corsican",
         "value": "co"
     },
     {
+        "name": "Croatian",
         "title": "croatian",
         "value": "hr"
     },
     {
+        "name": "Czech",
         "title": "czech",
         "value": "cs"
     },
     {
+        "name": "Danish",
         "title": "danish",
         "value": "da"
     },
     {
+        "name": "Divehi",
         "title": "divehi",
         "value": "dv"
     },
     {
+        "name": "Dogri",
         "title": "dogri",
         "value": "doi"
     },
     {
+        "name": "Dutch",
         "title": "dutch",
         "value": "nl"
     },
     {
+        "name": "Esperanto",
         "title": "esperanto",
         "value": "eo"
     },
     {
+        "name": "Estonian",
         "title": "estonian",
         "value": "et"
     },
     {
+        "name": "Filipino",
         "title": "filipino",
         "value": "fil"
     },
     {
+        "name": "Finnish",
         "title": "finnish",
         "value": "fi"
     },
     {
+        "name": "Frisian",
         "title": "frisian",
         "value": "fy"
     },
     {
+        "name": "Galician",
         "title": "galician",
         "value": "gl"
     },
     {
+        "name": "Georgian",
         "title": "georgian",
         "value": "ka"
     },
     {
+        "name": "Greek",
         "title": "greek",
         "value": "el"
     },
     {
+        "name": "Guarani",
         "title": "guarani",
         "value": "gn"
     },
     {
+        "name": "Gujarati",
         "title": "gujarati",
         "value": "gu"
     },
     {
+        "name": "Haitian Creole",
         "title": "haitianCreole",
         "value": "ht"
     },
     {
+        "name": "Hawaiian",
         "title": "hawaiian",
         "value": "haw"
     },
     {
+        "name": "Hebrew",
         "title": "hebrew",
         "value": "he"
     },
     {
+        "name": "Hmong",
         "title": "hmong",
         "value": "hmn"
     },
     {
+        "name": "Hungarian",
         "title": "hungarian",
         "value": "hu"
     },
     {
+        "name": "Icelandic",
         "title": "icelandic",
         "value": "is"
     },
     {
+        "name": "Igbo",
         "title": "igbo",
         "value": "ig"
     },
     {
+        "name": "Ilocano",
         "title": "ilocano",
         "value": "ilo"
     },
     {
+        "name": "Irish",
         "title": "irish",
         "value": "ga"
     },
     {
+        "name": "Javanese",
         "title": "javanese",
         "value": "jv"
     },
     {
+        "name": "Kannada",
         "title": "kannada",
         "value": "kn"
     },
     {
+        "name": "Kazakh",
         "title": "kazakh",
         "value": "kk"
     },
     {
+        "name": "Khmer",
         "title": "khmer",
         "value": "km"
     },
     {
+        "name": "Kinyarwanda",
         "title": "kinyarwanda",
         "value": "rw"
     },
     {
+        "name": "Kurdish",
         "title": "kurdish",
         "value": "ku"
     },
     {
+        "name": "Kyrgyz",
         "title": "kyrgyz",
         "value": "ky"
     },
     {
+        "name": "Lao",
         "title": "lao",
         "value": "lo"
     },
     {
+        "name": "Latin",
         "title": "latin",
         "value": "la"
     },
     {
+        "name": "Latvian",
         "title": "latvian",
         "value": "lv"
     },
     {
+        "name": "Lingala",
         "title": "lingala",
         "value": "ln"
     },
     {
+        "name": "Lithuanian",
         "title": "lithuanian",
         "value": "lt"
     },
     {
+        "name": "Luganda",
         "title": "luganda",
         "value": "lg"
     },
     {
+        "name": "Luxembourgish",
         "title": "luxembourgish",
         "value": "lb"
     },
     {
+        "name": "Macedonian",
         "title": "macedonian",
         "value": "mk"
     },
     {
+        "name": "Maithili",
         "title": "maithili",
         "value": "mai"
     },
     {
+        "name": "Malagasy",
         "title": "malagasy",
         "value": "mg"
     },
     {
+        "name": "Malay",
         "title": "malay",
         "value": "ms"
     },
     {
+        "name": "Malayalam",
         "title": "malayalam",
         "value": "ml"
     },
     {
+        "name": "Maltese",
         "title": "maltese",
         "value": "mt"
     },
     {
+        "name": "Maori",
         "title": "maori",
         "value": "mi"
     },
     {
+        "name": "Marathi",
         "title": "marathi",
         "value": "mr"
     },
     {
+        "name": "Mizo",
         "title": "mizo",
         "value": "lus"
     },
     {
+        "name": "Mongolian",
         "title": "mongolian",
         "value": "mn"
     },
     {
+        "name": "Myanmar",
         "title": "myanmar",
         "value": "my"
     },
     {
+        "name": "Nepali",
         "title": "nepali",
         "value": "ne"
     },
     {
+        "name": "Norwegian",
         "title": "norwegian",
         "value": "no"
     },
     {
+        "name": "Nyanja",
         "title": "nyanja",
         "value": "ny"
     },
     {
+        "name": "Odia",
         "title": "odia",
         "value": "or"
     },
     {
+        "name": "Oromo",
         "title": "oromo",
         "value": "om"
     },
     {
+        "name": "Pashto",
         "title": "pashto",
         "value": "ps"
     },
     {
+        "name": "Persian",
         "title": "persian",
         "value": "fa"
     },
     {
+        "name": "Polish",
         "title": "polish",
         "value": "pl"
     },
     {
+        "name": "Punjabi",
         "title": "punjabi",
         "value": "pa"
     },
     {
+        "name": "Quechua",
         "title": "quechua",
         "value": "qu"
     },
     {
+        "name": "Romanian",
         "title": "romanian",
         "value": "ro"
     },
     {
+        "name": "Samoan",
         "title": "samoan",
         "value": "sm"
     },
     {
+        "name": "Sanskrit",
         "title": "sanskrit",
         "value": "sa"
     },
     {
+        "name": "Scots Gaelic",
         "title": "scotsGaelic",
         "value": "gd"
     },
     {
+        "name": "Sepedi",
         "title": "sepedi",
         "value": "nso"
     },
     {
+        "name": "Serbian",
         "title": "serbian",
         "value": "sr"
     },
     {
+        "name": "Sesotho",
         "title": "sesotho",
         "value": "st"
     },
     {
+        "name": "Shona",
         "title": "shona",
         "value": "sn"
     },
     {
+        "name": "Sindhi",
         "title": "sindhi",
         "value": "sd"
     },
     {
+        "name": "Sinhala",
         "title": "sinhala",
         "value": "si"
     },
     {
+        "name": "Slovak",
         "title": "slovak",
         "value": "sk"
     },
     {
+        "name": "Slovenian",
         "title": "slovenian",
         "value": "sl"
     },
     {
+        "name": "Somali",
         "title": "somali",
         "value": "so"
     },
     {
+        "name": "Sundanese",
         "title": "sundanese",
         "value": "su"
     },
     {
+        "name": "Swahili",
         "title": "swahili",
         "value": "sw"
     },
     {
+        "name": "Swedish",
         "title": "swedish",
         "value": "sv"
     },
     {
+        "name": "Tagalog",
         "title": "tagalog",
         "value": "tl"
     },
     {
+        "name": "Tajik",
         "title": "tajik",
         "value": "tg"
     },
     {
+        "name": "Tamil",
         "title": "tamil",
         "value": "ta"
     },
     {
+        "name": "Tatar",
         "title": "tatar",
         "value": "tt"
     },
     {
+        "name": "Telugu",
         "title": "telugu",
         "value": "te"
     },
     {
+        "name": "Thai",
         "title": "thai",
         "value": "th"
     },
     {
+        "name": "Tigrinya",
         "title": "tigrinya",
         "value": "ti"
     },
     {
+        "name": "Turkish",
         "title": "turkish",
         "value": "tr"
     },
     {
+        "name": "Turkmen",
         "title": "turkmen",
         "value": "tk"
     },
     {
+        "name": "Twi",
         "title": "twi",
         "value": "ak"
     },
     {
+        "name": "Ukrainian",
         "title": "ukrainian",
         "value": "uk"
     },
     {
+        "name": "Urdu",
         "title": "urdu",
         "value": "ur"
     },
     {
+        "name": "Uyghur",
         "title": "uyghur",
         "value": "ug"
     },
     {
+        "name": "Uzbek",
         "title": "uzbek",
         "value": "uz"
     },
     {
+        "name": "Vietnamese",
         "title": "vietnamese",
         "value": "vi"
     },
     {
+        "name": "Welsh",
         "title": "welsh",
         "value": "cy"
     },
     {
+        "name": "Xhosa",
         "title": "xhosa",
         "value": "xh"
     },
     {
+        "name": "Yiddish",
         "title": "yiddish",
         "value": "yi"
     },
     {
+        "name": "Yoruba",
         "title": "yoruba",
         "value": "yo"
     },
     {
+        "name": "Zulu",
         "title": "zulu",
         "value": "zu"
     }
 ]
 
+export const LANGUAGES_MAP = new Map(LANGUAGES.map((lang) => [lang.value, lang]))
+
 export const VIEW_STRATEGIES = [
-    {
-        "title": "monolingual",
-        "value": "single"
-    },
     {
         "title": "bilingual",
         "value": "double"
+    },
+    {
+        "title": "translationOnly",
+        "value": "single"
     },
 ]
 

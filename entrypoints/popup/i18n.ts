@@ -1,12 +1,18 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
-import en from './locales/en.json';
-import zhCN from './locales/zh-CN.json';
+import en from '@/assets/locales/en.json';
+import zhCN from '@/assets/locales/zh-CN.json';
+import { browser } from 'wxt/browser';
+import { ACTION, CONFIG_KEY } from '@/main/constants';
+import { getConfig } from '@/utils/db';
 
 const detectLng = () => {
   const ui = browser.i18n?.getUILanguage?.() || navigator.language;
   return ui.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
 };
+
+const isSupported = (v: unknown): v is 'en' | 'zh-CN' =>
+  v === 'en' || v === 'zh-CN';
 
 void i18n.use(initReactI18next).init({
   resources: {
@@ -17,6 +23,19 @@ void i18n.use(initReactI18next).init({
   fallbackLng: 'en',
   interpolation: { escapeValue: false },
   returnNull: false,
+});
+
+void (async () => {
+  const stored = await getConfig(CONFIG_KEY.INTERFACE_LANG);
+  if (isSupported(stored) && stored !== i18n.language) {
+    await i18n.changeLanguage(stored);
+  }
+})();
+
+browser.runtime.onMessage.addListener((msg: any) => {
+  if (msg?.action === ACTION.INTERFACE_LANG_CHANGE && isSupported(msg.data)) {
+    void i18n.changeLanguage(msg.data);
+  }
 });
 
 export default i18n;

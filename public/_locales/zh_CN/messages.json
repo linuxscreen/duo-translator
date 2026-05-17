@@ -5,12 +5,6 @@
   "extDescription": {
     "message": "开源免费并且开箱即用的翻译插件，具有双语、对比高亮和规则模式等功能"
   },
-  "contextMenuTranslate": {
-    "message": "翻译此页面"
-  },
-  "contextMenuOriginal": {
-    "message": "查看原文"
-  },
   "shortcutToggleTranslation": {
     "message": "翻译/恢复 页面"
   },
@@ -19,6 +13,9 @@
   },
   "shortcutRestore": {
     "message": "恢复页面"
+  },
+  "shortcutAiWorkbench": {
+    "message": "打开 AI 写作工作台"
   },
   "confirmCloseFloatBall": {
     "message": "确认关闭双语翻译悬浮球？可到设置中重新开启"

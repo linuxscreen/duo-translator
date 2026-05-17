@@ -43,7 +43,10 @@ export const SelectContent = forwardRef<ElementRef<typeof SelectPrimitive.Conten
         position={position}
         sideOffset={4}
         className={cn(
-          'relative z-50 max-h-60 overflow-hidden rounded-lg border border-line bg-surface p-1 text-ink shadow-[0_12px_28px_-8px_rgba(0,0,0,.6),0_0_0_0.5px_rgba(255,255,255,.04)]',
+          // Sits above the Dialog overlay (z=2147483600) — Select renders
+          // into its own portal at document.body, so a low z-index would
+          // otherwise put the dropdown BEHIND the dialog's dim backdrop.
+          'relative z-[2147483700] max-h-60 overflow-hidden rounded-lg border border-line bg-surface p-1 text-ink shadow-[0_12px_28px_-8px_rgba(0,0,0,.6),0_0_0_0.5px_rgba(255,255,255,.04)]',
           'data-[state=open]:animate-in data-[state=closed]:animate-out',
           'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
           position === 'popper' && 'w-[var(--radix-select-trigger-width)]',
