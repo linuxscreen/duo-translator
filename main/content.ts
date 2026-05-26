@@ -1,7 +1,7 @@
 import getCssSelector from "css-selector-generator";
 import { franc } from "franc";
 import { split } from "sentence-splitter";
-import { TB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANS_SERVICE, DOMAIN_STRATEGY, svgAddCursor, svgTrashCursor, TRANS_ACTION, ACTION, STORAGE_ACTION, iso6393To1Map, excludedTagSet, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX } from "./constants";
+import { TB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANS_SERVICE, DOMAIN_STRATEGY, svgAddCursor, svgTrashCursor, TRANS_ACTION, ACTION, STORAGE_ACTION, iso6393To1Map, excludedTagSet, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, EXCLUDE_CHILD_ELEMENT_TAGS, DEFAULT_VALUE } from "./constants";
 import { restore, translationServices, translateParams, getTranslateResult, translate, TranslateResult } from "./translateService";
 import { sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
@@ -19,6 +19,13 @@ import { getDomainWithPortFromUrl } from "@/utils/url";
 export async function content() {
     console.log('content script loaded');
     let translateElements: Set<HTMLElement> = new Set()
+
+    // Constructable Stylesheet for translation + bilingual highlighting CSS.
+    // - Lives in document.adoptedStyleSheets, not the DOM, so it doesn't
+    //   trigger our own MutationObserver and can't be removed by hostile pages.
+    // - replaceSync() swaps the whole rule set in one call (no innerText
+    //   re-parsing on every keystroke from the options color picker).
+    let translationStyleSheet: CSSStyleSheet | null = null
 
     let batchElements: HTMLElement[] = [];
     let batchTimer: NodeJS.Timeout | null = null
@@ -68,8 +75,8 @@ export async function content() {
     let translatedElementMap = new Map<HTMLElement, TranslateResult>()
     // get all config from storage
     let [ruleStrategy, viewStrategy, targetLanguage, translateService, globalSwitch, defaultStrategy,
-        rawDomainStrategy, floatBallSwitch]
-        : [string[], VIEW_STRATEGY, string, string, boolean, string, any, boolean] = await Promise.all(
+        rawDomainStrategy, floatBallSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars]
+        : [string[], VIEW_STRATEGY, string, string, boolean, string, any, boolean, number, number] = await Promise.all(
             [
                 listRuleFromDB(domainWithPort),
                 getConfig(CONFIG_KEY.VIEW_STRATEGY),
@@ -78,16 +85,19 @@ export async function content() {
                 getConfig(CONFIG_KEY.GLOBAL_SWITCH),
                 getConfig(CONFIG_KEY.DEFAULT_STRATEGY),
                 sendMessageToBackground({ action: DB_ACTION.DOMAIN_GET, data: { domain: domainWithPort } }),
-                getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH)
+                getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
+                getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES),
+                getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS)
             ]
         )
-    viewStrategy = viewStrategy || VIEW_STRATEGY.DOUBLE
+    viewStrategy = viewStrategy || DEFAULT_VALUE.VIEW_STRATEGY
     globalSwitch = globalSwitch === undefined ? true : globalSwitch
     floatBallSwitch = floatBallSwitch === undefined ? true : floatBallSwitch
-    translateService = translateService || TRANS_SERVICE.MICROSOFT
+    translateService = translateService || DEFAULT_VALUE.TRANSLATE_SERVICE
     targetLanguage = targetLanguage || navigator.language.split('-')[0]
-    defaultStrategy = defaultStrategy || DOMAIN_STRATEGY.AUTO
+    defaultStrategy = defaultStrategy || DEFAULT_VALUE.DOMAIN_STRATEGY
     let domainStrategy = (rawDomainStrategy?.strategy || DOMAIN_STRATEGY.AUTO) as string
+    bilingualHighlightingMinSentences = bilingualHighlightingMinSentences || DEFAULT_VALUE.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES
     const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
     // console.debug("get config:", "ruleStrategy: ", ruleStrategy, "viewStrategy: ", viewStrategy,
     //     "targetLanguage: ", targetLanguage, "translateService: ", translateService, "globalSwitch: ",
@@ -562,7 +572,8 @@ export async function content() {
     }
 
     async function initCSS() {
-        // set rule mode css style
+        // Rule mode style stays as a <style> element — it never changes after
+        // init so the cost of adoptedStyleSheets bookkeeping isn't worth it.
         let ruleModeStyle = document.createElement('style') as HTMLStyleElement
         ruleModeStyle.id = "rule-mode-style"
         ruleModeStyle.innerText += ".duo-selected {outline: 2px solid yellow !important;}"
@@ -572,9 +583,14 @@ export async function content() {
 
     async function removeCSS() {
         document.getElementById('rule-mode-style')?.remove()
+        if (translationStyleSheet) {
+            document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+                (s) => s !== translationStyleSheet,
+            )
+            translationStyleSheet = null
+        }
+        // Legacy cleanup — earlier versions used a <style id="duo-translation-style">.
         document.getElementById('duo-translation-style')?.remove()
-        // document.head.removeChild(document.getElementById('rule-mode-style') as HTMLStyleElement)
-        // document.head.removeChild(document.getElementById('duo-translation-style') as HTMLStyleElement)
     }
 
     function startObserveDom() {
@@ -1021,49 +1037,83 @@ export async function content() {
 
     }
 
+    // Builds the full stylesheet text for translation styling + bilingual
+    // highlighting from current config. Always returns a complete CSS string
+    // so the caller can swap the stylesheet atomically via replaceSync.
+    function buildTranslationCss(opts: {
+        bgColor: string
+        fontColor: string
+        borderStyle: string
+        borderColor: string
+        highlightBg: string
+        highlightFontColor: string
+        highlightStyle: string
+        highlightBorderColor: string
+        highlightSwitch: boolean
+    }): string {
+        const blocks: string[] = []
+
+        // Translation style — applied to the appended translation copy.
+        const translationDecls: string[] = []
+        if (opts.bgColor) translationDecls.push(`background-color: ${opts.bgColor};`)
+        if (opts.fontColor) translationDecls.push(`color: ${opts.fontColor};`)
+        const translationRule = getCSSRuleString(opts.borderStyle, opts.borderColor)
+        if (translationRule) translationDecls.push(translationRule)
+        if (translationDecls.length > 0) {
+            blocks.push(`.duo-translation { ${translationDecls.join(' ')} }`)
+        }
+
+        // Bilingual highlighting — unified across original + translation spans.
+        if (opts.highlightSwitch) {
+            const highlightDecls: string[] = []
+            if (opts.highlightBg) highlightDecls.push(`background-color: ${opts.highlightBg};`)
+            if (opts.highlightFontColor) highlightDecls.push(`color: ${opts.highlightFontColor};`)
+            const highlightRule = getCSSRuleString(opts.highlightStyle, opts.highlightBorderColor)
+            if (highlightRule) highlightDecls.push(highlightRule)
+            if (highlightDecls.length > 0) {
+                blocks.push(
+                    `.duo-highlight-original, .duo-highlight-translation { ${highlightDecls.join(' ')} }`,
+                )
+            }
+        }
+        return blocks.join('\n')
+    }
+
     async function processStyleChangeAction() {
-        let [bgColor, fontColor, borderStyle, originalBgColor, translationBgColor, highlightSwitch] = await Promise.all([
+        let [
+            bgColor, fontColor, borderStyle, borderColor,
+            highlightBg, highlightFontColor, highlightStyle, highlightBorderColor,
+            highlightSwitch,
+        ] = await Promise.all([
             getConfig(CONFIG_KEY.BG_COLOR),
             getConfig(CONFIG_KEY.FONT_COLOR),
             getConfig(CONFIG_KEY.STYLE),
-            getConfig(CONFIG_KEY.ORIGINAL_BG_COLOR),
-            getConfig(CONFIG_KEY.TRANSLATION_BG_COLOR),
-            getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH)
-        ]);
-        bgColor = bgColor || ""
-        fontColor = fontColor || ""
-        borderStyle = borderStyle || "noneStyleSelect"
-        originalBgColor = originalBgColor || '#FFECCB'
-        translationBgColor = translationBgColor || '#ADD8E6'
-        if (highlightSwitch == null) {
-            highlightSwitch = true
+            getConfig(CONFIG_KEY.BORDER_COLOR),
+            getConfig(CONFIG_KEY.HIGHLIGHT_BG_COLOR),
+            getConfig(CONFIG_KEY.HIGHLIGHT_FONT_COLOR),
+            getConfig(CONFIG_KEY.HIGHLIGHT_STYLE),
+            getConfig(CONFIG_KEY.HIGHLIGHT_BORDER_COLOR),
+            getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
+        ])
+        const css = buildTranslationCss({
+            bgColor: bgColor || '',
+            fontColor: fontColor || '',
+            borderStyle: borderStyle || 'noneStyleSelect',
+            borderColor: borderColor || '',
+            highlightBg: highlightBg || '',
+            highlightFontColor: highlightFontColor || '',
+            highlightStyle: highlightStyle || 'noneStyleSelect',
+            highlightBorderColor: highlightBorderColor || '',
+            highlightSwitch: highlightSwitch == null ? true : !!highlightSwitch,
+        })
+
+        if (!translationStyleSheet) {
+            translationStyleSheet = new CSSStyleSheet()
+            document.adoptedStyleSheets = [...document.adoptedStyleSheets, translationStyleSheet]
         }
-        console.log('style:', bgColor, fontColor, borderStyle, originalBgColor, translationBgColor, highlightSwitch)
-        let styleSheet: HTMLStyleElement = document.getElementById("duo-translation-style") as HTMLStyleElement;
-        if (!styleSheet) {
-            styleSheet = document.createElement("style");
-            styleSheet.type = "text/css";
-            // Insert the <style> tag into <head>
-            document.head.appendChild(styleSheet);
-            styleSheet.id = "duo-translation-style"
-        }
-        let rule = getCSSRuleString(borderStyle)
-        styleSheet.innerText = ""
-        // insert css style
-        if (bgColor && bgColor !== "") {
-            styleSheet.innerText += `.duo-translation { background-color: ${bgColor};}`;
-        }
-        if (fontColor && fontColor !== "") {
-            styleSheet.innerText += `.duo-translation { color: ${fontColor};}`;
-        }
-        if (rule && rule != "") {
-            styleSheet.innerText += `.duo-translation { ${rule} }`;
-        }
-        if (highlightSwitch) {
-            styleSheet.innerText += `.duo-highlight-translation { background-color: ${translationBgColor}; }`;
-            styleSheet.innerText += `.duo-highlight-original { background-color: ${originalBgColor}; }`;
-        }
-        console.log('styleSheet:', styleSheet)
+        // replaceSync replaces all rules atomically; far cheaper than re-parsing
+        // an innerText concatenation on every drag tick from the color picker.
+        translationStyleSheet.replaceSync(css)
     }
 
     function isNotTranslateElement(element: HTMLElement): boolean {
@@ -1260,6 +1310,7 @@ export async function content() {
     }
 
     /**
+     * deprecated
      * Remove all comment nodes recursively
      */
     function removeCommentNodesRecursively(element: HTMLElement) {
@@ -1350,7 +1401,7 @@ export async function content() {
         }
     }
 
-    function wrapTextNode2Span(textNodes: Node[], sentences: string[]): HTMLElement[] {
+    function wrapTextNode2Span(textNodes: Text[], sentences: string[]): HTMLElement[] {
         let j = 0
         let spans: HTMLElement[] = []
         for (let i = 0; i < sentences.length; i++) {
@@ -1358,7 +1409,6 @@ export async function content() {
             while (j < textNodes.length) {
                 let text = textNodes[j].textContent
                 if (!text) {
-                    // todo
                     continue
                 }
                 if (sentence.length >= text.length) {
@@ -1468,20 +1518,21 @@ export async function content() {
                     if (!element || element.querySelector(".duo-translation")) {
                         continue
                     }
-                    let originalText = element.textContent
-                    let textNodes = getAllTextNodes(element)
+                    let originalTextResult = getTextNodesAndText(element)
                     translatedElement.classList.add("duo-translation")
                     // find the last child that textContent is not empty
                     let lastChild = element.lastChild
                     while (lastChild && lastChild.textContent === "") {
                         lastChild = lastChild.previousSibling
                     }
-                    let divide = document.createElement('span')
-                    divide.classList.add("duo-divide")
-                    divide.innerHTML = '&nbsp;&nbsp;'
-                    if (translatedResult.rawTextLength > 40) { // todo
+                    let divide : HTMLElement
+                    if (originalTextResult.text.length >= translationLineBreakMinChars) {
                         divide = document.createElement('br')
                         divide.classList.add("duo-divide")
+                    } else {
+                        divide = document.createElement('span')
+                        divide.classList.add("duo-divide")
+                        divide.innerHTML = '&nbsp;&nbsp;'
                     }
                     if (lastChild?.nextSibling) {
                         elements[i].insertBefore(translatedElement, lastChild.nextSibling)
@@ -1491,11 +1542,24 @@ export async function content() {
                         elements[i].appendChild(translatedElement)
                     }
                     let handler = function () {
-                        let sentences = splitSentence(originalText)
-                        let spans = wrapTextNode2Span(textNodes, sentences)
-                        sentences = splitSentence(translatedElement.textContent!)
-                        textNodes = getAllTextNodes(translatedElement)
-                        spans.push(...wrapTextNode2Span(textNodes, sentences))
+                        if (originalTextResult.text == "" || originalTextResult.textNodes.length == 0) {
+                            return
+                        }
+                        let translatedTextResult = getTextNodesAndText(translatedElement)
+                        if (translatedTextResult.text == "" || translatedTextResult.textNodes.length == 0) {
+                            return
+                        }
+                        const originalSentences = splitSentence(originalTextResult.text)
+                        if (originalSentences.length === 0 || originalSentences.length < bilingualHighlightingMinSentences) {
+                            return
+                        }
+                        const translatedSentences = splitSentence(translatedTextResult.text)
+                        if (translatedSentences.length != originalSentences.length) {
+                            return
+                        }
+                        let spans = wrapTextNode2Span(originalTextResult.textNodes, originalSentences)
+
+                        spans.push(...wrapTextNode2Span(translatedTextResult.textNodes, translatedSentences))
                         for (let span of spans) {
                             highlightHandler(span, element, translatedElement)
                         }
@@ -1545,16 +1609,28 @@ export async function content() {
         return targetLanguage != pageLanguage
     }
 
-    function getAllTextNodes(element: Node) {
-        let textNodes: Node[] = []
-        if (element.nodeType === 3 && element.textContent != "") {
-            textNodes.push(element)
+    function getTextNodesAndText(element: Node) {
+        let text = ""
+        let textNodes: Text[] = []
+        const process = function (element: Node) {
+            if (element.nodeType === Node.TEXT_NODE && element.textContent?.replace(/\p{Cf}/gu, '') != "") {
+                textNodes.push(element as Text)
+                text += element.textContent
+            }
+            if (element.nodeType === Node.ELEMENT_NODE) {
+                let ele = element as HTMLElement
+                if (EXCLUDE_CHILD_ELEMENT_TAGS.has(ele.tagName)) {
+                    return
+                }
+                let children = element.childNodes
+                for (let child of children) {
+                    process(child)
+                }
+            }
         }
-        let children = element.childNodes
-        for (let child of children) {
-            textNodes.push(...getAllTextNodes(child))
-        }
-        return textNodes
+        process(element)
+
+        return { textNodes, text }
     }
 
     function splitSentence(text: string | null) {
@@ -1575,8 +1651,10 @@ export async function content() {
     }
 
     // =============== Rule mode ===============
-    function getCSSRuleString(style: string) {
+    function getCSSRuleString(style: string, color?: string) {
         let cssRule = ""
+        const isBorder = style === 'solidBorder' || style === 'dottedBorder' || style === 'dashedBorder'
+        const isUnderline = !!style && style.endsWith("Line")
         switch (style) {
             case 'noneStyleSelect':
                 cssRule = 'border: none;'
@@ -1606,13 +1684,17 @@ export async function content() {
                 cssRule = 'text-decoration: underline dashed;'
                 break;
         }
-        if (style?.endsWith("Line")) {
+        if (color) {
+            if (isBorder) {
+                cssRule += `border-color: ${color};`
+            } else if (isUnderline) {
+                cssRule += `text-decoration-color: ${color};`
+            }
+        }
+        if (isUnderline) {
             cssRule += `text-underline-offset: 4px;`
-        } else {
-            // cssRule += `padding: 4px;`
         }
         return cssRule
-
     }
 
     async function toggleSelectionMode() {

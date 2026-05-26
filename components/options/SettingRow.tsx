@@ -10,10 +10,11 @@ type Props = {
 
 /** Label on the left, hint underneath, control on the right. */
 export function SettingRow({ label, hint, control, className }: Props) {
+  // border-b border-line last:border-b-0
   return (
     <div
       className={cn(
-        'flex items-center justify-between gap-6 border-b border-line last:border-b-0',
+        'flex items-center justify-between gap-6 ',
         'px-4 py-3.5',
         className,
       )}

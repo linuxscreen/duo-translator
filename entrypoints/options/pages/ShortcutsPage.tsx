@@ -11,10 +11,10 @@ type CommandInfo = {
 };
 
 const COMMAND_LABEL_KEYS: Record<string, { key: string; fallback: string }> = {
-  'shortcut-toggle': { key: 'shortcutToggleTranslation', fallback: 'translate/restore page' },
-  'shortcut-translate': { key: 'shortcutTranslate', fallback: 'translate page' },
-  'shortcut-restore': { key: 'shortcutRestore', fallback: 'restore page' },
-  'shortcut-ai-workbench': { key: 'shortcutAiWorkbench', fallback: 'open AI writing workbench' },
+  'shortcut-toggle': { key: 'shortcutToggleTranslation', fallback: 'Translate/restore page' },
+  'shortcut-translate': { key: 'shortcutTranslate', fallback: 'Translate page' },
+  'shortcut-restore': { key: 'shortcutRestore', fallback: 'Restore page' },
+  'shortcut-ai-workbench': { key: 'shortcutAiWorkbench', fallback: 'Open AI writing workbench' },
 };
 
 export function ShortcutsPage() {

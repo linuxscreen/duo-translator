@@ -7,6 +7,18 @@ export const Select = SelectPrimitive.Root;
 export const SelectGroup = SelectPrimitive.Group;
 export const SelectValue = SelectPrimitive.Value;
 
+type LabelProps = ComponentPropsWithoutRef<typeof SelectPrimitive.Label>;
+export const SelectLabel = forwardRef<ElementRef<typeof SelectPrimitive.Label>, LabelProps>(
+  ({ className, ...props }, ref) => (
+    <SelectPrimitive.Label
+      ref={ref}
+      className={cn('px-2 py-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-soft', className)}
+      {...props}
+    />
+  ),
+);
+SelectLabel.displayName = 'SelectLabel';
+
 type TriggerProps = ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>;
 
 export const SelectTrigger = forwardRef<ElementRef<typeof SelectPrimitive.Trigger>, TriggerProps>(

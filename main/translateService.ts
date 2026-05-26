@@ -1,4 +1,4 @@
-import { ACTION, APP_NAME_WITH_SUFFIX, PORT_NAME, TRANS_SERVICE, VIEW_STRATEGY } from "@/main/constants";
+import { ACTION, APP_NAME_WITH_SUFFIX, EXCLUDE_CHILD_ELEMENT_TAGS, PORT_NAME, TRANS_SERVICE, VIEW_STRATEGY } from "@/main/constants";
 import { sendMessageToBackground } from "../utils/message";
 import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
 import { browser } from "wxt/browser";
@@ -19,6 +19,7 @@ export class TranslateResult {
     translatedMappedHtmlText: string; // translated innerHtml of the mapped tag element, for example <b0>translated text</b0>
     sourceLang: string;
     score: number;
+    rawText: string = "";
     rawTextLength: number = 0; // original text length, sum of all text nodes length
     translatedCopyElement?: HTMLElement; // a translated copy of the original element use for double view strategy
     originalSliceElement?: HTMLElement[];
@@ -681,21 +682,29 @@ export function resolveTranslateService(service: string): TranslateService | und
 // ---------------------------------------------------------------------------
 // DOM-level helpers used by content scripts
 // ---------------------------------------------------------------------------
-
-function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STRATEGY): {
+class PreProcessResult {
     elements: HTMLElement[]; // original elements that need mapping tag, which come from element and its children
     mappedHtmlText: string;
-    deleteTextNodes: Text[]; // text nodes that need to be deleted, which come from the child text nodes of element
+    textNodes: Text[]; // text nodes that need to be deleted, which come from the child text nodes of element
+    text: string;
     totalTextNodesLength: number;
-} {
+
+    constructor(elements: HTMLElement[], mappedHtmlText: string, textNodes: Text[], text: string, totalTextNodesLength: number) {
+        this.elements = elements;
+        this.mappedHtmlText = mappedHtmlText;
+        this.textNodes = textNodes;
+        this.text = text;
+        this.totalTextNodesLength = totalTextNodesLength;
+    }
+}
+
+function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STRATEGY): PreProcessResult {
     let i = 0;
     let totalTextNodesLength = 0;
+    let text = "";
     const elements: HTMLElement[] = [];
     const processParent = document.createElement("div");
-    const deleteTextNodes: Text[] = [];
-
-    const SKIP_TAGS = new Set([
-        'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', "IMAGE"]);
+    const textNodes: Text[] = [];
 
     // flag all children of the element that textNode is not empty
     let notEmptyNodes: Node[] = [];
@@ -704,12 +713,12 @@ function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STR
         let pop = stack.pop();
         if (!pop) continue;
         // /\p{Cf}/gu: Contains all zero-width characters
-        if (pop.nodeType === Node.TEXT_NODE && pop.textContent?.replace(/\p{Cf}/gu, '').trim() !== '') {
+        if (pop.nodeType === Node.TEXT_NODE && pop.textContent?.replace(/\p{Cf}/gu, '') !== '') {
             notEmptyNodes.push(pop);
         }
         if (pop.nodeType === Node.ELEMENT_NODE) {
             let p = pop as HTMLElement;
-            if (SKIP_TAGS.has(p.tagName)) continue;
+            if (EXCLUDE_CHILD_ELEMENT_TAGS.has(p.tagName)) continue;
             stack.push(...pop.childNodes);
         }
     }
@@ -744,7 +753,8 @@ function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STR
             const textNode = node as Text;
             if (textNode.textContent === "") return;
             totalTextNodesLength += textNode.textContent.length;
-            deleteTextNodes.push(textNode);
+            text += textNode.textContent;
+            textNodes.push(textNode);
             parent.appendChild(textNode.cloneNode(true));
         }
     };
@@ -753,7 +763,7 @@ function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STR
     if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
         removeChildren.forEach(ele => element.removeChild(ele))
     }
-    return { elements, mappedHtmlText: processParent.innerHTML, deleteTextNodes, totalTextNodesLength };
+    return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, totalTextNodesLength, text };
 }
 
 function updateTranslateElementContent(rawTranslatedHtml: string, originalElements: HTMLElement[]) {
@@ -808,11 +818,10 @@ export async function getTranslateResult(
     if (!elements || elements.length === 0) return [];
 
     const texts: string[] = [];
-    const sliceElements: HTMLElement[][] = [];
-    const deleteTextNodesList: Text[][] = [];
+    const preProcessResults: PreProcessResult[] = [];
+
     const needRemoveElementIdx: number[] = []
     const translatedCopyElements: HTMLElement[] = [];
-    const rawTextLengths: number[] = [];
     for (let i = 0; i < elements.length; i++) {
         let element = elements[i]
         if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
@@ -830,9 +839,7 @@ export async function getTranslateResult(
         }
 
         texts.push(result.mappedHtmlText);
-        sliceElements.push(result.elements);
-        deleteTextNodesList.push(result.deleteTextNodes);
-        rawTextLengths.push(result.totalTextNodesLength);
+        preProcessResults.push(result);
     }
 
     for (let i = needRemoveElementIdx.length - 1; i >= 0; i--) {
@@ -849,17 +856,20 @@ export async function getTranslateResult(
             elements.splice(i, 1);
             results.splice(i, 1);
         }
-        result.originalSliceElement = sliceElements[i];
+        let preProcessResult = preProcessResults[i]
+        result.originalSliceElement = preProcessResult.elements
         result.rawMappedHtmlText = texts[i];
-        result.rawTextLength = rawTextLengths[i];
+        result.rawTextLength = preProcessResult.totalTextNodesLength;
+        result.rawText = preProcessResult.text
         if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
             // We render against a copy in DOUBLE mode, so the original text
             // nodes can be discarded outright.
-            deleteTextNodesList[i]?.forEach((textNode) => textNode?.remove());
+            preProcessResult.textNodes?.forEach((textNode) => textNode?.remove());
             result.translatedCopyElement = translatedCopyElements[i];
+            result.textNodes = preProcessResult.textNodes
         } else {
             // SINGLE may leave the element untranslated; keep the originals.
-            result.textNodes = deleteTextNodesList[i];
+            result.textNodes = preProcessResult.textNodes
         }
     }
     return results;

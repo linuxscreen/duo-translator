@@ -3,19 +3,19 @@
     "message": "DuoTranslator"
   },
   "extDescription": {
-    "message": "open-source translation extension with bilingual display, contrast highlighting, and rule mode features"
+    "message": "Open-source translation extension with bilingual display, contrast highlighting, and rule mode features"
   },
   "shortcutToggleTranslation": {
-    "message": "translate/restore page"
+    "message": "Translate/restore page"
   },
   "shortcutTranslate": {
-    "message": "translate page"
+    "message": "Translate page"
   },
   "shortcutRestore": {
-    "message": "restore page"
+    "message": "Restore page"
   },
   "shortcutAiWorkbench": {
-    "message": "open AI writing workbench"
+    "message": "Open AI writing workbench"
   },
   "confirmCloseFloatBall": {
     "message": "Confirm to close the bilingual translation floating ball? You can re-enable it in the settings"

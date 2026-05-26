@@ -414,10 +414,10 @@ export default function App() {
           <div className="flex items-center justify-between gap-3 px-2 py-1.5">
             <div className="min-w-0">
               <div className="text-[12.5px] text-ink">
-                {t('bilingualComparisonHighlighting', 'Comparison highlighting')}
+                {t('bilingualHighlighting', 'Bilingual sentence-by-sentence highlighting')}
               </div>
               <div className="mt-px text-[11px] text-ink-soft">
-                {t('bilingualComparisonHighlightingHint', 'Sentence-by-sentence comparison')}
+                {t('bilingualHighlightingHint', 'Highlight original and translation sentence by sentence')}
               </div>
             </div>
             <Switch checked={highlight} onCheckedChange={onHighlightToggle} size="sm" />

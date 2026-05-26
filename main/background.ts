@@ -14,6 +14,8 @@ import {
     PORT_NAME,
     APP_NAME_WITH_SUFFIX,
     AI_TASK,
+    DEFAULT_VALUE,
+    CONFIG_VALUE_TO_KEY,
 } from "@/main/constants";
 import { Browser, browser } from "wxt/browser";
 import { Token } from "@/main/translateService";
@@ -31,6 +33,7 @@ import {
     AiProvider,
 } from "@/main/aiService";
 import { getDomainWithPortFromUrl } from '@/utils/url';
+import { storage } from 'wxt/utils/storage';
 
 // In-extension locale tables for strings the background needs to render itself
 // (currently the context menu title). Chrome's chrome.i18n.getMessage is locked
@@ -59,20 +62,6 @@ export function background() {
         const lang = normalizeInterfaceLang(value)
         if (lang) currentInterfaceLang = lang
     })
-
-    // One-shot migration: legacy AI_WRITING_DISABLED_DOMAINS (string[]) →
-    // DomainStorage docs with aiWritingDisabled=true. The config slot is wiped after
-    // migration so subsequent runs no-op.
-    void (async () => {
-        const legacy = await configStorage.getConfigItem(CONFIG_KEY.AI_WRITING_DISABLED_DOMAINS);
-        if (!Array.isArray(legacy) || legacy.length === 0) return;
-        for (const d of legacy) {
-            if (typeof d !== 'string' || !d) continue;
-            await domainStorage.update(new Domain(d, undefined, undefined, true));
-        }
-        await configStorage.setConfigItem(CONFIG_KEY.AI_WRITING_DISABLED_DOMAINS, []);
-    })()
-
 
     browser.runtime.onMessage.addListener((message, sender, sendResponse: (t: any) => void) => {
         // messages are received to manipulate the db database
@@ -669,21 +658,10 @@ export function background() {
     });
 }
 
-export class Sub {
-    constructor(title: string, content: string) {
-        this.title = title
-        this.content = content
-    }
-
-    title: string
-    content: string
-}
-
 export class Domain {
-    constructor(domain: string, strategy?: DOMAIN_STRATEGY, viewStrategy?: VIEW_STRATEGY, aiWritingDisabled?: boolean, aiWritingEnabled?: boolean) {
+    constructor(domain: string, strategy?: DOMAIN_STRATEGY, aiWritingDisabled?: boolean, aiWritingEnabled?: boolean) {
         this.domain = domain
         this.strategy = strategy
-        this.viewStrategy = viewStrategy
         this.aiWritingDisabled = aiWritingDisabled
         this.aiWritingEnabled = aiWritingEnabled
     }
@@ -739,17 +717,9 @@ class ConfigStorage {
             .then(doc => doc.value)
             .catch(err => {
                 if (err?.name === 'not_found') {
-                    if (name === CONFIG_KEY.GLOBAL_SWITCH) {
-                        return true
-                    }
-                    if (name === CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH) {
-                        return true
-                    }
-                    if (name === CONFIG_KEY.FLOAT_BALL_SWITCH) {
-                        return true
-                    }
-                    if (name === CONFIG_KEY.CONTEXT_MENU_SWITCH) {
-                        return true
+                    const enumKey = CONFIG_VALUE_TO_KEY[name];
+                    if (enumKey && enumKey in DEFAULT_VALUE) {
+                        return (DEFAULT_VALUE as Record<string, unknown>)[enumKey];
                     }
                     return undefined;
                 }

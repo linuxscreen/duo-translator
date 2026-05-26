@@ -27,21 +27,27 @@ export const STATUS_FAIL = '500';
 
 export const TRANSLATE_STATUS_KEY = 'tabTranslateStatus#'
 
-export enum DEFAULT_VALUE {
-    GLOBAL_SWITCH = 1,
-    BILINGUAL_HIGHLIGHTING_SWITCH = 0,
-    FLOAT_BALL_SWITCH = 1,
-    CONTEXT_MENU_SWITCH = 1,
-    VIEW_STRATEGY = 'double',
-    TARGET_LANG = 'en',
-    TRANSLATE_SERVICE = 'microsoft',
-    TRANSLATE_SERVICE_TITLE = 'microsoftTranslator',
-    AI_WRITING_DOT_SWITCH = 1,
-    AI_TARGET_LANG = 'en',
-    AI_DEFAULT_ENHANCE_MODE = 'polish',
-    AI_DOT_TRANSLATE_SERVICE = 'microsoft',
-    AI_USE_FOR_TRANSLATE_PAGE = 1,
-}
+export const DEFAULT_VALUE = {
+    GLOBAL_SWITCH: true,
+    BILINGUAL_HIGHLIGHTING_SWITCH: true,
+    FLOAT_BALL_SWITCH: true,
+    CONTEXT_MENU_SWITCH: true,
+    VIEW_STRATEGY: 'double',
+    TARGET_LANG: 'en',
+    TRANSLATE_SERVICE: 'microsoft',
+    TRANSLATE_SERVICE_TITLE: 'microsoftTranslator',
+    AI_WRITING_DOT_SWITCH: true,
+    AI_TARGET_LANG: 'en',
+    AI_DEFAULT_ENHANCE_MODE: 'polish',
+    AI_DOT_TRANSLATE_SERVICE: 'microsoft',
+    AI_USE_FOR_TRANSLATE_PAGE: true,
+    BILINGUAL_HIGHLIGHTING_MIN_SENTENCES: 2,
+    DOMAIN_STRATEGY: 'auto',
+    TRANSLATION_LINE_BREAK_MIN_CHARS: 40,
+    HIGHLIGHT_STYLE: 'underLine',
+    HIGHLIGHT_BORDER_COLOR: '#df5f47',
+    HIGHLIGHT_BORDER_COLOR_INDEX: 1
+} as const;
 
 export enum DB_ACTION {
     RULES_ADD = 'addRule',
@@ -192,14 +198,27 @@ export enum CONFIG_KEY {
     STYLE = 'style',
     BG_COLOR = 'bgColor',
     FONT_COLOR = 'fontColor',
+    BORDER_COLOR = 'borderColor',
     PADDING = 'padding',
     BG_COLOR_INDEX = 'bgColorIndex',
     FONT_COLOR_INDEX = 'fontColorIndex',
-    ORIGINAL_BG_COLOR = 'originalBgColor',
-    ORIGINAL_BG_COLOR_INDEX = 'originalBgColorIndex',
-    TRANSLATION_BG_COLOR = 'translationBgColor',
-    TRANSLATION_BG_COLOR_INDEX = 'translationBgColorIndex',
-    BILINGUAL_HIGHLIGHTING_SWITCH = 'bilingualComparisonHighlightingSwitch',
+    BORDER_COLOR_INDEX = 'borderColorIndex',
+    // Bilingual highlighting style (used for both original + translation hover).
+    HIGHLIGHT_BG_COLOR = 'highlightBgColor',
+    HIGHLIGHT_BG_COLOR_INDEX = 'highlightBgColorIndex',
+    HIGHLIGHT_FONT_COLOR = 'highlightFontColor',
+    HIGHLIGHT_FONT_COLOR_INDEX = 'highlightFontColorIndex',
+    HIGHLIGHT_STYLE = 'highlightStyle',
+    HIGHLIGHT_BORDER_COLOR = 'highlightBorderColor',
+    HIGHLIGHT_BORDER_COLOR_INDEX = 'highlightBorderColorIndex',
+    BILINGUAL_HIGHLIGHTING_SWITCH = 'bilingualHighlightingSwitch',
+    // Minimum number of sentences in a paragraph for sentence-by-sentence
+    // highlighting to apply. Paragraphs with fewer sentences are skipped.
+    BILINGUAL_HIGHLIGHTING_MIN_SENTENCES = 'bilingualHighlightingMinSentences',
+    // Minimum character count of a translated paragraph for a line-break
+    // divider to be inserted between the original and translation. 0 means
+    // always break (the divider is always a <br>).
+    TRANSLATION_LINE_BREAK_MIN_CHARS = 'translationLineBreakMinChars',
     GLOBAL_SWITCH = 'globalSwitch',
     TARGET_LANGUAGE = 'targetLanguage',
     TRANSLATE_SERVICE = 'translateService',
@@ -213,7 +232,6 @@ export enum CONFIG_KEY {
     AI_PROVIDERS = 'aiProviders',
     AI_ACTIVE_PROVIDER_ID = 'aiActiveProviderId',
     AI_TARGET_LANG = 'aiTargetLang',
-    AI_WRITING_DISABLED_DOMAINS = 'aiWritingDisabledDomains',
     // When true, the floating dot only mounts on domains explicitly added to
     // the enabled list (DomainStorage.aiWritingEnabled). When false (default),
     // it mounts everywhere except domains on the disabled list.
@@ -235,6 +253,13 @@ export enum CONFIG_KEY {
     // providers are only usable inside the AI Writing flows.
     AI_USE_FOR_TRANSLATE_PAGE = 'aiUseForTranslatePage',
 }
+
+// CONFIG_KEY value -> enum key name. Lets us look up a default for any config
+// key whose enum-key name also exists on DEFAULT_VALUE (e.g. CONFIG_KEY.GLOBAL_SWITCH
+// = 'globalSwitch' → 'GLOBAL_SWITCH' → DEFAULT_VALUE.GLOBAL_SWITCH).
+export const CONFIG_VALUE_TO_KEY: Record<string, string> = Object.fromEntries(
+    Object.entries(CONFIG_KEY).map(([k, v]) => [v as string, k])
+);
 
 export type InterfaceLang = 'en' | 'zh-CN';
 
@@ -883,6 +908,44 @@ export const LANGUAGES = [
 
 export const LANGUAGES_MAP = new Map(LANGUAGES.map((lang) => [lang.value, lang]))
 
+// Border / underline style preset used by translation style + bilingual highlighting.
+// The value strings double as CSS class names in the popup demo so legacy code can match by id.
+export const STYLE_NONE = 'noneStyleSelect';
+
+export type TranslationStyleOption = { value: string; title: string };
+// `groupTitle === null` renders the option(s) at the top level without a section header.
+export type TranslationStyleGroup = { groupTitle: string | null; options: TranslationStyleOption[] };
+
+export const STYLE_GROUPS: TranslationStyleGroup[] = [
+    {
+        groupTitle: null,
+        options: [{ value: STYLE_NONE, title: 'none' }],
+    },
+    {
+        groupTitle: 'bottom',
+        options: [
+            { value: 'wavyLine', title: 'wavyLine' },
+            { value: 'doubleLine', title: 'doubleUnderline' },
+            { value: 'underLine', title: 'underLine' },
+            { value: 'dottedLine', title: 'dottedLine' },
+            { value: 'dashedLine', title: 'dashedLine' },
+        ],
+    },
+    {
+        groupTitle: 'wrap',
+        options: [
+            { value: 'solidBorder', title: 'solidBorder' },
+            { value: 'dottedBorder', title: 'dottedBorder' },
+            { value: 'dashedBorder', title: 'dashedBorder' },
+        ],
+    },
+];
+
+// Preset color palettes. Empty string = "no color" (transparent slot rendered as a checker swatch).
+export const TRANSLATION_BG_COLORS = ['', '#df5f47', '#57a0ee', '#faec63', '#73b364'];
+export const TRANSLATION_FONT_COLORS = ['', '#df5f47', '#57a0ee', '#faec63', '#73b364'];
+export const HIGHLIGHT_COLORS = ['', '#df5f47', '#57a0ee', '#faec63', '#73b364'];
+
 export const VIEW_STRATEGIES = [
     {
         "title": "bilingual",
@@ -1112,6 +1175,9 @@ export const EXCLUDE_TAGS = [
     // 'button',
     "footer"
 ];
+
+export const EXCLUDE_CHILD_ELEMENT_TAGS = new Set([
+        'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', "IMAGE"]);
 
 export const iso6393To1Map: Map<string, string> = new Map(Object.entries(iso6393To1));
 

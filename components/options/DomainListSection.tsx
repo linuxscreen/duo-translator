@@ -164,16 +164,12 @@ export function DomainListSection({
   return (
     <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
       <div className="flex w-full items-center gap-3 px-4 py-3.5">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex flex-1 items-center gap-3 text-left"
-        >
+        <div className="flex flex-1 items-center gap-3 text-left">
           <div className="text-[13.5px] font-medium text-ink">
             {title}
             <span className="ml-2 text-[12px] text-ink-soft">({items.length})</span>
           </div>
-        </button>
+        </div>
         {open && (
           <Input
             value={query}
@@ -186,7 +182,8 @@ export function DomainListSection({
         <button
           type="button"
           onClick={onToggle}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-ink-soft transition-colors hover:bg-hover hover:text-ink"
+          title={t(open ? 'collapse' : 'expand', open ? 'Collapse' : 'Expand')}
+          className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-ink-soft transition-colors hover:bg-hover hover:text-ink"
         >
           <ChevronDown
             className={cn(
