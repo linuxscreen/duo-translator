@@ -10,6 +10,7 @@ import {
 import { sendMessageToBackground } from '@/utils/message';
 import { getConfig, setConfig } from '@/utils/db';
 import { SettingRow } from '@/components/options/SettingRow';
+import { SyncAndBackupSection } from '@/components/options/SyncAndBackupSection';
 import {
   Select,
   SelectContent,
@@ -76,32 +77,39 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
-      <SettingRow
-        label={t('interfaceLanguage', 'Interface language')}
-        control={
-          <Select value={interfaceLang} onValueChange={onInterfaceLang}>
-            <SelectTrigger className="min-w-[200px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {INTERFACE_LANGUAGES.map((l) => (
-                <SelectItem key={l.value} value={l.value}>
-                  {l.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        }
-      />
-      <SettingRow
-        label={t('globalSwitch', 'Global switch')}
-        control={<Switch checked={globalSwitch} onCheckedChange={onGlobalSwitch} />}
-      />
-      <SettingRow
-        label={t('contextMenu', 'Context menu')}
-        control={<Switch checked={contextMenu} onCheckedChange={onContextMenu} />}
-      />
+    <div className="space-y-4">
+      <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
+        <SettingRow
+          label={t('interfaceLanguage', 'Interface language')}
+          control={
+            <Select value={interfaceLang} onValueChange={onInterfaceLang}>
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {INTERFACE_LANGUAGES.map((l) => (
+                  <SelectItem key={l.value} value={l.value}>
+                    {l.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
+        <SettingRow
+          label={t('globalSwitch', 'Global switch')}
+          control={<Switch checked={globalSwitch} onCheckedChange={onGlobalSwitch} />}
+        />
+        <SettingRow
+          label={t('contextMenu', 'Context menu')}
+          control={<Switch checked={contextMenu} onCheckedChange={onContextMenu} />}
+        />
+      </div>
+
+      <h2 className="text-[14px] font-medium text-ink-soft">
+        {t('syncAndBackup', 'Sync & Backup')}
+      </h2>
+      <SyncAndBackupSection />
     </div>
   );
 }

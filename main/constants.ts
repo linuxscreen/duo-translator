@@ -62,6 +62,23 @@ export enum DB_ACTION {
     DOMAIN_LIST = 'listDomain',
     CONFIG_GET = 'getConfig',
     CONFIG_SET = 'setConfig',
+    BACKUP_EXPORT = 'backupExport',
+    BACKUP_IMPORT = 'backupImport',
+}
+
+export enum SYNC_ACTION {
+    SYNC_NOW = 'syncNow',
+    SYNC_STATUS = 'syncStatus',
+    AUTH_GDRIVE = 'authGdrive',
+    AUTH_WEBDAV = 'authWebdav',
+    DISCONNECT_PROVIDER = 'disconnectProvider',
+    SET_ACTIVE_PROVIDER = 'setActiveProvider',
+    GET_ACTIVE_PROVIDER = 'getActiveProvider',
+}
+
+export enum SYNC_PROVIDER_ID {
+    GDRIVE = 'gdrive',
+    WEBDAV = 'webdav',
 }
 
 export enum STORAGE_ACTION {
