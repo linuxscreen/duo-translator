@@ -256,7 +256,7 @@ export function ProviderModal({ open, initial, onClose, onSave }: Props) {
                                 : 'border-red-500/40 bg-red-500/10 text-red-600'
                         }`}
                     >
-                        {testReply.ok ? `${t('aiTestOk', 'OK')}: ${testReply.text.slice(0, 120)}` : testReply.text.slice(0, 240)}
+                        {testReply.ok ? `${t('aiTestOk', 'OK')}` : testReply.text.slice(0, 240)}
                     </div>
                 )}
             </div>

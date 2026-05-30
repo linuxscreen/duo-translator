@@ -435,6 +435,91 @@ export function background() {
                 })();
                 return true;
             }
+            case ACTION.TRANSLATE_SERVICE_TEST: {
+                (async () => {
+                    try {
+                        const svc: string = message.data?.service;
+                        const targetLang: string = message.data?.targetLang || 'zh-CN';
+                        const sample = 'Hello, world.';
+                        let reply = '';
+                        if (svc === TRANS_SERVICE.GOOGLE) {
+                            const r = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(sample)}`);
+                            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                            const j = await r.json();
+                            reply = j?.[0]?.[0]?.[0] || 'OK';
+                        } else if (svc === TRANS_SERVICE.MICROSOFT) {
+                            const token = await getMicrosoftToken();
+                            if (!token?.token) throw new Error('Failed to obtain Microsoft token');
+                            const r = await fetch(`https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=${encodeURIComponent(targetLang)}`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.token },
+                                body: JSON.stringify([{ Text: sample }]),
+                            });
+                            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                            const j = await r.json();
+                            reply = j?.[0]?.translations?.[0]?.text || 'OK';
+                        } else if (svc === TRANS_SERVICE.DEEPL) {
+                            const key: string = (message.data?.apiKey ?? '') || ((await configRepo.get(CONFIG_KEY.DEEPL_API_KEY)) as string) || '';
+                            if (!key) throw new Error('DeepL API key is not configured');
+                            const url = key.endsWith(':fx') ? 'https://api-free.deepl.com/v2/translate' : 'https://api.deepl.com/v2/translate';
+                            const params = new URLSearchParams();
+                            params.append('text', sample);
+                            params.append('target_lang', (targetLang.split('-')[0] || 'EN').toUpperCase());
+                            const r = await fetch(url, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `DeepL-Auth-Key ${key}` },
+                                body: params.toString(),
+                            });
+                            if (!r.ok) {
+                                let detail = '';
+                                try { detail = (await r.text()).slice(0, 200); } catch { }
+                                throw new Error(`HTTP ${r.status}${detail ? ': ' + detail : ''}`);
+                            }
+                            const j = await r.json();
+                            reply = j?.translations?.[0]?.text || 'OK';
+                        } else {
+                            throw new Error(`Unknown service: ${svc}`);
+                        }
+                        sendResponse({ status: STATUS_SUCCESS, data: { reply } });
+                    } catch (e: any) {
+                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
+                    }
+                })();
+                return true;
+            }
+            case ACTION.DEEPL_REQUEST: {
+                // CORS proxy for DeepL: content sends the JSON request body,
+                // background attaches the configured key + endpoint and fetches.
+                (async () => {
+                    try {
+                        const body = message.data?.body;
+                        const key = ((await configRepo.get(CONFIG_KEY.DEEPL_API_KEY)) as string) || '';
+                        if (!key) throw new Error('DeepL API key is not configured');
+                        const url = key.endsWith(':fx')
+                            ? 'https://api-free.deepl.com/v2/translate'
+                            : 'https://api.deepl.com/v2/translate';
+                        const r = await fetch(url, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                Authorization: `DeepL-Auth-Key ${key}`,
+                            },
+                            body: JSON.stringify(body),
+                        });
+                        if (r.status !== 200) {
+                            let detail = '';
+                            try { detail = (await r.text()).slice(0, 200); } catch { }
+                            throw new Error(`HTTP ${r.status}${detail ? ': ' + detail : ''}`);
+                        }
+                        const payload = await r.json();
+                        sendResponse({ status: STATUS_SUCCESS, data: payload });
+                    } catch (e: any) {
+                        console.error(APP_NAME_WITH_SUFFIX, 'DeepL request failed:', e?.message || e);
+                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
+                    }
+                })();
+                return true;
+            }
             case ACTION.GLOBAL_SWITCH_CHANGE:
                 console.log('globalSwitchChange', message.data)
                 let globalSwitch = message.data

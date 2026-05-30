@@ -172,6 +172,12 @@ export enum ACTION {
     LEAVE_SELECTION_MODE = 'leaveSelectionMode',
     AI_OPEN_WORKBENCH = 'aiOpenWorkbench',
     AI_PROVIDER_TEST = 'aiProviderTest',
+    // Test a built-in translation service (google/microsoft/deepl) from Options.
+    TRANSLATE_SERVICE_TEST = 'translateServiceTest',
+    // DeepL request proxy. DeepL's API has no CORS headers, so the content
+    // script cannot fetch it directly — background performs the fetch and
+    // returns the raw JSON payload. content reshapes it into TranslateResult[].
+    DEEPL_REQUEST = 'deeplRequest',
     OPEN_OPTIONS_PAGE = 'openOptionsPage',
     // Broadcast from Options when the user picks a UI language. Background
     // listens to update context menu; other extension UIs listen to swap i18n.
@@ -269,6 +275,9 @@ export enum CONFIG_KEY {
     // services (in the popup/options Translation Service picker). Off ⇒ AI
     // providers are only usable inside the AI Writing flows.
     AI_USE_FOR_TRANSLATE_PAGE = 'aiUseForTranslatePage',
+    // User-supplied DeepL API key (free-tier keys end with ":fx"). When empty,
+    // DeepL translation is unavailable until configured in Options.
+    DEEPL_API_KEY = 'deeplApiKey',
 }
 
 // CONFIG_KEY value -> enum key name. Lets us look up a default for any config

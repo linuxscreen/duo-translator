@@ -2,6 +2,7 @@ import { ACTION, APP_NAME_WITH_SUFFIX, EXCLUDE_CHILD_ELEMENT_TAGS, PORT_NAME, TR
 import { sendMessageToBackground } from "../utils/message";
 import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
 import { browser } from "wxt/browser";
+import { isTraditionalChinese } from "@/utils/language";
 
 // ---------------------------------------------------------------------------
 // Domain types
@@ -120,9 +121,13 @@ export function convertAToBTags(html: string): string {
     return finalResult;
 }
 
-function transferLanguageCode(language: string): string {
+function transferLanguageCode(language: string, text?: string): string {
     if (language === "zh-Hans") return "zh-CN";
     if (language === "zh-Hant") return "zh-TW";
+    if (language === "ZH") {
+        if (!text) return "zh-CN";
+        return isTraditionalChinese(text) ? "zh-TW" : "zh-CN";
+    }
     return language;
 }
 
@@ -460,36 +465,28 @@ export class MicrosoftTranslateService extends TranslateService {
 
 export class DeepLTranslateService extends TranslateService {
     readonly name = TRANS_SERVICE.DEEPL;
-    private readonly apiKey: string;
-    private readonly endpoint: string;
 
-    constructor(apiKey: string = import.meta.env.VITE_DEEPL_API_KEY ?? "") {
+    constructor() {
         super();
-        this.apiKey = apiKey;
-        // DeepL routes free-tier keys (suffix ":fx") to api-free; paid keys to api.
-        this.endpoint = apiKey.endsWith(":fx")
-            ? "https://api-free.deepl.com/v2/translate"
-            : "https://api.deepl.com/v2/translate";
     }
 
+    private targetLangConverter(lang: string): string {
+        if (lang === "zh-CN") return "ZH-HANS"
+        if (lang === "zh-TW") return "ZH-HANT"
+        return lang.toUpperCase()
+    }
+
+    // DeepL's API returns no CORS headers, so a content-script fetch is blocked.
+    // We proxy the request through background (which has host permissions and
+    // is not subject to page-origin CORS), passing only the request body — the
+    // API key + endpoint selection live in background.
     private async request(body: Record<string, unknown>): Promise<any | null> {
-        if (!this.apiKey) {
-            console.error(APP_NAME_WITH_SUFFIX, "DeepL API key is not configured (VITE_DEEPL_API_KEY).");
-            return null;
-        }
-        const response = await fetch(this.endpoint, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `DeepL-Auth-Key ${this.apiKey}`,
-            },
-            body: JSON.stringify(body),
+        const resp = await sendMessageToBackground({
+            action: ACTION.DEEPL_REQUEST,
+            data: { body },
         });
-        if (response.status !== 200) {
-            console.error(APP_NAME_WITH_SUFFIX, "DeepL Translate API error:", response.status, response.statusText);
-            return null;
-        }
-        return response.json();
+        // background returns the raw DeepL JSON payload, or undefined on error.
+        return resp ?? null;
     }
 
     private toResults(payload: any): TranslateResult[] {
@@ -497,7 +494,7 @@ export class DeepLTranslateService extends TranslateService {
             payload?.translations ?? [];
         return translations.map(
             (t) =>
-                new TranslateResult(t.text, transferLanguageCode(t.detected_source_language), 1),
+                new TranslateResult(t.text, transferLanguageCode(t.detected_source_language, t.text), 1),
         );
     }
 
@@ -510,7 +507,7 @@ export class DeepLTranslateService extends TranslateService {
         if (texts.length === 0) return [];
         const payload = await this.request({
             text: texts,
-            target_lang: targetLang.toUpperCase(),
+            target_lang: this.targetLangConverter(targetLang),
             ...(sourceLang ? { source_lang: sourceLang.toUpperCase() } : {}),
         });
         return payload ? this.toResults(payload) : [];

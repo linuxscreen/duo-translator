@@ -3,6 +3,7 @@ import { type ReactNode, useState } from 'react';
 import { Translation, useTranslation } from 'react-i18next';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { SettingsPage } from './pages/SettingsPage';
 import { ShortcutsPage } from './pages/ShortcutsPage';
 import { TranslationPage } from './pages/TranslationPage';
@@ -55,6 +56,7 @@ export default function App() {
   };
 
   return (
+    <TooltipProvider delayDuration={300}>
     <div className="min-h-screen w-full">
       {/* Top bar */}
       <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-line bg-bg/80 px-6 backdrop-blur-md">
@@ -133,5 +135,6 @@ export default function App() {
         </main>
       </div>
     </div>
+    </TooltipProvider>
   );
 }

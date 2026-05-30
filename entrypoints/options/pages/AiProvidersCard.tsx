@@ -1,4 +1,4 @@
-import { Plus, Trash2, Pencil, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Pencil, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { browser } from 'wxt/browser';
@@ -8,6 +8,7 @@ import { getCatalogEntry, normalizeProvider } from '@/main/aiService';
 import { getConfig, setConfig } from '@/utils/db';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import { TestResultBadge } from '@/components/ui/test-result-badge';
 import { ProviderModal } from '../components/ProviderModal';
 import { ServiceMark } from '@/components/ui/service-mark';
 
@@ -173,17 +174,10 @@ export function AiProvidersCard() {
                                         </span>
                                     </div>
                                     {ts.kind === 'ok' && (
-                                        <span className="inline-flex items-center gap-1 truncate text-[11px] text-emerald-500">
-                                            <CheckCircle2 className="h-3 w-3" strokeWidth={1.8} />
-                                            {t('aiTestOk', 'OK')}
-                                            {ts.reply ? `: ${ts.reply.slice(0, 40)}` : ''}
-                                        </span>
+                                        <TestResultBadge kind="ok" okLabel={t('aiTestOk', 'OK')} />
                                     )}
                                     {ts.kind === 'fail' && (
-                                        <span className="inline-flex items-center gap-1 truncate text-[11px] text-red-500">
-                                            <AlertCircle className="h-3 w-3" strokeWidth={1.8} />
-                                            {ts.message.slice(0, 80)}
-                                        </span>
+                                        <TestResultBadge kind="fail" message={ts.message} />
                                     )}
                                 </div>
                                 <div className="text-[12.5px] text-ink-soft truncate">{entry.label}</div>
