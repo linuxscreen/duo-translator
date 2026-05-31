@@ -1531,10 +1531,7 @@ export async function content() {
                     let originalTextResult = getTextNodesAndText(element)
                     translatedElement.classList.add("duo-translation")
                     // find the last child that textContent is not empty
-                    let lastChild = element.lastChild
-                    while (lastChild && lastChild.textContent === "") {
-                        lastChild = lastChild.previousSibling
-                    }
+                    let lastChild = getLastContainingTextChild(element)
                     let divide : HTMLElement
                     if (originalTextResult.text.length >= translationLineBreakMinChars) {
                         divide = document.createElement('br')
@@ -1545,11 +1542,11 @@ export async function content() {
                         divide.innerHTML = '&nbsp;&nbsp;'
                     }
                     if (lastChild?.nextSibling) {
-                        elements[i].insertBefore(translatedElement, lastChild.nextSibling)
-                        elements[i].insertBefore(divide, lastChild.nextSibling)
+                        element.insertBefore(translatedElement, lastChild.nextSibling)
+                        element.insertBefore(divide, lastChild.nextSibling)
                     } else {
-                        elements[i].appendChild(divide)
-                        elements[i].appendChild(translatedElement)
+                        element.appendChild(divide)
+                        element.appendChild(translatedElement)
                     }
                     let handler = function () {
                         if (originalTextResult.text == "" || originalTextResult.textNodes.length == 0) {
@@ -1596,6 +1593,35 @@ export async function content() {
                     ignoreMutationElements.delete(element)
                 }
             })
+        }
+    }
+
+    function getLastContainingTextChild(element : Node) {
+        let lastChild = element.lastChild
+        while (lastChild && !isContainsValidTextElement(lastChild)) {
+            lastChild = lastChild.previousSibling
+        }
+        return lastChild
+    }
+
+    function isContainsValidTextElement(element: Node) {
+        if (element.nodeType === Node.TEXT_NODE) {
+            return true
+        }
+        let stack = [element]
+        while (stack.length > 0) {
+            let pop = stack.pop()
+            if (!pop) continue
+            if (pop.nodeType === Node.TEXT_NODE && pop.textContent?.replace(/\p{Cf}/gu, '') != "") {
+                return true
+            }
+            if (pop.nodeType === Node.ELEMENT_NODE) {
+                let ele = pop as HTMLElement
+                if (EXCLUDE_CHILD_ELEMENT_TAGS.has(ele.tagName)) {
+                    continue
+                }
+                stack.push(...pop.childNodes)
+            }
         }
     }
 
