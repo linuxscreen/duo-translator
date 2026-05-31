@@ -48,6 +48,7 @@ export type DomainDoc = {
     viewStrategy?: VIEW_STRATEGY;
     aiWritingDisabled?: boolean;
     aiWritingEnabled?: boolean;
+    floatBallDisabled?: boolean;
 };
 
 export type DomainListItem = { domain: string } & DomainDoc;
@@ -119,6 +120,7 @@ export const domainRepo = {
         if (patch.viewStrategy !== undefined) next.viewStrategy = patch.viewStrategy;
         if (patch.aiWritingDisabled !== undefined) next.aiWritingDisabled = patch.aiWritingDisabled;
         if (patch.aiWritingEnabled !== undefined) next.aiWritingEnabled = patch.aiWritingEnabled;
+        if (patch.floatBallDisabled !== undefined) next.floatBallDisabled = patch.floatBallDisabled;
         await storage.setItem(domainKey(host), next);
         await bumpMtime();
     },
@@ -134,7 +136,7 @@ export const domainRepo = {
      */
     async clearField(
         host: string,
-        field: 'strategy' | 'aiWritingDisabled' | 'aiWritingEnabled' | 'viewStrategy',
+        field: 'strategy' | 'aiWritingDisabled' | 'aiWritingEnabled' | 'viewStrategy' | 'floatBallDisabled',
     ): Promise<void> {
         const doc = await storage.getItem<DomainDoc>(domainKey(host));
         if (!doc) return;
@@ -143,7 +145,8 @@ export const domainRepo = {
             doc.strategy === undefined &&
             doc.viewStrategy === undefined &&
             doc.aiWritingDisabled === undefined &&
-            doc.aiWritingEnabled === undefined;
+            doc.aiWritingEnabled === undefined &&
+            doc.floatBallDisabled === undefined;
         if (empty) {
             await storage.removeItem(domainKey(host));
         } else {
@@ -156,6 +159,7 @@ export const domainRepo = {
         strategy?: DOMAIN_STRATEGY;
         aiWritingDisabled?: boolean;
         aiWritingEnabled?: boolean;
+        floatBallDisabled?: boolean;
     }): Promise<DomainListItem[]> {
         const all = await storage.snapshot('local');
         let items: DomainListItem[] = [];
@@ -169,6 +173,7 @@ export const domainRepo = {
                 viewStrategy: doc.viewStrategy,
                 aiWritingDisabled: doc.aiWritingDisabled,
                 aiWritingEnabled: doc.aiWritingEnabled,
+                floatBallDisabled: doc.floatBallDisabled,
             });
         }
         if (filter?.strategy) items = items.filter((it) => it.strategy === filter.strategy);
@@ -177,6 +182,9 @@ export const domainRepo = {
         }
         if (filter?.aiWritingEnabled !== undefined) {
             items = items.filter((it) => !!it.aiWritingEnabled === filter.aiWritingEnabled);
+        }
+        if (filter?.floatBallDisabled !== undefined) {
+            items = items.filter((it) => !!it.floatBallDisabled === filter.floatBallDisabled);
         }
         return items;
     },

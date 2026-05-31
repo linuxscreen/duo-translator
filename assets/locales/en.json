@@ -66,7 +66,7 @@
   "showToggleButton": "show toggle button",
   "showTranslation": "show translation",
   "viewStrategy": "view strategy",
-  "floatBall": "Float ball",
+  "floatBall": "Floating ball",
   "contextMenu": "Context menu",
   "displayMode": "Display mode",
   "targetLanguage": "Target language",
@@ -260,6 +260,7 @@
   "feedback": "Feedback",
   "more": "More",
   "aiSettings": "Settings",
+  "disableAIWriting": "Disable AI writing",
   "aiTranslateWith": "Translate with",
   "aiBetterWritingWith": "Better writing with",
   "aiGroupTranslators": "Translators",
@@ -357,5 +358,10 @@
   "backupImportModeMerge": "Merge — keep existing values not in the file",
   "backupImportModeReplace": "Replace — drop values not in the file",
   "backupImportPick": "Pick backup file…",
-  "backupImported": "Backup imported"
+  "backupImported": "Backup imported",
+  "floatBallConfirmClose": "Confirm to close the bilingual translation floating ball? You can re-enable it in the settings",
+  "floatBallTooltipTranslate": "Translate this page",
+  "floatBallTooltipRestore": "Show original",
+  "floatBallCloseTitle": "Disable floating ball",
+  "floatBallDisabledWebsites": "Floating ball disabled websites"
 }

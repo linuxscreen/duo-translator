@@ -172,7 +172,7 @@ export function background() {
                 return true
             }
             case DB_ACTION.DOMAIN_DELETE: {
-                const fieldArg = message.data?.field as ('strategy' | 'aiWritingDisabled' | 'aiWritingEnabled' | 'viewStrategy' | undefined);
+                const fieldArg = message.data?.field as ('strategy' | 'aiWritingDisabled' | 'aiWritingEnabled' | 'viewStrategy' | 'floatBallDisabled' | undefined);
                 const op = fieldArg
                     ? domainRepo.clearField(message.data.domain, fieldArg)
                     : domainRepo.delete(message.data.domain);
@@ -188,6 +188,7 @@ export function background() {
                     strategy: message.data?.strategy,
                     aiWritingDisabled: message.data?.aiWritingDisabled,
                     aiWritingEnabled: message.data?.aiWritingEnabled,
+                    floatBallDisabled: message.data?.floatBallDisabled,
                 };
                 domainRepo.list(filter).then((data) => {
                     sendResponse({ status: STATUS_SUCCESS, data })
@@ -405,11 +406,30 @@ export function background() {
                     updateContextMenu(message.data.status)
                 }
                 break
-            case ACTION.OPEN_OPTIONS_PAGE:
-                browser.tabs.create({ url: 'options.html' }).then(
+            case ACTION.OPEN_OPTIONS_PAGE: {
+                const optionsTab = message?.data?.tab
+                const optionsUrl = optionsTab ? `options.html#${optionsTab}` : 'options.html'
+                browser.tabs.create({ url: optionsUrl }).then(
                     () => sendResponse({ status: STATUS_SUCCESS, data: null }),
                     (e: any) => sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } }),
                 )
+                return true
+            }
+            case ACTION.OPEN_POPUP:
+                // Opens the toolbar action popup anchored to the extension icon
+                // (Chrome 127+). Must target the sender's window so it pops over
+                // the page the float ball lives on.
+                (async () => {
+                    try {
+                        const windowId = sender?.tab?.windowId
+                        // openPopup is Chrome 127+; the polyfill may not type it.
+                        const action = (browser as any).action
+                        await action.openPopup(windowId !== undefined ? { windowId } : undefined)
+                        sendResponse({ status: STATUS_SUCCESS, data: null })
+                    } catch (e: any) {
+                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } })
+                    }
+                })()
                 return true
             case ACTION.AI_PROVIDER_TEST: {
                 const provider = normalizeProvider(message.data);

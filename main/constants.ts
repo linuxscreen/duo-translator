@@ -179,6 +179,10 @@ export enum ACTION {
     // returns the raw JSON payload. content reshapes it into TranslateResult[].
     DEEPL_REQUEST = 'deeplRequest',
     OPEN_OPTIONS_PAGE = 'openOptionsPage',
+    // Open the toolbar action popup (popup.html) anchored to the extension
+    // icon — same surface/position as a manual icon click. Requested from the
+    // float ball's settings button; background calls chrome.action.openPopup().
+    OPEN_POPUP = 'openPopup',
     // Broadcast from Options when the user picks a UI language. Background
     // listens to update context menu; other extension UIs listen to swap i18n.
     INTERFACE_LANG_CHANGE = 'interfaceLangChange',

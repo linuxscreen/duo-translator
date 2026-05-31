@@ -19,9 +19,16 @@ type Tab = {
   icon: ReactNode;
 };
 
+const VALID_TABS: TabId[] = ['settings', 'services', 'translation', 'aiWriting', 'shortcuts'];
+
+function getInitialTab(): TabId {
+  const hash = window.location.hash.replace(/^#/, '') as TabId;
+  return VALID_TABS.includes(hash) ? hash : 'settings';
+}
+
 export default function App() {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<TabId>('settings');
+  const [tab, setTab] = useState<TabId>(getInitialTab);
 
   const tabs: Tab[] = [
     {
@@ -95,7 +102,10 @@ export default function App() {
                 <button
                   key={it.id}
                   type="button"
-                  onClick={() => setTab(it.id)}
+                  onClick={() => {
+                    setTab(it.id);
+                    window.history.replaceState(null, '', `#${it.id}`);
+                  }}
                   className={cn(
                     'group relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px]',
                     'transition-colors duration-150',

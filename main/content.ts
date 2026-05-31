@@ -620,12 +620,22 @@ export async function content() {
     async function initFloatBall() {
         if (!globalSwitch) return
         if (!floatBallSwitch) return
+        // Per-site disable: "Disable on this site" from the float ball's close
+        // menu persists domain.floatBallDisabled — honour it on (re)mount.
+        if (rawDomainStrategy?.floatBallDisabled) return
         if (floatBall) return
         floatBall = await mountFloatBall({
+            domain: domainWithPort,
             initiallyActive: translateStatus,
             onTranslate: () => { translateAction() },
             onRestore: () => { restoreOriginalAction() },
-            onClose: () => { floatBallSwitch = false; floatBall = null },
+            onClose: () => {
+                floatBallSwitch = false
+                // Defer teardown: onClose fires from inside the ball's own React
+                // click handler; unmounting the root synchronously from there is
+                // unsafe, so let the current event finish first.
+                setTimeout(() => removeFloatBall(), 0)
+            },
         })
     }
 

@@ -12,6 +12,7 @@ export type DomainItem = {
   strategy?: DOMAIN_STRATEGY;
   aiWritingDisabled?: boolean;
   aiWritingEnabled?: boolean;
+  floatBallDisabled?: boolean;
 };
 
 /**
@@ -19,11 +20,13 @@ export type DomainItem = {
  *  - `strategy`: page-translation Always/Never list (one of NEVER/ALWAYS).
  *  - `aiWritingDisabled`: AI Writing floating dot blacklist (boolean true).
  *  - `aiWritingEnabled`: AI Writing floating dot whitelist (boolean true).
+ *  - `floatBallDisabled`: translation float ball blacklist (boolean true).
  */
 export type DomainListKind =
   | { field: 'strategy'; strategy: DOMAIN_STRATEGY }
   | { field: 'aiWritingDisabled' }
-  | { field: 'aiWritingEnabled' };
+  | { field: 'aiWritingEnabled' }
+  | { field: 'floatBallDisabled' };
 
 export function normalizeDomain(raw: string): string {
   const s = (raw || '').trim().toLowerCase();
@@ -82,6 +85,7 @@ export function DomainListSection({
   const buildUpdatePayload = (domain: string): Record<string, unknown> => {
     if (kind.field === 'strategy') return { domain, strategy: kind.strategy };
     if (kind.field === 'aiWritingEnabled') return { domain, aiWritingEnabled: true };
+    if (kind.field === 'floatBallDisabled') return { domain, floatBallDisabled: true };
     return { domain, aiWritingDisabled: true };
   };
 

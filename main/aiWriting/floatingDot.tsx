@@ -450,7 +450,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
     };
 
     const openOptions = () => {
-        browser.runtime.sendMessage({ action: ACTION.OPEN_OPTIONS_PAGE }).catch(() => { });
+        browser.runtime.sendMessage({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: 'aiWriting' } }).catch(() => { });
     };
 
     // ---- Settings popover change handlers ----------------------------------
@@ -710,7 +710,7 @@ function CloseMenu({ onPick, onClose }: { onPick: (c: "session" | "site" | "fore
         >
             <div className="flex items-center justify-between px-3 pb-0.5">
                 <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#8a93a8]">
-                    {t("aiSettings1", "Disable input enhancement")}
+                    {t("disableAIWriting", "Disable AI writing")}
                 </span>
                 <button
                     type="button"

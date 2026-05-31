@@ -260,6 +260,7 @@
   "feedback": "反馈",
   "more": "更多",
   "aiSettings": "设置",
+  "disableAIWriting": "关闭AI写作",
   "aiTranslateWith": "翻译服务",
   "aiBetterWritingWith": "写作服务",
   "aiGroupTranslators": "翻译引擎",
@@ -357,5 +358,10 @@
   "backupImportModeMerge": "合并 — 保留文件外的现有值",
   "backupImportModeReplace": "替换 — 丢弃文件外的现有值",
   "backupImportPick": "选择备份文件…",
-  "backupImported": "备份已导入"
+  "backupImported": "备份已导入",
+  "floatBallConfirmClose": "确认关闭双语翻译悬浮球？可到设置中重新开启",
+  "floatBallTooltipTranslate": "翻译此页面",
+  "floatBallTooltipRestore": "显示原文",
+  "floatBallCloseTitle": "隐藏悬浮球",
+  "floatBallDisabledWebsites": "已禁用悬浮球的网站"
 }

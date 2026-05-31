@@ -105,8 +105,10 @@ export function TranslationPage() {
   // Domain lists
   const [alwaysList, setAlwaysList] = useState<DomainItem[]>([]);
   const [neverList, setNeverList] = useState<DomainItem[]>([]);
+  const [floatBallDisabledList, setFloatBallDisabledList] = useState<DomainItem[]>([]);
   const [alwaysOpen, setAlwaysOpen] = useState(false);
   const [neverOpen, setNeverOpen] = useState(false);
+  const [floatBallDisabledOpen, setFloatBallDisabledOpen] = useState(false);
   // Style section expanded by default; only the chevron button on the right
   // toggles — not the header text — to avoid accidental collapse.
   const [styleOpen, setStyleOpen] = useState(true);
@@ -114,7 +116,7 @@ export function TranslationPage() {
   const [ready, setReady] = useState(false);
 
   const refreshDomains = async () => {
-    const [a, n] = await Promise.all([
+    const [a, n, fb] = await Promise.all([
       sendMessageToBackground({
         action: DB_ACTION.DOMAIN_LIST,
         data: { strategy: DOMAIN_STRATEGY.ALWAYS },
@@ -123,9 +125,14 @@ export function TranslationPage() {
         action: DB_ACTION.DOMAIN_LIST,
         data: { strategy: DOMAIN_STRATEGY.NEVER },
       }),
+      sendMessageToBackground({
+        action: DB_ACTION.DOMAIN_LIST,
+        data: { floatBallDisabled: true },
+      }),
     ]);
     setAlwaysList(Array.isArray(a) ? a : []);
     setNeverList(Array.isArray(n) ? n : []);
+    setFloatBallDisabledList(Array.isArray(fb) ? fb : []);
   };
 
   useEffect(() => {
@@ -420,7 +427,7 @@ export function TranslationPage() {
     <div className="flex flex-col gap-4">
       <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
         <SettingRow
-          label={t('floatBall', 'Float ball')}
+          label={t('floatBall', 'Floating ball')}
           control={<Switch checked={floatBall} onCheckedChange={onFloatBall} />}
         />
         <SettingRow
@@ -725,6 +732,16 @@ export function TranslationPage() {
         items={neverList}
         otherItems={alwaysList}
         kind={{ field: 'strategy', strategy: DOMAIN_STRATEGY.NEVER }}
+        onChanged={refreshDomains}
+      />
+
+      <DomainListSection
+        title={t('floatBallDisabledWebsites', 'Floating ball disabled websites')}
+        emptyHint={t('noDomainsConfigured', 'No websites configured.')}
+        open={floatBallDisabledOpen}
+        onToggle={() => setFloatBallDisabledOpen((o) => !o)}
+        items={floatBallDisabledList}
+        kind={{ field: 'floatBallDisabled' }}
         onChanged={refreshDomains}
       />
     </div>
