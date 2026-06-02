@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Check, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import {
   ACTION,
@@ -24,7 +24,7 @@ import {
   sendMessageToAllTabs,
   sendMessageToBackground,
 } from '@/utils/message';
-import { getConfig, setConfig } from '@/utils/db';
+import { getConfig, setConfig, clearTranslationCache, getTranslationCacheSize } from '@/utils/db';
 import { SettingRow } from '@/components/options/SettingRow';
 import { ColorPicker } from '@/components/options/ColorPicker';
 import { NumberInputWithReset } from '@/components/options/NumberInputWithReset';
@@ -38,6 +38,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Dialog } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { DomainListSection, type DomainItem } from '@/components/options/DomainListSection';
 import { buildStylePreview, styleHasBorder } from '@/utils/translationStyle';
 
@@ -57,6 +59,15 @@ const DEFAULT_STRATEGY_OPTIONS: { value: DEFAULT_STRATEGY; title: string; fallba
   { value: DEFAULT_STRATEGY.NEVER, title: 'notTranslateAllWebsites', fallback: "Don't translate all websites" },
 ];
 
+/** Human-readable byte size, e.g. 0 B / 12.3 KB / 4.5 MB. */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / Math.pow(1024, i);
+  return `${i === 0 ? value : value.toFixed(1)} ${units[i]}`;
+}
+
 function broadcastStyleChange() {
   void sendMessageToAllTabs({ action: ACTION.STYLE_CHANGE });
 }
@@ -75,6 +86,12 @@ export function TranslationPage() {
     String(DEFAULT_VALUE.TRANSLATION_LINE_BREAK_MIN_CHARS),
   );
   const [floatBall, setFloatBall] = useState(true);
+  const [translationCache, setTranslationCache] = useState(true);
+  // Transient "cleared" state for the clear-cache button (resets after ~1.5s).
+  const [cacheCleared, setCacheCleared] = useState(false);
+  // Clear-cache confirmation dialog.
+  const [clearCacheOpen, setClearCacheOpen] = useState(false);
+  const [cacheSizeBytes, setCacheSizeBytes] = useState(0);
   const [viewStrategy, setViewStrategy] = useState<string>(DEFAULT_VALUE.VIEW_STRATEGY);
   const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.TARGET_LANG);
   const [translateService, setTranslateService] = useState<string>(DEFAULT_VALUE.TRANSLATE_SERVICE);
@@ -139,7 +156,7 @@ export function TranslationPage() {
     let cancelled = false;
     (async () => {
       const [
-        bh, fb, vs, tl, ts, disabled, ds, ms, lb,
+        bh, fb, vs, tl, ts, disabled, ds, ms, lb, tc,
         styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg,
         hbCfg, hbIdxCfg, hfCfg, hfIdxCfg, hsCfg, hbcCfg, hbcIdxCfg,
       ] = await Promise.all([
@@ -152,6 +169,7 @@ export function TranslationPage() {
         getConfig(CONFIG_KEY.DEFAULT_STRATEGY),
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES),
         getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS),
+        getConfig(CONFIG_KEY.TRANSLATION_CACHE_SWITCH),
         getConfig(CONFIG_KEY.STYLE),
         getConfig(CONFIG_KEY.BG_COLOR),
         getConfig(CONFIG_KEY.BG_COLOR_INDEX),
@@ -180,6 +198,7 @@ export function TranslationPage() {
           : Number(DEFAULT_VALUE.TRANSLATION_LINE_BREAK_MIN_CHARS);
       setLineBreakInput(String(initialLb));
       setFloatBall(fb === undefined ? true : fb);
+      setTranslationCache(tc === undefined ? true : tc);
       setViewStrategy(vs === undefined ? DEFAULT_VALUE.VIEW_STRATEGY : vs);
       setTargetLang(tl === undefined ? DEFAULT_VALUE.TARGET_LANG : tl);
       setTranslateService(ts === undefined ? DEFAULT_VALUE.TRANSLATE_SERVICE : ts);
@@ -255,6 +274,25 @@ export function TranslationPage() {
     const def = Number(DEFAULT_VALUE.TRANSLATION_LINE_BREAK_MIN_CHARS);
     setLineBreakInput(String(def));
     void setConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS, def);
+  };
+
+  const onTranslationCache = (v: boolean) => {
+    setTranslationCache(v);
+    void setConfig(CONFIG_KEY.TRANSLATION_CACHE_SWITCH, v);
+    void sendMessageToAllTabs({ action: ACTION.TRANSLATION_CACHE_SWITCH_CHANGE, data: v });
+  };
+
+  const onClearCacheClick = async () => {
+    const size = await getTranslationCacheSize();
+    setCacheSizeBytes(size);
+    setClearCacheOpen(true);
+  };
+
+  const onConfirmClearCache = async () => {
+    setClearCacheOpen(false);
+    await clearTranslationCache();
+    setCacheCleared(true);
+    setTimeout(() => setCacheCleared(false), 1500);
   };
 
   const onFloatBall = (v: boolean) => {
@@ -519,6 +557,35 @@ export function TranslationPage() {
             />
           }
         />
+        <SettingRow
+          label={t('enableTranslationCache', 'Enable translation cache')}
+          hint={t(
+            'enableTranslationCacheHint',
+            'Cache translation results to skip repeated requests',
+          )}
+          control={
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClearCacheClick}
+                title={t('clearTranslationCache', 'Clear cache')}
+                className={cn(
+                  'inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md transition-colors',
+                  cacheCleared
+                    ? 'text-emerald-500'
+                    : 'text-ink-soft hover:bg-hover hover:text-ink',
+                )}
+              >
+                {cacheCleared ? (
+                  <Check className="h-4 w-4" strokeWidth={1.8} />
+                ) : (
+                  <Trash2 className="h-4 w-4" strokeWidth={1.6} />
+                )}
+              </button>
+              <Switch checked={translationCache} onCheckedChange={onTranslationCache} />
+            </div>
+          }
+        />
       </div>
 
       {/* Bilingual highlighting */}
@@ -744,6 +811,30 @@ export function TranslationPage() {
         kind={{ field: 'floatBallDisabled' }}
         onChanged={refreshDomains}
       />
+
+      <Dialog
+        open={clearCacheOpen}
+        onClose={() => setClearCacheOpen(false)}
+        title={t('clearTranslationCache', 'Clear cache')}
+        widthClass="w-[400px]"
+        footer={
+          <>
+            <Button variant="outline" size="sm" onClick={() => setClearCacheOpen(false)}>
+              {t('cancel', 'Cancel')}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={onConfirmClearCache}>
+              {t('confirm', 'Confirm')}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-[13px] leading-6 text-ink">
+          {t('clearTranslationCacheConfirm', {
+            size: formatBytes(cacheSizeBytes),
+            defaultValue: 'The cache currently uses {{size}}. Clear it?',
+          })}
+        </p>
+      </Dialog>
     </div>
   );
 }

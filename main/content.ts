@@ -2,7 +2,7 @@ import getCssSelector from "css-selector-generator";
 import { franc } from "franc";
 import { split } from "sentence-splitter";
 import { TB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANS_SERVICE, DOMAIN_STRATEGY, svgAddCursor, svgTrashCursor, TRANS_ACTION, ACTION, STORAGE_ACTION, iso6393To1Map, excludedTagSet, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, EXCLUDE_CHILD_ELEMENT_TAGS, DEFAULT_VALUE } from "./constants";
-import { restore, translationServices, translateParams, getTranslateResult, translate, TranslateResult } from "./translateService";
+import { restore, translationServices, translateParams, getTranslateResult, translate, TranslateResult, resetTranslationCacheEnabled } from "./translateService";
 import { sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
 import { shuffle } from "@/utils/arrays";
@@ -276,6 +276,11 @@ export async function content() {
                     await restoreOriginalAction()
                     // await translateAction()
                 }
+                break
+            case ACTION.TRANSLATION_CACHE_SWITCH_CHANGE:
+                // Drop the memoized cache-enabled flag so the next translate
+                // batch re-reads the toggle.
+                resetTranslationCacheEnabled(typeof message.data === "boolean" ? message.data : undefined)
                 break
             case ACTION.TARGET_LANG_CHANGE:
                 let newLang = message?.data

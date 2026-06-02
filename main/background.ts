@@ -35,6 +35,7 @@ import {
 import { getDomainWithPortFromUrl } from '@/utils/url';
 import { storage } from 'wxt/utils/storage';
 import { configRepo, domainRepo, ruleRepo, type DomainDoc } from "@/main/storage/configStore";
+import * as translationCache from "@/main/storage/translationCache";
 import { migrateFromPouchIfNeeded } from "@/main/storage/migrateFromPouch";
 import { buildSnapshot, applySnapshot, redactSecrets } from "@/main/storage/snapshot";
 import {
@@ -616,6 +617,42 @@ export function background() {
                 isTranslateParaShowing = false
                 sendResponse({ status: STATUS_SUCCESS });
                 break
+            case ACTION.TRANSLATION_CACHE_GET:
+                translationCache.getMany(
+                    message.data.service,
+                    message.data.targetLang,
+                    message.data.texts ?? [],
+                ).then((data) => {
+                    sendResponse({ status: STATUS_SUCCESS, data })
+                }).catch((e) => {
+                    sendResponse({ status: STATUS_FAIL, data: { name: e?.name, message: e?.message } })
+                })
+                return true
+            case ACTION.TRANSLATION_CACHE_PUT:
+                translationCache.putMany(
+                    message.data.service,
+                    message.data.targetLang,
+                    message.data.entries ?? [],
+                ).then(() => {
+                    sendResponse({ status: STATUS_SUCCESS })
+                }).catch((e) => {
+                    sendResponse({ status: STATUS_FAIL, data: { name: e?.name, message: e?.message } })
+                })
+                return true
+            case ACTION.TRANSLATION_CACHE_CLEAR:
+                translationCache.clearAll().then(() => {
+                    sendResponse({ status: STATUS_SUCCESS })
+                }).catch((e) => {
+                    sendResponse({ status: STATUS_FAIL, data: { name: e?.name, message: e?.message } })
+                })
+                return true
+            case ACTION.TRANSLATION_CACHE_SIZE:
+                translationCache.getTotalBytes().then((data) => {
+                    sendResponse({ status: STATUS_SUCCESS, data })
+                }).catch((e) => {
+                    sendResponse({ status: STATUS_FAIL, data: { name: e?.name, message: e?.message } })
+                })
+                return true
             default:
                 break
         }

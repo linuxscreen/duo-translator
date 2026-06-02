@@ -44,6 +44,7 @@ export const DEFAULT_VALUE = {
     BILINGUAL_HIGHLIGHTING_MIN_SENTENCES: 2,
     DOMAIN_STRATEGY: 'auto',
     TRANSLATION_LINE_BREAK_MIN_CHARS: 40,
+    TRANSLATION_CACHE_SWITCH: true,
     HIGHLIGHT_STYLE: 'underLine',
     HIGHLIGHT_BORDER_COLOR: '#df5f47',
     HIGHLIGHT_BORDER_COLOR_INDEX: 1
@@ -198,6 +199,19 @@ export enum ACTION {
     INTERFACE_LANG_CHANGE = 'interfaceLangChange',
     SHOW_TRANSLATE_RESTORE_PARA_MENU = 'showTranslateRestoreParaMenu',
     HIDE_TRANSLATE_RESTORE_PARA_MENU = 'hideTranslateRestoreParaMenu',
+    // Persistent translation-result cache (LRU, IndexedDB in background).
+    // GET: batch-lookup translations for (service, targetLang, texts[]).
+    // PUT: batch-store freshly fetched translations.
+    // CLEAR: wipe the whole cache (from the Options "clear cache" button).
+    TRANSLATION_CACHE_GET = 'translationCacheGet',
+    TRANSLATION_CACHE_PUT = 'translationCachePut',
+    TRANSLATION_CACHE_CLEAR = 'translationCacheClear',
+    // Current approximate cache size in bytes (for the Options "clear cache"
+    // confirmation prompt).
+    TRANSLATION_CACHE_SIZE = 'translationCacheSize',
+    // Broadcast from Options when the cache switch toggles so content scripts
+    // drop their memoized enabled-flag.
+    TRANSLATION_CACHE_SWITCH_CHANGE = 'translationCacheSwitchChange',
 }
 
 /**
@@ -256,6 +270,8 @@ export enum CONFIG_KEY {
     // divider to be inserted between the original and translation. 0 means
     // always break (the divider is always a <br>).
     TRANSLATION_LINE_BREAK_MIN_CHARS = 'translationLineBreakMinChars',
+    // Persistent translation-result cache toggle (LRU, 100MB cap). Default on.
+    TRANSLATION_CACHE_SWITCH = 'translationCacheSwitch',
     GLOBAL_SWITCH = 'globalSwitch',
     TARGET_LANGUAGE = 'targetLanguage',
     TRANSLATE_SERVICE = 'translateService',

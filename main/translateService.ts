@@ -1,5 +1,6 @@
-import { ACTION, APP_NAME_WITH_SUFFIX, EXCLUDE_CHILD_ELEMENT_TAGS, PORT_NAME, TRANS_SERVICE, VIEW_STRATEGY } from "@/main/constants";
+import { ACTION, APP_NAME_WITH_SUFFIX, CONFIG_KEY, EXCLUDE_CHILD_ELEMENT_TAGS, PORT_NAME, TRANS_SERVICE, VIEW_STRATEGY } from "@/main/constants";
 import { sendMessageToBackground } from "../utils/message";
+import { getConfig } from "@/utils/db";
 import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
 import { browser } from "wxt/browser";
 import { isTraditionalChinese } from "@/utils/language";
@@ -737,6 +738,127 @@ export function resolveTranslateService(service: string): TranslateService | und
 }
 
 // ---------------------------------------------------------------------------
+// Translation result cache (content-side client)
+//
+// The store itself lives in the background (IndexedDB, LRU, 100MB cap — see
+// main/storage/translationCache.ts). Here we only message it. Lookups are
+// keyed by (service, targetLang, sourceText); a hit reconstructs a
+// TranslateResult identical to a fresh API response.
+// ---------------------------------------------------------------------------
+
+interface CachedTranslation {
+    t: string; // translatedMappedHtmlText
+    s: string; // sourceLang
+    c: number; // score
+}
+
+// Memoized cache-enabled flag. Invalidated by the content script when the
+// Options switch broadcasts ACTION.TRANSLATION_CACHE_SWITCH_CHANGE.
+let cacheEnabledMemo: boolean | null = null;
+
+/** Reset (or directly set) the memoized cache-enabled flag. */
+export function resetTranslationCacheEnabled(value?: boolean): void {
+    cacheEnabledMemo = value === undefined ? null : value;
+}
+
+async function isTranslationCacheEnabled(): Promise<boolean> {
+    if (cacheEnabledMemo !== null) return cacheEnabledMemo;
+    const v = await getConfig(CONFIG_KEY.TRANSLATION_CACHE_SWITCH);
+    cacheEnabledMemo = v === undefined ? true : !!v;
+    return cacheEnabledMemo;
+}
+
+async function cacheGetMany(
+    service: string,
+    targetLang: string,
+    texts: string[],
+): Promise<(CachedTranslation | null)[]> {
+    if (texts.length === 0) return [];
+    const res = await sendMessageToBackground(
+        { action: ACTION.TRANSLATION_CACHE_GET, data: { service, targetLang, texts } },
+        15000,
+    );
+    if (!Array.isArray(res) || res.length !== texts.length) {
+        return new Array(texts.length).fill(null);
+    }
+    return res as (CachedTranslation | null)[];
+}
+
+function cachePutMany(
+    service: string,
+    targetLang: string,
+    entries: { text: string; value: CachedTranslation }[],
+): void {
+    if (entries.length === 0) return;
+    void sendMessageToBackground(
+        { action: ACTION.TRANSLATION_CACHE_PUT, data: { service, targetLang, entries } },
+        15000,
+    );
+}
+
+/**
+ * Translate `texts`, serving hits from the persistent cache and only sending
+ * the misses to the provider. The returned array is always aligned 1:1 with
+ * `texts` (order preserved); freshly fetched results are written back to the
+ * cache. Returns undefined to mirror the original "no results" signal (unknown
+ * service / provider failure) so callers bail out exactly as before.
+ */
+async function translateTextsWithCache(
+    service: string,
+    texts: string[],
+    targetLang: string,
+    signal?: AbortSignal,
+): Promise<TranslateResult[] | undefined> {
+    if (texts.length === 0) return [];
+
+    if (!(await isTranslationCacheEnabled())) {
+        return resolveTranslateService(service)?.translateText(texts, targetLang, signal);
+    }
+
+    const cached = await cacheGetMany(service, targetLang, texts);
+    const missIndices: number[] = [];
+    const missTexts: string[] = [];
+    for (let i = 0; i < texts.length; i++) {
+        if (!cached[i]) {
+            missIndices.push(i);
+            missTexts.push(texts[i]);
+        }
+    }
+
+    let fetched: TranslateResult[] = [];
+    if (missTexts.length > 0) {
+        const r = await resolveTranslateService(service)?.translateText(missTexts, targetLang, signal);
+        if (!r) return undefined; // unknown service / failure → bail like before
+        // Provider must answer 1:1 with the inputs. If it doesn't, the
+        // positional remap below would misalign — fall back to a full
+        // (uncached) translation rather than return a corrupt array.
+        if (r.length !== missTexts.length) {
+            return resolveTranslateService(service)?.translateText(texts, targetLang, signal);
+        }
+        fetched = r;
+    }
+
+    const results: TranslateResult[] = new Array(texts.length);
+    for (let i = 0; i < texts.length; i++) {
+        const hit = cached[i];
+        if (hit) results[i] = new TranslateResult(hit.t, hit.s, hit.c);
+    }
+    const toCache: { text: string; value: CachedTranslation }[] = [];
+    for (let f = 0; f < missIndices.length; f++) {
+        const idx = missIndices[f];
+        const r = fetched[f];
+        results[idx] = r;
+        toCache.push({
+            text: texts[idx],
+            value: { t: r.translatedMappedHtmlText, s: r.sourceLang, c: r.score },
+        });
+    }
+
+    cachePutMany(service, targetLang, toCache);
+    return results;
+}
+
+// ---------------------------------------------------------------------------
 // DOM-level helpers used by content scripts
 // ---------------------------------------------------------------------------
 class PreProcessResult {
@@ -903,7 +1025,7 @@ export async function getTranslateResult(
         elements.splice(needRemoveElementIdx[i], 1)
     }
 
-    const results = await resolveTranslateService(service)?.translateText(texts, targetLang, signal);
+    const results = await translateTextsWithCache(service, texts, targetLang, signal);
     if (!results) return [];
 
 
