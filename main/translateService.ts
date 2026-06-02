@@ -543,6 +543,10 @@ export class DeepLTranslateService extends TranslateService {
 
 export const AI_SERVICE_PREFIX = "ai:" as const;
 
+// AI completions can take well over the default 5s sendMessage timeout, so the
+// non-streaming page-translation round-trip uses a more generous budget.
+const AI_TRANSLATE_TIMEOUT = 120000;
+
 /**
  * Routes page-translation requests to a configured AI provider. The actual
  * HTTP call lives in background ([main/background.ts] AI_TRANSLATE) — both
@@ -564,6 +568,62 @@ export class AiTranslateService extends TranslateService {
     }
 
     async translateText(
+        texts: string[],
+        targetLang: string,
+        signal?: AbortSignal | null,
+        _sourceLang?: string,
+    ): Promise<TranslateResult[]> {
+        if (texts.length === 0) return [];
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
+        // Page translation doesn't need streaming. Use a one-shot message to
+        // background, which calls chatCompleteNonStream (stream:false) and
+        // returns the full JSON array of translations.
+        //
+        // sendMessage has no native cancellation, so abort is relayed out of
+        // band: we tag the request with a requestId and, on signal abort, fire
+        // an AI_TRANSLATE_ABORT message carrying that id. Background holds an
+        // AbortController per request and aborts the in-flight fetch — so the
+        // upstream HTTP request is genuinely cancelled, not just ignored.
+        const requestId =
+            (globalThis.crypto?.randomUUID?.() as string | undefined) ??
+            `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+        let onAbort: (() => void) | null = null;
+        if (signal) {
+            onAbort = () => {
+                void sendMessageToBackground({
+                    action: ACTION.AI_TRANSLATE_ABORT,
+                    data: { requestId },
+                });
+            };
+            signal.addEventListener("abort", onAbort);
+        }
+
+        try {
+            const translations = (await sendMessageToBackground(
+                {
+                    action: ACTION.AI_TRANSLATE_TEXT,
+                    data: { requestId, providerId: this.providerId, texts, targetLang },
+                },
+                AI_TRANSLATE_TIMEOUT,
+            )) as string[] | undefined;
+
+            if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+            if (!translations) return [];
+            return translations.map((t) => new TranslateResult(String(t ?? ""), "", 1));
+        } finally {
+            if (onAbort) signal?.removeEventListener("abort", onAbort);
+        }
+    }
+
+    /**
+     * Streaming (port-based) page translation. Kept for callers that need to
+     * abort an in-flight AI call mid-request: the content side disconnects the
+     * port and background turns onDisconnect into controller.abort(). The
+     * default {@link translateText} now uses the simpler non-streaming path.
+     */
+    async streamTranslateText(
         texts: string[],
         targetLang: string,
         signal?: AbortSignal | null,

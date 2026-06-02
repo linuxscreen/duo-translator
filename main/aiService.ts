@@ -82,6 +82,7 @@ export interface ChatMessage {
 }
 
 export interface ChatOptions {
+    params?: any;
     temperature?: number;
     maxTokens?: number;
     signal?: AbortSignal;
@@ -154,7 +155,7 @@ export function buildPrompt(req: AiStreamRequest): ChatMessage[] {
             // that MUST be preserved exactly in the output array).
             const lang = LANGUAGES_MAP.get(payload.targetLang || DEFAULT_VALUE.AI_TARGET_LANG)?.name;
             return [
-                { role: "system", content: `You are a professional ${lang} native speaker translator. Translate any text the user inputs into ${lang}. The translation should be natural and fluent, conforming to ${lang} expression conventions. Output only the translation, with no explanation, no quotes. The input format is json array, translate each array item independently, keep array length and order unchanged, return raw JSON array only. If the original item's text is already in ${lang}, output it as-is. If the original item's text contains XML tags, consider where the tags should be placed in the translation while maintaining fluency.` },
+                { role: "system", content: `You are a professional ${lang} native speaker translator. Translate any text the user inputs into ${lang}. The translation should be natural and fluent, conforming to ${lang} expression conventions. Output only the translation, with no explanation, no quotes, or formatting marks. If the original text is already in ${lang}, output it as-is. If the text contains XML tags, consider where the tags should be placed in the translation while maintaining fluency. The <sep/> XML tag is the sole paragraph separator. Preserve every <sep/> tag in your translation exactly as-is. Each paragraph must map one-to-one to the source — do not merge, split, or reorder them.` },
                 { role: "user", content: text },
             ];
         }
@@ -402,6 +403,201 @@ export async function* claudeChatStream(
             /* ignore */
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Non-streaming clients — background-only. Used by the page-translation
+// pipeline, which wants a single full response and must NOT set stream:true on
+// the upstream request (some providers/proxies reject or mis-handle SSE for
+// batch JSON translation). Mirrors the chatStream adapters per provider type.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Global concurrency limiter for non-streaming requests. Every call to
+// chatCompleteNonStream goes through this semaphore, so no matter how many
+// callers fire at once (multiple page-translate batches, other features...),
+// at most NON_STREAM_MAX_CONCURRENCY upstream requests are in flight. This is
+// the single chokepoint where the rate limit actually takes effect.
+// ---------------------------------------------------------------------------
+const NON_STREAM_MAX_CONCURRENCY = 5;
+let nonStreamActive = 0;
+const nonStreamWaiters: (() => void)[] = [];
+
+function acquireNonStreamSlot(): Promise<void> {
+    if (nonStreamActive < NON_STREAM_MAX_CONCURRENCY) {
+        nonStreamActive++;
+        return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => nonStreamWaiters.push(resolve));
+}
+
+function releaseNonStreamSlot(): void {
+    const next = nonStreamWaiters.shift();
+    if (next) {
+        // Hand the slot straight to the next waiter — active count stays put.
+        next();
+    } else {
+        nonStreamActive--;
+    }
+}
+
+/**
+ * Dispatch a non-streaming chat completion to the right protocol adapter based
+ * on `provider.type`. Returns the full response text. Calls are globally rate
+ * limited to NON_STREAM_MAX_CONCURRENCY concurrent upstream requests.
+ */
+export async function chatCompleteNonStream(
+    provider: AiProvider,
+    messages: ChatMessage[],
+    opts: ChatOptions = {},
+): Promise<string> {
+    await acquireNonStreamSlot();
+    try {
+        switch (provider.type) {
+            case "gemini":
+                return await geminiChatComplete(provider, messages, opts);
+            case "claude":
+                return await claudeChatComplete(provider, messages, opts);
+            // OpenAI-compatible: openai, deepseek, ollama, openrouter, custom
+            default:
+                return await openAiChatComplete(provider, messages, opts);
+        }
+    } finally {
+        releaseNonStreamSlot();
+    }
+}
+
+export async function openAiChatComplete(
+    provider: AiProvider,
+    messages: ChatMessage[],
+    opts: ChatOptions = {},
+): Promise<string> {
+    const url = applyTemplate(provider.url, { model: provider.model, key: provider.apiKey });
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (provider.apiKey) headers["Authorization"] = `Bearer ${provider.apiKey}`;
+
+    const resp = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+            model: provider.model,
+            messages,
+            stream: false,
+            ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+            ...(opts.params !== undefined ? opts.params : {}),
+            ...(opts.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),
+        }),
+        signal: opts.signal,
+    });
+
+    if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        throw new Error(`AI request failed: HTTP ${resp.status} ${resp.statusText} ${errText}`);
+    }
+    const json = await resp.json();
+    const content: string | undefined = json?.choices?.[0]?.message?.content;
+    return typeof content === "string" ? content : "";
+}
+
+export async function geminiChatComplete(
+    provider: AiProvider,
+    messages: ChatMessage[],
+    opts: ChatOptions = {},
+): Promise<string> {
+    const systemParts: { text: string }[] = [];
+    type Content = { role: "user" | "model"; parts: { text: string }[] };
+    const contents: Content[] = [];
+    for (const m of messages) {
+        if (m.role === "system") {
+            systemParts.push({ text: m.content });
+            continue;
+        }
+        const role = m.role === "assistant" ? "model" : "user";
+        const last = contents[contents.length - 1];
+        if (last && last.role === role) {
+            last.parts.push({ text: m.content });
+        } else {
+            contents.push({ role, parts: [{ text: m.content }] });
+        }
+    }
+
+    // Unary generateContent endpoint — unlike the stream path we do NOT swap to
+    // streamGenerateContent or append alt=sse.
+    const url = applyTemplate(provider.url, { model: provider.model, key: provider.apiKey });
+    const body: any = {
+        contents,
+        ...(systemParts.length > 0 ? { systemInstruction: { parts: systemParts } } : {}),
+        generationConfig: {
+            ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+            ...(opts.maxTokens !== undefined ? { maxOutputTokens: opts.maxTokens } : {}),
+        },
+    };
+
+    const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: opts.signal,
+    });
+
+    if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        throw new Error(`Gemini request failed: HTTP ${resp.status} ${resp.statusText} ${errText}`);
+    }
+    const json = await resp.json();
+    const parts = json?.candidates?.[0]?.content?.parts;
+    let out = "";
+    if (Array.isArray(parts)) {
+        for (const p of parts) {
+            if (typeof p?.text === "string") out += p.text;
+        }
+    }
+    return out;
+}
+
+export async function claudeChatComplete(
+    provider: AiProvider,
+    messages: ChatMessage[],
+    opts: ChatOptions = {},
+): Promise<string> {
+    const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
+    const convo = messages
+        .filter((m) => m.role !== "system")
+        .map((m) => ({ role: m.role, content: m.content }));
+
+    const url = applyTemplate(provider.url, { model: provider.model, key: provider.apiKey });
+    const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "x-api-key": provider.apiKey,
+            "anthropic-version": "2023-06-01",
+            "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+            model: provider.model,
+            max_tokens: opts.maxTokens ?? 4096,
+            ...(system ? { system } : {}),
+            messages: convo,
+            stream: false,
+            ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+        }),
+        signal: opts.signal,
+    });
+
+    if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        throw new Error(`Claude request failed: HTTP ${resp.status} ${resp.statusText} ${errText}`);
+    }
+    const json = await resp.json();
+    const blocks = json?.content;
+    let out = "";
+    if (Array.isArray(blocks)) {
+        for (const b of blocks) {
+            if (typeof b?.text === "string") out += b.text;
+        }
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------

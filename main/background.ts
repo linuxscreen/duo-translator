@@ -28,6 +28,7 @@ import {
     buildPrompt,
     chatStream,
     chatComplete,
+    chatCompleteNonStream,
     normalizeProvider,
     AiProvider,
 } from "@/main/aiService";
@@ -67,6 +68,7 @@ const LOCALES: Record<InterfaceLang, Record<string, string>> = {
     en: enLocale as Record<string, string>,
     'zh-CN': zhCNLocale as Record<string, string>,
 };
+const SEPARATOR_TAG = "<sep/>"
 
 export function background() {
     console.log("background loaded")
@@ -540,6 +542,44 @@ export function background() {
                 })();
                 return true;
             }
+            case ACTION.AI_TRANSLATE_TEXT: {
+                // One-shot (non-streaming) page-translation via AI. content sends
+                // { requestId, providerId?, texts, targetLang }; we return the
+                // translations array. Cancellation: an AbortController is stored
+                // under requestId and its signal is forwarded to the upstream
+                // fetch, so an AI_TRANSLATE_ABORT for the same id cancels it.
+                (async () => {
+                    const { requestId, providerId, texts, targetLang } = (message.data || {}) as {
+                        requestId?: string;
+                        providerId?: string;
+                        texts: string[];
+                        targetLang: string;
+                    };
+                    const controller = new AbortController();
+                    if (requestId) aiTranslateAborters.set(requestId, controller);
+                    try {
+                        const translations = await aiPageTranslate(providerId, texts, targetLang, controller.signal);
+                        sendResponse({ status: STATUS_SUCCESS, data: translations });
+                    } catch (e: any) {
+                        console.error(APP_NAME_WITH_SUFFIX, 'AI translate failed:', e?.message || e);
+                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
+                    } finally {
+                        if (requestId) aiTranslateAborters.delete(requestId);
+                    }
+                })();
+                return true;
+            }
+            case ACTION.AI_TRANSLATE_ABORT: {
+                // Cancel the in-flight AI_TRANSLATE_TEXT fetch for this requestId.
+                const requestId: string | undefined = message.data?.requestId;
+                const controller = requestId ? aiTranslateAborters.get(requestId) : undefined;
+                if (controller) {
+                    controller.abort();
+                    aiTranslateAborters.delete(requestId!);
+                }
+                sendResponse({ status: STATUS_SUCCESS });
+                break;
+            }
             case ACTION.GLOBAL_SWITCH_CHANGE:
                 console.log('globalSwitchChange', message.data)
                 let globalSwitch = message.data
@@ -797,31 +837,16 @@ export function background() {
                 const messages = buildPrompt({
                     task: AI_TASK.PAGE_TRANSLATE,
                     providerId: provider.id,
-                    payload: { text: JSON.stringify(texts ?? []), targetLang },
+                    payload: { text: texts.join(SEPARATOR_TAG), targetLang },
                 });
                 const full = await chatComplete(provider, messages, { signal: controller.signal });
                 if (disposed) return;
-                // Model is instructed to return a JSON array; be forgiving and
-                // pull the first top-level [...] block if surrounded by prose.
-                let parsed: unknown;
-                try {
-                    parsed = JSON.parse(full);
-                } catch {
-                    const start = full.indexOf("[");
-                    const end = full.lastIndexOf("]");
-                    if (start >= 0 && end > start) {
-                        parsed = JSON.parse(full.slice(start, end + 1));
-                    } else {
-                        throw new Error("AI did not return a JSON array");
-                    }
-                }
-                if (!Array.isArray(parsed)) throw new Error("AI response was not a JSON array");
-                send({ type: "result", translations: parsed.map(String) });
+                send({ type: "result", translations: full.split(SEPARATOR_TAG).filter((s) => s.length > 0) });
             } catch (e: any) {
                 send({ type: "error", message: e?.message || String(e) });
                 // if (controller.signal.aborted) return;
             } finally {
-                try { port.disconnect(); } catch {}
+                try { port.disconnect(); } catch { }
             }
         });
     });
@@ -874,6 +899,103 @@ export function background() {
             }
         });
     });
+}
+
+// In-flight AbortControllers for one-shot AI_TRANSLATE_TEXT requests, keyed by
+// the content-supplied requestId. AI_TRANSLATE_ABORT looks one up to cancel the
+// upstream fetch. Entries are removed when the request settles.
+const aiTranslateAborters = new Map<string, AbortController>();
+
+/**
+ * Run a page-translation request against the configured AI provider and return
+ * the translations array. Shared by both the port-based streaming bridge
+ * (PORT_NAME.AI_TRANSLATE) and the one-shot ACTION.AI_TRANSLATE_TEXT handler.
+ * Throws on misconfiguration or a non-array model response.
+ */
+// Batch texts up to this many characters per upstream request. The concurrency
+// cap is enforced globally inside chatCompleteNonStream (a shared semaphore), so
+// firing every batch at once here is fine — the limiter throttles the actual
+// requests across all callers, not just this one invocation.
+const AI_PAGE_TRANSLATE_BATCH_CHARS = 500;
+
+async function aiPageTranslate(
+    providerId: string | undefined,
+    texts: string[],
+    targetLang: string,
+    signal?: AbortSignal,
+): Promise<string[]> {
+    const raw_list: any[] = ((await configRepo.get(CONFIG_KEY.AI_PROVIDERS)) as any[] | null) || [];
+    const list: AiProvider[] = raw_list.map(normalizeProvider);
+    let provider: AiProvider | undefined;
+    if (list.length > 0) {
+        const id = providerId || (await configRepo.get(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID));
+        provider = list.find((p) => p.id === id && p.enabled !== false)
+            || list.find((p) => p.enabled !== false);
+    }
+    if (!provider) throw new Error("No enabled AI provider configured.");
+
+    let temperature = 0; // todo support use defined temperature
+    let params: any; // todo support use defined params
+    if (provider.type === "deepseek") {
+        params = { thinking: { type: "disabled" } }
+    }
+
+    const all = texts ?? [];
+    if (all.length === 0) return [];
+
+    // Split into batches of <= AI_PAGE_TRANSLATE_BATCH_CHARS characters. Each
+    // batch is a contiguous slice so results can be written back into their
+    // original positions regardless of completion order. Concurrency is capped
+    // downstream by chatCompleteNonStream's global semaphore.
+    const batches: { start: number; texts: string[] }[] = [];
+    let cur: string[] = [];
+    let curStart = 0;
+    let curChars = 0;
+    for (let i = 0; i < all.length; i++) {
+        const len = all[i].length;
+        // Close the current batch if appending this text would exceed the
+        // char budget — unless the batch is empty (a single oversized text
+        // still has to go out on its own).
+        if (cur.length > 0 && curChars + len > AI_PAGE_TRANSLATE_BATCH_CHARS) {
+            batches.push({ start: curStart, texts: cur });
+            cur = [];
+            curStart = i;
+            curChars = 0;
+        }
+        cur.push(all[i]);
+        curChars += len;
+    }
+    if (cur.length > 0) batches.push({ start: curStart, texts: cur });
+
+    const results: string[] = new Array(all.length);
+
+    // Translate one batch and write its results back at the right offset.
+    const runBatch = async (batch: { start: number; texts: string[] }) => {
+        const messages = buildPrompt({
+            task: AI_TASK.PAGE_TRANSLATE,
+            providerId: provider!.id,
+            payload: { text: batch.texts.join(SEPARATOR_TAG), targetLang },
+        });
+        // Non-streaming: the upstream request is sent with stream:false (see
+        // chatCompleteNonStream) — page translation wants the full result in
+        // one response, not an SSE stream.
+        const full = await chatCompleteNonStream(provider!, messages, { temperature, signal, params });
+        const outs = full.split(SEPARATOR_TAG).filter((s) => s.length > 0);
+        // if (outs.length != texts.length) throw new Error(`Expected ${texts.length} translations, got ${outs.length}`)
+        
+        for (let i = 0; i < batch.texts.length; i++) {
+            // Guard against a short response — fall back to the source text so
+            // indices never drift out of alignment with the input array.
+            // todo fallback to machine translation
+            results[batch.start + i] = i < outs.length ? outs[i] : batch.texts[i];
+        }
+    };
+
+    // Fire every batch; the global semaphore in chatCompleteNonStream caps how
+    // many actually hit the network at once.
+    await Promise.all(batches.map(runBatch));
+
+    return results;
 }
 
 export class Domain {

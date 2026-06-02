@@ -178,6 +178,16 @@ export enum ACTION {
     // script cannot fetch it directly — background performs the fetch and
     // returns the raw JSON payload. content reshapes it into TranslateResult[].
     DEEPL_REQUEST = 'deeplRequest',
+    // One-shot (non-streaming) page-translation request to an AI provider.
+    // Unlike PORT_NAME.AI_TRANSLATE (port-based, abortable), this uses a plain
+    // sendMessage round-trip: background calls chatComplete and returns the
+    // full translations array. Preferred for page translation where streaming
+    // is unnecessary. The port path is kept as `streamTranslateText`.
+    AI_TRANSLATE_TEXT = 'aiTranslateText',
+    // Out-of-band cancellation for AI_TRANSLATE_TEXT. sendMessage has no native
+    // abort, so content fires this with the same requestId on signal abort;
+    // background aborts the in-flight fetch for that request.
+    AI_TRANSLATE_ABORT = 'aiTranslateAbort',
     OPEN_OPTIONS_PAGE = 'openOptionsPage',
     // Open the toolbar action popup (popup.html) anchored to the extension
     // icon — same surface/position as a manual icon click. Requested from the
