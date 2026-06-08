@@ -44,7 +44,7 @@ export function AiWritingPage() {
   const [activeProviderId, setActiveProviderId] = useState<string>('');
   const [enhanceProviderId, setEnhanceProviderId] = useState<string>('');
   const [translateServiceKey, setTranslateServiceKey] = useState<string>(
-    String(DEFAULT_VALUE.AI_DOT_TRANSLATE_SERVICE),
+    String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE),
   );
 
   const [whitelistMode, setWhitelistMode] = useState<boolean>(false);
@@ -70,14 +70,13 @@ export function AiWritingPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [sw, lang, mode, list, activeId, enhanceId, transKey, wlMode] = await Promise.all([
-        getConfig(CONFIG_KEY.AI_WRITING_DOT_SWITCH),
+      const [sw, lang, mode, list, activeId, transKey, wlMode] = await Promise.all([
+        getConfig(CONFIG_KEY.AI_WRITING_SWITCH),
         getConfig(CONFIG_KEY.AI_TARGET_LANG),
         getConfig(CONFIG_KEY.AI_DEFAULT_ENHANCE_MODE),
         getConfig(CONFIG_KEY.AI_PROVIDERS),
         getConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID),
-        getConfig(CONFIG_KEY.AI_DOT_ENHANCE_PROVIDER_ID),
-        getConfig(CONFIG_KEY.AI_DOT_TRANSLATE_SERVICE),
+        getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
         getConfig(CONFIG_KEY.AI_WRITING_WHITELIST_MODE),
       ]);
       if (cancelled) return;
@@ -91,12 +90,11 @@ export function AiWritingPage() {
       setActiveProviderId(typeof activeId === 'string' ? activeId : '');
       // Fallback chain mirrors the floating dot's resolution order.
       const resolvedEnhance =
-        arr.find((p: AiProvider) => p.id === enhanceId)?.id ||
         arr.find((p: AiProvider) => p.id === activeId)?.id ||
         arr[0]?.id ||
         '';
       setEnhanceProviderId(resolvedEnhance);
-      setTranslateServiceKey(transKey || String(DEFAULT_VALUE.AI_DOT_TRANSLATE_SERVICE));
+      setTranslateServiceKey(transKey || String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE));
       setWhitelistMode(!!wlMode);
       await refreshDomainLists();
       if (!cancelled) setReady(true);
@@ -108,7 +106,7 @@ export function AiWritingPage() {
 
   const toggleEnabled = async (v: boolean) => {
     setEnabled(v);
-    await setConfig(CONFIG_KEY.AI_WRITING_DOT_SWITCH, v);
+    await setConfig(CONFIG_KEY.AI_WRITING_SWITCH, v);
   };
   const changeTargetLang = async (v: string) => {
     setTargetLang(v);
@@ -120,11 +118,11 @@ export function AiWritingPage() {
   };
   const changeEnhanceProvider = async (v: string) => {
     setEnhanceProviderId(v);
-    await setConfig(CONFIG_KEY.AI_DOT_ENHANCE_PROVIDER_ID, v);
+    await setConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID, v);
   };
   const changeTranslateService = async (v: string) => {
     setTranslateServiceKey(v);
-    await setConfig(CONFIG_KEY.AI_DOT_TRANSLATE_SERVICE, v);
+    await setConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE, v);
   };
   const toggleWhitelistMode = async (v: boolean) => {
     setWhitelistMode(v);

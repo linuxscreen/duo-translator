@@ -39,7 +39,7 @@ export const DEFAULT_VALUE = {
     AI_WRITING_DOT_SWITCH: true,
     AI_TARGET_LANG: 'en',
     AI_DEFAULT_ENHANCE_MODE: 'polish',
-    AI_DOT_TRANSLATE_SERVICE: 'microsoft',
+    AI_TRANSLATE_SERVICE: 'microsoft',
     AI_USE_FOR_TRANSLATE_PAGE: true,
     BILINGUAL_HIGHLIGHTING_MIN_SENTENCES: 2,
     DOMAIN_STRATEGY: 'auto',
@@ -281,9 +281,9 @@ export enum CONFIG_KEY {
     CONTEXT_MENU_SWITCH = 'contextMenuSwitch',
     DISABLED_TRANSLATE_SERVICE = 'disabledTranslateService',
     // AI Writing
-    AI_WRITING_DOT_SWITCH = 'aiWritingDotSwitch',
+    AI_WRITING_SWITCH = 'aiWritingDotSwitch',
     AI_PROVIDERS = 'aiProviders',
-    AI_ACTIVE_PROVIDER_ID = 'aiActiveProviderId',
+    AI_ACTIVE_PROVIDER_ID = 'aiActiveProviderId', //which AI provider Better-Writing uses.
     AI_TARGET_LANG = 'aiTargetLang',
     // When true, the floating dot only mounts on domains explicitly added to
     // the enabled list (DomainStorage.aiWritingEnabled). When false (default),
@@ -291,13 +291,10 @@ export enum CONFIG_KEY {
     AI_WRITING_WHITELIST_MODE = 'aiWritingWhitelistMode',
     AI_DEFAULT_ENHANCE_MODE = 'aiDefaultEnhanceMode',
     // Per-task service selection for the floating dot.
-    // AI_DOT_TRANSLATE_SERVICE: either a TRANS_SERVICE value ('microsoft' |
+    // AI_TRANSLATE_SERVICE: either a TRANS_SERVICE value ('microsoft' |
     // 'google' | 'deepl') or `ai:<providerId>` to route translate through an
     // AI provider. Default: 'microsoft'.
-    AI_DOT_TRANSLATE_SERVICE = 'aiDotTranslateService',
-    // AI_DOT_ENHANCE_PROVIDER_ID: which AI provider Better-Writing uses.
-    // Falls back to AI_ACTIVE_PROVIDER_ID when unset.
-    AI_DOT_ENHANCE_PROVIDER_ID = 'aiDotEnhanceProviderId',
+    AI_TRANSLATE_SERVICE = 'aiDotTranslateService',
     // UI language override for popup/options/context menu. Empty/undefined
     // means "auto-detect from browser UI language".
     INTERFACE_LANG = 'interfaceLang',

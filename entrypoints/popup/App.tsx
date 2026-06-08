@@ -204,7 +204,7 @@ export default function App() {
   // background's AI_TRANSLATE port handler and resolveTranslateService consume.
   const aiServiceList = aiProviders.map((p) => ({
     value: `ai:${p.id}`,
-    label: p.name,
+    label: `${p.name} . ${p.model}`,
     type: p.type as string,
     isAi: true,
   }));

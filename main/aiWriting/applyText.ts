@@ -1,4 +1,17 @@
 /**
+ * Whether `applyTextToTarget` could actually write into `el` right now.
+ * True only for a connected <textarea> / <input> / contentEditable element —
+ * the same set `applyTextToTarget` knows how to write to. Used to gate the
+ * "Apply to input" button: if the cursor isn't in an editable target, applying
+ * is impossible, so the button must be disabled.
+ */
+export function canApplyToTarget(el: HTMLElement | null | undefined): boolean {
+    if (!el || !el.isConnected) return false;
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) return true;
+    return el.isContentEditable;
+}
+
+/**
  * Write `text` into the element the user was last focused on, in a way that
  * frameworks (React controlled inputs, Vue v-model, contentEditable rich
  * editors like Twitter / ChatGPT / Gmail) actually observe.

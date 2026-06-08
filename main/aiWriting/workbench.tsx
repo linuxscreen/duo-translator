@@ -6,14 +6,28 @@ import {
     CONFIG_KEY,
     DEFAULT_VALUE,
     LANGUAGES,
-    LANGUAGES_MAP,
+    TRANS_SERVICE,
 } from "@/main/constants";
+import type { AiProvider } from "@/main/aiService";
 import { startAiChatStream } from "@/main/aiService";
-import { getConfig } from "@/utils/db";
-import { applyTextToTarget } from "./applyText";
+import { getConfig, setConfig } from "@/utils/db";
+import { applyTextToTarget, canApplyToTarget } from "./applyText";
 import { DiffView } from "./DiffView";
+import {
+    buildTranslateServiceKey,
+    parseTranslateServiceKey,
+    startTranslate,
+    type TranslateServiceChoice,
+} from "./translateRunner";
 import { loadTailwindIntoShadow } from "./shadowStyle";
 import { t, useLang } from "./i18n";
+import { useCopyFeedback } from "./useCopyFeedback";
+
+const REGULAR_TRANSLATORS: { value: string; label: string }[] = [
+    { value: TRANS_SERVICE.MICROSOFT, label: "Microsoft" },
+    { value: TRANS_SERVICE.GOOGLE, label: "Google" },
+    { value: TRANS_SERVICE.DEEPL, label: "DeepL" },
+];
 
 // ---------------------------------------------------------------------------
 // Singleton mount
@@ -85,13 +99,27 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
     useLang();
     const [open, setOpen] = useState(false);
     const [input, setInput] = useState("");
+    // Snapshot of the original text at the moment Run was pressed. The diff is
+    // computed against this, NOT the live `input`, so editing the original
+    // afterward doesn't mutate the already-generated diff until the next Run.
+    const [baseText, setBaseText] = useState("");
     const [output, setOutput] = useState("");
     const [task, setTask] = useState<AI_TASK>(AI_TASK.POLISH);
     const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANG);
     const [running, setRunning] = useState(false);
+    const [copied, copy] = useCopyFeedback();
     const [error, setError] = useState<string | null>(null);
-    const [view, setView] = useState<"text" | "diff">("text");
+    // Enhance mode defaults to the Diff view (Diff sits before Text in the
+    // toggle); translate mode ignores `view` and always renders plain text.
+    const [view, setView] = useState<"text" | "diff">("diff");
     const [pos, setPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+    // Service selection — translate routes through a translator/AI provider,
+    // enhance routes through an AI provider (the "model").
+    const [providers, setProviders] = useState<AiProvider[]>([]);
+    const [translateChoice, setTranslateChoice] = useState<TranslateServiceChoice>({
+        kind: "trans", service: String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE),
+    });
+    const [enhanceProviderId, setEnhanceProviderId] = useState<string>("");
     const targetRef = useRef<HTMLElement | null>(null);
     const abortRef = useRef<(() => void) | null>(null);
     const dialogRef = useRef<HTMLDivElement>(null);
@@ -102,7 +130,7 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
             setInput(seed.text || "");
             setOutput("");
             setError(null);
-            setView("text");
+            setView("diff");
             if (seed.task) setTask(seed.task);
             targetRef.current = seed.targetEl ?? null;
             // Center on viewport on first open.
@@ -112,10 +140,22 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                 x: Math.max(20, Math.round((window.innerWidth - w) / 2)),
                 y: Math.max(20, Math.round((window.innerHeight - h) / 2)),
             });
-            // Seed default targetLang from saved config when available.
-            getConfig(CONFIG_KEY.AI_TARGET_LANG).then((v) => {
-                if (v) setTargetLang(v);
-            });
+            // Hydrate selections from saved config on each open so the
+            // workbench mirrors the floating dot's remembered choices.
+            (async () => {
+                const [lang, transKey, list, activeId] = await Promise.all([
+                    getConfig(CONFIG_KEY.AI_TARGET_LANG),
+                    getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
+                    getConfig(CONFIG_KEY.AI_PROVIDERS),
+                    getConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID),
+                ]);
+                if (lang) setTargetLang(lang);
+                setTranslateChoice(parseTranslateServiceKey(transKey || String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE)));
+                const arr: AiProvider[] = (Array.isArray(list) ? list : [])
+                    .filter((p: AiProvider) => p?.enabled !== false);
+                setProviders(arr);
+                setEnhanceProviderId(arr.find((p) => p.id === activeId)?.id || arr[0]?.id || "");
+            })();
         });
     }, [registerOpen]);
 
@@ -140,14 +180,31 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
 
     const run = async () => {
         if (!input.trim() || running) return;
-        setRunning(true);
+        // Translate ignores `view`; enhance defaults to Diff.
+        setView(task === AI_TASK.TRANSLATE ? "text" : "diff");
         setOutput("");
         setError(null);
-        setView("text");
-        const { stream, abort } = startAiChatStream({
-            task,
-            payload: { text: input, lang: targetLang },
-        });
+        // Freeze the original for the diff so later edits to the left pane
+        // don't retroactively change this run's diff.
+        setBaseText(input);
+
+        let running$: { stream: AsyncIterable<string>; abort: () => void };
+        if (task === AI_TASK.TRANSLATE) {
+            running$ = startTranslate(input, targetLang, translateChoice);
+        } else {
+            // Enhance needs an AI provider (the chosen model).
+            if (providers.length === 0 || !enhanceProviderId) {
+                setError(t("aiNoProviderShort", "Configure a provider in Options → AI Writing first."));
+                return;
+            }
+            running$ = startAiChatStream({
+                task,
+                providerId: enhanceProviderId,
+                payload: { text: input },
+            });
+        }
+        setRunning(true);
+        const { stream, abort } = running$;
         abortRef.current = abort;
         try {
             for await (const delta of stream) {
@@ -161,6 +218,29 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
         }
     };
 
+    // Switching the task starts a fresh, independent result — drop whatever
+    // the previous task produced so a stale diff/translation isn't shown.
+    const onChangeTask = (next: AI_TASK) => {
+        if (next === task) return;
+        if (abortRef.current) { abortRef.current(); abortRef.current = null; }
+        setTask(next);
+        setOutput("");
+        setError(null);
+        setRunning(false);
+        setView(next === AI_TASK.TRANSLATE ? "text" : "diff");
+    };
+
+    // Persist + apply service selection (mirrors the floating dot).
+    const onPickTranslateService = (key: string) => {
+        const c = parseTranslateServiceKey(key);
+        setTranslateChoice(c);
+        setConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE, buildTranslateServiceKey(c));
+    };
+    const onPickEnhanceProvider = (id: string) => {
+        setEnhanceProviderId(id);
+        setConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID, id);
+    };
+
     const stop = () => {
         if (abortRef.current) abortRef.current();
         abortRef.current = null;
@@ -170,10 +250,6 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
     const apply = () => {
         const ok = applyTextToTarget(targetRef.current, output);
         if (ok) close();
-    };
-
-    const copy = async () => {
-        try { await navigator.clipboard.writeText(output); } catch { /* ignore */ }
     };
 
     // Drag handling.
@@ -247,23 +323,64 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                 <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-[rgba(140,180,230,0.08)]">
                     <select
                         value={task}
-                        onChange={(e) => setTask(e.target.value as AI_TASK)}
+                        onChange={(e) => onChangeTask(e.target.value as AI_TASK)}
                         className="h-7 rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-2"
                     >
                         {TASK_OPTIONS.map((o) => (
                             <option key={o.value} value={o.value}>{t(o.labelKey, o.fallback)}</option>
                         ))}
                     </select>
-                    {task === AI_TASK.TRANSLATE && (
-                        <select
-                            value={targetLang}
-                            onChange={(e) => setTargetLang(e.target.value)}
-                            className="h-7 rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-2"
-                        >
-                            {LANGUAGES.map((l) => (
-                                <option key={l.value} value={l.value}>{t(l.title, l.title)}</option>
-                            ))}
-                        </select>
+                    {task === AI_TASK.TRANSLATE ? (
+                        <>
+                            <select
+                                title={t("aiTargetLang", "Translate to")}
+                                value={targetLang}
+                                onChange={(e) => setTargetLang(e.target.value)}
+                                className="h-7 rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-2"
+                            >
+                                {LANGUAGES.map((l) => (
+                                    <option key={l.value} value={l.value}>{t(l.title, l.title)}</option>
+                                ))}
+                            </select>
+                            {/* Translate service: built-in translators + configured AI providers. */}
+                            <select
+                                value={buildTranslateServiceKey(translateChoice)}
+                                onChange={(e) => onPickTranslateService(e.target.value)}
+                                title={t("aiTranslateWith", "Translate with")}
+                                className="h-7 rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-2"
+                            >
+                                <optgroup label={t("aiGroupTranslators", "Translators")}>
+                                    {REGULAR_TRANSLATORS.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                    ))}
+                                </optgroup>
+                                {providers.length > 0 && (
+                                    <optgroup label={t("aiGroupAiProviders", "AI providers")}>
+                                        {providers.map((p) => (
+                                            <option key={p.id} value={`ai:${p.id}`}>{p.name} · {p.model}</option>
+                                        ))}
+                                    </optgroup>
+                                )}
+                            </select>
+                        </>
+                    ) : (
+                        /* Enhance modes: pick the AI provider (model). */
+                        providers.length > 0 ? (
+                            <select
+                                value={enhanceProviderId}
+                                onChange={(e) => onPickEnhanceProvider(e.target.value)}
+                                title={t("aiSwitchProvider", "Switch AI provider")}
+                                className="h-7 rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-2"
+                            >
+                                {providers.map((p) => (
+                                    <option key={p.id} value={p.id}>{p.name} · {p.model}</option>
+                                ))}
+                            </select>
+                        ) : (
+                            <span className="text-[11.5px] text-[#8a93a8]">
+                                {t("aiNoProviderConfigured", "No AI provider configured")}
+                            </span>
+                        )
                     )}
                     <div className="flex-1" />
                     {running ? (
@@ -306,14 +423,14 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                                 <div className="flex items-center gap-1">
                                     <button
                                         type="button"
-                                        onClick={() => setView("text")}
-                                        className={`px-1.5 py-0.5 rounded ${view === "text" ? "bg-[rgba(120,200,230,0.12)] text-[oklch(0.86_0.16_195)]" : "text-[#8a93a8] hover:bg-[rgba(120,200,230,0.05)]"}`}
-                                    >{t("aiViewText", "Text")}</button>
-                                    <button
-                                        type="button"
                                         onClick={() => setView("diff")}
                                         className={`px-1.5 py-0.5 rounded ${view === "diff" ? "bg-[rgba(120,200,230,0.12)] text-[oklch(0.86_0.16_195)]" : "text-[#8a93a8] hover:bg-[rgba(120,200,230,0.05)]"}`}
                                     >{t("aiViewDiff", "Diff")}</button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setView("text")}
+                                        className={`px-1.5 py-0.5 rounded ${view === "text" ? "bg-[rgba(120,200,230,0.12)] text-[oklch(0.86_0.16_195)]" : "text-[#8a93a8] hover:bg-[rgba(120,200,230,0.05)]"}`}
+                                    >{t("aiViewText", "Text")}</button>
                                 </div>
                             )}
                         </div>
@@ -324,8 +441,8 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                                 <span className="inline-flex items-center gap-1.5 text-[#8a93a8]">
                                     <Loader2 className="h-3 w-3 animate-spin" /> {t("aiStreaming", "Streaming...")}
                                 </span>
-                            ) : view === "diff" && task !== AI_TASK.TRANSLATE ? (
-                                <DiffView original={input} rewritten={output} />
+                            ) : output && view === "diff" && task !== AI_TASK.TRANSLATE ? (
+                                <DiffView original={baseText} rewritten={output} />
                             ) : (
                                 output
                             )}
@@ -337,18 +454,18 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                 <div className="flex items-center justify-end gap-2 px-3 py-2 border-t border-[rgba(140,180,230,0.08)] bg-[#0a111c]">
                     <button
                         type="button"
-                        onClick={copy}
+                        onClick={() => copy(output)}
                         disabled={!output}
                         className="h-7 px-2 inline-flex items-center gap-1 rounded-md border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] hover:border-[oklch(0.86_0.16_195)] disabled:opacity-40"
                     >
-                        <Copy className="h-3 w-3" /> {t("aiCopy", "Copy")}
+                        <Copy className="h-3 w-3" /> {copied ? t("aiCopied", "Copied") : t("aiCopy", "Copy")}
                     </button>
                     <button
                         type="button"
                         onClick={apply}
-                        disabled={!output || !targetRef.current?.isConnected}
-                        title={!targetRef.current?.isConnected ? t("aiOriginalInputGone", "Original input is no longer available") : undefined}
-                        className="duo-ai-primary h-7 px-3 inline-flex items-center gap-1 rounded-md text-[12px]"
+                        disabled={!output || !canApplyToTarget(targetRef.current)}
+                        title={!canApplyToTarget(targetRef.current) ? t("aiNoEditableTarget", "Place the cursor in an editable input to apply") : undefined}
+                        className="duo-ai-primary h-7 px-3 inline-flex items-center gap-1 rounded-md text-[12px] disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                         {t("aiApplyToInput", "Apply to input")}
                     </button>

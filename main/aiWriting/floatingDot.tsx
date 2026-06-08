@@ -36,6 +36,7 @@ import { applyTextToTarget } from "./applyText";
 import { DiffView } from "./DiffView";
 import { ensureWorkbenchMounted, openWorkbench } from "./workbench";
 import { t, useLang } from "./i18n";
+import { useCopyFeedback } from "./useCopyFeedback";
 import {
     buildTranslateServiceKey,
     parseTranslateServiceKey,
@@ -65,7 +66,7 @@ export async function mountAiWritingDot(opts: MountOptions): Promise<() => void>
     if (document.getElementById(HOST_ID)) return () => { };
 
     const [globalSwitch, whitelistMode, domainDoc] = await Promise.all([
-        getConfig(CONFIG_KEY.AI_WRITING_DOT_SWITCH),
+        getConfig(CONFIG_KEY.AI_WRITING_SWITCH),
         getConfig(CONFIG_KEY.AI_WRITING_WHITELIST_MODE),
         sendMessageToBackground({ action: DB_ACTION.DOMAIN_GET, data: { domain: opts.domain } }),
     ]);
@@ -143,7 +144,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
     // Preferences (hydrated from config).
     const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANG);
     const [translateChoice, setTranslateChoice] = useState<TranslateServiceChoice>({
-        kind: "trans", service: String(DEFAULT_VALUE.AI_DOT_TRANSLATE_SERVICE),
+        kind: "trans", service: String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE),
     });
     const [enhanceProviderId, setEnhanceProviderId] = useState<string>("");
     const [providers, setProviders] = useState<AiProvider[]>([]);
@@ -171,25 +172,23 @@ function FloatingDotApp({ domain }: { domain: string }) {
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const [lang, transKey, enhanceId, list, activeId] = await Promise.all([
+            const [lang, transKey, list, activeId] = await Promise.all([
                 getConfig(CONFIG_KEY.AI_TARGET_LANG),
-                getConfig(CONFIG_KEY.AI_DOT_TRANSLATE_SERVICE),
-                getConfig(CONFIG_KEY.AI_DOT_ENHANCE_PROVIDER_ID),
+                getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
                 getConfig(CONFIG_KEY.AI_PROVIDERS),
                 getConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID),
             ]);
             if (cancelled) return;
             setTargetLang(lang || DEFAULT_VALUE.AI_TARGET_LANG);
-            setTranslateChoice(parseTranslateServiceKey(transKey || String(DEFAULT_VALUE.AI_DOT_TRANSLATE_SERVICE)));
+            setTranslateChoice(parseTranslateServiceKey(transKey || String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE)));
             // Hide disabled providers from selection — config carries `enabled`
             // (undefined for legacy records, treated as true).
             const arr: AiProvider[] = (Array.isArray(list) ? list : [])
                 .filter((p: AiProvider) => p?.enabled !== false);
             setProviders(arr);
             // Resolve enhance provider with fallback chain:
-            // explicit AI_DOT_ENHANCE_PROVIDER_ID → AI_ACTIVE_PROVIDER_ID → first
-            const resolved = arr.find((p) => p.id === enhanceId)?.id
-                || arr.find((p) => p.id === activeId)?.id
+            // explicit AI_ACTIVE_PROVIDER_ID → first
+            const resolved = arr.find((p) => p.id === activeId)?.id
                 || arr[0]?.id
                 || "";
             setEnhanceProviderId(resolved);
@@ -363,11 +362,11 @@ function FloatingDotApp({ domain }: { domain: string }) {
     };
     const persistTranslateChoice = async (c: TranslateServiceChoice) => {
         setTranslateChoice(c);
-        await setConfig(CONFIG_KEY.AI_DOT_TRANSLATE_SERVICE, buildTranslateServiceKey(c));
+        await setConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE, buildTranslateServiceKey(c));
     };
     const persistEnhanceProvider = async (id: string) => {
         setEnhanceProviderId(id);
-        await setConfig(CONFIG_KEY.AI_DOT_ENHANCE_PROVIDER_ID, id);
+        await setConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID, id);
     };
 
     // ---- Run a task --------------------------------------------------------
@@ -502,7 +501,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
             }
             setSessionHidden(true);
         } else if (choice === "forever") {
-            await setConfig(CONFIG_KEY.AI_WRITING_DOT_SWITCH, false);
+            await setConfig(CONFIG_KEY.AI_WRITING_SWITCH, false);
             setSessionHidden(true);
         }
     };
@@ -550,7 +549,6 @@ function FloatingDotApp({ domain }: { domain: string }) {
                             targetLang={targetLang}
                             translateKey={buildTranslateServiceKey(translateChoice)}
                             onApply={apply}
-                            onCopy={() => navigator.clipboard.writeText(result.output).catch(() => { })}
                             onClose={() => { setResult(null); resultRef.current = null; maybeHideAfterPopoverClose(); }}
                             onStop={() => { abortRef.current?.(); }}
                             onSwitchEnhanceProvider={onPickEnhanceProvider}
@@ -821,7 +819,7 @@ function SettingsPopover({
                 </button>
             </div>
 
-                        <Field label={t("aiBetterWritingWith", "Better writing with")}>
+            <Field label={t("aiBetterWritingWith", "Better writing with")}>
                 {providers.length === 0 ? (
                     <div className="flex items-center justify-between gap-2 rounded bg-[#070b14] border border-[rgba(140,180,230,0.18)] px-2 py-1.5">
                         <span className="text-[11.5px] text-[#8a93a8]">{t("aiNoProviderConfigured", "No AI provider configured")}</span>
@@ -907,7 +905,7 @@ function ResultBubble({
     currentEnhanceProvider,
     targetLang,
     translateKey,
-    onApply, onCopy, onClose, onStop,
+    onApply, onClose, onStop,
     onSwitchEnhanceProvider,
     onSwitchMode,
     onSwitchLang,
@@ -920,7 +918,6 @@ function ResultBubble({
     targetLang: string;
     translateKey: string;
     onApply: () => void;
-    onCopy: () => void;
     onClose: () => void;
     onStop: () => void;
     onSwitchEnhanceProvider: (id: string) => void;
@@ -930,27 +927,27 @@ function ResultBubble({
     onConfigureAi: () => void;
 }) {
     useLang();
+    const [copied, copy] = useCopyFeedback();
     const isTranslate = result.task === AI_TASK.TRANSLATE;
     const isNoProvider = result.error === "__NO_PROVIDER__";
     const showDiff = !isTranslate && result.output.length > 0;
 
     // Compact dark select — explicit `<option>` bg so platforms (notably
     // Windows/Linux) don't render a white dropdown that hides the text.
-    const selectCls = "h-5 max-w-[150px] rounded bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[10.5px] text-[#eef1f8] px-1 truncate";
+    const selectCls = "h-5 min-w-0 max-w-[150px] rounded bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[10.5px] text-[#eef1f8] px-1 truncate";
     const optionCls = "bg-[#0f1623] text-[#eef1f8]";
 
     return (
         <div className="w-[360px] max-w-[80vw] max-h-[320px] flex flex-col rounded-lg bg-[#0f1623]/95 border border-[rgba(140,180,230,0.18)] shadow-[0_8px_28px_rgba(0,0,0,0.5)] backdrop-blur-md overflow-hidden">
             <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-[rgba(140,180,230,0.08)] gap-2">
-                <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                    {result.running && <Loader2 className="h-3 w-3 animate-spin text-[#8a93a8] shrink-0" />}
+                <div className="flex items-center gap-1.5 min-w-0">
                     {isTranslate ? (
                         <>
                             <select
                                 value={targetLang}
                                 onChange={(e) => onSwitchLang(e.target.value)}
                                 title={t("aiTargetLang", "Target language")}
-                                className={selectCls + " max-w-[90px]"}
+                                className={selectCls + " w-[90px] shrink-0"}
                             >
                                 {LANGUAGES.map((l) => (
                                     <option key={l.value} value={l.value} className={optionCls}>{t(l.title, l.title)}</option>
@@ -1003,6 +1000,7 @@ function ResultBubble({
                             )}
                         </>
                     )}
+                    {result.running && <Loader2 className="h-3 w-3 animate-spin text-[#8a93a8] shrink-0" />}
                 </div>
                 <div className="flex items-center gap-1">
                     {result.running && (
@@ -1048,7 +1046,7 @@ function ResultBubble({
                 ) : showDiff ? (
                     <DiffView original={result.original} rewritten={result.output} compact />
                 ) : (
-                    result.output || (result.running ? "" : "—")
+                    result.output
                 )}
             </div>
 
@@ -1056,11 +1054,11 @@ function ResultBubble({
                 <div className="flex items-center justify-end gap-1.5 px-2.5 py-1.5 border-t border-[rgba(140,180,230,0.08)] bg-[#0a111c]">
                     <button
                         type="button"
-                        onClick={onCopy}
+                        onClick={() => copy(result.output)}
                         onMouseDown={(e) => e.preventDefault()}
                         disabled={!result.output}
                         className="h-6 px-2 rounded-md border border-[rgba(140,180,230,0.18)] text-[11px] text-[#eef1f8] hover:border-[oklch(0.86_0.16_195)] disabled:opacity-40"
-                    >{t("aiCopy", "Copy")}</button>
+                    >{copied ? t("aiCopied", "Copied") : t("aiCopy", "Copy")}</button>
                     <button
                         type="button"
                         onClick={onApply}

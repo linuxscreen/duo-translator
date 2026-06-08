@@ -646,8 +646,10 @@ export function startAiChatStream(req: AiStreamRequest): {
             }
         }
     };
-    port.onMessage.addListener(onMessage);
-    port.onDisconnect.addListener(() => {
+    // Terminate the iteration as "done", resolving any pending `next()` so a
+    // parked `for await` loop unblocks and runs to completion. Safe to call
+    // multiple times.
+    const finish = () => {
         ended = true;
         if (resolveNext) {
             const r = resolveNext;
@@ -655,7 +657,10 @@ export function startAiChatStream(req: AiStreamRequest): {
             rejectNext = null;
             r({ value: undefined as any, done: true });
         }
-    });
+    };
+
+    port.onMessage.addListener(onMessage);
+    port.onDisconnect.addListener(finish);
 
     const stream: AsyncIterable<string> = {
         [Symbol.asyncIterator]() {
@@ -682,7 +687,11 @@ export function startAiChatStream(req: AiStreamRequest): {
 
     return {
         stream,
-        abort: () => { try { port.disconnect(); } catch {} },
+        // Calling `port.disconnect()` does NOT fire our own `onDisconnect`
+        // listener (only the other end is notified), so we must `finish()`
+        // ourselves — otherwise a `for await` loop parked on `next()` hangs
+        // forever and the caller's `running` flag never clears.
+        abort: () => { finish(); try { port.disconnect(); } catch {} },
     };
 }
 
