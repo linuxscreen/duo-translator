@@ -9,8 +9,6 @@ lerna-debug.log*
 
 node_modules
 .output
-stats.html
-stats-*.json
 .wxt
 web-ext.config.ts
 
@@ -25,13 +23,6 @@ web-ext.config.ts
 *.sln
 *.sw?
 
-a.html
-a.json
-b.html
-demo.ts
-index.html
-log.ts
-background.ts.back
 utils/generateI18nJsonFile.ts
 utils/messages.json
 demo/*
@@ -46,8 +37,9 @@ entrypoints/test
 .env.development
 .env.production
 
-.dev
-
 # AI
 CLAUDE.local.md
 .codex
+
+# others
+.dev

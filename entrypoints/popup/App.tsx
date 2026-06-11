@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Globe, HelpCircle, PenLine, Settings as SettingsIcon, Sparkles } from 'lucide-react';
+import { AirplayIcon, Globe, HelpCircle, PenLine, Settings as SettingsIcon, Sparkles } from 'lucide-react';
 
 import {
   ACTION,
+  APP_NAME,
   CONFIG_KEY,
   DB_ACTION,
   DEFAULT_STRATEGY,
+  DEFAULT_STRATEGY_OPTIONS,
   DEFAULT_VALUE,
   DOMAIN_STRATEGY,
   LANGUAGES,
@@ -15,6 +17,7 @@ import {
   TRANS_ACTION,
   TRANSLATE_SERVICES,
   TRANSLATE_STATUS_KEY,
+  TranslateServiceMeta,
   VIEW_STRATEGY,
 } from '@/main/constants';
 import type { AiProvider } from '@/main/aiService';
@@ -25,8 +28,10 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ServiceMark } from '@/components/ui/service-mark';
 import { Switch } from '@/components/ui/switch';
-import { browser } from 'wxt/browser';
+import { Browser, browser } from 'wxt/browser';
 import { Button } from '@/components/ui/button';
+import { use } from 'i18next';
+import { buildServiceOptions, getService } from '@/utils/service';
 
 const getConfig = (name: string) =>
   sendMessageToBackground({ action: DB_ACTION.CONFIG_GET, data: { name } });
@@ -47,7 +52,7 @@ export default function App() {
   const [mode, setMode] = useState<VIEW_STRATEGY>(VIEW_STRATEGY.DOUBLE);
   let lang = navigator.language.split('-')[0];
   const [targetLanguage, setTargetLanguage] = useState(lang);
-  const [service, setService] = useState<string>(DEFAULT_VALUE.TRANSLATE_SERVICE);
+  const [service, setService] = useState<string>();
   const [translateActive, setTranslateActive] = useState(false);
   const [defaultStrategy, setDefaultStrategy] = useState<DEFAULT_STRATEGY>(DEFAULT_STRATEGY.AUTO);
   const [siteRule, setSiteRule] = useState<DOMAIN_STRATEGY>(DOMAIN_STRATEGY.AUTO);
@@ -57,48 +62,60 @@ export default function App() {
   // Enabled AI providers (filtered by the per-card Use-for-page toggle).
   // Appended below the built-in translation services in the dropdown.
   const [aiProviders, setAiProviders] = useState<AiProvider[]>([]);
+  const [translateServices, setTranslateServices] = useState<TranslateServiceMeta[]>([]);
+  let tabId: number | undefined
 
   // Hydrate from background storage on mount
   useEffect(() => {
+    console.log("popup mount")
     let cancelled = false;
+    const listener = (message: any, sender: Browser.runtime.MessageSender, sendResponse: (response?: any) => void) => {
+      if (message.action === TRANS_ACTION.TRANSLATE_STATUS_CHANGE) {
+        console.log("receive message:", message, tabId)
+        if (tabId !== undefined && message.data.tabId === tabId && typeof message.data.status === 'boolean') {
+          setTranslateActive(message.data.status)
+        }
+      }
+    }
+    browser.runtime.onMessage.addListener(listener);
+
     (async () => {
-      const [gs, vs, tl, ts, ds, bh, d, id, aiList, aiUseForPage] = await Promise.all([
+      const [gs, vs, tl, ts, ds, bh, d, id]: [
+        boolean, VIEW_STRATEGY, string | undefined, string | undefined, DEFAULT_STRATEGY, boolean,
+        string | undefined, number | undefined
+      ] = await Promise.all([
         getConfig(CONFIG_KEY.GLOBAL_SWITCH),
         getConfig(CONFIG_KEY.VIEW_STRATEGY),
-        getConfig(CONFIG_KEY.TARGET_LANG),
+        getConfig(CONFIG_KEY.TARGET_LANGUAGE),
         getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
         getConfig(CONFIG_KEY.DEFAULT_STRATEGY),
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
         sendMessageToBackground({ action: TB_ACTION.TAB_DOMAIN_GET }),
         sendMessageToBackground({ action: TB_ACTION.ID_GET }),
-        getConfig(CONFIG_KEY.AI_PROVIDERS),
-        getConfig(CONFIG_KEY.AI_USE_FOR_TRANSLATE_PAGE),
       ]);
+      tabId = id
+      let { activeService, enabledTranslateServices, enabledAiProviders, aiUsedForTranslatePage } = await getService(ts);
+
       if (cancelled) return;
       console.log("domain: ", d)
 
       // Surface AI providers in the service dropdown only when:
-      //  (a) the global "use for translate page" toggle is on (default true)
+      //  (a) the global "Also used for translate page" toggle is on (default true)
       //  (b) the provider itself is enabled (legacy records without `enabled`
       //      are treated as enabled).
-      const useForPage = aiUseForPage === undefined ? !!DEFAULT_VALUE.AI_USE_FOR_TRANSLATE_PAGE : !!aiUseForPage;
-      if (useForPage && Array.isArray(aiList)) {
-        setAiProviders((aiList as AiProvider[]).filter((p) => p?.enabled !== false));
+      if (aiUsedForTranslatePage) {
+        setAiProviders(enabledAiProviders);
       }
+      setTranslateServices(enabledTranslateServices);
 
-      if (typeof gs === 'boolean') setGlobalOn(gs);
-      if (vs === VIEW_STRATEGY.SINGLE) setMode(VIEW_STRATEGY.SINGLE);
-      else if (vs === VIEW_STRATEGY.DOUBLE) setMode(VIEW_STRATEGY.DOUBLE);
-      if (typeof tl === 'string') setTargetLanguage(tl);
-      if (typeof ts === 'string') setService(ts);
-      if (
-        ds === DOMAIN_STRATEGY.ALWAYS ||
-        ds === DOMAIN_STRATEGY.NEVER ||
-        ds === DOMAIN_STRATEGY.AUTO
-      ) {
-        setDefaultStrategy(ds);
-      }
-      if (typeof bh === 'boolean') setHighlight(bh);
+      setGlobalOn(gs);
+      setMode(vs);
+      setTargetLanguage(tl || navigator.language.split('-')[0]);
+
+      setService(activeService)
+      console.log("service: ", service)
+      setDefaultStrategy(ds);
+      setHighlight(bh);
       if (typeof d === 'string') setDomain(d);
 
       if (typeof d === 'string' && d.length > 0) {
@@ -125,13 +142,18 @@ export default function App() {
       if (!cancelled) setReady(true);
     })();
     return () => {
+      browser.runtime.onMessage.removeListener(listener);
       cancelled = true;
     };
   }, []);
 
   const openHelpPage = () => {
-    browser.tabs.create({ url: "https://duotranslator.com/docs" });
+    browser.tabs.create({ url: `${import.meta.env.VITE_WEBSITE}/docs` });
   };
+
+  const aiWritingClick = (e: React.MouseEvent) => {
+    openAiWorkbench()
+  }
 
   const onGlobalSwitchToggle = (v: boolean) => {
     setGlobalOn(v);
@@ -148,7 +170,7 @@ export default function App() {
 
   const onTargetLanguageChange = (v: string) => {
     setTargetLanguage(v);
-    void setConfig(CONFIG_KEY.TARGET_LANG, v);
+    void setConfig(CONFIG_KEY.TARGET_LANGUAGE, v);
     void sendMessageToAllTabs({ action: ACTION.TARGET_LANG_CHANGE, data: v });
   };
 
@@ -160,7 +182,9 @@ export default function App() {
 
   const onTranslateToggle = (active: boolean) => {
     setTranslateActive(active);
-    void sendMessageToTab({ action: active ? TRANS_ACTION.TRANSLATE : TRANS_ACTION.SHOW_ORIGINAL });
+    void sendMessageToTab({ action: active ? TRANS_ACTION.TRANSLATE : TRANS_ACTION.SHOW_ORIGINAL }).then(() => {
+      window.close()
+    });
   };
 
   const onDefaultStrategyChange = (v: DEFAULT_STRATEGY) => {
@@ -194,21 +218,18 @@ export default function App() {
     window.close();
   };
 
-  const baseServiceList = Array.from(TRANSLATE_SERVICES.values()).map((svc) => ({
-    value: svc.value,
-    label: t(svc.title, svc.name),
-    type: "default",
-    isAi: false,
-  }));
-  // AI provider entries use the `ai:<id>` value scheme — the same key the
-  // background's AI_TRANSLATE port handler and resolveTranslateService consume.
-  const aiServiceList = aiProviders.map((p) => ({
-    value: `ai:${p.id}`,
-    label: `${p.name} . ${p.model}`,
-    type: p.type as string,
-    isAi: true,
-  }));
-  const serviceList = [...baseServiceList, ...aiServiceList];
+  const openShortcutsPage = () => {
+    browser.tabs.create({ url : "options.html#shortcuts"});
+  }
+
+  const openFeedbackPage = () => {
+    browser.tabs.create({ url: `${import.meta.env.VITE_GITHUB_URL}/issues` });
+  }
+
+  // Flat (ungrouped) list of translators + AI providers — shared shape used by
+  // every service picker (popup / options / AI writing). AI provider entries
+  // use the `ai:<id>` value scheme the background's AI_TRANSLATE port consumes.
+  const serviceList = buildServiceOptions(translateServices, aiProviders);
 
   const version =
     browser.runtime?.getManifest?.()?.version || '';
@@ -221,32 +242,20 @@ export default function App() {
     <div className="relative w-[380px] overflow-hidden bg-bg text-ink before:pointer-events-none before:absolute before:inset-0 before:opacity-50 before:bg-[radial-gradient(ellipse_80%_30%_at_50%_0%,var(--color-accent-soft),transparent_70%)]">
       {/* Header */}
       <div className="relative z-10 flex items-center justify-between border-b border-line bg-surface px-3 py-2">
-        <button type="button" className="flex items-center gap-2.5 text-left">
-          <span
-            className="block h-5 w-5 shrink-0 rounded-full border border-line-strong"
-            style={{
-              background:
-                'radial-gradient(circle at 30% 30%, rgba(255,255,255,0.4) 0%, transparent 35%), linear-gradient(135deg, #2a3142, #161a23)',
-            }}
-          />
-          <span className="flex min-w-0 flex-col gap-px">
-            {/* <span className="truncate text-[12.5px] font-medium text-ink-soft">
-              {t('signedOut', 'Not signed in')}
-            </span> */}
-            <span className="font-mono text-[10.5px] font-medium tracking-[0.04em] text-accent">
-              {t('signIn', 'Sign in →')}
-            </span>
-          </span>
+        <button type="button" className="flex items-center gap-2 text-left">
+          <img className='w-5 h-5' src={`${APP_NAME}.svg`}></img>
+          <span className='font-bold'>{APP_NAME}</span>
         </button>
         <div className="flex shrink-0 items-center gap-1.5">
-          <button
+          {/* AI writing workbench button */}
+          {/* <button
             type="button"
             className={iconBtnCls}
             onClick={openAiWorkbench}
             title={t('aiWorkbench', 'AI Workbench')}
           >
             <Sparkles className="h-4 w-4" strokeWidth={1.6} />
-          </button>
+          </button> */}
           <button type="button" className={iconBtnCls} onClick={openHelpPage} title={t('helpDocument', 'Help')}>
             <HelpCircle className="h-4 w-4" strokeWidth={1.6} />
           </button>
@@ -315,15 +324,8 @@ export default function App() {
               {serviceList.map((s) => (
                 <SelectItem key={s.value} value={s.value}>
                   <span className="flex items-center gap-3">
-                    {/* AI entries have no service-icon mark — fall back to a
-                        small inline Sparkles glyph for visual parity. */}
-                    {s.isAi ? (
-                      // <Sparkles className="h-3.5 w-3.5 text-accent" strokeWidth={1.8} />
-                      <ServiceMark id={s.type} />
-                    ) : (
-                      <ServiceMark id={s.value} />
-                    )}
-                    {s.label}
+                    <ServiceMark id={s.iconId} />
+                    {s.i18nKey ? t(s.i18nKey, s.label) : s.label}
                   </span>
                 </SelectItem>
               ))}
@@ -368,18 +370,13 @@ export default function App() {
         <Card>
           <CardTitle>{t('defaultTranslateStrategy', 'Default translate strategy')}</CardTitle>
           <RadioGroup value={defaultStrategy} onValueChange={(v) => onDefaultStrategyChange(v as DEFAULT_STRATEGY)}>
-            <RadioGroupItem
-              value={DEFAULT_STRATEGY.AUTO}
-              label={t('automaticallyDetermine', 'Automatically determine')}
-            />
-            <RadioGroupItem
-              value={DEFAULT_STRATEGY.ALWAYS}
-              label={t('translateAllWebsites', 'Translate all websites')}
-            />
-            <RadioGroupItem
-              value={DEFAULT_STRATEGY.NEVER}
-              label={t('notTranslateAllWebsites', "Don't translate all websites")}
-            />
+            {DEFAULT_STRATEGY_OPTIONS.map((opt) => (
+              <RadioGroupItem
+                value={opt.value}
+                label={t(opt.title, opt.fallback)}
+              />
+            )
+            )}
           </RadioGroup>
         </Card>
 
@@ -426,6 +423,7 @@ export default function App() {
 
         {/* AI Writing */}
         <button
+          onClick={aiWritingClick}
           type="button"
           className={cn(
             'group relative flex w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-[10px] border border-line-strong px-3 py-2.5 text-left',
@@ -475,11 +473,11 @@ export default function App() {
         <div className=' flex gap-2'>
           <span>v{version}</span>
           <span className="opacity-50">·</span>
-          <a className="cursor-pointer text-ink-soft hover:text-accent">
+          <a className="cursor-pointer text-ink-soft hover:text-accent" onClick={openShortcutsPage}>
             {t('shortcuts', 'Shortcuts')}
           </a>
           <span className="opacity-50">·</span>
-          <a className="cursor-pointer text-ink-soft hover:text-accent">
+          <a className="cursor-pointer text-ink-soft hover:text-accent" onClick={openFeedbackPage}>
             {t('feedback', 'Feedback')}
           </a>
         </div>

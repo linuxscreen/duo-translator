@@ -1,5 +1,5 @@
 import { Sparkles } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AI_TASK,
@@ -7,16 +7,15 @@ import {
   DB_ACTION,
   DEFAULT_VALUE,
   LANGUAGES,
-  TRANSLATE_SERVICES,
 } from '@/main/constants';
 import { getConfig, setConfig } from '@/utils/db';
 import { sendMessageToBackground } from '@/utils/message';
-import type { AiProvider } from '@/main/aiService';
+import { type AiProvider } from '@/main/aiService';
+import { buildServiceOptions, getAiWritingTranslateService, type ServiceOption } from '@/utils/service';
 import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -26,6 +25,7 @@ import {
   DomainListSection,
   type DomainItem,
 } from '@/components/options/DomainListSection';
+import { ServiceMark } from '@/components/ui/service-mark';
 
 const ENHANCE_MODES: { value: AI_TASK; label: string }[] = [
   { value: AI_TASK.GRAMMAR, label: 'aiGrammar' },
@@ -38,7 +38,7 @@ export function AiWritingPage() {
   const { t } = useTranslation();
   const [ready, setReady] = useState(false);
   const [enabled, setEnabled] = useState<boolean>(true);
-  const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANG);
+  const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANGUAGE);
   const [defaultMode, setDefaultMode] = useState<string>(DEFAULT_VALUE.AI_DEFAULT_ENHANCE_MODE);
   const [providers, setProviders] = useState<AiProvider[]>([]);
   const [activeProviderId, setActiveProviderId] = useState<string>('');
@@ -46,6 +46,9 @@ export function AiWritingPage() {
   const [translateServiceKey, setTranslateServiceKey] = useState<string>(
     String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE),
   );
+  // Flat (ungrouped) translate-with options — translators + AI providers,
+  // built the same way as the popup so every picker stays consistent.
+  const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
 
   const [whitelistMode, setWhitelistMode] = useState<boolean>(false);
   const [disabledList, setDisabledList] = useState<DomainItem[]>([]);
@@ -70,31 +73,33 @@ export function AiWritingPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [sw, lang, mode, list, activeId, transKey, wlMode] = await Promise.all([
+      const [sw, lang, mode, activeId, transKey, wlMode] = await Promise.all([
         getConfig(CONFIG_KEY.AI_WRITING_SWITCH),
-        getConfig(CONFIG_KEY.AI_TARGET_LANG),
+        getConfig(CONFIG_KEY.AI_TARGET_LANGUAGE),
         getConfig(CONFIG_KEY.AI_DEFAULT_ENHANCE_MODE),
-        getConfig(CONFIG_KEY.AI_PROVIDERS),
         getConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID),
         getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
         getConfig(CONFIG_KEY.AI_WRITING_WHITELIST_MODE),
       ]);
       if (cancelled) return;
       setEnabled(sw === undefined ? true : !!sw);
-      setTargetLang(lang || DEFAULT_VALUE.AI_TARGET_LANG);
+      setTargetLang(lang || DEFAULT_VALUE.AI_TARGET_LANGUAGE);
       setDefaultMode(mode || DEFAULT_VALUE.AI_DEFAULT_ENHANCE_MODE);
-      const arr = (Array.isArray(list) ? list : []).filter(
-        (p: AiProvider) => p?.enabled !== false,
-      );
-      setProviders(arr);
+      // Shared loader: enabled translators + enabled AI providers + the
+      // resolved active translate service (falls back if the saved one is gone).
+      const { activeService, enabledTranslateServices, enabledAiProviders } =
+        await getAiWritingTranslateService(transKey);
+      if (cancelled) return;
+      setProviders(enabledAiProviders);
+      setServiceOptions(buildServiceOptions(enabledTranslateServices, enabledAiProviders));
       setActiveProviderId(typeof activeId === 'string' ? activeId : '');
       // Fallback chain mirrors the floating dot's resolution order.
       const resolvedEnhance =
-        arr.find((p: AiProvider) => p.id === activeId)?.id ||
-        arr[0]?.id ||
+        enabledAiProviders.find((p: AiProvider) => p.id === activeId)?.id ||
+        enabledAiProviders[0]?.id ||
         '';
       setEnhanceProviderId(resolvedEnhance);
-      setTranslateServiceKey(transKey || String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE));
+      setTranslateServiceKey(activeService);
       setWhitelistMode(!!wlMode);
       await refreshDomainLists();
       if (!cancelled) setReady(true);
@@ -110,7 +115,7 @@ export function AiWritingPage() {
   };
   const changeTargetLang = async (v: string) => {
     setTargetLang(v);
-    await setConfig(CONFIG_KEY.AI_TARGET_LANG, v);
+    await setConfig(CONFIG_KEY.AI_TARGET_LANGUAGE, v);
   };
   const changeDefaultMode = async (v: string) => {
     setDefaultMode(v);
@@ -128,8 +133,6 @@ export function AiWritingPage() {
     setWhitelistMode(v);
     await setConfig(CONFIG_KEY.AI_WRITING_WHITELIST_MODE, v);
   };
-
-  const builtInServices = useMemo(() => Array.from(TRANSLATE_SERVICES.values()), []);
 
   if (!ready) {
     return <div className="h-60 rounded-xl border border-line bg-surface/60 backdrop-blur-sm" />;
@@ -154,7 +157,7 @@ export function AiWritingPage() {
           control={<Switch checked={enabled} onCheckedChange={(v) => void toggleEnabled(v)} />}
         />
 
-                <SettingRow
+        <SettingRow
           label={t('aiBetterWritingWith', 'Better writing with')}
           control={
             providers.length === 0 ? (
@@ -172,7 +175,10 @@ export function AiWritingPage() {
                 <SelectContent>
                   {providers.map((p) => (
                     <SelectItem key={p.id} value={p.id}>
-                      {p.name} · {p.model}
+                      <span className="flex items-center gap-1">
+                        {<ServiceMark id={p.type} />}
+                        {p.getTitle()}
+                        </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -228,22 +234,14 @@ export function AiWritingPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectGroup>
-                  {builtInServices.map((s) => (
-                    <SelectItem key={s.value} value={s.value}>
-                      {t(s.title, s.name)}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-                {providers.length > 0 && (
-                  <SelectGroup>
-                    {providers.map((p) => (
-                      <SelectItem key={`ai:${p.id}`} value={`ai:${p.id}`}>
-                        {p.name} · {p.model}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                )}
+                {serviceOptions.map((s) => (
+                  <SelectItem key={s.value} value={s.value}>
+                    <span className="flex items-center gap-1">
+                      <ServiceMark id={s.iconId} />
+                      {s.i18nKey ? t(s.i18nKey, s.label) : s.label}
+                    </span>
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           }

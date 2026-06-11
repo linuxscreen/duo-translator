@@ -11,7 +11,7 @@ export default defineConfig({
         name: '__MSG_extName__',
         description: '__MSG_extDescription__',
         default_locale: 'en',
-        permissions: ['storage', 'tabs', 'activeTab', 'contextMenus', 'commands', 'identity'],
+        permissions: ['storage', 'tabs', 'activeTab', 'contextMenus', 'commands', 'identity', 'alarms'],
         host_permissions: ['https://www.googleapis.com/*', 'https://oauth2.googleapis.com/*', 'https://accounts.google.com/*'],
         // WebDAV URL is user-supplied at runtime, so we request the matching
         // origin via `browser.permissions.request` on connect. <all_urls> here
@@ -20,6 +20,12 @@ export default defineConfig({
         content_scripts: [
             {
                 matches: ['https://*/*', 'http://*/*'],
+                // Inject into sub-frames too — the AI Writing dot must live
+                // inside the iframe whose input is focused (focus events don't
+                // cross frame boundaries; fixed-positioning is per-frame). The
+                // script self-gates: page translation / float ball stay
+                // top-frame only (see main/content.ts).
+                all_frames: true,
                 css: ['assets/style.css']
             }
         ],

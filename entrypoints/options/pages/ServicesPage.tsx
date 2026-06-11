@@ -1,4 +1,4 @@
-import { Search, Pencil, Loader2 } from 'lucide-react';
+import { Search, Pencil, Loader2, FlaskConical } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { browser } from 'wxt/browser';
@@ -45,7 +45,7 @@ export function ServicesPage() {
         let cancelled = false;
         (async () => {
             const [ds, dpKey] = await Promise.all([
-                getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICE),
+                getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES),
                 getConfig(CONFIG_KEY.DEEPL_API_KEY),
             ]);
             if (cancelled) return;
@@ -138,13 +138,13 @@ export function ServicesPage() {
                 alert(t('keepAtLeastOneTranslationService', 'Keep at least one translation service'));
                 return;
             }
-            const current = (await getConfig(CONFIG_KEY.TRANSLATE_SERVICE)) as string | undefined;
-            if (current && current.includes(row.value)) {
-                alert(
-                    t('useTranslationServiceCannotBeDisabled', 'The translation service in use cannot be disabled'),
-                );
-                return;
-            }
+            // const current = (await getConfig(CONFIG_KEY.TRANSLATE_SERVICE)) as string | undefined;
+            // if (current && current.includes(row.value)) {
+            //     alert(
+            //         t('useTranslationServiceCannotBeDisabled', 'The translation service in use cannot be disabled'),
+            //     );
+            //     return;
+            // }
         }
 
         const nextDisabled = new Set(disabled);
@@ -152,7 +152,7 @@ export function ServicesPage() {
         else nextDisabled.add(row.value);
         setDisabled(nextDisabled);
         setRows((prev) => prev.map((r) => (r.value === row.value ? { ...r, enabled: next } : r)));
-        await setConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICE, Array.from(nextDisabled));
+        await setConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES, Array.from(nextDisabled));
     };
 
     if (!ready) {
@@ -231,6 +231,7 @@ export function ServicesPage() {
                                 onClick={() => void runTest(row.value)}
                                 disabled={ts.kind === 'pending'}
                             >
+                                <FlaskConical className="h-3 w-3" strokeWidth={2}/>
                                 {ts.kind === 'pending' ? (
                                     <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
                                 ) : (

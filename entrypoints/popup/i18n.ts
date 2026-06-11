@@ -26,7 +26,7 @@ void i18n.use(initReactI18next).init({
 });
 
 void (async () => {
-  const stored = await getConfig(CONFIG_KEY.INTERFACE_LANG);
+  const stored = await getConfig(CONFIG_KEY.INTERFACE_LANGUAGE);
   if (isSupported(stored) && stored !== i18n.language) {
     await i18n.changeLanguage(stored);
   }

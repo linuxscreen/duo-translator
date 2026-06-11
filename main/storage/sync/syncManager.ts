@@ -1,23 +1,27 @@
-// Orchestrates push/pull through the active SyncProvider with last-write-wins
-// semantics over a single integer mtime.
+// Orchestrates push/pull through every authenticated SyncProvider with
+// last-write-wins semantics over a single integer mtime.
+//
+// Multiple providers can be connected at once; each keeps its own credentials.
+// `syncNow(id)` syncs one provider, `syncOnStartup` syncs all connected ones.
 //
 // Local mtime is bumped by configStore on any user-data mutation. Remote
 // mtime is whatever the remote snapshot's envelope reports. The newer one
-// wins, silently.
+// wins, silently. A global lock serializes all syncs so the shared local
+// mtime can't be raced when several providers sync back-to-back.
 
-import { storage, type StorageItemKey } from 'wxt/utils/storage';
-import { APP_NAME_WITH_SUFFIX, SYNC_PROVIDER_ID } from '@/main/constants';
+import { APP_NAME_WITH_SUFFIX, CONFIG_KEY, SYNC_PROVIDER_ID } from '@/main/constants';
 import {
     buildSnapshot,
-    applySnapshot,
+    mergeSnapshots,
+    applyMergedToLocal,
     type Snapshot,
 } from '@/main/storage/snapshot';
-import { getLocalMtime, setLocalMtime } from '@/main/storage/configStore';
-import type { SyncProvider, SyncResult } from './types';
+import { getConfigItem } from '@/main/storage/configStore';
+import type { SyncProvider, SyncResult, SyncDirection } from './types';
 import { googleDriveProvider } from './googleDriveProvider';
 import { webdavProvider } from './webdavProvider';
 
-const ACTIVE_KEY: StorageItemKey = 'local:__sync_active_provider';
+const PROVIDERS: SyncProvider[] = [googleDriveProvider, webdavProvider];
 
 function providerById(id: SYNC_PROVIDER_ID): SyncProvider {
     switch (id) {
@@ -28,98 +32,95 @@ function providerById(id: SYNC_PROVIDER_ID): SyncProvider {
     }
 }
 
-export async function getActiveProviderId(): Promise<SYNC_PROVIDER_ID | null> {
-    return storage.getItem<SYNC_PROVIDER_ID>(ACTIVE_KEY);
-}
-
-export async function setActiveProvider(id: SYNC_PROVIDER_ID | null): Promise<void> {
-    if (id === null) {
-        await storage.removeItem(ACTIVE_KEY);
-    } else {
-        await storage.setItem(ACTIVE_KEY, id);
-    }
-}
-
-export async function getActiveProvider(): Promise<SyncProvider | null> {
-    const id = await getActiveProviderId();
-    if (!id) return null;
-    return providerById(id);
-}
-
 export function getProviderById(id: SYNC_PROVIDER_ID): SyncProvider {
     return providerById(id);
 }
 
-// Single in-flight sync at a time to avoid push/pull racing each other.
-let inflight: Promise<SyncResult> | null = null;
+export function getAllProviders(): SyncProvider[] {
+    return PROVIDERS;
+}
 
-export async function syncNow(): Promise<SyncResult> {
-    if (inflight) return inflight;
-    inflight = (async (): Promise<SyncResult> => {
-        try {
-            const provider = await getActiveProvider();
-            if (!provider) return { ok: false, error: 'No sync provider selected' };
-            if (!(await provider.isAuthenticated())) {
-                return { ok: false, error: 'Sync provider not authenticated' };
-            }
+export async function getAuthenticatedProviders(): Promise<SyncProvider[]> {
+    const out: SyncProvider[] = [];
+    for (const p of PROVIDERS) {
+        if (await p.isAuthenticated()) out.push(p);
+    }
+    return out;
+}
 
-            const localMtime = await getLocalMtime();
-            const remote: Snapshot | null = await provider.pull();
+// Global lock: only one sync runs at a time (any provider) so the local
+// sync-meta is never read/written concurrently. Each caller still gets its own
+// result back.
+let chain: Promise<unknown> = Promise.resolve();
 
-            if (!remote) {
-                const snap = await buildSnapshot({ includeSecrets: true });
-                await provider.push(snap);
-                await setLocalMtime(snap.mtime);
-                return { ok: true, direction: 'upload', localMtime: snap.mtime };
-            }
+function withLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = chain.then(fn, fn);
+    chain = run.catch(() => {});
+    return run;
+}
 
-            if (remote.mtime > localMtime) {
-                await applySnapshot(remote, 'replace');
-                // After applying remote, align local mtime to remote so we
-                // don't immediately treat it as "we're newer" next round.
-                await setLocalMtime(remote.mtime);
-                return {
-                    ok: true,
-                    direction: 'download',
-                    remoteMtime: remote.mtime,
-                    localMtime: remote.mtime,
-                };
-            }
+async function shouldSyncSecrets(): Promise<boolean> {
+    return !!(await getConfigItem(CONFIG_KEY.SYNC_INCLUDE_SECRETS));
+}
 
-            if (remote.mtime < localMtime) {
-                const snap = await buildSnapshot({ includeSecrets: true });
-                // Force our just-built snapshot's mtime to the canonical local mtime
-                // so the round-trip is consistent.
-                const aligned: Snapshot = { ...snap, mtime: localMtime };
-                await provider.push(aligned);
-                return { ok: true, direction: 'upload', localMtime };
-            }
-
-            return { ok: true, direction: 'noop', remoteMtime: remote.mtime, localMtime };
-        } catch (e: any) {
-            console.error(APP_NAME_WITH_SUFFIX, 'syncNow failed', e);
-            return { ok: false, error: e?.message || String(e) };
-        }
-    })();
+// Per-provider per-key LWW merge. Runs under the global lock.
+//
+//   pull remote → merge(local, remote) → apply locally + push merged
+//
+// Because the merge is key-by-key with tombstones, adding one key on device B
+// never wipes device A's other keys: B's unchanged keys carry older clocks and
+// lose to A's newer ones, while the union keeps everything.
+async function runSync(provider: SyncProvider): Promise<SyncResult> {
     try {
-        return await inflight;
-    } finally {
-        inflight = null;
+        if (!(await provider.isAuthenticated())) {
+            return { ok: false, error: 'Sync provider not authenticated' };
+        }
+
+        const includeSecrets = await shouldSyncSecrets();
+        const local = await buildSnapshot({ includeSecrets });
+        const remote: Snapshot | null = await provider.pull();
+
+        if (!remote) {
+            await provider.push(local);
+            return { ok: true, direction: 'upload' };
+        }
+
+        const { merged, localChanged, remoteChanged } = mergeSnapshots(local, remote);
+        if (localChanged) await applyMergedToLocal(merged);
+        if (remoteChanged) await provider.push(merged);
+
+        const direction: SyncDirection =
+            localChanged && remoteChanged
+                ? 'merge'
+                : remoteChanged
+                    ? 'upload'
+                    : localChanged
+                        ? 'download'
+                        : 'noop';
+        return { ok: true, direction };
+    } catch (e: any) {
+        console.error(APP_NAME_WITH_SUFFIX, 'syncNow failed', provider.id, e);
+        return { ok: false, error: e?.message || String(e) };
     }
 }
 
+export async function syncNow(id: SYNC_PROVIDER_ID): Promise<SyncResult> {
+    const provider = providerById(id);
+    return withLock(() => runSync(provider));
+}
+
 /**
- * Called from background startup after migration. Fire-and-forget; failures
- * just log. Skips entirely if no provider is configured.
+ * Sync every connected provider sequentially. Fire-and-forget; failures just
+ * log. Used by auto-sync (startup / debounce / periodic).
  */
-export async function syncOnStartup(): Promise<void> {
+export async function syncAll(reason = 'auto'): Promise<void> {
     try {
-        const provider = await getActiveProvider();
-        if (!provider) return;
-        if (!(await provider.isAuthenticated())) return;
-        const result = await syncNow();
-        console.log(APP_NAME_WITH_SUFFIX, 'startup sync:', result);
+        const providers = await getAuthenticatedProviders();
+        for (const provider of providers) {
+            const result = await withLock(() => runSync(provider));
+            console.log(APP_NAME_WITH_SUFFIX, 'sync', reason, provider.id, result);
+        }
     } catch (e) {
-        console.error(APP_NAME_WITH_SUFFIX, 'startup sync error', e);
+        console.error(APP_NAME_WITH_SUFFIX, 'sync error', reason, e);
     }
 }

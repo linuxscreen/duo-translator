@@ -1,4 +1,4 @@
-import { AI_TASK, TRANS_SERVICE } from "@/main/constants";
+import { AI_PREFIX, AI_TASK, DEFAULT_VALUE, TRANS_SERVICE } from "@/main/constants";
 import { translationServices } from "@/main/translateService";
 import { startAiChatStream } from "@/main/aiService";
 
@@ -15,10 +15,8 @@ export type TranslateServiceChoice =
     | { kind: "trans"; service: string }
     | { kind: "ai"; providerId: string };
 
-const AI_PREFIX = "ai:";
-
 export function parseTranslateServiceKey(key: string | undefined | null): TranslateServiceChoice {
-    if (!key) return { kind: "trans", service: TRANS_SERVICE.MICROSOFT };
+    if (!key) return { kind: "trans", service: DEFAULT_VALUE.AI_TRANSLATE_SERVICE };
     if (key.startsWith(AI_PREFIX)) return { kind: "ai", providerId: key.slice(AI_PREFIX.length) };
     return { kind: "trans", service: key };
 }

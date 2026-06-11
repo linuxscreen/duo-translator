@@ -26,10 +26,32 @@ export interface SyncProvider {
 
     /** Short human-readable label (account email, baseURL, etc.) for the UI. */
     describe(): Promise<string | null>;
+
+    /**
+     * Metadata about the remote backup file for the "manage backups" UI.
+     * Optional — providers that can't cheaply report it may omit it.
+     * Returns null when no remote backup exists yet.
+     */
+    getRemoteInfo?(): Promise<RemoteBackupInfo | null>;
+
+    /** Delete the remote backup file. Optional, paired with getRemoteInfo. */
+    deleteRemote?(): Promise<void>;
 }
 
-export type SyncDirection = 'upload' | 'download' | 'noop';
+/** Metadata describing the remote backup file shown in the manage-backups UI. */
+export type RemoteBackupInfo = {
+    /** Remote file name. */
+    name: string;
+    /** Size in bytes, or null when the provider can't report it. */
+    size: number | null;
+    /** Last-modified time as epoch ms, or null when unknown. */
+    modifiedTime: number | null;
+};
+
+// upload = remote updated, download = local updated, merge = both updated,
+// noop = already in sync.
+export type SyncDirection = 'upload' | 'download' | 'merge' | 'noop';
 
 export type SyncResult =
-    | { ok: true; direction: SyncDirection; remoteMtime?: number; localMtime: number }
+    | { ok: true; direction: SyncDirection }
     | { ok: false; error: string };

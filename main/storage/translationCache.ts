@@ -13,7 +13,9 @@
 // translated mapped-HTML plus the detected sourceLang/score, so a cache hit
 // reconstructs a TranslateResult identical to a fresh API response.
 
-const DB_NAME = 'duo-translator-translation-cache';
+import { APP_NAME_KEBAB_CASE } from "../constants";
+
+const DB_NAME = `${APP_NAME_KEBAB_CASE}-translation-cache`;
 const DB_VERSION = 1;
 const STORE_ENTRIES = 'entries';
 const STORE_META = 'meta';

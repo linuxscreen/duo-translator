@@ -14,7 +14,7 @@ export type AiProviderType =
     | "claude"
     | "custom";
 
-export interface AiProvider {
+export class AiProvider {
     id: string;
     /** Provider kind — drives default URL and which request adapter is used. */
     type: AiProviderType;
@@ -27,9 +27,20 @@ export interface AiProvider {
     model: string;
     /** When false the provider is preserved but hidden from selection dropdowns. */
     enabled?: boolean;
-    /** Legacy field — older configs used `baseUrl` (without `/chat/completions`).
-     *  Kept here so we can migrate on read; new writes use `url`. */
-    baseUrl?: string;
+
+    constructor(id: string, type: AiProviderType, name: string, url: string, apiKey: string, model: string, enabled?: boolean) {
+        this.id = id;
+        this.type = type;
+        this.name = name;
+        this.url = url;
+        this.apiKey = apiKey;
+        this.model = model;
+        this.enabled = enabled
+    }
+
+    getTitle(): string {
+        return `${this.name} · ${this.model}`
+    }
 }
 
 export interface ProviderCatalogEntry {
@@ -54,26 +65,21 @@ export function getCatalogEntry(type: AiProviderType): ProviderCatalogEntry {
     return PROVIDER_CATALOG.find((c) => c.type === type) ?? PROVIDER_CATALOG[0];
 }
 
-/**
- * Migrate older-shape provider records (no `type`, `baseUrl` instead of `url`)
- * into the current shape. Safe to call on already-migrated records.
- */
 export function normalizeProvider(p: any): AiProvider {
-    const type: AiProviderType = (p?.type as AiProviderType) || "openai";
+    const type: AiProviderType = p?.type as AiProviderType;
     let url: string = typeof p?.url === "string" ? p.url : "";
-    if (!url && typeof p?.baseUrl === "string" && p.baseUrl) {
-        url = p.baseUrl.replace(/\/+$/, "") + "/chat/completions";
-    }
     if (!url) url = getCatalogEntry(type).defaultUrl;
-    return {
-        id: String(p?.id ?? ""),
+
+    let provider = new AiProvider(
+        String(p?.id ?? ""),
         type,
-        name: String(p?.name ?? getCatalogEntry(type).label),
+        String(p?.name ?? getCatalogEntry(type).label),
         url,
-        apiKey: String(p?.apiKey ?? ""),
-        model: String(p?.model ?? ""),
-        enabled: p?.enabled === undefined ? true : !!p.enabled,
-    };
+        String(p?.apiKey ?? ""),
+        String(p?.model ?? ""),
+    );
+    provider.enabled = p?.enabled === undefined ? true : !!p.enabled;
+    return provider
 }
 
 export interface ChatMessage {
@@ -113,7 +119,7 @@ export function buildPrompt(req: AiStreamRequest): ChatMessage[] {
     const text = payload.text ?? "";
     switch (task) {
         case AI_TASK.TRANSLATE: {
-            const lang = LANGUAGES_MAP.get(payload.targetLang || DEFAULT_VALUE.AI_TARGET_LANG)?.name;
+            const lang = LANGUAGES_MAP.get(payload.targetLang || DEFAULT_VALUE.AI_TARGET_LANGUAGE)?.name;
             return [
                 {
                     role: "system",
@@ -153,7 +159,7 @@ export function buildPrompt(req: AiStreamRequest): ChatMessage[] {
             // content. The user content is a JSON-stringified array of
             // paragraph texts (each item may contain <bN> placeholder tags
             // that MUST be preserved exactly in the output array).
-            const lang = LANGUAGES_MAP.get(payload.targetLang || DEFAULT_VALUE.AI_TARGET_LANG)?.name;
+            const lang = LANGUAGES_MAP.get(payload.targetLang || DEFAULT_VALUE.AI_TARGET_LANGUAGE)?.name;
             return [
                 { role: "system", content: `You are a professional ${lang} native speaker translator. Translate any text the user inputs into ${lang}. The translation should be natural and fluent, conforming to ${lang} expression conventions. Output only the translation, with no explanation, no quotes, or formatting marks. If the original text is already in ${lang}, output it as-is. If the text contains XML tags, consider where the tags should be placed in the translation while maintaining fluency. The <sep/> XML tag is the sole paragraph separator. Preserve every <sep/> tag in your translation exactly as-is. Each paragraph must map one-to-one to the source — do not merge, split, or reorder them.` },
                 { role: "user", content: text },
@@ -677,7 +683,7 @@ export function startAiChatStream(req: AiStreamRequest): {
                     });
                 },
                 return(): Promise<IteratorResult<string>> {
-                    try { port.disconnect(); } catch {}
+                    try { port.disconnect(); } catch { }
                     ended = true;
                     return Promise.resolve({ value: undefined as any, done: true });
                 },
@@ -691,7 +697,7 @@ export function startAiChatStream(req: AiStreamRequest): {
         // listener (only the other end is notified), so we must `finish()`
         // ourselves — otherwise a `for await` loop parked on `next()` hangs
         // forever and the caller's `running` flag never clears.
-        abort: () => { finish(); try { port.disconnect(); } catch {} },
+        abort: () => { finish(); try { port.disconnect(); } catch { } },
     };
 }
 

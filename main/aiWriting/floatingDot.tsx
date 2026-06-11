@@ -19,11 +19,12 @@ import {
     DB_ACTION,
     DEFAULT_VALUE,
     LANGUAGES,
-    TRANS_SERVICE,
+    type TranslateServiceMeta,
 } from "@/main/constants";
 import { sendMessageToBackground } from "@/utils/message";
 import type { AiProvider } from "@/main/aiService";
 import { startAiChatStream } from "@/main/aiService";
+import { buildServiceOptions, getAiWritingTranslateService, type ServiceOption } from "@/utils/service";
 import { getConfig, setConfig } from "@/utils/db";
 import {
     AiTarget,
@@ -44,14 +45,9 @@ import {
     TranslateServiceChoice,
 } from "./translateRunner";
 import { getElementText } from "@/utils/dom";
+import { shareConfig } from "../content";
 
 const HOST_ID = "duo-ai-dot-host";
-
-const REGULAR_TRANSLATORS: { value: string; label: string }[] = [
-    { value: TRANS_SERVICE.MICROSOFT, label: "Microsoft" },
-    { value: TRANS_SERVICE.GOOGLE, label: "Google" },
-    { value: TRANS_SERVICE.DEEPL, label: "DeepL" },
-];
 
 // ---------------------------------------------------------------------------
 // Mount entry point — called once from main/content.ts
@@ -70,7 +66,7 @@ export async function mountAiWritingDot(opts: MountOptions): Promise<() => void>
         getConfig(CONFIG_KEY.AI_WRITING_WHITELIST_MODE),
         sendMessageToBackground({ action: DB_ACTION.DOMAIN_GET, data: { domain: opts.domain } }),
     ]);
-    const enabled = globalSwitch === undefined ? !!DEFAULT_VALUE.AI_WRITING_DOT_SWITCH : !!globalSwitch;
+    const enabled = globalSwitch === undefined ? !!DEFAULT_VALUE.AI_WRITING_SWITCH : !!globalSwitch;
     if (!enabled) return () => { };
     if (whitelistMode) {
         // Whitelist mode: mount ONLY when domain is explicitly enabled.
@@ -142,12 +138,13 @@ function FloatingDotApp({ domain }: { domain: string }) {
     const [resultShiftRight, setResultShiftRight] = useState(0);
 
     // Preferences (hydrated from config).
-    const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANG);
+    const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANGUAGE);
     const [translateChoice, setTranslateChoice] = useState<TranslateServiceChoice>({
         kind: "trans", service: String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE),
     });
     const [enhanceProviderId, setEnhanceProviderId] = useState<string>("");
     const [providers, setProviders] = useState<AiProvider[]>([]);
+    const [translateServices, setTranslateServices] = useState<TranslateServiceMeta[]>([]);
 
     const lastTargetRef = useMemo(createLastTargetRef, []);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -172,24 +169,25 @@ function FloatingDotApp({ domain }: { domain: string }) {
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const [lang, transKey, list, activeId] = await Promise.all([
-                getConfig(CONFIG_KEY.AI_TARGET_LANG),
+            const [transKey, activeId] = await Promise.all([
                 getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
-                getConfig(CONFIG_KEY.AI_PROVIDERS),
                 getConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID),
             ]);
             if (cancelled) return;
-            setTargetLang(lang || DEFAULT_VALUE.AI_TARGET_LANG);
-            setTranslateChoice(parseTranslateServiceKey(transKey || String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE)));
-            // Hide disabled providers from selection — config carries `enabled`
-            // (undefined for legacy records, treated as true).
-            const arr: AiProvider[] = (Array.isArray(list) ? list : [])
-                .filter((p: AiProvider) => p?.enabled !== false);
-            setProviders(arr);
+            setTargetLang(shareConfig.aiTargetLanguage || DEFAULT_VALUE.AI_TARGET_LANGUAGE);
+            // Shared loader: enabled translators + enabled AI providers, plus the
+            // resolved active translate service (falls back when the saved value
+            // is no longer valid — same logic the popup/options use).
+            const { activeService, enabledTranslateServices, enabledAiProviders } =
+                await getAiWritingTranslateService(transKey);
+            if (cancelled) return;
+            setTranslateServices(enabledTranslateServices);
+            setProviders(enabledAiProviders);
+            setTranslateChoice(parseTranslateServiceKey(activeService));
             // Resolve enhance provider with fallback chain:
             // explicit AI_ACTIVE_PROVIDER_ID → first
-            const resolved = arr.find((p) => p.id === activeId)?.id
-                || arr[0]?.id
+            const resolved = enabledAiProviders.find((p) => p.id === activeId)?.id
+                || enabledAiProviders[0]?.id
                 || "";
             setEnhanceProviderId(resolved);
         })();
@@ -358,11 +356,13 @@ function FloatingDotApp({ domain }: { domain: string }) {
 
     const persistTargetLang = async (v: string) => {
         setTargetLang(v);
-        await setConfig(CONFIG_KEY.AI_TARGET_LANG, v);
+        await setConfig(CONFIG_KEY.AI_TARGET_LANGUAGE, v);
+        shareConfig.aiTargetLanguage = v;
     };
     const persistTranslateChoice = async (c: TranslateServiceChoice) => {
         setTranslateChoice(c);
         await setConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE, buildTranslateServiceKey(c));
+        shareConfig.aiTranslateServiceChoice = c;
     };
     const persistEnhanceProvider = async (id: string) => {
         setEnhanceProviderId(id);
@@ -449,7 +449,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
     };
 
     const openOptions = () => {
-        browser.runtime.sendMessage({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: 'aiWriting' } }).catch(() => { });
+        browser.runtime.sendMessage({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: 'services' } }).catch(() => { });
     };
 
     // ---- Settings popover change handlers ----------------------------------
@@ -509,6 +509,9 @@ function FloatingDotApp({ domain }: { domain: string }) {
     if (sessionHidden || !visible) return null;
 
     const currentEnhanceProvider = providers.find((p) => p.id === enhanceProviderId);
+    // Flat (ungrouped) translate-with options shared by the settings popover
+    // and result bubble — translators + AI providers, same shape as the popup.
+    const serviceOptions = buildServiceOptions(translateServices, providers);
 
     // Block focus theft from the user's input on ANY mousedown within our
     // UI — clicking on plain <div>s (panel body, header text, content area)
@@ -545,6 +548,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
                         <ResultBubble
                             result={result}
                             providers={providers}
+                            serviceOptions={serviceOptions}
                             currentEnhanceProvider={currentEnhanceProvider}
                             targetLang={targetLang}
                             translateKey={buildTranslateServiceKey(translateChoice)}
@@ -598,6 +602,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
                                         translateKey={buildTranslateServiceKey(translateChoice)}
                                         enhanceProviderId={enhanceProviderId}
                                         providers={providers}
+                                        serviceOptions={serviceOptions}
                                         onPickLang={onPickTargetLang}
                                         onPickTranslate={onPickTranslateService}
                                         onPickEnhance={onPickEnhanceProvider}
@@ -744,6 +749,7 @@ function SettingsPopover({
     translateKey,
     enhanceProviderId,
     providers,
+    serviceOptions,
     onPickLang,
     onPickTranslate,
     onPickEnhance,
@@ -754,6 +760,7 @@ function SettingsPopover({
     translateKey: string;
     enhanceProviderId: string;
     providers: AiProvider[];
+    serviceOptions: ServiceOption[];
     onPickLang: (v: string) => void;
     onPickTranslate: (v: string) => void;
     onPickEnhance: (v: string) => void;
@@ -838,7 +845,7 @@ function SettingsPopover({
                         className="h-7 w-full rounded bg-[#070b14] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-1.5"
                     >
                         {providers.map((p) => (
-                            <option key={p.id} value={p.id}>{p.name} · {p.model}</option>
+                            <option key={p.id} value={p.id}>{p.getTitle()}</option>
                         ))}
                     </select>
                 )}
@@ -862,18 +869,11 @@ function SettingsPopover({
                     onChange={(e) => onPickTranslate(e.target.value)}
                     className="h-7 w-full rounded bg-[#070b14] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-1.5"
                 >
-                    <optgroup label={t("aiGroupTranslators", "Translators")}>
-                        {REGULAR_TRANSLATORS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                    </optgroup>
-                    {providers.length > 0 && (
-                        <optgroup label={t("aiGroupAiProviders", "AI providers")}>
-                            {providers.map((p) => (
-                                <option key={p.id} value={`ai:${p.id}`}>{p.name} · {p.model}</option>
-                            ))}
-                        </optgroup>
-                    )}
+                    {serviceOptions.map((s) => (
+                        <option key={s.value} value={s.value}>
+                            {s.i18nKey ? t(s.i18nKey, s.label) : s.label}
+                        </option>
+                    ))}
                 </select>
             </Field>
 
@@ -902,6 +902,7 @@ const ENHANCE_MODES: AI_TASK[] = [AI_TASK.GRAMMAR, AI_TASK.POLISH, AI_TASK.FORMA
 function ResultBubble({
     result,
     providers,
+    serviceOptions,
     currentEnhanceProvider,
     targetLang,
     translateKey,
@@ -914,6 +915,7 @@ function ResultBubble({
 }: {
     result: NonNullable<ResultPanel>;
     providers: AiProvider[];
+    serviceOptions: ServiceOption[];
     currentEnhanceProvider: AiProvider | undefined;
     targetLang: string;
     translateKey: string;
@@ -959,18 +961,11 @@ function ResultBubble({
                                 title={t("aiTranslateWith", "Translate with")}
                                 className={selectCls}
                             >
-                                <optgroup label={t("aiGroupTranslators", "Translators")} className={optionCls}>
-                                    {REGULAR_TRANSLATORS.map((opt) => (
-                                        <option key={opt.value} value={opt.value} className={optionCls}>{opt.label}</option>
-                                    ))}
-                                </optgroup>
-                                {providers.length > 0 && (
-                                    <optgroup label={t("aiGroupAiProviders", "AI providers")} className={optionCls}>
-                                        {providers.map((p) => (
-                                            <option key={p.id} value={`ai:${p.id}`} className={optionCls}>{p.name} · {p.model}</option>
-                                        ))}
-                                    </optgroup>
-                                )}
+                                {serviceOptions.map((s) => (
+                                    <option key={s.value} value={s.value} className={optionCls}>
+                                        {s.i18nKey ? t(s.i18nKey, s.label) : s.label}
+                                    </option>
+                                ))}
                             </select>
                         </>
                     ) : (
@@ -994,7 +989,7 @@ function ResultBubble({
                                     className={selectCls}
                                 >
                                     {providers.map((p) => (
-                                        <option key={p.id} value={p.id} className={optionCls}>{p.name} · {p.model}</option>
+                                        <option key={p.id} value={p.id} className={optionCls}>{p.getTitle()}</option>
                                     ))}
                                 </select>
                             )}

@@ -6,23 +6,55 @@
 // user's other files).
 //
 // File layout: a single JSON snapshot at
-//   appDataFolder/duo-translator-config.json
+//   appDataFolder/{APP_NAME}-config.json
 // fileId is cached after first push so subsequent updates use PATCH not POST.
 
 import { storage, type StorageItemKey } from 'wxt/utils/storage';
 import { browser } from 'wxt/browser';
-import { APP_NAME_WITH_SUFFIX, SYNC_PROVIDER_ID } from '@/main/constants';
+import { APP_NAME_KEBAB_CASE, APP_NAME_WITH_SUFFIX, SYNC_PROVIDER_ID } from '@/main/constants';
 import type { Snapshot } from '@/main/storage/snapshot';
 import { isValidSnapshot } from '@/main/storage/snapshot';
-import type { SyncProvider } from './types';
+import type { SyncProvider, RemoteBackupInfo } from './types';
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
-const REMOTE_FILE_NAME = 'duo-translator-config.json';
+const REMOTE_FILE_NAME = `${APP_NAME_KEBAB_CASE}-config.json`;
 
-// OAuth client id from Google Cloud Console. Public installed-app client id —
-// no client_secret. Replace with the actual project's client id before shipping.
-// (Stored in code intentionally; OAuth installed-app client ids are not secrets.)
-const GOOGLE_CLIENT_ID = '__GOOGLE_OAUTH_CLIENT_ID__';
+// OAuth client id from Google Cloud Console (type: "Web application").
+// The redirect URI https://<extension-id>.chromiumapp.org/ must be registered
+// under this client's "Authorized redirect URIs".
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+
+// ┌─────────────────────────────────────────────────────────────────────────┐
+// │ ⚠️ TEMPORARY (debug only) — MUST be replaced before going to production.  │
+// ├─────────────────────────────────────────────────────────────────────────┤
+// │ Google's "Web application" client requires a client_secret for the        │
+// │ authorization-code token exchange (PKCE does NOT remove this requirement). │
+// │ To get sync working locally we read the secret from .env and ship it       │
+// │ bundled into the extension.                                                │
+// │                                                                            │
+// │ RISK: an extension bundle is plain-text and trivially unpacked, so a       │
+// │   shipped secret can be extracted by anyone and used to impersonate your   │
+// │   OAuth client. This is acceptable ONLY for local debugging under the      │
+// │   "test users" stage — never publish to the store like this.               │
+// │                                                                            │
+// │ PRODUCTION PLAN — backend token broker (BFF):                              │
+// │   Keep the secret only on your own server; the extension never sees it.    │
+// │   1. Deploy a minimal endpoint (Cloudflare Workers / Vercel Function is     │
+// │      enough) that receives { code, code_verifier, redirect_uri } (and       │
+// │      refresh requests), appends client_secret server-side, forwards to      │
+// │      https://oauth2.googleapis.com/token, and returns Google's response     │
+// │      verbatim.                                                              │
+// │   2. Point the two fetches below at your backend URL instead of            │
+// │      'https://oauth2.googleapis.com/token' (e.g. read                       │
+// │      import.meta.env.VITE_TOKEN_BROKER_URL).                                │
+// │   3. Delete GOOGLE_CLIENT_SECRET here and the client_secret field in the   │
+// │      request bodies — the secret then lives nowhere in the frontend.        │
+// │   PKCE (code_challenge / code_verifier) stays as-is; it is an independent   │
+// │   protection layer from the server holding the secret. redirect_uri is     │
+// │   still chromiumapp.org, passed through by the extension, and the backend   │
+// │   must use that same redirect_uri when calling Google.                      │
+// └─────────────────────────────────────────────────────────────────────────┘
+const GOOGLE_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_CLIENT_SECRET;
 
 const TOKENS_KEY: StorageItemKey = 'local:__sync_gdrive_tokens';
 const FILE_ID_KEY: StorageItemKey = 'local:__sync_gdrive_file_id';
@@ -127,6 +159,9 @@ class GoogleDriveProviderImpl implements SyncProvider {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({
                 client_id: GOOGLE_CLIENT_ID,
+                // TEMPORARY: bundled secret. Remove once the backend broker is in
+                // place for production (see the note at the top of this file).
+                client_secret: GOOGLE_CLIENT_SECRET,
                 grant_type: 'authorization_code',
                 code,
                 code_verifier: verifier,
@@ -170,6 +205,49 @@ class GoogleDriveProviderImpl implements SyncProvider {
         await storage.removeItem(FILE_ID_KEY);
     }
 
+    async getRemoteInfo(): Promise<RemoteBackupInfo | null> {
+        const accessToken = await this.getFreshAccessToken();
+        const fileId = await this.resolveFileId(accessToken);
+        if (!fileId) return null;
+        const url = new URL(`https://www.googleapis.com/drive/v3/files/${fileId}`);
+        url.searchParams.set('fields', 'name,size,modifiedTime');
+        const res = await googleFetch(accessToken, url.toString());
+        if (res.status === 404) {
+            // Stale cached id — the backup was removed elsewhere.
+            await storage.removeItem(FILE_ID_KEY);
+            return null;
+        }
+        if (!res.ok) {
+            throw new Error(`Drive metadata failed: ${res.status} ${await res.text()}`);
+        }
+        const j = (await res.json()) as {
+            name?: string;
+            size?: string;
+            modifiedTime?: string;
+        };
+        return {
+            name: j.name ?? REMOTE_FILE_NAME,
+            size: j.size != null ? Number(j.size) : null,
+            modifiedTime: j.modifiedTime ? Date.parse(j.modifiedTime) : null,
+        };
+    }
+
+    async deleteRemote(): Promise<void> {
+        const accessToken = await this.getFreshAccessToken();
+        const fileId = await this.resolveFileId(accessToken);
+        if (!fileId) return;
+        const res = await googleFetch(
+            accessToken,
+            `https://www.googleapis.com/drive/v3/files/${fileId}`,
+            { method: 'DELETE' },
+        );
+        // 404 = already gone; treat as success.
+        if (!res.ok && res.status !== 404) {
+            throw new Error(`Drive delete failed: ${res.status} ${await res.text()}`);
+        }
+        await storage.removeItem(FILE_ID_KEY);
+    }
+
     private async getFreshAccessToken(): Promise<string> {
         const t = await this.getTokens();
         if (!t) throw new Error('Google Drive not connected');
@@ -184,6 +262,9 @@ class GoogleDriveProviderImpl implements SyncProvider {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: new URLSearchParams({
                 client_id: GOOGLE_CLIENT_ID,
+                // TEMPORARY: bundled secret. Remove once the backend broker is in
+                // place for production (see the note at the top of this file).
+                client_secret: GOOGLE_CLIENT_SECRET,
                 grant_type: 'refresh_token',
                 refresh_token: t.refreshToken,
             }),

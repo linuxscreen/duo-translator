@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { browser } from 'wxt/browser';
 import { ACTION, STATUS_SUCCESS } from '@/main/constants';
-import type { AiProvider, AiProviderType } from '@/main/aiService';
+import { AiProvider, AiProviderType } from '@/main/aiService';
 import { PROVIDER_CATALOG, getCatalogEntry } from '@/main/aiService';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -93,15 +93,15 @@ export function ProviderModal({ open, initial, onClose, onSave }: Props) {
         !!trimmedModel &&
         !apiKeyMissing;
 
-    const buildProvider = (): AiProvider => ({
-        id: initial?.id ?? newProviderId(),
+    const buildProvider = (): AiProvider => new AiProvider(
+        initial?.id ?? newProviderId(),
         type,
-        name: trimmedName,
-        url: trimmedUrl,
-        apiKey: trimmedKey,
-        model: trimmedModel,
-        enabled: initial?.enabled ?? true,
-    });
+        trimmedName,
+        trimmedUrl,
+        trimmedKey,
+        trimmedModel,
+        initial?.enabled ?? true,
+    );
 
     const runTest = async () => {
         if (!valid) return;

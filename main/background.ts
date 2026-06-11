@@ -29,23 +29,23 @@ import {
     chatStream,
     chatComplete,
     chatCompleteNonStream,
-    normalizeProvider,
     AiProvider,
+    normalizeProvider,
 } from "@/main/aiService";
 import { getDomainWithPortFromUrl } from '@/utils/url';
 import { storage } from 'wxt/utils/storage';
-import { configRepo, domainRepo, ruleRepo, type DomainDoc } from "@/main/storage/configStore";
+import { configRepo, domainRepo, getConfigItem, ruleRepo, type DomainDoc } from "@/main/storage/configStore";
 import * as translationCache from "@/main/storage/translationCache";
 import { migrateFromPouchIfNeeded } from "@/main/storage/migrateFromPouch";
-import { buildSnapshot, applySnapshot, redactSecrets } from "@/main/storage/snapshot";
+import { buildSnapshot, applyImportedSnapshot, redactSecrets } from "@/main/storage/snapshot";
 import {
-    getActiveProviderId,
-    setActiveProvider,
+    getAllProviders,
     getProviderById,
     syncNow,
-    syncOnStartup,
 } from "@/main/storage/sync/syncManager";
-import type { WebDavCredentials } from "@/main/storage/sync/webdavProvider";
+import { registerAutoSyncListeners, startAutoSync, applyAutoSyncConfig } from "@/main/storage/sync/autoSync";
+import { getWebdavConfig, type WebDavCredentials } from "@/main/storage/sync/webdavProvider";
+import { sendMessageToTab } from "@/utils/message";
 
 // Module-top: react to install/update events. `update` triggers the one-shot
 // PouchDB → chrome.storage.local migration. `install` skips it (no legacy data).
@@ -70,24 +70,36 @@ const LOCALES: Record<InterfaceLang, Record<string, string>> = {
     'zh-CN': zhCNLocale as Record<string, string>,
 };
 const SEPARATOR_TAG = "<sep/>"
+const CONTEXT_MENU_TRANSLATE_TITLE = 'contextMenuTranslate'
+const CONTEXT_MENU_RESTORE_TITLE = 'contextMenuRestore'
+const CONTEXT_MENU_TRANSLATE_PARA_TITLE = 'contextMenuTranslatePara'
+const CONTEXT_MENU_RESTORE_PARA_TITLE = 'contextMenuRestorePara'
+const CONTEXT_MENU_TRANSLATE_TEXT_BOX_TITLE = 'contextMenuTranslateTextBox'
+const CONTEXT_MENU_TRANSLATE_SELECTION_TITLE = 'contextMenuTranslateSelection'
+
 
 export function background() {
     console.log("background loaded")
     const mutex = new Mutex();
+    let translateStatus = false
+    let paraTranslateStatus = false
+    let paraContextMenuShowStatus = false
+
+    let currentInterfaceLang: InterfaceLang = detectDefaultInterfaceLang()
+    // Register auto-sync alarm/storage listeners synchronously at SW startup so
+    // an alarm that wakes the worker is always caught.
+    registerAutoSyncListeners();
     // Safety-net: in case the onInstalled-driven migration was killed by a SW
     // shutdown, retry on every boot. The migration module itself is idempotent
     // (flag-checked) so this is a near-free no-op once done.
     void migrateFromPouchIfNeeded({ trigger: 'startup' }).then(() => {
-        // Pull from active sync provider (if configured) once migration settled.
-        void syncOnStartup();
+        // Schedule periodic auto-sync + run the startup sync (if enabled) once
+        // migration settled.
+        void startAutoSync();
         initTokenMap();
     });
-    let paraContextMenuShowStatus = false
-    let isTranslateParaShowing = false
-
-    let currentInterfaceLang: InterfaceLang = detectDefaultInterfaceLang()
     const getMsg = (key: string) => LOCALES[currentInterfaceLang][key] ?? key
-    configRepo.get(CONFIG_KEY.INTERFACE_LANG).then((value) => {
+    configRepo.get(CONFIG_KEY.INTERFACE_LANGUAGE).then((value) => {
         const lang = normalizeInterfaceLang(value)
         if (lang) currentInterfaceLang = lang
     })
@@ -227,32 +239,29 @@ export function background() {
             }
             case DB_ACTION.BACKUP_IMPORT: {
                 const snap = message.data?.snapshot;
-                const mode: 'merge' | 'replace' = message.data?.mode === 'replace' ? 'replace' : 'merge';
-                applySnapshot(snap, mode).then(() => {
+                applyImportedSnapshot(snap).then(() => {
                     sendResponse({ status: STATUS_SUCCESS, data: null });
                 }).catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
                 return true
             }
             case SYNC_ACTION.SYNC_NOW: {
-                syncNow().then((result) => {
+                const id = message.data?.id as SYNC_PROVIDER_ID;
+                syncNow(id).then((result) => {
                     sendResponse({ status: STATUS_SUCCESS, data: result });
                 }).catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
                 return true
             }
             case SYNC_ACTION.SYNC_STATUS: {
                 (async () => {
-                    const activeId = await getActiveProviderId();
-                    let description: string | null = null;
-                    let authenticated = false;
-                    if (activeId) {
-                        const provider = getProviderById(activeId);
-                        authenticated = await provider.isAuthenticated();
-                        if (authenticated) description = await provider.describe();
+                    // Per-provider connection state — providers coexist, any
+                    // number can be connected at once.
+                    const providers: Record<string, { authenticated: boolean; description: string | null }> = {};
+                    for (const provider of getAllProviders()) {
+                        const authenticated = await provider.isAuthenticated();
+                        const description = authenticated ? await provider.describe() : null;
+                        providers[provider.id] = { authenticated, description };
                     }
-                    sendResponse({
-                        status: STATUS_SUCCESS,
-                        data: { activeId, authenticated, description },
-                    });
+                    sendResponse({ status: STATUS_SUCCESS, data: { providers } });
                 })().catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
                 return true
             }
@@ -260,7 +269,6 @@ export function background() {
                 (async () => {
                     const provider = getProviderById(SYNC_PROVIDER_ID.GDRIVE);
                     await provider.authenticate();
-                    await setActiveProvider(SYNC_PROVIDER_ID.GDRIVE);
                     const description = await provider.describe();
                     sendResponse({ status: STATUS_SUCCESS, data: { description } });
                 })().catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
@@ -270,7 +278,6 @@ export function background() {
                 (async () => {
                     const provider = getProviderById(SYNC_PROVIDER_ID.WEBDAV);
                     await provider.authenticate(message.data as WebDavCredentials);
-                    await setActiveProvider(SYNC_PROVIDER_ID.WEBDAV);
                     const description = await provider.describe();
                     sendResponse({ status: STATUS_SUCCESS, data: { description } });
                 })().catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
@@ -278,27 +285,49 @@ export function background() {
             }
             case SYNC_ACTION.DISCONNECT_PROVIDER: {
                 (async () => {
-                    const id = (message.data?.id as SYNC_PROVIDER_ID) ?? (await getActiveProviderId());
+                    const id = message.data?.id as SYNC_PROVIDER_ID | undefined;
                     if (id) {
-                        const provider = getProviderById(id);
-                        await provider.disconnect();
-                        const active = await getActiveProviderId();
-                        if (active === id) await setActiveProvider(null);
+                        await getProviderById(id).disconnect();
                     }
                     sendResponse({ status: STATUS_SUCCESS, data: null });
                 })().catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
                 return true
             }
-            case SYNC_ACTION.SET_ACTIVE_PROVIDER: {
-                const id = (message.data?.id as SYNC_PROVIDER_ID | null) ?? null;
-                setActiveProvider(id).then(() => {
+            case SYNC_ACTION.REMOTE_INFO: {
+                (async () => {
+                    const id = message.data?.id as SYNC_PROVIDER_ID;
+                    const provider = getProviderById(id);
+                    const info = provider.getRemoteInfo ? await provider.getRemoteInfo() : null;
+                    sendResponse({ status: STATUS_SUCCESS, data: info });
+                })().catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
+                return true
+            }
+            case SYNC_ACTION.REMOTE_DOWNLOAD: {
+                (async () => {
+                    const id = message.data?.id as SYNC_PROVIDER_ID;
+                    const snap = await getProviderById(id).pull();
+                    sendResponse({ status: STATUS_SUCCESS, data: snap });
+                })().catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
+                return true
+            }
+            case SYNC_ACTION.REMOTE_DELETE: {
+                (async () => {
+                    const id = message.data?.id as SYNC_PROVIDER_ID;
+                    const provider = getProviderById(id);
+                    if (provider.deleteRemote) await provider.deleteRemote();
                     sendResponse({ status: STATUS_SUCCESS, data: null });
+                })().catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
+                return true
+            }
+            case SYNC_ACTION.WEBDAV_CONFIG_GET: {
+                getWebdavConfig().then((cfg) => {
+                    sendResponse({ status: STATUS_SUCCESS, data: cfg });
                 }).catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
                 return true
             }
-            case SYNC_ACTION.GET_ACTIVE_PROVIDER: {
-                getActiveProviderId().then((id) => {
-                    sendResponse({ status: STATUS_SUCCESS, data: { activeId: id } });
+            case SYNC_ACTION.AUTO_CONFIG_CHANGED: {
+                applyAutoSyncConfig().then(() => {
+                    sendResponse({ status: STATUS_SUCCESS, data: null });
                 }).catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
                 return true
             }
@@ -380,7 +409,7 @@ export function background() {
                 if (contextMenuSwitch) {
                     browser.contextMenus.create({
                         id: CONTEXT_MENU.TRANSLATE_RESTORE_PAGE,
-                        title: getMsg('contextMenuTranslate'),
+                        title: getMsg(CONTEXT_MENU_TRANSLATE_TITLE),
                         contexts: ["page"]
                     });
                 } else {
@@ -393,11 +422,21 @@ export function background() {
                     currentInterfaceLang = lang
                     // Refresh the context menu title if it exists. update()
                     // silently fails (logs lastError) when the item is absent.
-                    const title = translateStatus
-                        ? getMsg('contextMenuOriginal')
-                        : getMsg('contextMenuTranslate')
                     try {
-                        browser.contextMenus.update('translate', { title })
+                        if (paraContextMenuShowStatus) {
+                            browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PARA, {
+                                title: paraContextMenuShowStatus
+                                    ? getMsg(CONTEXT_MENU_RESTORE_PARA_TITLE)
+                                    : getMsg(CONTEXT_MENU_TRANSLATE_PARA_TITLE)
+                            })
+                        } else {
+                            browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {
+                                title: translateStatus
+                                    ? getMsg(CONTEXT_MENU_RESTORE_TITLE)
+                                    : getMsg(CONTEXT_MENU_TRANSLATE_TITLE)
+                            })
+                        }
+                        browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_TEXT_BOX, { title: getMsg(CONTEXT_MENU_TRANSLATE_TEXT_BOX_TITLE) })
                     } catch { }
                 }
                 sendResponse({ status: STATUS_SUCCESS, data: null })
@@ -406,7 +445,17 @@ export function background() {
             case TRANS_ACTION.TRANSLATE_STATUS_CHANGE:
                 console.log('translateStatusChange', message.data)
                 if (typeof message.data.status === 'boolean') {
+                    translateStatus = message.data.status
                     updateContextMenu(message.data.status)
+                }
+                break
+            case ACTION.RELAY_FRAMES:
+                // Re-broadcast an inner action to every frame of the sender's
+                // tab. The top-frame content script uses this to fan a
+                // translate/restore out to (cross-origin) sub-frames it cannot
+                // message directly. `message.data` is the inner Message.
+                if (sender.tab?.id && message.data?.action) {
+                    browser.tabs.sendMessage(sender.tab.id, message.data).catch(() => { })
                 }
                 break
             case ACTION.OPEN_OPTIONS_PAGE: {
@@ -595,28 +644,74 @@ export function background() {
                 }
                 break
             case ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU:
-                let translatedStatus = message.data.translated as boolean
-                isTranslateParaShowing = !translatedStatus
-                let msg = translatedStatus ? "Restore this paragraph" : "Translate this paragraph"
-                if (paraContextMenuShowStatus) {
-                    browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PARA, { title: msg })
-                    return
-                }
-                browser.contextMenus.create({
-                    id: CONTEXT_MENU.TRANSLATE_RESTORE_PARA,
-                    title: msg,
-                    contexts: ["page", "link"] //"selection"
-                });
-                paraContextMenuShowStatus = true;
-                sendResponse({ status: STATUS_SUCCESS });
-                break
+                (async () => {
+                    let translateStatus = message.data.translated as boolean
+                    paraTranslateStatus = translateStatus
+                    let msg = getMsg(translateStatus ? CONTEXT_MENU_RESTORE_PARA_TITLE : CONTEXT_MENU_TRANSLATE_PARA_TITLE)
+                    if (paraContextMenuShowStatus) {
+                        try {
+                            await browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PARA, { title: msg })
+                        } catch (e) {
+                            console.error('Error updating context menu:', e);
+                            sendResponse({ status: STATUS_FAIL });
+                            return
+                        }
+                        sendResponse({ status: STATUS_SUCCESS });
+                        return
+                    }
+                    try {
+                        await browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
+                    } catch (e) {
+                        console.error('Error removing context menu:', e);
+                        sendResponse({ status: STATUS_FAIL });
+                        return
+                    }
+                    browser.contextMenus.create({
+                        id: CONTEXT_MENU.TRANSLATE_RESTORE_PARA,
+                        title: msg,
+                        contexts: ["page", "link"] //"selection"
+                    }, () => {
+                        if (browser.runtime.lastError) {
+                            console.error('Error creating context menu:', browser.runtime.lastError.message);
+                            sendResponse({ status: STATUS_FAIL });
+                            return
+                        }
+                        sendResponse({ status: STATUS_SUCCESS });
+                        paraContextMenuShowStatus = true;
+                    });
+
+                })()
+
+
+                return true
             case ACTION.HIDE_TRANSLATE_RESTORE_PARA_MENU:
-                if (!paraContextMenuShowStatus) return
-                browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PARA)
-                paraContextMenuShowStatus = false
-                isTranslateParaShowing = false
-                sendResponse({ status: STATUS_SUCCESS });
-                break
+                (async () => {
+                    if (!paraContextMenuShowStatus) return
+                    try {
+                        await browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PARA)
+                    } catch (e) {
+                        console.error('Error removing context menu:', e);
+                        sendResponse({ status: STATUS_FAIL });
+                        return
+                    }
+
+                    let t: string = translateStatus ? CONTEXT_MENU_RESTORE_TITLE : CONTEXT_MENU_TRANSLATE_TITLE
+                    browser.contextMenus.create({
+                        id: CONTEXT_MENU.TRANSLATE_RESTORE_PAGE,
+                        title: getMsg(t),
+                        contexts: ["page"] //"selection"
+                    }, () => {
+                        if (browser.runtime.lastError) {
+                            console.error('Error creating context menu:', browser.runtime.lastError.message);
+                            sendResponse({ status: STATUS_FAIL });
+                            return
+                        }
+                        sendResponse({ status: STATUS_SUCCESS });
+                        paraContextMenuShowStatus = false
+                    });
+                })()
+
+                return true
             case ACTION.TRANSLATION_CACHE_GET:
                 translationCache.getMany(
                     message.data.service,
@@ -659,7 +754,6 @@ export function background() {
         return
     });
 
-    let translateStatus = false
     // add context menu to translate page
     configRepo.get(CONFIG_KEY.CONTEXT_MENU_SWITCH).then((value) => {
         console.log("contextMenuSwitch", value);
@@ -695,7 +789,7 @@ export function background() {
                 break
             case CONTEXT_MENU.TRANSLATE_RESTORE_PARA:
                 console.log('translatePara', info, tab)
-                let act = isTranslateParaShowing ? TRANS_ACTION.TRANSLATE_PARA : TRANS_ACTION.SHOW_ORIGINAL_PARA
+                let act = paraTranslateStatus ? TRANS_ACTION.SHOW_ORIGINAL_PARA : TRANS_ACTION.TRANSLATE_PARA
                 browser.tabs.sendMessage(tab.id, { action: act });
                 break
         }
@@ -704,20 +798,22 @@ export function background() {
     }
 
     function initContextMenu() {
-        let t: string = 'contextMenuTranslate'
-        if (translateStatus) {
-            t = 'contextMenuOriginal'
-        }
+        let t: string = translateStatus ? CONTEXT_MENU_RESTORE_TITLE : CONTEXT_MENU_TRANSLATE_TITLE
+        browser.contextMenus.removeAll()
         browser.contextMenus.create({
             id: CONTEXT_MENU.TRANSLATE_RESTORE_PAGE,
             title: getMsg(t),
             contexts: ["page"] //"selection"
         });
-
         browser.contextMenus.create({
             id: CONTEXT_MENU.TRANSLATE_TEXT_BOX,
-            title: "Translate text box to English",
+            title: getMsg(CONTEXT_MENU_TRANSLATE_TEXT_BOX_TITLE),
             contexts: ["editable"]
+        });
+        browser.contextMenus.create({
+            id: CONTEXT_MENU.TRANSLATE_SELECTION,
+            title: getMsg(CONTEXT_MENU_TRANSLATE_SELECTION_TITLE),
+            contexts: ["selection"]
         });
 
         browser.contextMenus.onClicked.addListener(contextMenuClickLister)
@@ -732,17 +828,10 @@ export function background() {
             // get current tab translate status
             let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + activeInfo.tabId
             browser.storage.session.get(tabTranslateStatusKey).then((value) => {
-                translateStatus = value[tabTranslateStatusKey] as boolean
-                if (translateStatus) {
-                    browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {
-                        title: getMsg('contextMenuOriginal'),
-                    })
-                } else {
-                    browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {
-                        title: getMsg('contextMenuTranslate'),
-                    })
-                }
+                translateStatus = !!value[tabTranslateStatusKey]
+                updateContextMenu(translateStatus)
             })
+            // browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_TEXT_BOX, { title : ''})
         });
     }
 
@@ -790,17 +879,11 @@ export function background() {
 
     function updateContextMenu(status: boolean) {
         console.log('updateContextMenu', status)
-        translateStatus = status
+        if (paraContextMenuShowStatus) return
 
-        if (translateStatus) {
-            browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {
-                title: getMsg('contextMenuOriginal'),
-            })
-        } else {
-            browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {
-                title: getMsg('contextMenuTranslate'),
-            })
-        }
+        browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {
+            title: translateStatus ? getMsg(CONTEXT_MENU_RESTORE_TITLE) : getMsg(CONTEXT_MENU_TRANSLATE_TITLE),
+        })
     }
 
     async function getMicrosoftToken(): Promise<Token> {
@@ -1019,7 +1102,7 @@ async function aiPageTranslate(
         const full = await chatCompleteNonStream(provider!, messages, { temperature, signal, params });
         const outs = full.split(SEPARATOR_TAG).filter((s) => s.length > 0);
         // if (outs.length != texts.length) throw new Error(`Expected ${texts.length} translations, got ${outs.length}`)
-        
+
         for (let i = 0; i < batch.texts.length; i++) {
             // Guard against a short response — fall back to the source text so
             // indices never drift out of alignment with the input array.

@@ -13,8 +13,8 @@
 //
 // Internal book-keeping keys (filtered out of snapshots, see snapshot.ts):
 //   __migration_v1_done       — set after the one-shot PouchDB → storage migration
-//   __sync_local_mtime        — mtime updated after every config/domain/rule mutation
-//   __sync_active_provider    — 'gdrive' | 'webdav' | null
+//   __sync_meta               — per-key LWW clocks + tombstones (see SyncMeta)
+//   __sync_active_provider    — legacy single-provider selector (no longer written)
 //   __sync_gdrive_tokens      — OAuth tokens
 //   __sync_gdrive_file_id     — cached Drive fileId
 //   __sync_webdav_creds       — { baseUrl, username, password, basePath }
@@ -36,11 +36,13 @@ export const STORAGE_PREFIX = {
 
 export const INTERNAL_STORAGE_KEYS = [
     '__migration_v1_done',
-    '__sync_local_mtime',
+    '__sync_meta',
+    '__sync_local_mtime', // legacy, kept excluded so any stale value never syncs
     '__sync_active_provider',
     '__sync_gdrive_tokens',
     '__sync_gdrive_file_id',
     '__sync_webdav_creds',
+    '__sync_webdav_disconnected',
 ] as const;
 
 export type DomainDoc = {
@@ -57,19 +59,67 @@ const configKey = (name: string): StorageItemKey => `local:${STORAGE_PREFIX.CONF
 const domainKey = (host: string): StorageItemKey => `local:${STORAGE_PREFIX.DOMAIN}${host}`;
 const ruleKey = (host: string): StorageItemKey => `local:${STORAGE_PREFIX.RULE}${host}`;
 
-const MTIME_KEY: StorageItemKey = 'local:__sync_local_mtime';
+// Data-key (storage key without the `local:` area prefix) builders. These match
+// the keys used in snapshot `data`/`meta`/`tombstones` and in the sync-meta map.
+const dataConfigKey = (name: string): string => `${STORAGE_PREFIX.CONFIG}${name}`;
+const dataDomainKey = (host: string): string => `${STORAGE_PREFIX.DOMAIN}${host}`;
+const dataRuleKey = (host: string): string => `${STORAGE_PREFIX.RULE}${host}`;
 
-/** Bump the local mtime; called after any user-data mutation so syncManager LWW can compare. */
-async function bumpMtime(): Promise<void> {
-    await storage.setItem<number>(MTIME_KEY, Date.now());
+// ------------------------------ Sync meta ----------------------------------
+//
+// Per-key last-write-wins bookkeeping for cloud sync. `clocks[key]` is the
+// last-modified time (ms) of a live key; `tombstones[key]` is the deletion
+// time of a removed key. Sync merges key-by-key using these, so edits to
+// different keys on different devices never clobber each other.
+
+export type SyncMeta = {
+    clocks: Record<string, number>;
+    tombstones: Record<string, number>;
+};
+
+const META_KEY: StorageItemKey = 'local:__sync_meta';
+
+export async function getSyncMeta(): Promise<SyncMeta> {
+    const m = await storage.getItem<SyncMeta>(META_KEY);
+    return m ?? { clocks: {}, tombstones: {} };
 }
 
-export async function getLocalMtime(): Promise<number> {
-    return (await storage.getItem<number>(MTIME_KEY)) ?? 0;
+async function saveSyncMeta(m: SyncMeta): Promise<void> {
+    await storage.setItem(META_KEY, m);
 }
 
-export async function setLocalMtime(mtime: number): Promise<void> {
-    await storage.setItem<number>(MTIME_KEY, mtime);
+/** Replace the whole sync-meta — used after a merge applies the merged clocks. */
+export async function setSyncMeta(meta: SyncMeta): Promise<void> {
+    await saveSyncMeta(meta);
+}
+
+/** Mark a data key as live-modified now (and clear any tombstone for it). */
+async function touchKey(dataKey: string): Promise<void> {
+    const m = await getSyncMeta();
+    m.clocks[dataKey] = Date.now();
+    delete m.tombstones[dataKey];
+    await saveSyncMeta(m);
+}
+
+/** Mark a data key as deleted now (and drop its live clock). */
+async function tombstoneKey(dataKey: string): Promise<void> {
+    const m = await getSyncMeta();
+    delete m.clocks[dataKey];
+    m.tombstones[dataKey] = Date.now();
+    await saveSyncMeta(m);
+}
+
+/** Bump clocks for several data keys to now — used after a manual import so the
+ *  imported values win on the next sync. */
+export async function touchKeys(dataKeys: string[]): Promise<void> {
+    if (dataKeys.length === 0) return;
+    const m = await getSyncMeta();
+    const now = Date.now();
+    for (const k of dataKeys) {
+        m.clocks[k] = now;
+        delete m.tombstones[k];
+    }
+    await saveSyncMeta(m);
 }
 
 function defaultForConfig(name: string): unknown {
@@ -93,7 +143,7 @@ export const configRepo = {
 
     async set(name: string, value: unknown): Promise<void> {
         await storage.setItem(configKey(name), value);
-        await bumpMtime();
+        await touchKey(dataConfigKey(name));
     },
 };
 
@@ -106,7 +156,7 @@ export const domainRepo = {
 
     async set(host: string, doc: DomainDoc): Promise<void> {
         await storage.setItem(domainKey(host), doc);
-        await bumpMtime();
+        await touchKey(dataDomainKey(host));
     },
 
     /**
@@ -122,12 +172,12 @@ export const domainRepo = {
         if (patch.aiWritingEnabled !== undefined) next.aiWritingEnabled = patch.aiWritingEnabled;
         if (patch.floatBallDisabled !== undefined) next.floatBallDisabled = patch.floatBallDisabled;
         await storage.setItem(domainKey(host), next);
-        await bumpMtime();
+        await touchKey(dataDomainKey(host));
     },
 
     async delete(host: string): Promise<void> {
         await storage.removeItem(domainKey(host));
-        await bumpMtime();
+        await tombstoneKey(dataDomainKey(host));
     },
 
     /**
@@ -149,10 +199,11 @@ export const domainRepo = {
             doc.floatBallDisabled === undefined;
         if (empty) {
             await storage.removeItem(domainKey(host));
+            await tombstoneKey(dataDomainKey(host));
         } else {
             await storage.setItem(domainKey(host), doc);
+            await touchKey(dataDomainKey(host));
         }
-        await bumpMtime();
     },
 
     async list(filter?: {
@@ -202,7 +253,7 @@ export const ruleRepo = {
         if (existing.includes(rule)) return;
         existing.push(rule);
         await storage.setItem(ruleKey(host), existing);
-        await bumpMtime();
+        await touchKey(dataRuleKey(host));
     },
 
     async delete(host: string, rule: string): Promise<void> {
@@ -211,10 +262,11 @@ export const ruleRepo = {
         const next = existing.filter((r) => r !== rule);
         if (next.length === 0) {
             await storage.removeItem(ruleKey(host));
+            await tombstoneKey(dataRuleKey(host));
         } else {
             await storage.setItem(ruleKey(host), next);
+            await touchKey(dataRuleKey(host));
         }
-        await bumpMtime();
     },
 
     async deleteList(host: string, rules: string[]): Promise<void> {
@@ -224,10 +276,11 @@ export const ruleRepo = {
         const next = existing.filter((r) => !drop.has(r));
         if (next.length === 0) {
             await storage.removeItem(ruleKey(host));
+            await tombstoneKey(dataRuleKey(host));
         } else {
             await storage.setItem(ruleKey(host), next);
+            await touchKey(dataRuleKey(host));
         }
-        await bumpMtime();
     },
 
     /** Original RuleStorage.search returned PouchDB doc objects ({ _id, rules }).

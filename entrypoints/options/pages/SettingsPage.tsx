@@ -35,7 +35,7 @@ export function SettingsPage() {
     let cancelled = false;
     (async () => {
       const [il, gs, cm] = await Promise.all([
-        getConfig(CONFIG_KEY.INTERFACE_LANG),
+        getConfig(CONFIG_KEY.INTERFACE_LANGUAGE),
         getConfig(CONFIG_KEY.GLOBAL_SWITCH),
         getConfig(CONFIG_KEY.CONTEXT_MENU_SWITCH),
       ]);
@@ -53,7 +53,7 @@ export function SettingsPage() {
   const onInterfaceLang = (v: string) => {
     if (v !== 'en' && v !== 'zh-CN') return;
     setInterfaceLang(v);
-    void setConfig(CONFIG_KEY.INTERFACE_LANG, v);
+    void setConfig(CONFIG_KEY.INTERFACE_LANGUAGE, v);
     void i18n.changeLanguage(v);
     void sendMessageToBackground({ action: ACTION.INTERFACE_LANG_CHANGE, data: v });
   };

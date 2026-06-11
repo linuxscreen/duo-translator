@@ -19,36 +19,16 @@ export class TranslateServiceMeta {
     }
 }
 
-export const APP_NAME = 'DuoTranslator';
+export const APP_NAME = import.meta.env.VITE_APP_NAME;
 export const APP_NAME_WITH_SUFFIX = APP_NAME + ' - ';
+export const APP_NAME_KEBAB_CASE = import.meta.env.VITE_APP_NAME_KEBAB_CASE;
 
 export const STATUS_SUCCESS = '200';
 export const STATUS_FAIL = '500';
 
 export const TRANSLATE_STATUS_KEY = 'tabTranslateStatus#'
 
-export const DEFAULT_VALUE = {
-    GLOBAL_SWITCH: true,
-    BILINGUAL_HIGHLIGHTING_SWITCH: true,
-    FLOAT_BALL_SWITCH: true,
-    CONTEXT_MENU_SWITCH: true,
-    VIEW_STRATEGY: 'double',
-    TARGET_LANG: 'en',
-    TRANSLATE_SERVICE: 'microsoft',
-    TRANSLATE_SERVICE_TITLE: 'microsoftTranslator',
-    AI_WRITING_DOT_SWITCH: true,
-    AI_TARGET_LANG: 'en',
-    AI_DEFAULT_ENHANCE_MODE: 'polish',
-    AI_TRANSLATE_SERVICE: 'microsoft',
-    AI_USE_FOR_TRANSLATE_PAGE: true,
-    BILINGUAL_HIGHLIGHTING_MIN_SENTENCES: 2,
-    DOMAIN_STRATEGY: 'auto',
-    TRANSLATION_LINE_BREAK_MIN_CHARS: 40,
-    TRANSLATION_CACHE_SWITCH: true,
-    HIGHLIGHT_STYLE: 'underLine',
-    HIGHLIGHT_BORDER_COLOR: '#df5f47',
-    HIGHLIGHT_BORDER_COLOR_INDEX: 1
-} as const;
+export const AI_PREFIX = "ai:";
 
 export enum DB_ACTION {
     RULES_ADD = 'addRule',
@@ -73,8 +53,16 @@ export enum SYNC_ACTION {
     AUTH_GDRIVE = 'authGdrive',
     AUTH_WEBDAV = 'authWebdav',
     DISCONNECT_PROVIDER = 'disconnectProvider',
-    SET_ACTIVE_PROVIDER = 'setActiveProvider',
-    GET_ACTIVE_PROVIDER = 'getActiveProvider',
+    REMOTE_INFO = 'remoteInfo',
+    REMOTE_DOWNLOAD = 'remoteDownload',
+    REMOTE_DELETE = 'remoteDelete',
+    // Options notifies background after toggling auto-sync / changing the
+    // interval so the background can reschedule its alarms.
+    AUTO_CONFIG_CHANGED = 'autoSyncConfigChanged',
+    // Read the persisted WebDAV credentials back so the config form can be
+    // pre-filled (the options page is part of the extension, so exposing the
+    // locally-stored password to it is fine).
+    WEBDAV_CONFIG_GET = 'webdavConfigGet',
 }
 
 export enum SYNC_PROVIDER_ID {
@@ -142,9 +130,15 @@ export enum TRANS_SERVICE {
 
 export const TRANSLATE_SERVICES: Map<string, TranslateServiceMeta> = new Map([
     ["microsoft", new TranslateServiceMeta("Microsoft", "microsoft", "microsoftTranslator", "MicrosoftTranslateDescription", false)],
-    ["google", new TranslateServiceMeta("Google", "google", "googleTranslator", "GoogleTranslateDescription", false)],
-    ["deepl", new TranslateServiceMeta("DeepL", "deepl", "deeplTranslator", "DeeplTranslateDescription", true)],
+    ["google", new TranslateServiceMeta("Google", "google", "googleTranslate", "GoogleTranslateDescription", false)],
+    ["deepl", new TranslateServiceMeta("DeepL", "deepl", "deepl", "DeeplTranslateDescription", true)],
 ]);
+
+export const DEFAULT_STRATEGY_OPTIONS: { value: DEFAULT_STRATEGY; title: string; fallback: string }[] = [
+    { value: DEFAULT_STRATEGY.AUTO, title: 'automaticallyDetermine', fallback: 'Automatically determine' },
+    { value: DEFAULT_STRATEGY.ALWAYS, title: 'translateAllWebsites', fallback: 'Translate all websites' },
+    { value: DEFAULT_STRATEGY.NEVER, title: 'notTranslateAllWebsites', fallback: "Don't translate all websites" },
+];
 
 // translation action
 export enum TRANS_ACTION {
@@ -212,6 +206,12 @@ export enum ACTION {
     // Broadcast from Options when the cache switch toggles so content scripts
     // drop their memoized enabled-flag.
     TRANSLATION_CACHE_SWITCH_CHANGE = 'translationCacheSwitchChange',
+    // Top-frame → sub-frames fan-out. The top-frame content script sends this to
+    // background with `data` = an inner Message; background re-broadcasts that
+    // inner message to every frame of the sender's tab. Used to drive iframe
+    // translation on manual toggles / float-ball clicks, which the top frame
+    // cannot deliver to cross-origin iframes itself.
+    RELAY_FRAMES = 'relayFrames',
 }
 
 /**
@@ -244,8 +244,8 @@ export enum AI_TASK {
 export enum CONFIG_KEY {
     DEFAULT_STRATEGY = 'defaultStrategy',
     VIEW_STRATEGY = 'viewStrategy',
-    TARGET_LANG = 'targetLanguage',
-    SOURCE_LANG = 'sourceLanguage',
+    TARGET_LANGUAGE = 'targetLanguage',
+    SOURCE_LANGUAGE = 'sourceLanguage',
     STYLE = 'style',
     BG_COLOR = 'bgColor',
     FONT_COLOR = 'fontColor',
@@ -273,18 +273,17 @@ export enum CONFIG_KEY {
     // Persistent translation-result cache toggle (LRU, 100MB cap). Default on.
     TRANSLATION_CACHE_SWITCH = 'translationCacheSwitch',
     GLOBAL_SWITCH = 'globalSwitch',
-    TARGET_LANGUAGE = 'targetLanguage',
     TRANSLATE_SERVICE = 'translateService',
     MICROSOFT_TOKEN = 'microsoftToken',
     FLOAT_BALL_POSITION = 'floatBallPosition',
     FLOAT_BALL_SWITCH = 'floatBallSwitch',
     CONTEXT_MENU_SWITCH = 'contextMenuSwitch',
-    DISABLED_TRANSLATE_SERVICE = 'disabledTranslateService',
+    DISABLED_TRANSLATE_SERVICES = 'disabledTranslateServices',
     // AI Writing
     AI_WRITING_SWITCH = 'aiWritingDotSwitch',
     AI_PROVIDERS = 'aiProviders',
     AI_ACTIVE_PROVIDER_ID = 'aiActiveProviderId', //which AI provider Better-Writing uses.
-    AI_TARGET_LANG = 'aiTargetLang',
+    AI_TARGET_LANGUAGE = 'aiTargetLanguage',
     // When true, the floating dot only mounts on domains explicitly added to
     // the enabled list (DomainStorage.aiWritingEnabled). When false (default),
     // it mounts everywhere except domains on the disabled list.
@@ -294,10 +293,10 @@ export enum CONFIG_KEY {
     // AI_TRANSLATE_SERVICE: either a TRANS_SERVICE value ('microsoft' |
     // 'google' | 'deepl') or `ai:<providerId>` to route translate through an
     // AI provider. Default: 'microsoft'.
-    AI_TRANSLATE_SERVICE = 'aiDotTranslateService',
+    AI_TRANSLATE_SERVICE = 'aiTranslateService',
     // UI language override for popup/options/context menu. Empty/undefined
     // means "auto-detect from browser UI language".
-    INTERFACE_LANG = 'interfaceLang',
+    INTERFACE_LANGUAGE = 'interfaceLanguage',
     // When enabled, configured AI providers also surface as page-translation
     // services (in the popup/options Translation Service picker). Off ⇒ AI
     // providers are only usable inside the AI Writing flows.
@@ -305,7 +304,40 @@ export enum CONFIG_KEY {
     // User-supplied DeepL API key (free-tier keys end with ":fx"). When empty,
     // DeepL translation is unavailable until configured in Options.
     DEEPL_API_KEY = 'deeplApiKey',
+    // When true, cloud sync includes API keys (AI providers + DeepL) in the
+    // synced snapshot. Off by default so secrets stay on-device unless the user
+    // opts in. Separate from the per-export "include keys" checkbox.
+    SYNC_INCLUDE_SECRETS = 'syncIncludeSecrets',
+    // Automatic sync: when on, sync runs on startup, 30s-debounced after any
+    // config change, and on a periodic alarm. Off by default. Per-device pref
+    // (excluded from the synced snapshot).
+    SYNC_AUTO = 'syncAuto',
+    // Periodic auto-sync interval in minutes (5..60, default 15). Per-device.
+    SYNC_INTERVAL_MINUTES = 'syncIntervalMinutes',
 }
+
+export const DEFAULT_VALUE = {
+    GLOBAL_SWITCH: true,
+    BILINGUAL_HIGHLIGHTING_SWITCH: true,
+    FLOAT_BALL_SWITCH: true,
+    CONTEXT_MENU_SWITCH: true,
+    VIEW_STRATEGY: 'double',
+    DEFAULT_STRATEGY: 'auto',
+    AI_WRITING_SWITCH: true,
+    AI_DEFAULT_ENHANCE_MODE: 'polish',
+    AI_TRANSLATE_SERVICE: 'microsoft',
+    AI_USE_FOR_TRANSLATE_PAGE: true,
+    BILINGUAL_HIGHLIGHTING_MIN_SENTENCES: 2,
+    DOMAIN_STRATEGY: 'auto',
+    TRANSLATION_LINE_BREAK_MIN_CHARS: 40,
+    TRANSLATION_CACHE_SWITCH: true,
+    SYNC_INTERVAL_MINUTES: 15,
+    HIGHLIGHT_STYLE: 'underLine',
+    HIGHLIGHT_BORDER_COLOR: '#df5f47',
+    HIGHLIGHT_BORDER_COLOR_INDEX: 1,
+    DISABLED_TRANSLATE_SERVICES: ['deepl'],
+    AI_TARGET_LANGUAGE: 'en',
+} as const;
 
 // CONFIG_KEY value -> enum key name. Lets us look up a default for any config
 // key whose enum-key name also exists on DEFAULT_VALUE (e.g. CONFIG_KEY.GLOBAL_SWITCH
@@ -1230,7 +1262,7 @@ export const EXCLUDE_TAGS = [
 ];
 
 export const EXCLUDE_CHILD_ELEMENT_TAGS = new Set([
-        'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', "IMAGE"]);
+    'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', "IMAGE"]);
 
 export const iso6393To1Map: Map<string, string> = new Map(Object.entries(iso6393To1));
 

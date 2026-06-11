@@ -6,10 +6,11 @@ import {
     CONFIG_KEY,
     DEFAULT_VALUE,
     LANGUAGES,
-    TRANS_SERVICE,
+    type TranslateServiceMeta,
 } from "@/main/constants";
 import type { AiProvider } from "@/main/aiService";
 import { startAiChatStream } from "@/main/aiService";
+import { buildServiceOptions, getAiWritingTranslateService } from "@/utils/service";
 import { getConfig, setConfig } from "@/utils/db";
 import { applyTextToTarget, canApplyToTarget } from "./applyText";
 import { DiffView } from "./DiffView";
@@ -22,12 +23,6 @@ import {
 import { loadTailwindIntoShadow } from "./shadowStyle";
 import { t, useLang } from "./i18n";
 import { useCopyFeedback } from "./useCopyFeedback";
-
-const REGULAR_TRANSLATORS: { value: string; label: string }[] = [
-    { value: TRANS_SERVICE.MICROSOFT, label: "Microsoft" },
-    { value: TRANS_SERVICE.GOOGLE, label: "Google" },
-    { value: TRANS_SERVICE.DEEPL, label: "DeepL" },
-];
 
 // ---------------------------------------------------------------------------
 // Singleton mount
@@ -87,10 +82,10 @@ export function openWorkbench(seed: WorkbenchSeed): void {
 // ---------------------------------------------------------------------------
 
 const TASK_OPTIONS: { value: AI_TASK; labelKey: string; fallback: string }[] = [
-    { value: AI_TASK.GRAMMAR,   labelKey: "aiGrammar",   fallback: "Grammar fix" },
-    { value: AI_TASK.POLISH,    labelKey: "aiPolish",    fallback: "Polish" },
-    { value: AI_TASK.FORMAL,    labelKey: "aiFormal",    fallback: "Formal" },
-    { value: AI_TASK.CASUAL,    labelKey: "aiCasual",    fallback: "Casual" },
+    { value: AI_TASK.GRAMMAR, labelKey: "aiGrammar", fallback: "Grammar fix" },
+    { value: AI_TASK.POLISH, labelKey: "aiPolish", fallback: "Polish" },
+    { value: AI_TASK.FORMAL, labelKey: "aiFormal", fallback: "Formal" },
+    { value: AI_TASK.CASUAL, labelKey: "aiCasual", fallback: "Casual" },
     { value: AI_TASK.TRANSLATE, labelKey: "aiTranslate", fallback: "Translate" },
 ];
 
@@ -105,7 +100,7 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
     const [baseText, setBaseText] = useState("");
     const [output, setOutput] = useState("");
     const [task, setTask] = useState<AI_TASK>(AI_TASK.POLISH);
-    const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANG);
+    const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANGUAGE);
     const [running, setRunning] = useState(false);
     const [copied, copy] = useCopyFeedback();
     const [error, setError] = useState<string | null>(null);
@@ -116,6 +111,7 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
     // Service selection — translate routes through a translator/AI provider,
     // enhance routes through an AI provider (the "model").
     const [providers, setProviders] = useState<AiProvider[]>([]);
+    const [translateServices, setTranslateServices] = useState<TranslateServiceMeta[]>([]);
     const [translateChoice, setTranslateChoice] = useState<TranslateServiceChoice>({
         kind: "trans", service: String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE),
     });
@@ -143,18 +139,20 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
             // Hydrate selections from saved config on each open so the
             // workbench mirrors the floating dot's remembered choices.
             (async () => {
-                const [lang, transKey, list, activeId] = await Promise.all([
-                    getConfig(CONFIG_KEY.AI_TARGET_LANG),
+                const [lang, transKey, activeId] = await Promise.all([
+                    getConfig(CONFIG_KEY.AI_TARGET_LANGUAGE),
                     getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
-                    getConfig(CONFIG_KEY.AI_PROVIDERS),
                     getConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID),
                 ]);
                 if (lang) setTargetLang(lang);
-                setTranslateChoice(parseTranslateServiceKey(transKey || String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE)));
-                const arr: AiProvider[] = (Array.isArray(list) ? list : [])
-                    .filter((p: AiProvider) => p?.enabled !== false);
-                setProviders(arr);
-                setEnhanceProviderId(arr.find((p) => p.id === activeId)?.id || arr[0]?.id || "");
+                // Shared loader: enabled translators + enabled AI providers, plus
+                // the resolved active translate service (same logic the popup uses).
+                const { activeService, enabledTranslateServices, enabledAiProviders } =
+                    await getAiWritingTranslateService(transKey);
+                setTranslateServices(enabledTranslateServices);
+                setProviders(enabledAiProviders);
+                setTranslateChoice(parseTranslateServiceKey(activeService));
+                setEnhanceProviderId(enabledAiProviders.find((p) => p.id === activeId)?.id || enabledAiProviders[0]?.id || "");
             })();
         });
     }, [registerOpen]);
@@ -342,25 +340,18 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                                     <option key={l.value} value={l.value}>{t(l.title, l.title)}</option>
                                 ))}
                             </select>
-                            {/* Translate service: built-in translators + configured AI providers. */}
+                            {/* Translate service: built-in translators + configured AI providers (flat list). */}
                             <select
                                 value={buildTranslateServiceKey(translateChoice)}
                                 onChange={(e) => onPickTranslateService(e.target.value)}
                                 title={t("aiTranslateWith", "Translate with")}
                                 className="h-7 rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-2"
                             >
-                                <optgroup label={t("aiGroupTranslators", "Translators")}>
-                                    {REGULAR_TRANSLATORS.map((opt) => (
-                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                    ))}
-                                </optgroup>
-                                {providers.length > 0 && (
-                                    <optgroup label={t("aiGroupAiProviders", "AI providers")}>
-                                        {providers.map((p) => (
-                                            <option key={p.id} value={`ai:${p.id}`}>{p.name} · {p.model}</option>
-                                        ))}
-                                    </optgroup>
-                                )}
+                                {buildServiceOptions(translateServices, providers).map((s) => (
+                                    <option key={s.value} value={s.value}>
+                                        {s.i18nKey ? t(s.i18nKey, s.label) : s.label}
+                                    </option>
+                                ))}
                             </select>
                         </>
                     ) : (
@@ -373,7 +364,7 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                                 className="h-7 rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-2"
                             >
                                 {providers.map((p) => (
-                                    <option key={p.id} value={p.id}>{p.name} · {p.model}</option>
+                                    <option key={p.id} value={p.id}>{p.getTitle()}</option>
                                 ))}
                             </select>
                         ) : (

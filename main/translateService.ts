@@ -1,4 +1,4 @@
-import { ACTION, APP_NAME_WITH_SUFFIX, CONFIG_KEY, EXCLUDE_CHILD_ELEMENT_TAGS, PORT_NAME, TRANS_SERVICE, VIEW_STRATEGY } from "@/main/constants";
+import { ACTION, AI_PREFIX, APP_NAME_WITH_SUFFIX, CONFIG_KEY, EXCLUDE_CHILD_ELEMENT_TAGS, PORT_NAME, TRANS_SERVICE, VIEW_STRATEGY } from "@/main/constants";
 import { sendMessageToBackground } from "../utils/message";
 import { getConfig } from "@/utils/db";
 import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
@@ -538,12 +538,6 @@ export class DeepLTranslateService extends TranslateService {
     }
 }
 
-// ---------------------------------------------------------------------------
-// AI (OpenAI-compatible / Gemini / Claude via background bridge)
-// ---------------------------------------------------------------------------
-
-export const AI_SERVICE_PREFIX = "ai:" as const;
-
 // AI completions can take well over the default 5s sendMessage timeout, so the
 // non-streaming page-translation round-trip uses a more generous budget.
 const AI_TRANSLATE_TIMEOUT = 120000;
@@ -565,7 +559,7 @@ export class AiTranslateService extends TranslateService {
     constructor(providerId: string) {
         super();
         this.providerId = providerId;
-        this.name = AI_SERVICE_PREFIX + providerId;
+        this.name = AI_PREFIX + providerId;
     }
 
     async translateText(
@@ -731,8 +725,8 @@ export const translationServices = new Map<string, TranslateService>([
  * an AI provider id prefixed with `ai:` (e.g. `ai:p_xyz123`).
  */
 export function resolveTranslateService(service: string): TranslateService | undefined {
-    if (service.startsWith(AI_SERVICE_PREFIX)) {
-        return new AiTranslateService(service.slice(AI_SERVICE_PREFIX.length));
+    if (service.startsWith(AI_PREFIX)) {
+        return new AiTranslateService(service.slice(AI_PREFIX.length));
     }
     return translationServices.get(service);
 }

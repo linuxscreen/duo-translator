@@ -1,15 +1,15 @@
-import { Plus, Trash2, Pencil, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Pencil, Loader2, FlaskConical } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { browser } from 'wxt/browser';
 import { ACTION, CONFIG_KEY, DEFAULT_VALUE, STATUS_SUCCESS } from '@/main/constants';
-import type { AiProvider } from '@/main/aiService';
-import { getCatalogEntry, normalizeProvider } from '@/main/aiService';
+import { AiProvider, normalizeProvider } from '@/main/aiService';
+import { getCatalogEntry } from '@/main/aiService';
 import { getConfig, setConfig } from '@/utils/db';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { TestResultBadge } from '@/components/ui/test-result-badge';
-import { ProviderModal } from '../components/ProviderModal';
+import { ProviderModal } from '../../../components/options/ProviderModal';
 import { ServiceMark } from '@/components/ui/service-mark';
 
 type TestState =
@@ -32,7 +32,7 @@ export function AiProvidersCard() {
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const [list, useAi] = await Promise.all([
+            const [list, useAi]: [AiProvider[] | undefined, boolean] = await Promise.all([
                 getConfig(CONFIG_KEY.AI_PROVIDERS),
                 getConfig(CONFIG_KEY.AI_USE_FOR_TRANSLATE_PAGE),
             ]);
@@ -69,7 +69,10 @@ export function AiProvidersCard() {
     };
 
     const toggleEnabled = async (id: string, enabled: boolean) => {
-        const next = providers.map((p) => (p.id === id ? { ...p, enabled } : p));
+        let next = providers.map((p) => {
+            if (p.id === id) p.enabled = enabled;
+            return p;
+        });
         await persistProviders(next);
     };
 
@@ -131,7 +134,7 @@ export function AiProvidersCard() {
                     </div>
                     <div className="flex items-center gap-3">
                         <label className="flex items-center gap-2 text-[12.5px] text-ink-soft">
-                            <span>{t('aiUseForTranslatePage', 'Use for translate page')}</span>
+                            <span>{t('aiUseForTranslatePage', 'Also used for translate page')}</span>
                             <Switch
                                 checked={useForPage}
                                 onCheckedChange={(v) => void toggleUseForPage(v)}
@@ -188,21 +191,22 @@ export function AiProvidersCard() {
                                         onCheckedChange={(v) => void toggleEnabled(p.id, v)}
                                         size="sm"
                                     />
-                                    <Button size="sm" variant="outline" onClick={() => openEdit(p)}>
-                                        <Pencil className="h-3 w-3" strokeWidth={2} />
-                                        {t('edit', 'Edit')}
-                                    </Button>
                                     <Button
                                         size="sm"
                                         variant="outline"
                                         onClick={() => void testProvider(p)}
                                         disabled={ts.kind === 'pending'}
                                     >
+                                        <FlaskConical className="h-3 w-3" strokeWidth={2}/>
                                         {ts.kind === 'pending' ? (
                                             <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
                                         ) : (
                                             t('aiTest', 'Test')
                                         )}
+                                    </Button>
+                                    <Button size="sm" variant="outline" onClick={() => openEdit(p)}>
+                                        <Pencil className="h-3 w-3" strokeWidth={2} />
+                                        {t('edit', 'Edit')}
                                     </Button>
                                     <Button size="sm" variant="destructive" onClick={() => void removeProvider(p.id)}>
                                         <Trash2 className="h-3 w-3" strokeWidth={2} />

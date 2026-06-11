@@ -5,7 +5,7 @@
 // (baseUrl + username + password + optional path).
 //
 // Layout:
-//   <baseUrl>/<basePath>/duo-translator-config.json
+//   <baseUrl>/<basePath>/{APP_NAME}-config.json
 //
 // Because the URL is user-supplied at runtime, the manifest declares
 // `optional_host_permissions: ['<all_urls>']` and we request the specific
@@ -13,13 +13,17 @@
 
 import { storage, type StorageItemKey } from 'wxt/utils/storage';
 import { browser } from 'wxt/browser';
-import { APP_NAME_WITH_SUFFIX, SYNC_PROVIDER_ID } from '@/main/constants';
+import { APP_NAME_KEBAB_CASE, APP_NAME_WITH_SUFFIX, SYNC_PROVIDER_ID } from '@/main/constants';
 import type { Snapshot } from '@/main/storage/snapshot';
 import { isValidSnapshot } from '@/main/storage/snapshot';
-import type { SyncProvider } from './types';
+import type { SyncProvider, RemoteBackupInfo } from './types';
 
 const CREDS_KEY: StorageItemKey = 'local:__sync_webdav_creds';
-const REMOTE_FILE_NAME = 'duo-translator-config.json';
+// Disconnect keeps the credentials (so the config form stays pre-filled and
+// reconnecting is one click) but flips this flag so the provider counts as
+// not-authenticated and stops syncing. Cleared on (re)authenticate.
+const DISCONNECTED_KEY: StorageItemKey = 'local:__sync_webdav_disconnected';
+const REMOTE_FILE_NAME = `${APP_NAME_KEBAB_CASE}-config.json`;
 
 export type WebDavCredentials = {
     baseUrl: string;
@@ -70,7 +74,9 @@ class WebDavProviderImpl implements SyncProvider {
 
     async isAuthenticated(): Promise<boolean> {
         const c = await this.getCreds();
-        return !!c && !!c.baseUrl && !!c.username;
+        if (!c || !c.baseUrl || !c.username) return false;
+        const disconnected = await storage.getItem<boolean>(DISCONNECTED_KEY);
+        return !disconnected;
     }
 
     async describe(): Promise<string | null> {
@@ -151,10 +157,56 @@ class WebDavProviderImpl implements SyncProvider {
         }
 
         await storage.setItem(CREDS_KEY, creds);
+        await storage.removeItem(DISCONNECTED_KEY);
     }
 
     async disconnect(): Promise<void> {
-        await storage.removeItem(CREDS_KEY);
+        // Keep credentials; just mark disconnected so the config (incl. password)
+        // survives for an easy reconnect.
+        await storage.setItem(DISCONNECTED_KEY, true);
+    }
+
+    async getRemoteInfo(): Promise<RemoteBackupInfo | null> {
+        const creds = await this.getCreds();
+        if (!creds) return null;
+        const url = buildFileUrl(creds);
+        const res = await fetch(url, {
+            method: 'PROPFIND',
+            headers: {
+                Authorization: basicAuth(creds.username, creds.password),
+                Depth: '0',
+                'Content-Type': 'application/xml; charset=utf-8',
+            },
+        });
+        if (res.status === 404) return null;
+        if (!res.ok) {
+            throw new Error(`WebDAV PROPFIND failed: ${res.status} ${await res.text().catch(() => '')}`);
+        }
+        // No DOMParser in a service worker — pull the two props out by regex,
+        // tolerant of the various DAV namespace prefixes (d:, D:, lp1:, …).
+        const xml = await res.text();
+        const sizeM = xml.match(/<[^>]*getcontentlength[^>]*>(\d+)<\//i);
+        const modM = xml.match(/<[^>]*getlastmodified[^>]*>([^<]+)<\//i);
+        const modMs = modM ? Date.parse(modM[1].trim()) : NaN;
+        return {
+            name: REMOTE_FILE_NAME,
+            size: sizeM ? Number(sizeM[1]) : null,
+            modifiedTime: Number.isFinite(modMs) ? modMs : null,
+        };
+    }
+
+    async deleteRemote(): Promise<void> {
+        const creds = await this.getCreds();
+        if (!creds) return;
+        const url = buildFileUrl(creds);
+        const res = await fetch(url, {
+            method: 'DELETE',
+            headers: { Authorization: basicAuth(creds.username, creds.password) },
+        });
+        // 404 = already gone; treat as success.
+        if (!res.ok && res.status !== 404) {
+            throw new Error(`WebDAV DELETE failed: ${res.status} ${await res.text().catch(() => '')}`);
+        }
     }
 
     async pull(): Promise<Snapshot | null> {
@@ -196,3 +248,11 @@ class WebDavProviderImpl implements SyncProvider {
 }
 
 export const webdavProvider: SyncProvider = new WebDavProviderImpl();
+
+/**
+ * Read the persisted WebDAV credentials, for pre-filling the options config
+ * form. Returns null when nothing has been saved yet.
+ */
+export async function getWebdavConfig(): Promise<WebDavCredentials | null> {
+    return storage.getItem<WebDavCredentials>(CREDS_KEY);
+}

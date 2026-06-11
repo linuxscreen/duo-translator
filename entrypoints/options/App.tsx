@@ -10,6 +10,7 @@ import { TranslationPage } from './pages/TranslationPage';
 import { AiWritingPage } from './pages/AiWritingPage';
 import { browser } from 'wxt/browser';
 import { ServicesPage } from './pages/ServicesPage';
+import { APP_NAME } from '@/main/constants';
 
 type TabId = 'settings' | 'services' | 'translation' | 'aiWriting' | 'shortcuts';
 
@@ -68,7 +69,7 @@ export default function App() {
       {/* Top bar */}
       <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-line bg-bg/80 px-6 backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <img src="/DuoTranslator.svg" alt="" className="h-8 w-8" />
+          <img src={`${APP_NAME}.svg`} alt="" className="h-5 w-5" />
           <div className="flex items-baseline gap-2">
             <span className="text-[15px] font-semibold tracking-tight text-ink">DUO</span>
             <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
@@ -77,13 +78,13 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => openUrl('https://duo.zeroflx.com/')}>
+          <Button variant="outline" size="sm" onClick={() => openUrl(import.meta.env.VITE_WEBSITE)}>
             <Globe className="h-3.5 w-3.5" strokeWidth={1.6} />
             {t('officialWebsite', 'Official Website')}
           </Button>
           <Button
             size="sm"
-            onClick={() => openUrl('https://github.com/linuxscreen/duo-translator')}
+            onClick={() => openUrl(import.meta.env.VITE_GITHUB_URL)}
           >
             <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.8} />
             GitHub

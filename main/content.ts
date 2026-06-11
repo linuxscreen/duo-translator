@@ -1,23 +1,99 @@
 import getCssSelector from "css-selector-generator";
 import { franc } from "franc";
 import { split } from "sentence-splitter";
-import { TB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANS_SERVICE, DOMAIN_STRATEGY, svgAddCursor, svgTrashCursor, TRANS_ACTION, ACTION, STORAGE_ACTION, iso6393To1Map, excludedTagSet, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, EXCLUDE_CHILD_ELEMENT_TAGS, DEFAULT_VALUE } from "./constants";
+import { TB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANS_SERVICE, DOMAIN_STRATEGY, svgAddCursor, svgTrashCursor, TRANS_ACTION, ACTION, STORAGE_ACTION, iso6393To1Map, excludedTagSet, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, EXCLUDE_CHILD_ELEMENT_TAGS, DEFAULT_VALUE, STATUS_SUCCESS } from "./constants";
 import { restore, translationServices, translateParams, getTranslateResult, translate, TranslateResult, resetTranslationCacheEnabled } from "./translateService";
 import { sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
 import { shuffle } from "@/utils/arrays";
 import { mountFloatBall, type FloatBallController } from "./floatBall";
 import { mountAiWritingDot } from "./aiWriting/floatingDot";
+import { isAiWritingTarget } from "./aiWriting/inputDetector";
 import { openWorkbench, ensureWorkbenchMounted } from "./aiWriting/workbench";
 import { addRuleToDB, deleteRuleFromDB, getConfig, listRuleFromDB } from "@/utils/db";
 import { isTraditionalChinese } from "@/utils/language";
-import { startTranslate } from "./aiWriting/translateRunner";
+import { parseTranslateServiceKey, startTranslate, TranslateServiceChoice } from "./aiWriting/translateRunner";
 import { applyTextToTarget } from "./aiWriting/applyText";
 import { getElementText } from "@/utils/dom";
 import { getDomainWithPortFromUrl } from "@/utils/url";
+import { getAiWritingTranslateService, getService } from "@/utils/service";
+
+/**
+ * Resolve the TOP document's domain from within a sub-frame. The dot's
+ * per-domain disable must key off the page the user actually sees (the address
+ * bar), not the iframe's own origin — otherwise "disable on this site" written
+ * against the top domain would never match an iframe-mounted dot.
+ *
+ * `location.ancestorOrigins` is ordered parent→top and is readable even across
+ * origins in Chromium, so its last entry is the top document's origin. Falls
+ * back to a guarded same-origin `window.top.location` read, then to the
+ * iframe's own domain if nothing else is available.
+ */
+function getTopFrameDomain(): string {
+    const origins = window.location.ancestorOrigins;
+    if (origins && origins.length > 0) {
+        const topOrigin = origins[origins.length - 1];
+        if (topOrigin && topOrigin !== "null") {
+            const d = getDomainWithPortFromUrl(topOrigin);
+            if (d !== "") return d;
+        }
+    }
+    try {
+        const href = window.top?.location?.href;
+        if (href) {
+            const d = getDomainWithPortFromUrl(href);
+            if (d !== "") return d;
+        }
+    } catch { /* cross-origin top — not reachable, fall through */ }
+    return getDomainWithPortFromUrl(window.location.href);
+}
+
+/**
+ * Bring up the AI Writing dot inside a sub-frame. The dot MUST live in the
+ * iframe's own document: focus events don't cross frame boundaries and
+ * `position: fixed` resolves against the iframe viewport, so a top-frame dot
+ * could never anchor to an input that lives in the iframe.
+ *
+ * Mounting is deferred until a real text field in this frame is focused —
+ * eagerly spinning up a React root + workbench in every ad/tracking iframe
+ * would be pure waste. `mountAiWritingDot` itself re-checks the global switch
+ * and per-domain disable (keyed off the TOP domain), so all gating still holds.
+ */
+async function initAiWritingDotInFrame() {
+    const domain = getTopFrameDomain();
+    if (domain === "") return;
+    let mounted = false;
+    const tryMount = (el: Element | null) => {
+        if (mounted || !isAiWritingTarget(el)) return;
+        mounted = true;
+        document.removeEventListener("focusin", onFocusIn, true);
+        mountAiWritingDot({ domain }).catch((err) =>
+            console.warn(APP_NAME_WITH_SUFFIX, "mountAiWritingDot (iframe) failed", err),
+        );
+    };
+    const onFocusIn = (e: FocusEvent) => tryMount(e.target as Element | null);
+    document.addEventListener("focusin", onFocusIn, true);
+    // Seed: the field may already be focused (e.g. an autofocused iframe editor).
+    tryMount(document.activeElement);
+}
+
+export const shareConfig: {
+    aiTranslateServiceChoice: TranslateServiceChoice,
+    aiTargetLanguage: string,
+} = { aiTranslateServiceChoice: { kind: 'trans', service: DEFAULT_VALUE.AI_TRANSLATE_SERVICE }, aiTargetLanguage: DEFAULT_VALUE.AI_TARGET_LANGUAGE };
 
 export async function content() {
     console.log('content script loaded');
+
+    // The script runs in all frames. The translation pipeline runs in every
+    // frame (so iframe content gets translated too), but a few concerns are
+    // strictly tab-level and belong to the TOP frame only: the float ball,
+    // writing the tab's translate-status to session storage, broadcasting that
+    // status to the popup/badge, and orchestrating manual toggles down to
+    // sub-frames. `isTopFrame` gates those. Comparing window references is safe
+    // even across origins (no property access).
+    const isTopFrame = window.top === window.self;
+
     let translateElements: Set<HTMLElement> = new Set()
 
     // Constructable Stylesheet for translation + bilingual highlighting CSS.
@@ -52,9 +128,11 @@ export async function content() {
         return
     }
     let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + tabId
-    // Get the domain name and port of the current page
+    // Get the domain name and port of the current page. Sub-frames key off the
+    // TOP document's domain so per-domain rules / strategy / disable stay
+    // consistent with what the user configured for the page they actually see.
     let currentUrl = window.location.href;
-    const domainWithPort = getDomainWithPortFromUrl(currentUrl);
+    const domainWithPort = isTopFrame ? getDomainWithPortFromUrl(currentUrl) : getTopFrameDomain();
     if (domainWithPort === "") {
         return
     }
@@ -68,15 +146,16 @@ export async function content() {
     // set translate status to false when the page is loaded
     let translateStatus = false
     persistTranslateStatus(false)
-    let manualTrigger = false
+    let manualTrigger = false // @deprecated
     const ignoreMutationElements = new WeakSet();
     const paragraphElementMap = new Map<HTMLElement, ELEMENT_STATUS>();
     let duoTranslatedElementSet = new Set<HTMLElement>()
     let translatedElementMap = new Map<HTMLElement, TranslateResult>()
     // get all config from storage
-    let [ruleStrategy, viewStrategy, targetLanguage, translateService, globalSwitch, defaultStrategy,
-        rawDomainStrategy, floatBallSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars]
-        : [string[], VIEW_STRATEGY, string, string, boolean, string, any, boolean, number, number] = await Promise.all(
+    let [ruleStrategy, viewStrategy, targetLanguageConfig, translateServiceConfig, globalSwitch, defaultStrategy,
+        rawDomainStrategy, floatBallSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey, aiTargetLanguage]
+        : [string[], VIEW_STRATEGY, string | undefined, string | undefined, boolean, string, any, boolean, number, number, string | undefined, string]
+        = await Promise.all(
             [
                 listRuleFromDB(domainWithPort),
                 getConfig(CONFIG_KEY.VIEW_STRATEGY),
@@ -87,17 +166,19 @@ export async function content() {
                 sendMessageToBackground({ action: DB_ACTION.DOMAIN_GET, data: { domain: domainWithPort } }),
                 getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
                 getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES),
-                getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS)
+                getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS),
+                getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
+                getConfig(CONFIG_KEY.AI_TARGET_LANGUAGE)
             ]
         )
-    viewStrategy = viewStrategy || DEFAULT_VALUE.VIEW_STRATEGY
-    globalSwitch = globalSwitch === undefined ? true : globalSwitch
-    floatBallSwitch = floatBallSwitch === undefined ? true : floatBallSwitch
-    translateService = translateService || DEFAULT_VALUE.TRANSLATE_SERVICE
-    targetLanguage = targetLanguage || navigator.language.split('-')[0]
-    defaultStrategy = defaultStrategy || DEFAULT_VALUE.DOMAIN_STRATEGY
+    let translateService = (await getService(translateServiceConfig)).activeService
+    let aiTranslateService = (await getAiWritingTranslateService(aiTranslateServiceKey)).activeService
+    let aiTranslateServiceChoice = parseTranslateServiceKey(aiTranslateService)
+    shareConfig.aiTargetLanguage = aiTargetLanguage
+    shareConfig.aiTranslateServiceChoice = aiTranslateServiceChoice
+    let targetLanguage = targetLanguageConfig || navigator.language.split('-')[0]
     let domainStrategy = (rawDomainStrategy?.strategy || DOMAIN_STRATEGY.AUTO) as string
-    bilingualHighlightingMinSentences = bilingualHighlightingMinSentences || DEFAULT_VALUE.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES
+
     const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
     // console.debug("get config:", "ruleStrategy: ", ruleStrategy, "viewStrategy: ", viewStrategy,
     //     "targetLanguage: ", targetLanguage, "translateService: ", translateService, "globalSwitch: ",
@@ -120,9 +201,17 @@ export async function content() {
             case TRANS_ACTION.SINGLE:
                 break
             case TRANS_ACTION.TOGGLE:
+                // Toggle is decided by the top frame only; it then relays the
+                // explicit translate/restore to sub-frames (toggleTranslateStatus).
+                // Sub-frames must NOT toggle their own status or they'd drift
+                // out of phase with the tab.
+                if (!isTopFrame) break
                 toggleTranslateStatus()
                 break
             case ACTION.AI_OPEN_WORKBENCH: {
+                // The workbench is a single tab-level surface. Keep it top-frame
+                // only so a fanned-out message doesn't open one per frame.
+                if (!isTopFrame) break
                 ensureWorkbenchMounted()
                 const active = document.activeElement as HTMLElement | null
                 let seedText = ""
@@ -138,9 +227,13 @@ export async function content() {
                 break
             }
             case ACTION.TOGGLE_SELECTION_MODE:
+                // Rule-selection mode (picking elements to exclude) is a
+                // top-frame interaction; don't activate it inside iframes.
+                if (!isTopFrame) break
                 await toggleSelectionMode()
                 break
             case ACTION.LEAVE_SELECTION_MODE:
+                if (!isTopFrame) break
                 deactivateSelectionMode()
                 break
             case ACTION.STYLE_CHANGE:
@@ -289,11 +382,10 @@ export async function content() {
                 } else {
                     return
                 }
-                if (message.active) {
+                if (message.active && whetherTranslate()) {
                     await restoreOriginalAction()
                     await translateAction()
                 }
-                // process the target language change
                 break
             case TB_ACTION.FLOAT_BALL_SWITCH:
                 if (typeof message.data === "boolean") {
@@ -324,6 +416,7 @@ export async function content() {
     // =============================  message listener end  ===================================
 
     let lastRightClickElement: HTMLElement | null = null
+    let lastParaTranslateStatus: boolean = false
     let lastEditableElement: HTMLElement | null = null
 
     document.addEventListener("contextmenu", (e) => {
@@ -344,33 +437,71 @@ export async function content() {
         return false
     }
 
-    // add 'Translate/Restore this paragraph' menu when mouse is over paragraph element and right clicked
+    // Decide whether the pointer is over the paragraph's text — counting both
+    // glyphs themselves and the blank gaps *between* lines (line-height leading,
+    // <br>, wrapped lines), while still excluding the paragraph's outer padding
+    // and the empty space past the end of a short line.
+    //
+    // `getClientRects()` over the paragraph's contents yields one rect per line
+    // fragment. The pointer counts as "on text" when it is either directly on a
+    // line fragment, or in a vertical gap that has a text line both above AND
+    // below it at the same x (an inter-line gap) — outer padding only ever has a
+    // line on one side, so it is correctly rejected.
+    const isPointOverText = (x: number, y: number, container: HTMLElement): boolean => {
+        const range = document.createRange();
+        range.selectNodeContents(container);
+        const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
+        // Line fragments whose horizontal span covers the pointer.
+        const overX = rects.filter((r) => x >= r.left && x <= r.right);
+        if (overX.length === 0) return false;
+        // Directly on a text line.
+        if (overX.some((r) => y >= r.top && y <= r.bottom)) return true;
+        // In a blank gap with a text line both above and below at this x.
+        const hasAbove = overX.some((r) => r.bottom <= y);
+        const hasBelow = overX.some((r) => r.top >= y);
+        return hasAbove && hasBelow;
+    };
+
+    // add 'Translate/Restore this paragraph' menu when mouse is over the text of
+    // a paragraph element and right mouse clicked
+    // Due to chrome limitations, currently context menu of 'Translate/Restore this paragraph' can only be implemented in this way.
+    // known issue: The context menu that is not triggered by the right mouse button may be abnormal.
     document.addEventListener("mousedown", (e) => {
+        // return
         if (e.button !== 2) { // ignore non right click
             return
         }
         const target = e.target as HTMLElement | null;
         const para = target?.closest(".duo-paragraph") as HTMLElement | null;
 
-        // if (para) {
-        //     translateParagraphElements([para]);
-        // }
-        console.log("paragraph clicked:", para);
-        // return
-        if (para) {
-            let translated = true
+        if (para && isPointOverText(e.clientX, e.clientY, para)) {
+            let translated
             if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
                 translated = duoTranslatedElementSet.has(para);
-            } else if (viewStrategy === VIEW_STRATEGY.SINGLE) {
+            } else {
                 translated = translateElements.has(para);
             }
-            lastRightClickElement = para
-            sendMessageToBackground({ action: ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU, data: { translated: translated } });
+            // if (lastRightClickElement !== null && lastParaTranslateStatus === translated) {
+            //     return
+            // }
+            browser.runtime.sendMessage({ action: ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU, data: { translated: translated } }).then((msg) => {
+                if (msg.status === STATUS_SUCCESS) {
+                    lastRightClickElement = para
+                    lastParaTranslateStatus = translated
+                }
+            });
+
         } else {
-            lastRightClickElement = null
-            sendMessageToBackground({ action: ACTION.HIDE_TRANSLATE_RESTORE_PARA_MENU });
+            // if (lastRightClickElement === null) {
+            //     return
+            // }
+            browser.runtime.sendMessage({ action: ACTION.HIDE_TRANSLATE_RESTORE_PARA_MENU }).then((msg) => {
+                if (msg.status === STATUS_SUCCESS) {
+                    lastRightClickElement = null
+                }
+            });
         }
-    });
+    }, true);
 
     const intersectionObserver = new IntersectionObserver(items => {
         // console.log("intersectionObserver items: ", items.length)
@@ -420,7 +551,8 @@ export async function content() {
     async function translateTextBox() {
         if (!lastEditableElement) return
         const originalText = getElementText(lastEditableElement);
-        const runStream = startTranslate(originalText, 'en', { kind: "trans", service: "google" });
+        if (originalText === "") return
+        const runStream = startTranslate(originalText, shareConfig.aiTargetLanguage, shareConfig.aiTranslateServiceChoice);
         let translatedText = "";
         for await (const chunk of runStream.stream) {
             translatedText += chunk;
@@ -543,14 +675,22 @@ export async function content() {
     async function init() {
         ruleStrategyProcess(ruleStrategy)
         initCSS()
-        await initFloatBall()
+        // The float ball is a single tab-level UI — top frame only.
+        if (isTopFrame) await initFloatBall()
         await initTranslate()
         // AI Writing is independent of page-translation lifecycle: even when
         // page translation is off / restricted, the writing assistant should
-        // still be available on user input fields.
-        mountAiWritingDot({ domain: domainWithPort }).catch((err) =>
-            console.warn(APP_NAME_WITH_SUFFIX, "mountAiWritingDot failed", err),
-        )
+        // still be available on user input fields. In sub-frames the dot mounts
+        // inside the iframe and is deferred until an input there is focused.
+        if (isTopFrame) {
+            mountAiWritingDot({ domain: domainWithPort }).catch((err) =>
+                console.warn(APP_NAME_WITH_SUFFIX, "mountAiWritingDot failed", err),
+            )
+        } else {
+            initAiWritingDotInFrame().catch((err) =>
+                console.warn(APP_NAME_WITH_SUFFIX, "initAiWritingDotInFrame failed", err),
+            )
+        }
     }
 
     /**
@@ -567,7 +707,21 @@ export async function content() {
         startObserveDom()
         let htmlElements = await markParagraphElement(document.body);
         pageLanguage = await detectLanguage(htmlElements);
-        if (isNeedsTranslate()) {
+        let shouldTranslate = isNeedsTranslate()
+        // Late-loading sub-frame catch-up: an iframe created AFTER the user
+        // already turned translation on (e.g. a button that opens an iframe
+        // dialog) must sync to the tab's current state. The top frame only
+        // relays a toggle at the instant it happens, so a frame that loads
+        // later would otherwise stay in its original language even though the
+        // rest of the tab is translated. The top frame is the source of truth
+        // and persists the status to session storage — read it here. (Only the
+        // manual-on case needs this; isNeedsTranslate already covers the
+        // strategy/auto path, and the top frame manages its own status.)
+        if (!isTopFrame && !shouldTranslate) {
+            const tabTranslated = await getSessionStorage(tabTranslateStatusKey)
+            if (tabTranslated === true) shouldTranslate = true
+        }
+        if (shouldTranslate) {
             await persistTranslateStatus(true)
             htmlElements.forEach((element) => {
                 paragraphElementMap.set(element, ELEMENT_STATUS.ORIGINAL)
@@ -622,6 +776,17 @@ export async function content() {
         floatBall = null
     }
 
+    // Fan a translate/restore out to this tab's sub-frames. The top frame can't
+    // reach cross-origin iframes directly, so it asks the background to
+    // re-broadcast the action to every frame of the tab. The echoed action also
+    // comes back to the top frame, but translate/restore are idempotent (task +
+    // status guards) so the re-entry is a harmless no-op. Sub-frames ignore raw
+    // TOGGLE and rely on this explicit relay, so their on/off state never
+    // diverges from the top frame's.
+    function relayToSubframes(action: string) {
+        void sendMessageToBackground({ action: ACTION.RELAY_FRAMES, data: { action } })
+    }
+
     async function initFloatBall() {
         if (!globalSwitch) return
         if (!floatBallSwitch) return
@@ -632,8 +797,8 @@ export async function content() {
         floatBall = await mountFloatBall({
             domain: domainWithPort,
             initiallyActive: translateStatus,
-            onTranslate: () => { translateAction() },
-            onRestore: () => { restoreOriginalAction() },
+            onTranslate: () => { translateAction(); relayToSubframes(TRANS_ACTION.TRANSLATE) },
+            onRestore: () => { restoreOriginalAction(); relayToSubframes(TRANS_ACTION.SHOW_ORIGINAL) },
             onClose: () => {
                 floatBallSwitch = false
                 // Defer teardown: onClose fires from inside the ball's own React
@@ -668,6 +833,14 @@ export async function content() {
      */
     async function persistTranslateStatus(status: boolean) {
         if (translateStatus === status) {
+            return
+        }
+        // Sub-frames mirror the status locally only — the tab-level session
+        // record, the float ball, and the popup/badge broadcast are owned by
+        // the top frame. If sub-frames wrote/broadcast too, they'd clobber the
+        // tab status with their own per-frame decision.
+        if (!isTopFrame) {
+            translateStatus = status
             return
         }
         console.log("persist translate status", status);
@@ -1012,27 +1185,38 @@ export async function content() {
 
         if (lang != "und") {
             return lang
-        } else {
-            // fallback to use microsoft translate to detect the language
-            try {
-                lang = await translationServices.get(TRANS_SERVICE.MICROSOFT)?.detectLanguage?.([text]) || "und"
-                console.log("detect language by microsoft translate: %s", lang)
-                return lang
-            }
-            catch {
-                return "und"
-            }
+        }
+        // Empty / near-empty frame (common for ad & tracking iframes): skip the
+        // Microsoft detect round-trip — there's nothing to translate anyway, and
+        // firing a network call per junk iframe would be wasteful.
+        if (utf8Length === 0) {
+            return "und"
+        }
+        // fallback to use microsoft translate to detect the language
+        try {
+            lang = await translationServices.get(TRANS_SERVICE.MICROSOFT)?.detectLanguage?.([text]) || "und"
+            console.log("detect language by microsoft translate: %s", lang)
+            return lang
+        }
+        catch {
+            return "und"
         }
     }
 
 
+    // Only ever invoked in the top frame (the TOGGLE message case is gated).
+    // After deciding translate-vs-restore from the top frame's status, fan the
+    // resulting EXPLICIT action out to sub-frames so they don't toggle off their
+    // own (possibly diverging) per-frame status.
     function toggleTranslateStatus() {
         // translateStatus = !translateStatus
         manualTrigger = true
         if (translateStatus) {
             restoreOriginalAction()
+            relayToSubframes(TRANS_ACTION.SHOW_ORIGINAL)
         } else {
             translateAction()
+            relayToSubframes(TRANS_ACTION.TRANSLATE)
         }
     }
 
@@ -1348,7 +1532,7 @@ export async function content() {
             return false
         }
         if (manualTrigger) {
-            console.log('manualTriggerTranslate:', manualTrigger, translateStatus)
+            // console.log('manualTriggerTranslate:', manualTrigger, translateStatus)
             return translateStatus;
         }
         if (domainStrategy == DOMAIN_STRATEGY.NEVER) {
@@ -1537,7 +1721,7 @@ export async function content() {
                     translatedElement.classList.add("duo-translation")
                     // find the last child that textContent is not empty
                     let lastChild = getLastContainingTextChild(element)
-                    let divide : HTMLElement
+                    let divide: HTMLElement
                     if (originalTextResult.text.length >= translationLineBreakMinChars) {
                         divide = document.createElement('br')
                         divide.classList.add("duo-divide")
@@ -1601,7 +1785,7 @@ export async function content() {
         }
     }
 
-    function getLastContainingTextChild(element : Node) {
+    function getLastContainingTextChild(element: Node) {
         let lastChild = element.lastChild
         while (lastChild && !isContainsValidTextElement(lastChild)) {
             lastChild = lastChild.previousSibling

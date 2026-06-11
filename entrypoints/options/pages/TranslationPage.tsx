@@ -12,13 +12,12 @@ import {
   HIGHLIGHT_COLORS,
   LANGUAGES,
   TB_ACTION,
-  TRANSLATE_SERVICES,
   TRANSLATION_BG_COLORS,
   TRANSLATION_FONT_COLORS,
   STYLE_GROUPS,
   STYLE_NONE,
   VIEW_STRATEGIES,
-  type TranslateServiceMeta,
+  DEFAULT_STRATEGY_OPTIONS,
 } from '@/main/constants';
 import {
   sendMessageToAllTabs,
@@ -42,6 +41,8 @@ import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { DomainListSection, type DomainItem } from '@/components/options/DomainListSection';
 import { buildStylePreview, styleHasBorder } from '@/utils/translationStyle';
+import { ServiceMark } from '@/components/ui/service-mark';
+import { buildServiceOptions, getService, type ServiceOption } from '@/utils/service';
 
 const MIN_SENTENCES_MIN = 1;
 const MIN_SENTENCES_MAX = 99;
@@ -52,12 +53,6 @@ const LINE_BREAK_MIN = 0;
 const LINE_BREAK_MAX = 9999;
 const clampLineBreak = (n: number) =>
   Math.min(LINE_BREAK_MAX, Math.max(LINE_BREAK_MIN, Math.floor(n)));
-
-const DEFAULT_STRATEGY_OPTIONS: { value: DEFAULT_STRATEGY; title: string; fallback: string }[] = [
-  { value: DEFAULT_STRATEGY.AUTO, title: 'automaticallyDetermine', fallback: 'Automatically determine' },
-  { value: DEFAULT_STRATEGY.ALWAYS, title: 'translateAllWebsites', fallback: 'Translate all websites' },
-  { value: DEFAULT_STRATEGY.NEVER, title: 'notTranslateAllWebsites', fallback: "Don't translate all websites" },
-];
 
 /** Human-readable byte size, e.g. 0 B / 12.3 KB / 4.5 MB. */
 function formatBytes(bytes: number): string {
@@ -93,9 +88,9 @@ export function TranslationPage() {
   const [clearCacheOpen, setClearCacheOpen] = useState(false);
   const [cacheSizeBytes, setCacheSizeBytes] = useState(0);
   const [viewStrategy, setViewStrategy] = useState<string>(DEFAULT_VALUE.VIEW_STRATEGY);
-  const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.TARGET_LANG);
-  const [translateService, setTranslateService] = useState<string>(DEFAULT_VALUE.TRANSLATE_SERVICE);
-  const [services, setServices] = useState<TranslateServiceMeta[]>([]);
+  const [targetLang, setTargetLang] = useState<string>(navigator.language.split('-')[0]);
+  const [translateService, setTranslateService] = useState<string>();
+  const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
   const [defaultStrategy, setDefaultStrategy] = useState<DEFAULT_STRATEGY>(DEFAULT_STRATEGY.AUTO);
 
   // Translation style
@@ -156,16 +151,15 @@ export function TranslationPage() {
     let cancelled = false;
     (async () => {
       const [
-        bh, fb, vs, tl, ts, disabled, ds, ms, lb, tc,
+        bh, fb, vs, tl, ts, ds, ms, lb, tc,
         styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg,
         hbCfg, hbIdxCfg, hfCfg, hfIdxCfg, hsCfg, hbcCfg, hbcIdxCfg,
       ] = await Promise.all([
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
         getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
         getConfig(CONFIG_KEY.VIEW_STRATEGY),
-        getConfig(CONFIG_KEY.TARGET_LANG),
+        getConfig(CONFIG_KEY.TARGET_LANGUAGE),
         getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
-        getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICE),
         getConfig(CONFIG_KEY.DEFAULT_STRATEGY),
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES),
         getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS),
@@ -200,12 +194,13 @@ export function TranslationPage() {
       setFloatBall(fb === undefined ? true : fb);
       setTranslationCache(tc === undefined ? true : tc);
       setViewStrategy(vs === undefined ? DEFAULT_VALUE.VIEW_STRATEGY : vs);
-      setTargetLang(tl === undefined ? DEFAULT_VALUE.TARGET_LANG : tl);
-      setTranslateService(ts === undefined ? DEFAULT_VALUE.TRANSLATE_SERVICE : ts);
-      const disabledSet = new Set<string>(Array.isArray(disabled) ? disabled : []);
-      setServices(
-        Array.from(TRANSLATE_SERVICES.values()).filter((s) => !disabledSet.has(s.value)),
-      );
+      tl && setTargetLang(tl);
+      // Same flat list (translators + AI providers) and active-service
+      // resolution the popup uses, so Options stays consistent with it.
+      const { activeService, enabledTranslateServices, enabledAiProviders } = await getService(ts);
+      if (cancelled) return;
+      setServiceOptions(buildServiceOptions(enabledTranslateServices, enabledAiProviders));
+      setTranslateService(activeService);
       if (ds === DEFAULT_STRATEGY.ALWAYS || ds === DEFAULT_STRATEGY.NEVER || ds === DEFAULT_STRATEGY.AUTO) {
         setDefaultStrategy(ds);
       }
@@ -309,7 +304,7 @@ export function TranslationPage() {
 
   const onTargetLang = (v: string) => {
     setTargetLang(v);
-    void setConfig(CONFIG_KEY.TARGET_LANG, v);
+    void setConfig(CONFIG_KEY.TARGET_LANGUAGE, v);
     void sendMessageToAllTabs({ action: ACTION.TARGET_LANG_CHANGE, data: v });
   };
 
@@ -510,9 +505,12 @@ export function TranslationPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {services.map((s) => (
+                {serviceOptions.map((s) => (
                   <SelectItem key={s.value} value={s.value}>
-                    {t(s.title, s.name)}
+                    <span className="flex items-center gap-3">
+                      <ServiceMark id={s.iconId} />
+                      {s.i18nKey ? t(s.i18nKey, s.label) : s.label}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>

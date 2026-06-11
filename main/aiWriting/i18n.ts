@@ -46,7 +46,7 @@ const setLang = (next: unknown) => {
 };
 
 // One-shot hydration from PouchDB. PouchDB value wins over browser UI lang.
-void getConfig(CONFIG_KEY.INTERFACE_LANG).then((stored) => setLang(stored));
+void getConfig(CONFIG_KEY.INTERFACE_LANGUAGE).then((stored) => setLang(stored));
 
 // Live updates broadcast from the options page when the user changes language.
 browser.runtime.onMessage.addListener((msg: any) => {
