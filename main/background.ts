@@ -437,6 +437,7 @@ export function background() {
                             })
                         }
                         browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_TEXT_BOX, { title: getMsg(CONTEXT_MENU_TRANSLATE_TEXT_BOX_TITLE) })
+                        browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_SELECTION, { title: getMsg(CONTEXT_MENU_TRANSLATE_SELECTION_TITLE) })
                     } catch { }
                 }
                 sendResponse({ status: STATUS_SUCCESS, data: null })
@@ -792,8 +793,10 @@ export function background() {
                 let act = paraTranslateStatus ? TRANS_ACTION.SHOW_ORIGINAL_PARA : TRANS_ACTION.TRANSLATE_PARA
                 browser.tabs.sendMessage(tab.id, { action: act });
                 break
+            case CONTEXT_MENU.TRANSLATE_SELECTION:
+                browser.tabs.sendMessage(tab.id, { action: TRANS_ACTION.TRANSLATE_SELECTION, data: info.selectionText });
+                break
         }
-
 
     }
 
@@ -873,9 +876,6 @@ export function background() {
     function removeShortcutKey() {
         browser.commands.onCommand.removeListener(shortcutKeyListener)
     }
-
-
-
 
     function updateContextMenu(status: boolean) {
         console.log('updateContextMenu', status)

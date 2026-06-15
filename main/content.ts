@@ -10,6 +10,7 @@ import { mountFloatBall, type FloatBallController } from "./floatBall";
 import { mountAiWritingDot } from "./aiWriting/floatingDot";
 import { isAiWritingTarget } from "./aiWriting/inputDetector";
 import { openWorkbench, ensureWorkbenchMounted } from "./aiWriting/workbench";
+import { openSelectionTranslate } from "./aiWriting/selectionPopup";
 import { addRuleToDB, deleteRuleFromDB, getConfig, listRuleFromDB } from "@/utils/db";
 import { isTraditionalChinese } from "@/utils/language";
 import { parseTranslateServiceKey, startTranslate, TranslateServiceChoice } from "./aiWriting/translateRunner";
@@ -409,6 +410,9 @@ export async function content() {
                 if (!lastRightClickElement) return
                 restoreOriginalParagraphElement(lastRightClickElement);
                 break
+            case TRANS_ACTION.TRANSLATE_SELECTION:
+                translateSelectionAction(message.data as string)
+                break
             default:
                 break
         }
@@ -560,6 +564,36 @@ export async function content() {
         console.log("translateTextBox: ", translatedText);
         applyTextToTarget(lastEditableElement, translatedText);
 
+    }
+
+    // "Translate selection" context-menu action. The menu fans out to every
+    // frame of the tab, so only the frame that actually owns the selection
+    // should show the popup. Translation reuses the PAGE translate service and
+    // target language (streamed), and the result is shown in a Shadow-DOM card
+    // anchored to the selection.
+    function translateSelectionAction(selectionText: string) {
+        const selection = window.getSelection()
+        const localSelection = selection?.toString().trim() || ""
+        // No local selection → the selection lives in another frame; skip so we
+        // don't pop up a duplicate empty card here.
+        if (localSelection === "") return
+        const text = (selectionText && selectionText.trim() !== "") ? selectionText : localSelection
+        if (text.trim() === "") return
+
+        let rect: DOMRect | null = null
+        try {
+            if (selection && selection.rangeCount > 0) {
+                const r = selection.getRangeAt(0).getBoundingClientRect()
+                if (r && (r.width > 0 || r.height > 0)) rect = r
+            }
+        } catch { /* detached range — fall back to centered placement */ }
+
+        openSelectionTranslate({
+            text,
+            targetLang: targetLanguage,
+            choice: parseTranslateServiceKey(translateService),
+            rect,
+        })
     }
 
     function scheduleMutationProcess() {

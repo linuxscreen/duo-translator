@@ -151,6 +151,7 @@ export enum TRANS_ACTION {
     TRANSLATE_TEXT_BOX = 'translateTextBox',
     TRANSLATE_PARA = 'translatePara',
     SHOW_ORIGINAL_PARA = 'showOriginalPara',
+    TRANSLATE_SELECTION = 'translateSelection',
 }
 
 export enum ACTION {
