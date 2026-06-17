@@ -40,7 +40,7 @@ entrypoints/test
 # AI
 CLAUDE.local.md
 .codex
-.AGENTS.MD
+AGENTS.md
 
 # others
 .dev

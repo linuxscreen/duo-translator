@@ -31,11 +31,11 @@ export const TRANSLATE_STATUS_KEY = 'tabTranslateStatus#'
 export const AI_PREFIX = "ai:";
 
 export enum DB_ACTION {
-    RULES_ADD = 'addRule',
-    RULES_DEL = 'deleteRule',
-    RULES_GET_ALL = 'getAllRule',
-    RULES_LIST = 'listRule',
-    RULES_SEARCH = 'searchRule',
+    RULE_ADD = 'addRule',
+    RULE_DEL = 'deleteRule',
+    RULE_GET_ALL = 'getAllRule',
+    RULE_LIST = 'listRule',
+    RULE_SEARCH = 'searchRule',
     DOMAIN_INSERT = 'insertDomain',
     DOMAIN_UPDATE = 'updateDomain',
     DOMAIN_GET = 'getDomain',

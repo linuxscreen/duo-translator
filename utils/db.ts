@@ -16,15 +16,15 @@ export async function getConfig(key: CONFIG_KEY): Promise<any> {
 }
 
 export function addRuleToDB(domain : string, rule: string) {
-    sendMessageToBackground({ action: DB_ACTION.RULES_ADD, data: { domain: domain, data: rule } })
+    sendMessageToBackground({ action: DB_ACTION.RULE_ADD, data: { domain: domain, data: rule } })
 }
 
 export function listRuleFromDB(domain : string) {
-    return sendMessageToBackground({ action: DB_ACTION.RULES_LIST, data: { domain: domain } })
+    return sendMessageToBackground({ action: DB_ACTION.RULE_LIST, data: { domain: domain } })
 }
 
 export function deleteRuleFromDB(domain : string, rule: string) {
-    sendMessageToBackground({ action: DB_ACTION.RULES_DEL, data: { domain: domain, data: rule } })
+    sendMessageToBackground({ action: DB_ACTION.RULE_DEL, data: { domain: domain, data: rule } })
 }
 
 /** Wipe the persistent translation-result cache (background IndexedDB). */

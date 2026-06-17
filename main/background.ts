@@ -132,14 +132,14 @@ export function background() {
             case ACTION.TRANSLATE_HTML:
                 // todo
                 break
-            case DB_ACTION.RULES_ADD:
+            case DB_ACTION.RULE_ADD:
                 ruleRepo.add(message.data.domain, message.data.data).then(() => {
                     sendResponse({ status: STATUS_SUCCESS, data: "add success" });
                 }).catch((e) => {
                     errorResponse(e)
                 })
                 return true
-            case DB_ACTION.RULES_DEL:
+            case DB_ACTION.RULE_DEL:
                 try {
                     ruleRepo.delete(message.data.domain, message.data.data).then(() => {
                         sendResponse({ status: STATUS_SUCCESS, data: "delete success" });
@@ -148,7 +148,7 @@ export function background() {
                     sendResponse({ status: STATUS_FAIL, data: "delete fail" });
                 }
                 return true
-            case DB_ACTION.RULES_LIST:
+            case DB_ACTION.RULE_LIST:
                 console.debug("list rule from domain", message.data.domain)
                 ruleRepo.list(message.data.domain).then((data) => {
                     sendResponse({ status: STATUS_SUCCESS, data: data });
@@ -156,14 +156,14 @@ export function background() {
                     errorResponse(e)
                 })
                 return true
-            case DB_ACTION.RULES_GET_ALL:
+            case DB_ACTION.RULE_GET_ALL:
                 ruleRepo.getAll().then((value) => {
                     sendResponse({ status: STATUS_SUCCESS, data: value })
                 }).catch((e) => {
                     errorResponse(e)
                 })
                 return true
-            case DB_ACTION.RULES_SEARCH:
+            case DB_ACTION.RULE_SEARCH:
                 ruleRepo.search(message.data.domain).then(value => {
                     sendResponse({ status: STATUS_SUCCESS, data: value })
                 }).catch((e) => {
