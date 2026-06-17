@@ -268,6 +268,7 @@
   "aiWritingSub": "Rewrite, polish, translate as you type",
   "feedback": "Feedback",
   "more": "More",
+  "setNoTranslateArea": "Set no-translate area",
   "aiSettings": "Settings",
   "disableAIWriting": "Disable AI writing",
   "aiTranslateWith": "Translate with",

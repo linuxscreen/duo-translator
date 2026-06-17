@@ -1,30 +1,30 @@
 import { ACTION, CONFIG_KEY, DB_ACTION } from "@/main/constants";
 import { sendMessageToBackground } from "@/utils/message";
 
-export async function setConfig(key: CONFIG_KEY, value: any) {
+export function setConfig(key: CONFIG_KEY, value: any) {
     return sendMessageToBackground({
         action: DB_ACTION.CONFIG_SET,
         data: { name: key, value: value }
     });
 }
 
-export async function getConfig(key: CONFIG_KEY): Promise<any> {
+export function getConfig(key: CONFIG_KEY): Promise<any> {
     return sendMessageToBackground({
         action: DB_ACTION.CONFIG_GET,
         data: { name: key }
     });
 }
 
-export function addRuleToDB(domain : string, rule: string) {
-    sendMessageToBackground({ action: DB_ACTION.RULE_ADD, data: { domain: domain, data: rule } })
+export function addRuleToDB(domain : string, rule: string) : Promise<any> {
+    return sendMessageToBackground({ action: DB_ACTION.RULE_ADD, data: { domain: domain, data: rule } })
 }
 
-export function listRuleFromDB(domain : string) {
+export function listRuleFromDB(domain : string) : Promise<any> {
     return sendMessageToBackground({ action: DB_ACTION.RULE_LIST, data: { domain: domain } })
 }
 
-export function deleteRuleFromDB(domain : string, rule: string) {
-    sendMessageToBackground({ action: DB_ACTION.RULE_DEL, data: { domain: domain, data: rule } })
+export function deleteRuleFromDB(domain : string, rule: string) : Promise<any> {
+    return sendMessageToBackground({ action: DB_ACTION.RULE_DEL, data: { domain: domain, data: rule } })
 }
 
 /** Wipe the persistent translation-result cache (background IndexedDB). */

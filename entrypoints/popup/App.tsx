@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AirplayIcon, Globe, HelpCircle, PenLine, Settings as SettingsIcon, Sparkles } from 'lucide-react';
+import { AirplayIcon, Ban, Globe, HelpCircle, PenLine, Settings as SettingsIcon, Sparkles } from 'lucide-react';
 
 import {
   ACTION,
@@ -63,7 +63,21 @@ export default function App() {
   // Appended below the built-in translation services in the dropdown.
   const [aiProviders, setAiProviders] = useState<AiProvider[]>([]);
   const [translateServices, setTranslateServices] = useState<TranslateServiceMeta[]>([]);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
   let tabId: number | undefined
+
+  // Close the "More" menu when clicking outside of it.
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
+        setMoreOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [moreOpen]);
 
   // Hydrate from background storage on mount
   useEffect(() => {
@@ -215,6 +229,13 @@ export default function App() {
 
   const openAiWorkbench = async () => {
     await sendMessageToTab({ action: ACTION.AI_OPEN_WORKBENCH });
+    window.close();
+  };
+
+  const enterSelectionMode = async () => {
+    setMoreOpen(false);
+    await sendMessageToTab({ action: ACTION.TOGGLE_SELECTION_MODE });
+    // Close the popup so the user can interact with the page to pick regions.
     window.close();
   };
 
@@ -481,8 +502,25 @@ export default function App() {
             {t('feedback', 'Feedback')}
           </a>
         </div>
-        <div>
-          <a className="cursor-pointer text-ink-soft hover:text-accent">{t('more', 'More')}</a>
+        <div ref={moreRef} className="relative">
+          <a
+            className="cursor-pointer text-ink-soft hover:text-accent"
+            onClick={() => setMoreOpen((v) => !v)}
+          >
+            {t('more', 'More')}
+          </a>
+          {moreOpen && (
+            <div className="absolute bottom-full right-0 z-20 mb-1.5 min-w-[160px] overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-lg">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-sans text-[12px] tracking-normal text-ink-soft transition-colors hover:bg-hover hover:text-accent"
+                onClick={enterSelectionMode}
+              >
+                <Ban className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
+                {t('setNoTranslateArea', '设置不翻译区域')}
+              </button>
+            </div>
+          )}
         </div>
 
       </div>

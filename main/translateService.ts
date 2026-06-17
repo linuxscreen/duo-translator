@@ -934,7 +934,7 @@ function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STR
 
     for (const child of element.childNodes) process(child, processParent);
     if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-        removeChildren.forEach(ele => element.removeChild(ele))
+        removeChildren.forEach(child => child.remove())
     }
     return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, totalTextNodesLength, text };
 }

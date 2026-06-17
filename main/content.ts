@@ -1,7 +1,6 @@
-import getCssSelector from "css-selector-generator";
 import { franc } from "franc";
 import { split } from "sentence-splitter";
-import { TB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANS_SERVICE, DOMAIN_STRATEGY, svgAddCursor, svgTrashCursor, TRANS_ACTION, ACTION, STORAGE_ACTION, iso6393To1Map, excludedTagSet, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, EXCLUDE_CHILD_ELEMENT_TAGS, DEFAULT_VALUE, STATUS_SUCCESS } from "./constants";
+import { TB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANS_SERVICE, DOMAIN_STRATEGY, TRANS_ACTION, ACTION, STORAGE_ACTION, iso6393To1Map, excludedTagSet, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, EXCLUDE_CHILD_ELEMENT_TAGS, DEFAULT_VALUE, STATUS_SUCCESS } from "./constants";
 import { restore, translationServices, translateParams, getTranslateResult, translate, TranslateResult, resetTranslationCacheEnabled } from "./translateService";
 import { sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
@@ -11,7 +10,8 @@ import { mountAiWritingDot } from "./aiWriting/floatingDot";
 import { isAiWritingTarget } from "./aiWriting/inputDetector";
 import { openWorkbench, ensureWorkbenchMounted } from "./aiWriting/workbench";
 import { openSelectionTranslate } from "./aiWriting/selectionPopup";
-import { addRuleToDB, deleteRuleFromDB, getConfig, listRuleFromDB } from "@/utils/db";
+import { getConfig, listRuleFromDB } from "@/utils/db";
+import { createRuleMode, type RuleModeController } from "./ruleMode";
 import { isTraditionalChinese } from "@/utils/language";
 import { parseTranslateServiceKey, startTranslate, TranslateServiceChoice } from "./aiWriting/translateRunner";
 import { applyTextToTarget } from "./aiWriting/applyText";
@@ -81,7 +81,11 @@ async function initAiWritingDotInFrame() {
 export const shareConfig: {
     aiTranslateServiceChoice: TranslateServiceChoice,
     aiTargetLanguage: string,
-} = { aiTranslateServiceChoice: { kind: 'trans', service: DEFAULT_VALUE.AI_TRANSLATE_SERVICE }, aiTargetLanguage: DEFAULT_VALUE.AI_TARGET_LANGUAGE };
+    rules: string[]
+} = {
+    aiTranslateServiceChoice: { kind: 'trans', service: DEFAULT_VALUE.AI_TRANSLATE_SERVICE },
+    aiTargetLanguage: DEFAULT_VALUE.AI_TARGET_LANGUAGE, rules: []
+};
 
 export async function content() {
     console.log('content script loaded');
@@ -115,14 +119,6 @@ export async function content() {
     // get the id of the current tab,which used unique defines the page
     const encoder = new TextEncoder();
 
-    // convert the SVG to Base64
-    const svgAddBase64 = btoa(svgAddCursor);
-    const svgTrashBase64 = btoa(svgTrashCursor);
-
-    // create a data URL for the cursor
-    const cursorAddUrl = `url('data:image/svg+xml;base64,${svgAddBase64}'), auto`;
-    const cursorTrashUrl = `url('data:image/svg+xml;base64,${svgTrashBase64}'), auto`;
-
     let pageLanguage = "und"
     let tabId = await sendMessageToBackground({ action: TB_ACTION.ID_GET })
     if (!tabId) {
@@ -137,10 +133,7 @@ export async function content() {
     if (domainWithPort === "") {
         return
     }
-    const getCssSelectorString = (ele: HTMLElement): string => {
-        // ignore the elements with class start with duo
-        return getCssSelector(ele, { selectors: ["id", "class", "tag"], blacklist: ['.duo-*'] })
-    }
+    const ruleMode: RuleModeController = createRuleMode(domainWithPort)
     let floatBall: FloatBallController | null = null
 
     // return
@@ -153,7 +146,7 @@ export async function content() {
     let duoTranslatedElementSet = new Set<HTMLElement>()
     let translatedElementMap = new Map<HTMLElement, TranslateResult>()
     // get all config from storage
-    let [ruleStrategy, viewStrategy, targetLanguageConfig, translateServiceConfig, globalSwitch, defaultStrategy,
+    let [rules, viewStrategy, targetLanguageConfig, translateServiceConfig, globalSwitch, defaultStrategy,
         rawDomainStrategy, floatBallSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey, aiTargetLanguage]
         : [string[], VIEW_STRATEGY, string | undefined, string | undefined, boolean, string, any, boolean, number, number, string | undefined, string]
         = await Promise.all(
@@ -172,6 +165,8 @@ export async function content() {
                 getConfig(CONFIG_KEY.AI_TARGET_LANGUAGE)
             ]
         )
+    rules = rules || []
+    shareConfig.rules = rules
     let translateService = (await getService(translateServiceConfig)).activeService
     let aiTranslateService = (await getAiWritingTranslateService(aiTranslateServiceKey)).activeService
     let aiTranslateServiceChoice = parseTranslateServiceKey(aiTranslateService)
@@ -231,11 +226,11 @@ export async function content() {
                 // Rule-selection mode (picking elements to exclude) is a
                 // top-frame interaction; don't activate it inside iframes.
                 if (!isTopFrame) break
-                await toggleSelectionMode()
+                await ruleMode.activeSelectInteraction()
                 break
             case ACTION.LEAVE_SELECTION_MODE:
                 if (!isTopFrame) break
-                deactivateSelectionMode()
+                ruleMode.deactivateSelectInteraction()
                 break
             case ACTION.STYLE_CHANGE:
                 // process style change action
@@ -674,9 +669,6 @@ export async function content() {
         await init()
     }
 
-    let childrenCursorCache: Set<HTMLElement> = new Set()
-    let selectionModeActive = false;
-
     function isIgnoreMutationElement(element: HTMLElement) {
         // closest() is a native O(depth) walk — faster than the JS loop and
         // catches the common UI-framework patterns in one shot.
@@ -707,7 +699,6 @@ export async function content() {
      * Execute init function when page is loaded
      */
     async function init() {
-        ruleStrategyProcess(ruleStrategy)
         initCSS()
         // The float ball is a single tab-level UI — top frame only.
         if (isTopFrame) await initFloatBall()
@@ -769,7 +760,9 @@ export async function content() {
         // init so the cost of adoptedStyleSheets bookkeeping isn't worth it.
         let ruleModeStyle = document.createElement('style') as HTMLStyleElement
         ruleModeStyle.id = "rule-mode-style"
-        ruleModeStyle.innerText += ".duo-selected {outline: 2px solid yellow !important;}"
+        // The selected-region indicator is drawn by ruleMode's overlay (yellow
+        // boxes), not a `.duo-selected` outline — an outline here would be clipped
+        // by the page's `overflow:hidden` ancestors just like the hover highlight.
         document.head.appendChild(ruleModeStyle)
         await processStyleChangeAction()
     }
@@ -909,7 +902,7 @@ export async function content() {
             document.querySelectorAll(".duo-needs-translate").forEach((element) => {
                 let ele = element as HTMLElement
                 paragraphElementMap.set(ele, ELEMENT_STATUS.ORIGINAL)
-                console.log("translateAction observe element");
+                // console.log("translateAction observe element");
                 intersectionObserver.observe(ele)
             })
         }
@@ -1254,22 +1247,6 @@ export async function content() {
         }
     }
 
-    function ruleStrategyProcess(ruleStrategy: string[]) {
-        // Iterate through all the rules and mark the elements that don't translate
-        if (!ruleStrategy) {
-            return
-        }
-        ruleStrategy.forEach((content: string) => {
-            let element = document.querySelector(content);
-            if (element == null) {
-                return
-            }
-            // add class，mark as duo-no-translate
-            element.classList.add('duo-no-translate');
-        })
-
-    }
-
     // Builds the full stylesheet text for translation styling + bilingual
     // highlighting from current config. Always returns a complete CSS string
     // so the caller can swap the stylesheet atomically via replaceSync.
@@ -1350,7 +1327,6 @@ export async function content() {
     }
 
     function isNotTranslateElement(element: HTMLElement): boolean {
-        // todo support user defined class to exclude translation
         return element.classList.contains('duo-no-translate')
     }
 
@@ -1447,6 +1423,17 @@ export async function content() {
             if (!el.isConnected) continue;
             if (isNotMarkElement(el)) continue;
             if (!nt && isNotTranslateElement(el)) nt = true;
+            if (!nt && rules?.length > 0) {
+                try {
+                    if (el.matches(rules.join(","))) {
+                        el.classList.add('duo-no-translate');
+                        nt = true
+                    }
+                } catch (e) {
+                    console.warn(APP_NAME_WITH_SUFFIX, "markParagraphElement matches failed", e);
+                }
+            }
+
             if (el.classList.contains("duo-paragraph")) {
                 if (!nt) collectElements.push(el);
                 continue;
@@ -1909,7 +1896,6 @@ export async function content() {
         return sentences
     }
 
-    // =============== Rule mode ===============
     function getCSSRuleString(style: string, color?: string) {
         let cssRule = ""
         const isBorder = style === 'solidBorder' || style === 'dottedBorder' || style === 'dashedBorder'
@@ -1954,231 +1940,6 @@ export async function content() {
             cssRule += `text-underline-offset: 4px;`
         }
         return cssRule
-    }
-
-    async function toggleSelectionMode() {
-        // get all the rules of the current domain from the db, find the element and add class duo-selected
-        let rules = await listRuleFromDB(domainWithPort)
-        console.log('rules:', rules)
-        if (rules) {
-            for (let rule of rules) {
-                let element = document.querySelector(rule);
-                if (element) {
-                    element.classList.add('duo-selected')
-                }
-            }
-        }
-        addEventListeners();
-    }
-
-    const mouseRightHandler = function (event: MouseEvent) {
-        if (event.button === 2) {
-            deactivateSelectionMode()
-        }
-    }
-    const contextMenuHandler = function (event: MouseEvent) {
-        event.preventDefault()
-    }
-
-    function addEventListeners() {
-        document.addEventListener('mouseover', highlightElement);
-        document.addEventListener('mousedown', mouseRightHandler);
-    }
-
-    function ruleModeAddStyle(element: HTMLElement) {
-        // element.style.cursor = cursorAddUrl;
-        element.style.setProperty('cursor', cursorAddUrl, 'important');
-        childrenCursorCache.add(element)
-        const children = element.querySelectorAll('*'); // Selects all children of the parent element
-        children.forEach(child => {
-            let ele = child as HTMLElement
-            // ele.style.setProperty('cursor', cursorAddUrl, 'important');
-            ele.style.setProperty('cursor', cursorAddUrl, 'important');
-            childrenCursorCache.add(ele)
-        });
-        element.style.setProperty('outline', '2px solid green', 'important');
-        // element.style.outline = "2px solid green !important";
-    }
-
-    function ruleModeDeleteStyle(element: HTMLElement) {
-        // element.style.cursor = cursorTrashUrl;
-        // element.style.setProperty('cursor', cursorTrashUrl, 'important');
-        element.style.setProperty('cursor', cursorTrashUrl, 'important');
-        childrenCursorCache.add(element)
-        const children = element.querySelectorAll('*'); // Selects all children of the parent element
-        children.forEach(child => {
-            let ele = child as HTMLElement
-            ele.style.setProperty('cursor', cursorTrashUrl, 'important');
-            childrenCursorCache.add(ele)
-        });
-        element.style.setProperty('outline', '2px solid red', 'important');
-        // element.style.outline = "2px solid red !important";
-    }
-
-    // @ts-ignore
-    function highlightElement(event) {
-        console.log('highlightElement', event.target)
-        let currentElement = event.target;
-        if (currentElement === document.body || currentElement === document.documentElement) {
-            return
-        }
-        // The parent element of the current element is a duo-selected element and is not processed
-        while (currentElement && currentElement !== document.body && currentElement !== document.documentElement) {
-            if (currentElement.className.includes("duo-selected")) {
-                // Set the deletion style
-                ruleModeDeleteStyle(currentElement)
-                const handler = function (event: Event) {
-                    console.log('inner')
-                    event.preventDefault();
-                    event.stopPropagation();
-                    selectElementClicked(currentElement)
-                }
-                currentElement.onmouseout = function (event: Event) {
-                    event.preventDefault();
-                    // event.stopPropagation();
-                    currentElement.style.outline = ""
-                    currentElement.removeEventListener('click', handler);
-                }
-                currentElement.addEventListener('click', handler);
-                // set the style of all child elements for the current element
-                let children = currentElement.querySelectorAll("*")
-                children.forEach((ele: HTMLElement) => {
-                    // ele.style.cursor = cursorTrashUrl;
-                    ele.style.setProperty('cursor', cursorTrashUrl, 'important');
-                    childrenCursorCache.add(ele)
-                })
-                return
-            }
-            currentElement = currentElement.parentElement
-        }
-        // The smallest unit element is a paragraph, and the current element must be a child or parent of the duo-paragraph element
-        let element
-            = event.target as HTMLElement
-        let elementAddRuleStyle = setElementAddRuleStyle(element);
-        if (elementAddRuleStyle) {
-            const clickHandler = function (event: Event) {
-                event.preventDefault();
-                event.stopPropagation();
-                selectElementClicked(elementAddRuleStyle)
-            }
-            elementAddRuleStyle.addEventListener('click', clickHandler);
-            elementAddRuleStyle.onmouseout = function (event: Event) {
-                event.preventDefault();
-                // event.stopPropagation();
-                elementAddRuleStyle.style.outline = ""
-                elementAddRuleStyle?.removeEventListener('click', clickHandler);
-            }
-        }
-
-    }
-
-    function removeNoTranslateClass(element: Element) {
-        element.classList.remove("duo-no-translate");
-        element.querySelectorAll(".duo-paragraph").forEach((child) => {
-            child.classList.add("duo-needs-translate")
-        })
-    }
-
-    /**
-     * click left mouse button on the <element> in the rule mode
-     * @param ele selected element
-     * @returns void
-     */
-    function selectElementClicked(ele: HTMLElement) {
-        if (ele.classList.contains("duo-selected")) {
-            ele.classList.remove("duo-selected")
-            ruleModeAddStyle(ele)
-            // save to db
-            let selector = getCssSelectorString(ele)
-            deleteRuleFromDB(domainWithPort, selector)
-            // remove class duo-no-translate
-            removeNoTranslateClass(ele)
-        } else {
-            // if ele's parent element has duo-selected, remove it
-            let parent = ele.parentElement
-            while (parent) {
-                if (parent.classList.contains("duo-selected")) {
-                    parent.classList.remove("duo-selected")
-                    ruleModeAddStyle(parent)
-                    deleteRuleFromDB(domainWithPort, getCssSelectorString(parent))
-                    removeNoTranslateClass(parent)
-                    return
-                }
-                parent = parent.parentElement as HTMLElement
-            }
-            if (ele.classList.length == 0) {
-                ele.setAttribute("class", "duo-selected")
-            } else {
-                ele.classList.add("duo-selected")
-            }
-            // remove children element that has duo-selected
-            let children = ele.querySelectorAll(".duo-selected")
-            children.forEach(child => {
-                child.classList.remove("duo-selected")
-                // save to db
-                let selector = getCssSelectorString(child as HTMLElement)
-                deleteRuleFromDB(domainWithPort, selector)
-                removeNoTranslateClass(child)
-            })
-            addRuleToDB(domainWithPort, getCssSelectorString(ele))
-            ele.classList.add("duo-no-translate")
-            ele.querySelectorAll(".duo-needs-translate").forEach((element) => {
-                element.classList.remove("duo-needs-translate")
-            })
-            ruleModeDeleteStyle(ele)
-        }
-    }
-
-    function setElementAddRuleStyle(element: HTMLElement): HTMLElement | undefined {
-        console.log('setElementAddRuleStyle:', element)
-        if (element.classList.contains("duo-paragraph")) {
-            ruleModeAddStyle(element)
-            return element
-        } else {
-            let query = element.querySelectorAll(".duo-paragraph")
-            if (query.length > 0) {
-                ruleModeAddStyle(element)
-                return element
-            } else {
-                // find the parent element of the current element that has the duo-paragraph class
-                let parent = element.parentElement
-                while (parent) {
-                    if (parent.classList.contains("duo-paragraph")) {
-                        ruleModeAddStyle(parent)
-                        // set the style of all child elements of the current element
-                        let children = parent.querySelectorAll("*")
-                        for (let child of children) {
-                            let ele = child as HTMLElement
-                            // ele.style.cursor = cursorAddUrl;
-                            ele.style.setProperty('cursor', cursorAddUrl, 'important');
-                            childrenCursorCache.add(ele)
-                        }
-                        return parent
-                    }
-                    parent = parent.parentElement as HTMLElement
-                }
-                return undefined
-            }
-        }
-    }
-
-    function deactivateSelectionMode() {
-        document.addEventListener('contextmenu', contextMenuHandler);
-        console.log('deactivateSelectionMode')
-        selectionModeActive = false;
-        // remove all element that have duo-selected
-        document.querySelectorAll('.duo-selected').forEach((element) => {
-            element.classList.remove('duo-selected');
-        })
-        childrenCursorCache.forEach((ele) => {
-            ele.style.cursor = 'auto';
-        })
-        document.removeEventListener('mouseover', highlightElement);
-        document.removeEventListener('mousedown', mouseRightHandler);
-        setTimeout(() => {
-            document.removeEventListener('contextmenu', contextMenuHandler);
-        }, 200)
-
     }
 
 }
