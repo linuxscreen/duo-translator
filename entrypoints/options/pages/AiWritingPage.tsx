@@ -11,7 +11,7 @@ import {
 import { getConfig, setConfig } from '@/utils/db';
 import { sendMessageToBackground } from '@/utils/message';
 import { type AiProvider } from '@/main/aiService';
-import { buildServiceOptions, getAiWritingTranslateService, type ServiceOption } from '@/utils/service';
+import { buildServiceOptions, getAiTranslateService, type ServiceOption } from '@/utils/service';
 import { Switch } from '@/components/ui/switch';
 import {
   Select,
@@ -41,6 +41,7 @@ export function AiWritingPage() {
   const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANGUAGE);
   const [defaultMode, setDefaultMode] = useState<string>(DEFAULT_VALUE.AI_DEFAULT_ENHANCE_MODE);
   const [providers, setProviders] = useState<AiProvider[]>([]);
+  const [hasConfiguredProviders, setHasConfiguredProviders] = useState(false);
   const [activeProviderId, setActiveProviderId] = useState<string>('');
   const [enhanceProviderId, setEnhanceProviderId] = useState<string>('');
   const [translateServiceKey, setTranslateServiceKey] = useState<string>(
@@ -87,10 +88,11 @@ export function AiWritingPage() {
       setDefaultMode(mode || DEFAULT_VALUE.AI_DEFAULT_ENHANCE_MODE);
       // Shared loader: enabled translators + enabled AI providers + the
       // resolved active translate service (falls back if the saved one is gone).
-      const { activeService, enabledTranslateServices, enabledAiProviders } =
-        await getAiWritingTranslateService(transKey);
+      const { activeService, enabledTranslateServices, enabledAiProviders, totalAiProviders } =
+        await getAiTranslateService(transKey);
       if (cancelled) return;
       setProviders(enabledAiProviders);
+      setHasConfiguredProviders(totalAiProviders > 0);
       setServiceOptions(buildServiceOptions(enabledTranslateServices, enabledAiProviders));
       setActiveProviderId(typeof activeId === 'string' ? activeId : '');
       // Fallback chain mirrors the floating dot's resolution order.
@@ -161,9 +163,20 @@ export function AiWritingPage() {
           label={t('aiBetterWritingWith', 'Better writing with')}
           control={
             providers.length === 0 ? (
-              <span className="text-[12px] text-ink-soft">
-                {t('aiNoProviderConfigured', 'No AI provider configured')}
-              </span>
+              <div className="flex items-center justify-between gap-2 rounded-md border border-line bg-surface/60 px-2.5 py-1.5">
+                <span className="text-[12px] text-ink-soft">
+                  {hasConfiguredProviders
+                    ? t('aiNoProviderEnabled', 'No AI provider enabled')
+                    : t('aiNoProviderConfigured', 'No AI provider configured')}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { window.location.hash = '#services'; }}
+                  className="shrink-0 text-[12px] text-accent hover:underline"
+                >
+                  {t('aiConfigure', 'Configure')}
+                </button>
+              </div>
             ) : (
               <Select
                 value={enhanceProviderId || activeProviderId || providers[0]?.id || ''}

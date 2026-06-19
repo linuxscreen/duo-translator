@@ -1,5 +1,5 @@
 // utils.js
-import { browser } from "wxt/browser"
+import { Browser, browser } from "wxt/browser"
 import { APP_NAME_WITH_SUFFIX, STATUS_SUCCESS } from "@/main/constants";
 
 type Message = {
@@ -69,20 +69,25 @@ export async function sendMessageToTab(message: Message) {
  * send a message to all tabs.
  * If the tab is active, set the active flag to true.
  * @param message The message to send.
+ * @param sendActiveFlag If false, the active flag will not be set.
  * @returns the response of the active tab.
  */
-export async function sendMessageToAllTabs(message: Message) {
+export async function sendMessageToAllTabs(message: Message, sendActiveFlag: boolean = true) {
     let tabs = await browser.tabs.query({})
-    let activeTab = await browser.tabs.query({ active: true, currentWindow: true })
-    if (activeTab.length !== 1) {
-        return
+    let activeTab : Browser.tabs.Tab | undefined
+    if (sendActiveFlag) {
+        let activeTabs = await browser.tabs.query({ active: true, currentWindow: true })
+        if (activeTabs.length < 1) {
+            return
+        }
+        activeTab = activeTabs[0]
     }
     let resp: any
     await Promise.all(tabs.map(tab => {
         if (!tab.url?.startsWith('http')) {
             return
         }
-        if (tab.id == activeTab?.[0]?.id) {
+        if (tab.id == activeTab?.id) {
             let messageCopy = structuredClone(message)
             messageCopy.active = true
             resp = browser.tabs.sendMessage(Number(tab.id), messageCopy)

@@ -17,7 +17,7 @@ import { parseTranslateServiceKey, startTranslate, TranslateServiceChoice } from
 import { applyTextToTarget } from "./aiWriting/applyText";
 import { getElementText } from "@/utils/dom";
 import { getDomainWithPortFromUrl } from "@/utils/url";
-import { getAiWritingTranslateService, getService } from "@/utils/service";
+import { getAiTranslateService, getTranslateService } from "@/utils/service";
 
 /**
  * Resolve the TOP document's domain from within a sub-frame. The dot's
@@ -147,8 +147,8 @@ export async function content() {
     let translatedElementMap = new Map<HTMLElement, TranslateResult>()
     // get all config from storage
     let [rules, viewStrategy, targetLanguageConfig, translateServiceConfig, globalSwitch, defaultStrategy,
-        rawDomainStrategy, floatBallSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey, aiTargetLanguage]
-        : [string[], VIEW_STRATEGY, string | undefined, string | undefined, boolean, string, any, boolean, number, number, string | undefined, string]
+        rawDomainStrategy, floatBallSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey, aiTargetLanguageConfig, contextMenuSwitch]
+        : [string[], VIEW_STRATEGY, string | undefined, string | undefined, boolean, string, any, boolean, number, number, string | undefined, string, boolean]
         = await Promise.all(
             [
                 listRuleFromDB(domainWithPort),
@@ -162,16 +162,17 @@ export async function content() {
                 getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES),
                 getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS),
                 getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
-                getConfig(CONFIG_KEY.AI_TARGET_LANGUAGE)
+                getConfig(CONFIG_KEY.AI_TARGET_LANGUAGE),
+                getConfig(CONFIG_KEY.CONTEXT_MENU_SWITCH)
             ]
         )
     rules = rules || []
     shareConfig.rules = rules
-    let translateService = (await getService(translateServiceConfig)).activeService
-    let aiTranslateService = (await getAiWritingTranslateService(aiTranslateServiceKey)).activeService
-    let aiTranslateServiceChoice = parseTranslateServiceKey(aiTranslateService)
-    shareConfig.aiTargetLanguage = aiTargetLanguage
-    shareConfig.aiTranslateServiceChoice = aiTranslateServiceChoice
+    let translateService = (await getTranslateService(translateServiceConfig)).activeService
+    let aiTranslateService = (await getAiTranslateService(aiTranslateServiceKey)).activeService
+    let parsedAiTranslateService = parseTranslateServiceKey(aiTranslateService)
+    shareConfig.aiTargetLanguage = aiTargetLanguageConfig
+    shareConfig.aiTranslateServiceChoice = parsedAiTranslateService
     let targetLanguage = targetLanguageConfig || navigator.language.split('-')[0]
     let domainStrategy = (rawDomainStrategy?.strategy || DOMAIN_STRATEGY.AUTO) as string
 
@@ -181,7 +182,7 @@ export async function content() {
     //     globalSwitch, "defaultStrategy: ", defaultStrategy, "domainStrategy: ", domainStrategy)
 
     // Accept messages from popups, process the task
-    // =============================  message listener start  ===================================
+    // ===============================  message listener start  ===================================
     browser.runtime.onMessage.addListener(async (message, sender, sendResponse: (t: any) => void) => {
         console.log('content script receive message:', message)
         switch (message.action) {
@@ -255,6 +256,7 @@ export async function content() {
                                         await translateAction()
                                         return true
                                     }
+                                    break
                                 case DEFAULT_STRATEGY.NEVER:
                                     if (translateStatus) {
                                         await restoreOriginalAction()
@@ -352,7 +354,9 @@ export async function content() {
                 // process the global switch change
                 break
             case ACTION.VIEW_STRATEGY_CHANGE:
+                let oldViewStrategy: VIEW_STRATEGY
                 if (message.data && message.data != "" && viewStrategy != message.data) {
+                    oldViewStrategy = viewStrategy
                     viewStrategy = message.data
                 } else {
                     return
@@ -362,8 +366,8 @@ export async function content() {
                 }
                 // process the view strategy change
                 if (translateStatus) {
-                    await restoreOriginalAction()
-                    // await translateAction()
+                    await restoreOriginalAction(oldViewStrategy)
+                    await translateAction()
                 }
                 break
             case ACTION.TRANSLATION_CACHE_SWITCH_CHANGE:
@@ -408,33 +412,28 @@ export async function content() {
             case TRANS_ACTION.TRANSLATE_SELECTION:
                 translateSelectionAction(message.data as string)
                 break
+            case TB_ACTION.CONTEXT_MENU_SWITCH:
+                if (typeof message.data === "boolean") {
+                    contextMenuSwitch = message.data
+                }
+            case ACTION.UPDATE_ACTIVE_TRANSLATE_SERVICE:
+                let activeTranslateService = message.data.activeTranslateService
+                if (activeTranslateService !== undefined) {
+                    translateService = activeTranslateService
+                }
+                let activeAiTranslateServiceChoice = message.data.activeAiTranslateServiceChoice
+                if (activeAiTranslateServiceChoice !== undefined) {
+                    shareConfig.aiTranslateServiceChoice = activeAiTranslateServiceChoice
+                }
             default:
                 break
         }
     });
-    // =============================  message listener end  ===================================
+    // ===============================  message listener end  =====================================
 
     let lastRightClickElement: HTMLElement | null = null
     let lastParaTranslateStatus: boolean = false
     let lastEditableElement: HTMLElement | null = null
-
-    document.addEventListener("contextmenu", (e) => {
-        const target = e.target as HTMLElement | null;
-        if (target && IsEditableElement(target)) {
-            // console.log("isContentEditable", target);
-            lastEditableElement = target
-        }
-    })
-
-    function IsEditableElement(element: HTMLElement): boolean {
-        if (element.isContentEditable) {
-            return true
-        }
-        if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-            return true
-        }
-        return false
-    }
 
     // Decide whether the pointer is over the paragraph's text — counting both
     // glyphs themselves and the blank gaps *between* lines (line-height leading,
@@ -467,7 +466,7 @@ export async function content() {
     // known issue: The context menu that is not triggered by the right mouse button may be abnormal.
     document.addEventListener("mousedown", (e) => {
         // return
-        if (e.button !== 2) { // ignore non right click
+        if (e.button !== 2 || !contextMenuSwitch) { // ignore non right click
             return
         }
         const target = e.target as HTMLElement | null;
@@ -501,6 +500,27 @@ export async function content() {
             });
         }
     }, true);
+
+    document.addEventListener("contextmenu", (e) => {
+        if (!contextMenuSwitch) {
+            return
+        }
+        const target = e.target as HTMLElement | null;
+        if (target && IsEditableElement(target)) {
+            // console.log("isContentEditable", target);
+            lastEditableElement = target
+        }
+    })
+
+    function IsEditableElement(element: HTMLElement): boolean {
+        if (element.isContentEditable) {
+            return true
+        }
+        if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+            return true
+        }
+        return false
+    }
 
     const intersectionObserver = new IntersectionObserver(items => {
         // console.log("intersectionObserver items: ", items.length)
@@ -913,7 +933,7 @@ export async function content() {
 
     }
 
-    async function restoreOriginalAction() {
+    async function restoreOriginalAction(viewStrategy?: VIEW_STRATEGY) {
         if (restoreOriginalTask) {
             return
         }
@@ -943,7 +963,7 @@ export async function content() {
             //     setTimeout(resolve, 2000);
             // })
             // restore original page
-            await restoreOriginalPage(false)
+            await restoreOriginalPage(false, false, viewStrategy)
         }
         restoreOriginalTask = action()
         restoreOriginalTask.finally(() => {
@@ -992,12 +1012,13 @@ export async function content() {
      * restore the original page
      * @param setStatus set the translation status to false and persist to storage
      */
-    async function restoreOriginalPage(setStatus: boolean = true, pure: boolean = false) {
+    async function restoreOriginalPage(setStatus: boolean = true, pure: boolean = false, vs?: VIEW_STRATEGY) {
         if (setStatus) {
             await persistTranslateStatus(false)
         }
+        let viewStrategyCopy = vs || viewStrategy
 
-        if (viewStrategy == VIEW_STRATEGY.DOUBLE) {
+        if (viewStrategyCopy == VIEW_STRATEGY.DOUBLE) {
             for (let element of duoTranslatedElementSet) {
                 if (!element) {
                     continue
@@ -1042,7 +1063,7 @@ export async function content() {
                 }
                 duoTranslatedElementSet.clear()
             })
-        } else if (viewStrategy == VIEW_STRATEGY.SINGLE) {
+        } else if (viewStrategyCopy == VIEW_STRATEGY.SINGLE) {
             let results: TranslateResult[] = []
             translatedElementMap.forEach((result, element) => {
                 ignoreMutationElements.add(element)
@@ -1207,7 +1228,7 @@ export async function content() {
         let lang = 'und'
         if (utf8Length > 500) {
             lang = getTextLanguage(text)
-            console.log("detect language by franc: %s", lang, utf8Length)
+            console.log("detect language by franc: %s, text length: %d", lang, utf8Length)
         }
 
         if (lang != "und") {

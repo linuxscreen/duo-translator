@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Copy, CornerDownLeft, Loader2, Sparkles, StopCircle, X } from "lucide-react";
+import { browser } from "wxt/browser";
 import {
+    ACTION,
     AI_TASK,
     CONFIG_KEY,
     DEFAULT_VALUE,
@@ -10,7 +12,7 @@ import {
 } from "@/main/constants";
 import type { AiProvider } from "@/main/aiService";
 import { startAiChatStream } from "@/main/aiService";
-import { buildServiceOptions, getAiWritingTranslateService } from "@/utils/service";
+import { buildServiceOptions, getAiTranslateService } from "@/utils/service";
 import { getConfig, setConfig } from "@/utils/db";
 import { applyTextToTarget, canApplyToTarget } from "./applyText";
 import { DiffView } from "./DiffView";
@@ -21,6 +23,7 @@ import {
     type TranslateServiceChoice,
 } from "./translateRunner";
 import { loadTailwindIntoShadow } from "./shadowStyle";
+import { NoProviderNotice } from "./NoProviderNotice";
 import { t, useLang } from "./i18n";
 import { useCopyFeedback } from "./useCopyFeedback";
 
@@ -111,6 +114,7 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
     // Service selection — translate routes through a translator/AI provider,
     // enhance routes through an AI provider (the "model").
     const [providers, setProviders] = useState<AiProvider[]>([]);
+    const [hasConfiguredProviders, setHasConfiguredProviders] = useState(false);
     const [translateServices, setTranslateServices] = useState<TranslateServiceMeta[]>([]);
     const [translateChoice, setTranslateChoice] = useState<TranslateServiceChoice>({
         kind: "trans", service: String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE),
@@ -147,10 +151,11 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                 if (lang) setTargetLang(lang);
                 // Shared loader: enabled translators + enabled AI providers, plus
                 // the resolved active translate service (same logic the popup uses).
-                const { activeService, enabledTranslateServices, enabledAiProviders } =
-                    await getAiWritingTranslateService(transKey);
+                const { activeService, enabledTranslateServices, enabledAiProviders, totalAiProviders } =
+                    await getAiTranslateService(transKey);
                 setTranslateServices(enabledTranslateServices);
                 setProviders(enabledAiProviders);
+                setHasConfiguredProviders(totalAiProviders > 0);
                 setTranslateChoice(parseTranslateServiceKey(activeService));
                 setEnhanceProviderId(enabledAiProviders.find((p) => p.id === activeId)?.id || enabledAiProviders[0]?.id || "");
             })();
@@ -368,9 +373,14 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                                 ))}
                             </select>
                         ) : (
-                            <span className="text-[11.5px] text-[#8a93a8]">
-                                {t("aiNoProviderConfigured", "No AI provider configured")}
-                            </span>
+                            <NoProviderNotice
+                                hasConfigured={hasConfiguredProviders}
+                                onConfigure={() =>
+                                    browser.runtime
+                                        .sendMessage({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: "services" } })
+                                        .catch(() => { })
+                                }
+                            />
                         )
                     )}
                     <div className="flex-1" />

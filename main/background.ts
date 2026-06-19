@@ -15,6 +15,7 @@ import {
     AI_TASK,
     SYNC_ACTION,
     SYNC_PROVIDER_ID,
+    DEFAULT_VALUE,
 } from "@/main/constants";
 import { Browser, browser } from "wxt/browser";
 import { Token } from "@/main/translateService";
@@ -78,14 +79,21 @@ const CONTEXT_MENU_TRANSLATE_TEXT_BOX_TITLE = 'contextMenuTranslateTextBox'
 const CONTEXT_MENU_TRANSLATE_SELECTION_TITLE = 'contextMenuTranslateSelection'
 
 
-export function background() {
+export async function background() {
     console.log("background loaded")
     const mutex = new Mutex();
     let translateStatus = false
     let paraTranslateStatus = false
     let paraContextMenuShowStatus = false
 
-    let currentInterfaceLang: InterfaceLang = detectDefaultInterfaceLang()
+    let contextMenuSwitch : boolean = DEFAULT_VALUE.CONTEXT_MENU_SWITCH
+    let contextMenuSwitchConfig = await configRepo.get(CONFIG_KEY.CONTEXT_MENU_SWITCH)
+    if (contextMenuSwitchConfig !== undefined) {
+        contextMenuSwitch = contextMenuSwitchConfig as boolean
+    }
+
+    let currentInterfaceLang = normalizeInterfaceLang(await configRepo.get(CONFIG_KEY.INTERFACE_LANGUAGE)) || detectDefaultInterfaceLang()
+
     // Register auto-sync alarm/storage listeners synchronously at SW startup so
     // an alarm that wakes the worker is always caught.
     registerAutoSyncListeners();
@@ -99,10 +107,6 @@ export function background() {
         initTokenMap();
     });
     const getMsg = (key: string) => LOCALES[currentInterfaceLang][key] ?? key
-    configRepo.get(CONFIG_KEY.INTERFACE_LANGUAGE).then((value) => {
-        const lang = normalizeInterfaceLang(value)
-        if (lang) currentInterfaceLang = lang
-    })
 
     browser.runtime.onMessage.addListener((message, sender, sendResponse: (t: any) => void) => {
         // messages are received to manipulate the db database
@@ -405,15 +409,13 @@ export function background() {
                 break
             case TB_ACTION.CONTEXT_MENU_SWITCH:
                 console.log('contextMenuSwitch', message.data)
-                let contextMenuSwitch = message.data.contextMenuSwitch
+                let data = message.data.contextMenuSwitch
+                if (typeof data !== 'boolean') return
+                contextMenuSwitch = data
                 if (contextMenuSwitch) {
-                    browser.contextMenus.create({
-                        id: CONTEXT_MENU.TRANSLATE_RESTORE_PAGE,
-                        title: getMsg(CONTEXT_MENU_TRANSLATE_TITLE),
-                        contexts: ["page"]
-                    });
+                    rebuildContextMenus()
                 } else {
-                    browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
+                    browser.contextMenus.removeAll()
                 }
                 break
             case ACTION.INTERFACE_LANG_CHANGE: {
@@ -447,6 +449,7 @@ export function background() {
                 console.log('translateStatusChange', message.data)
                 if (typeof message.data.status === 'boolean') {
                     translateStatus = message.data.status
+                    if (!contextMenuSwitch) return
                     updateContextMenu(message.data.status)
                 }
                 break
@@ -801,6 +804,33 @@ export function background() {
     }
 
     function initContextMenu() {
+        addAllContextMenus()
+
+        browser.contextMenus.onClicked.addListener(contextMenuClickLister)
+        // Listen for tab activation events
+        browser.tabs.onActivated.addListener(async (activeInfo) => {
+            // only process http or https url
+            let tab = await browser.tabs.get(activeInfo.tabId)
+            if (!tab?.url?.startsWith('http')) {
+                return
+            }
+            console.log('tabs.onActivated', activeInfo)
+            // get current tab translate status
+            let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + activeInfo.tabId
+            browser.storage.session.get(tabTranslateStatusKey).then((value) => {
+                translateStatus = !!value[tabTranslateStatusKey]
+                if (!contextMenuSwitch) return
+                updateContextMenu(translateStatus)
+            })
+        });
+    }
+
+    function rebuildContextMenus() {
+        paraContextMenuShowStatus = false
+        addAllContextMenus()
+    }
+
+    function addAllContextMenus() {
         let t: string = translateStatus ? CONTEXT_MENU_RESTORE_TITLE : CONTEXT_MENU_TRANSLATE_TITLE
         browser.contextMenus.removeAll()
         browser.contextMenus.create({
@@ -817,24 +847,6 @@ export function background() {
             id: CONTEXT_MENU.TRANSLATE_SELECTION,
             title: getMsg(CONTEXT_MENU_TRANSLATE_SELECTION_TITLE),
             contexts: ["selection"]
-        });
-
-        browser.contextMenus.onClicked.addListener(contextMenuClickLister)
-        // Listen for tab activation events
-        browser.tabs.onActivated.addListener(async (activeInfo) => {
-            // only process http or https url
-            let tab = await browser.tabs.get(activeInfo.tabId)
-            if (!tab?.url?.startsWith('http')) {
-                return
-            }
-            console.log('tabs.onActivated', activeInfo)
-            // get current tab translate status
-            let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + activeInfo.tabId
-            browser.storage.session.get(tabTranslateStatusKey).then((value) => {
-                translateStatus = !!value[tabTranslateStatusKey]
-                updateContextMenu(translateStatus)
-            })
-            // browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_TEXT_BOX, { title : ''})
         });
     }
 
@@ -989,8 +1001,8 @@ export function background() {
         port.onMessage.addListener(async (raw) => {
             const req = raw as AiStreamRequest;
             try {
-                // Look up provider directly from the in-scope ConfigStorage
-                // (PouchDB). Round-tripping through sendMessageToBackground
+                // Look up provider directly from the in-scope ConfigStorage.
+                // Round-tripping through sendMessageToBackground
                 // here would deadlock: we ARE the background.
                 const raw_list: any[] = ((await configRepo.get(CONFIG_KEY.AI_PROVIDERS)) as any[] | null) || [];
                 const list: AiProvider[] = raw_list.map(normalizeProvider);

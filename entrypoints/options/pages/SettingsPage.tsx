@@ -7,7 +7,7 @@ import {
   TB_ACTION,
   type InterfaceLang,
 } from '@/main/constants';
-import { sendMessageToBackground } from '@/utils/message';
+import { sendMessageToAllTabs, sendMessageToBackground } from '@/utils/message';
 import { getConfig, setConfig } from '@/utils/db';
 import { SettingRow } from '@/components/options/SettingRow';
 import { SyncAndBackupSection } from '@/components/options/SyncAndBackupSection';
@@ -56,6 +56,7 @@ export function SettingsPage() {
     void setConfig(CONFIG_KEY.INTERFACE_LANGUAGE, v);
     void i18n.changeLanguage(v);
     void sendMessageToBackground({ action: ACTION.INTERFACE_LANG_CHANGE, data: v });
+    void sendMessageToAllTabs({ action: ACTION.INTERFACE_LANG_CHANGE, data: v }, false);
   };
 
   const onGlobalSwitch = (v: boolean) => {
@@ -70,6 +71,7 @@ export function SettingsPage() {
       action: TB_ACTION.CONTEXT_MENU_SWITCH,
       data: { contextMenuSwitch: v },
     });
+    void sendMessageToAllTabs({ action: TB_ACTION.CONTEXT_MENU_SWITCH, data: v });
   };
 
   if (!ready) {

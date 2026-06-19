@@ -1,5 +1,5 @@
 import { ExternalLink, Globe, KeyRound, Languages, SlidersHorizontal, Sparkles, Component } from 'lucide-react';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { Translation, useTranslation } from 'react-i18next';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
@@ -30,6 +30,17 @@ function getInitialTab(): TabId {
 export default function App() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<TabId>(getInitialTab);
+
+  // Allow in-page navigation between tabs via the URL hash (e.g. the AI Writing
+  // page's "Configure" notice jumps to the Services tab).
+  useEffect(() => {
+    const onHashChange = () => {
+      const hash = window.location.hash.replace(/^#/, '') as TabId;
+      if (VALID_TABS.includes(hash)) setTab(hash);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   const tabs: Tab[] = [
     {

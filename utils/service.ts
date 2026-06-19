@@ -1,6 +1,8 @@
 import { AiProvider, normalizeProvider } from "@/main/aiService";
-import { AI_PREFIX, CONFIG_KEY, TRANS_SERVICE, TRANSLATE_SERVICES, TranslateServiceMeta } from "@/main/constants";
+import { ACTION, AI_PREFIX, CONFIG_KEY, TRANS_SERVICE, TRANSLATE_SERVICES, TranslateServiceMeta } from "@/main/constants";
 import { getConfig } from "./db";
+import { parseTranslateServiceKey } from "@/main/aiWriting/translateRunner";
+import { sendMessageToAllTabs } from "./message";
 
 /**
  * A flat, render-ready descriptor for one entry in a translate-service picker
@@ -69,18 +71,18 @@ export function buildServiceOptions(
 
 /**
  * Page-translation service context (popup + Options › Translation). AI
- * providers are surfaced only when the global "use AI for page translate"
+ * providers are surfaced only when the global "Also used for translating pages"
  * toggle is on.
  */
-export async function getService(configValue: string | undefined): Promise<{
+export async function getTranslateService(configValue: string | undefined): Promise<{
     activeService: string,
     enabledTranslateServices: TranslateServiceMeta[],
     enabledAiProviders: AiProvider[],
     aiUsedForTranslatePage?: boolean
 }> {
     const [disabledTranslateServices, aiProviders, aiUsedForTranslatePage]: [string[], AiProvider[], boolean] = await Promise.all([
-        getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES) || [],
-        getConfig(CONFIG_KEY.AI_PROVIDERS) || [],
+        getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES),
+        getConfig(CONFIG_KEY.AI_PROVIDERS),
         getConfig(CONFIG_KEY.AI_USE_FOR_TRANSLATE_PAGE),
     ]);
     const enabledTranslateServices = filterEnabledTranslateServices(disabledTranslateServices);
@@ -100,28 +102,58 @@ export async function getService(configValue: string | undefined): Promise<{
  * Independent from page translation: it reads its own `AI_TRANSLATE_SERVICE`
  * value and never gates AI providers on the page-translate toggle.
  */
-export async function getAiWritingTranslateService(configValue: string | undefined): Promise<{
+export async function getAiTranslateService(configValue: string | undefined): Promise<{
     activeService: string,
     enabledTranslateServices: TranslateServiceMeta[],
     enabledAiProviders: AiProvider[],
+    /** Count of all configured AI providers, regardless of enabled state.
+     * Lets callers tell "none configured" apart from "configured but disabled". */
+    totalAiProviders: number,
 }> {
     const [disabledTranslateServices, aiProviders]: [string[], AiProvider[]] = await Promise.all([
-        getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES) || [],
-        getConfig(CONFIG_KEY.AI_PROVIDERS) || [],
+        getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES),
+        getConfig(CONFIG_KEY.AI_PROVIDERS),
     ]);
     const enabledTranslateServices = filterEnabledTranslateServices(disabledTranslateServices);
-    const enabledAiProviders = (Array.isArray(aiProviders) ? aiProviders : [])
-        .map(normalizeProvider)
-        .filter((p) => p.enabled !== false);
+    const allAiProviders = (Array.isArray(aiProviders) ? aiProviders : []).map(normalizeProvider);
+    const enabledAiProviders = allAiProviders.filter((p) => p.enabled !== false);
 
     return {
         activeService: resolveActiveService(configValue, enabledTranslateServices, enabledAiProviders),
         enabledTranslateServices,
         enabledAiProviders,
+        totalAiProviders: allAiProviders.length,
     };
 }
 
 function filterEnabledTranslateServices(disabled: string[] | undefined): TranslateServiceMeta[] {
     const disabledSet = new Set(Array.isArray(disabled) ? disabled : []);
     return Array.from(TRANSLATE_SERVICES.values()).filter((s) => !disabledSet.has(s.value));
+}
+
+export async function getActiveTranslateService() {
+    const [translateServiceConfig, aiTranslateServiceConfig, disabledTranslateServices, aiProviders, aiUsedForTranslatePage]
+        : [string | undefined, string | undefined, string[], AiProvider[], boolean] = await Promise.all([
+            getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
+            getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
+            getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES),
+            getConfig(CONFIG_KEY.AI_PROVIDERS),
+            getConfig(CONFIG_KEY.AI_USE_FOR_TRANSLATE_PAGE),
+        ]);
+    const enabledTranslateServices = filterEnabledTranslateServices(disabledTranslateServices);
+    const allProviders = (Array.isArray(aiProviders) ? aiProviders : []).map(normalizeProvider);
+    const enabledAiProviders = aiUsedForTranslatePage ? allProviders.filter((p) => p.enabled !== false) : [];
+    const activeTranslateService = resolveActiveService(translateServiceConfig, enabledTranslateServices, enabledAiProviders)
+    const activeAiTranslateService = resolveActiveService(aiTranslateServiceConfig, enabledTranslateServices, enabledAiProviders)
+    let activeAiTranslateServiceChoice = parseTranslateServiceKey(activeAiTranslateService);
+    return {
+        activeTranslateService,
+        activeAiTranslateService,
+        activeAiTranslateServiceChoice
+    };
+}
+
+export async function notifyUpdateActiveTranslateService() {
+    let data = await getActiveTranslateService();
+    await sendMessageToAllTabs({ action: ACTION.UPDATE_ACTIVE_TRANSLATE_SERVICE, data: data })
 }

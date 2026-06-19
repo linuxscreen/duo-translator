@@ -8,7 +8,6 @@ import {
     Loader2,
     PenLine,
     Settings as SettingsIcon,
-    Sparkles,
     X,
 } from "lucide-react";
 import { browser } from "wxt/browser";
@@ -24,7 +23,7 @@ import {
 import { sendMessageToBackground } from "@/utils/message";
 import type { AiProvider } from "@/main/aiService";
 import { startAiChatStream } from "@/main/aiService";
-import { buildServiceOptions, getAiWritingTranslateService, type ServiceOption } from "@/utils/service";
+import { buildServiceOptions, getAiTranslateService, type ServiceOption } from "@/utils/service";
 import { getConfig, setConfig } from "@/utils/db";
 import {
     AiTarget,
@@ -36,6 +35,7 @@ import { loadTailwindIntoShadow } from "./shadowStyle";
 import { applyTextToTarget } from "./applyText";
 import { DiffView } from "./DiffView";
 import { ensureWorkbenchMounted, openWorkbench } from "./workbench";
+import { NoProviderNotice } from "./NoProviderNotice";
 import { t, useLang } from "./i18n";
 import { useCopyFeedback } from "./useCopyFeedback";
 import {
@@ -57,6 +57,9 @@ export interface MountOptions {
     /** Hostname for domain-disable lookups. */
     domain: string;
 }
+
+const AI_WRITING_TAB_ID = 'aiWriting'
+const SERVICES_TAB_ID = 'services'
 
 export async function mountAiWritingDot(opts: MountOptions): Promise<() => void> {
     if (document.getElementById(HOST_ID)) return () => { };
@@ -144,6 +147,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
     });
     const [enhanceProviderId, setEnhanceProviderId] = useState<string>("");
     const [providers, setProviders] = useState<AiProvider[]>([]);
+    const [hasConfiguredProviders, setHasConfiguredProviders] = useState(false);
     const [translateServices, setTranslateServices] = useState<TranslateServiceMeta[]>([]);
 
     const lastTargetRef = useMemo(createLastTargetRef, []);
@@ -178,11 +182,12 @@ function FloatingDotApp({ domain }: { domain: string }) {
             // Shared loader: enabled translators + enabled AI providers, plus the
             // resolved active translate service (falls back when the saved value
             // is no longer valid — same logic the popup/options use).
-            const { activeService, enabledTranslateServices, enabledAiProviders } =
-                await getAiWritingTranslateService(transKey);
+            const { activeService, enabledTranslateServices, enabledAiProviders, totalAiProviders } =
+                await getAiTranslateService(transKey);
             if (cancelled) return;
             setTranslateServices(enabledTranslateServices);
             setProviders(enabledAiProviders);
+            setHasConfiguredProviders(totalAiProviders > 0);
             setTranslateChoice(parseTranslateServiceKey(activeService));
             // Resolve enhance provider with fallback chain:
             // explicit AI_ACTIVE_PROVIDER_ID → first
@@ -314,6 +319,35 @@ function FloatingDotApp({ domain }: { domain: string }) {
         });
         return cleanup;
     }, [target, visible, expanded, result, settingsOpen]);
+
+    // Collapse the expanded toolbar (and close any open popover) when the user
+    // clicks fully OUTSIDE the dot UI — e.g. back into the page's input box.
+    // Without this, clicking into a valid AI-writing input while the Settings
+    // popover is open closes the popover (via its own click-away) but leaves
+    // the toolbar expanded: maybeHideAfterPopoverClose bails on the
+    // `isAiWritingTarget(active)` guard before reaching setExpanded(false), so
+    // the dot never collapses. Clicks INSIDE the container (the X button,
+    // switching toolbar buttons) include the container in their composed path
+    // and are intentionally left alone here.
+    useEffect(() => {
+        if (!expanded) return;
+        const onDown = (e: MouseEvent) => {
+            const container = containerRef.current;
+            if (!container) return;
+            if (e.composedPath().includes(container)) return;
+            // Keep the panel while a result is being shown — the result bubble
+            // is a sibling of the toolbar and manages its own dismissal.
+            if (resultRef.current) return;
+            setExpanded(false);
+            setSettingsOpen(false);
+            setCloseMenuOpen(false);
+        };
+        const id = window.setTimeout(() => document.addEventListener("mousedown", onDown, true), 0);
+        return () => {
+            clearTimeout(id);
+            document.removeEventListener("mousedown", onDown, true);
+        };
+    }, [expanded]);
 
     // Re-evaluate visibility after a popover/result closes. If focus is no
     // longer on a valid AI target (and not on our own UI), hide the dot.
@@ -448,8 +482,8 @@ function FloatingDotApp({ domain }: { domain: string }) {
         setExpanded(false);
     };
 
-    const openOptions = () => {
-        browser.runtime.sendMessage({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: 'services' } }).catch(() => { });
+    const openOptions = (tab: string) => {
+        browser.runtime.sendMessage({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: tab } }).catch(() => { });
     };
 
     // ---- Settings popover change handlers ----------------------------------
@@ -548,6 +582,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
                         <ResultBubble
                             result={result}
                             providers={providers}
+                            hasConfiguredProviders={hasConfiguredProviders}
                             serviceOptions={serviceOptions}
                             currentEnhanceProvider={currentEnhanceProvider}
                             targetLang={targetLang}
@@ -559,7 +594,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
                             onSwitchMode={(mode) => runEnhance(mode)}
                             onSwitchLang={onPickTargetLang}
                             onSwitchTranslate={onPickTranslateService}
-                            onConfigureAi={openOptions}
+                            onOpenOptions={openOptions}
                         />
                     </div>
                 )}
@@ -602,6 +637,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
                                         translateKey={buildTranslateServiceKey(translateChoice)}
                                         enhanceProviderId={enhanceProviderId}
                                         providers={providers}
+                                        hasConfiguredProviders={hasConfiguredProviders}
                                         serviceOptions={serviceOptions}
                                         onPickLang={onPickTargetLang}
                                         onPickTranslate={onPickTranslateService}
@@ -749,6 +785,7 @@ function SettingsPopover({
     translateKey,
     enhanceProviderId,
     providers,
+    hasConfiguredProviders,
     serviceOptions,
     onPickLang,
     onPickTranslate,
@@ -760,12 +797,13 @@ function SettingsPopover({
     translateKey: string;
     enhanceProviderId: string;
     providers: AiProvider[];
+    hasConfiguredProviders: boolean;
     serviceOptions: ServiceOption[];
     onPickLang: (v: string) => void;
     onPickTranslate: (v: string) => void;
     onPickEnhance: (v: string) => void;
     onClose: () => void;
-    onOpenOptions: () => void;
+    onOpenOptions: (tab: string) => void;
 }) {
     useLang();
     // Click-away — track mousedowns outside the popover.
@@ -828,16 +866,11 @@ function SettingsPopover({
 
             <Field label={t("aiBetterWritingWith", "Better writing with")}>
                 {providers.length === 0 ? (
-                    <div className="flex items-center justify-between gap-2 rounded bg-[#070b14] border border-[rgba(140,180,230,0.18)] px-2 py-1.5">
-                        <span className="text-[11.5px] text-[#8a93a8]">{t("aiNoProviderConfigured", "No AI provider configured")}</span>
-                        <button
-                            type="button"
-                            onClick={onOpenOptions}
-                            className="text-[11.5px] text-[oklch(0.86_0.16_195)] hover:underline"
-                        >
-                            {t("aiConfigure", "Configure")}
-                        </button>
-                    </div>
+                    <NoProviderNotice
+                        boxed
+                        hasConfigured={hasConfiguredProviders}
+                        onConfigure={() => onOpenOptions(SERVICES_TAB_ID)}
+                    />
                 ) : (
                     <select
                         value={enhanceProviderId}
@@ -879,7 +912,7 @@ function SettingsPopover({
 
             <button
                 type="button"
-                onClick={onOpenOptions}
+                onClick={() => onOpenOptions(AI_WRITING_TAB_ID)}
                 className="self-end text-[11px] text-[#8a93a8] hover:text-[oklch(0.86_0.16_195)]"
             >
                 {t("aiOpenAiSettings", "Open AI settings →")}
@@ -902,6 +935,7 @@ const ENHANCE_MODES: AI_TASK[] = [AI_TASK.GRAMMAR, AI_TASK.POLISH, AI_TASK.FORMA
 function ResultBubble({
     result,
     providers,
+    hasConfiguredProviders,
     serviceOptions,
     currentEnhanceProvider,
     targetLang,
@@ -911,10 +945,11 @@ function ResultBubble({
     onSwitchMode,
     onSwitchLang,
     onSwitchTranslate,
-    onConfigureAi,
+    onOpenOptions,
 }: {
     result: NonNullable<ResultPanel>;
     providers: AiProvider[];
+    hasConfiguredProviders: boolean;
     serviceOptions: ServiceOption[];
     currentEnhanceProvider: AiProvider | undefined;
     targetLang: string;
@@ -926,7 +961,7 @@ function ResultBubble({
     onSwitchMode: (mode: AI_TASK) => void;
     onSwitchLang: (lang: string) => void;
     onSwitchTranslate: (key: string) => void;
-    onConfigureAi: () => void;
+    onOpenOptions: (tab: string) => void;
 }) {
     useLang();
     const [copied, copy] = useCopyFeedback();
@@ -1020,20 +1055,10 @@ function ResultBubble({
 
             <div className="flex-1 min-h-0 overflow-auto px-2.5 py-2 text-[13px] leading-[1.45] text-[#eef1f8] whitespace-pre-wrap break-words">
                 {isNoProvider ? (
-                    <div className="flex flex-col items-start gap-2 py-1">
-                        <div className="flex items-start gap-1.5 text-[12.5px] text-[#eef1f8]">
-                            <Sparkles className="h-3.5 w-3.5 mt-px text-[oklch(0.86_0.16_195)] shrink-0" />
-                            <span>{t("aiNoProviderInline", "Better writing needs an AI provider. Add one in extension settings to continue.")}</span>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={onConfigureAi}
-                            onMouseDown={(e) => e.preventDefault()}
-                            className="duo-ai-primary h-6 px-2 rounded-md text-[11px]"
-                        >
-                            {t("aiConfigureAi", "Configure AI")}
-                        </button>
-                    </div>
+                    <NoProviderNotice
+                        hasConfigured={hasConfiguredProviders}
+                        onConfigure={() => onOpenOptions(SERVICES_TAB_ID)}
+                    />
                 ) : result.error ? (
                     <span className="inline-flex items-center gap-1 text-red-300">
                         <AlertCircle className="h-3.5 w-3.5" /> {result.error}

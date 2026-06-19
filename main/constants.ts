@@ -213,6 +213,7 @@ export enum ACTION {
     // translation on manual toggles / float-ball clicks, which the top frame
     // cannot deliver to cross-origin iframes itself.
     RELAY_FRAMES = 'relayFrames',
+    UPDATE_ACTIVE_TRANSLATE_SERVICE = "updateActiveTranslateService",
 }
 
 /**

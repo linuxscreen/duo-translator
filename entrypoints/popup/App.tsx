@@ -31,7 +31,7 @@ import { Switch } from '@/components/ui/switch';
 import { Browser, browser } from 'wxt/browser';
 import { Button } from '@/components/ui/button';
 import { use } from 'i18next';
-import { buildServiceOptions, getService } from '@/utils/service';
+import { buildServiceOptions, getTranslateService } from '@/utils/service';
 
 const getConfig = (name: string) =>
   sendMessageToBackground({ action: DB_ACTION.CONFIG_GET, data: { name } });
@@ -108,13 +108,13 @@ export default function App() {
         sendMessageToBackground({ action: TB_ACTION.ID_GET }),
       ]);
       tabId = id
-      let { activeService, enabledTranslateServices, enabledAiProviders, aiUsedForTranslatePage } = await getService(ts);
+      let { activeService, enabledTranslateServices, enabledAiProviders, aiUsedForTranslatePage } = await getTranslateService(ts);
 
       if (cancelled) return;
       console.log("domain: ", d)
 
       // Surface AI providers in the service dropdown only when:
-      //  (a) the global "Also used for translate page" toggle is on (default true)
+      //  (a) the global "Also used for translating pages" toggle is on (default true)
       //  (b) the provider itself is enabled (legacy records without `enabled`
       //      are treated as enabled).
       if (aiUsedForTranslatePage) {
@@ -510,14 +510,14 @@ export default function App() {
             {t('more', 'More')}
           </a>
           {moreOpen && (
-            <div className="absolute bottom-full right-0 z-20 mb-1.5 min-w-[160px] overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-lg">
+            <div className="absolute bottom-full right-0 z-20 mb-1.5 min-w-[180px] overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-lg">
               <button
                 type="button"
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-sans text-[12px] tracking-normal text-ink-soft transition-colors hover:bg-hover hover:text-accent"
                 onClick={enterSelectionMode}
               >
                 <Ban className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
-                {t('setNoTranslateArea', '设置不翻译区域')}
+                {t('setNoTranslateArea', 'Set no-translate area')}
               </button>
             </div>
           )}

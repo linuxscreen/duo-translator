@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { TestResultBadge } from '@/components/ui/test-result-badge';
 import { ProviderModal } from '../../../components/options/ProviderModal';
 import { ServiceMark } from '@/components/ui/service-mark';
+import { notifyUpdateActiveTranslateService } from '@/utils/service';
 
 type TestState =
     | { kind: 'idle' }
@@ -66,6 +67,7 @@ export function AiProvidersCard() {
     const toggleUseForPage = async (v: boolean) => {
         setUseForPage(v);
         await setConfig(CONFIG_KEY.AI_USE_FOR_TRANSLATE_PAGE, v);
+        await notifyUpdateActiveTranslateService();
     };
 
     const toggleEnabled = async (id: string, enabled: boolean) => {
@@ -74,6 +76,7 @@ export function AiProvidersCard() {
             return p;
         });
         await persistProviders(next);
+        await notifyUpdateActiveTranslateService();
     };
 
     const removeProvider = async (id: string) => {
@@ -84,6 +87,7 @@ export function AiProvidersCard() {
             delete next[id];
             return next;
         });
+        await notifyUpdateActiveTranslateService();
     };
 
     const testProvider = async (p: AiProvider) => {
@@ -134,7 +138,7 @@ export function AiProvidersCard() {
                     </div>
                     <div className="flex items-center gap-3">
                         <label className="flex items-center gap-2 text-[12.5px] text-ink-soft">
-                            <span>{t('aiUseForTranslatePage', 'Also used for translate page')}</span>
+                            <span>{t('aiUseForTranslatePage', 'Also used for translating pages')}</span>
                             <Switch
                                 checked={useForPage}
                                 onCheckedChange={(v) => void toggleUseForPage(v)}

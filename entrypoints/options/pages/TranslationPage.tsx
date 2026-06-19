@@ -42,7 +42,7 @@ import { Button } from '@/components/ui/button';
 import { DomainListSection, type DomainItem } from '@/components/options/DomainListSection';
 import { buildStylePreview, styleHasBorder } from '@/utils/translationStyle';
 import { ServiceMark } from '@/components/ui/service-mark';
-import { buildServiceOptions, getService, type ServiceOption } from '@/utils/service';
+import { buildServiceOptions, getTranslateService, type ServiceOption } from '@/utils/service';
 
 const MIN_SENTENCES_MIN = 1;
 const MIN_SENTENCES_MAX = 99;
@@ -197,7 +197,7 @@ export function TranslationPage() {
       tl && setTargetLang(tl);
       // Same flat list (translators + AI providers) and active-service
       // resolution the popup uses, so Options stays consistent with it.
-      const { activeService, enabledTranslateServices, enabledAiProviders } = await getService(ts);
+      const { activeService, enabledTranslateServices, enabledAiProviders } = await getTranslateService(ts);
       if (cancelled) return;
       setServiceOptions(buildServiceOptions(enabledTranslateServices, enabledAiProviders));
       setTranslateService(activeService);
@@ -321,7 +321,7 @@ export function TranslationPage() {
   };
 
   // Per-key debounce. Color-picker drag fires many onChange events per second;
-  // writing to PouchDB and broadcasting to every tab on each one causes UI lag.
+  // writing to db and broadcasting to every tab on each one causes UI lag.
   // We update React state immediately (for in-page preview) and trail the
   // persistence + cross-tab broadcast by ~120 ms.
   const persistTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
