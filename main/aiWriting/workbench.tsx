@@ -143,10 +143,11 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
             // Hydrate selections from saved config on each open so the
             // workbench mirrors the floating dot's remembered choices.
             (async () => {
-                const [lang, transKey, activeId] = await Promise.all([
+                const [lang, transKey, activeId, mode] = await Promise.all([
                     getConfig(CONFIG_KEY.AI_TARGET_LANGUAGE),
                     getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
                     getConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID),
+                    getConfig(CONFIG_KEY.AI_DEFAULT_ENHANCE_MODE)
                 ]);
                 if (lang) setTargetLang(lang);
                 // Shared loader: enabled translators + enabled AI providers, plus
@@ -158,6 +159,7 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                 setHasConfiguredProviders(totalAiProviders > 0);
                 setTranslateChoice(parseTranslateServiceKey(activeService));
                 setEnhanceProviderId(enabledAiProviders.find((p) => p.id === activeId)?.id || enabledAiProviders[0]?.id || "");
+                setTask(mode)
             })();
         });
     }, [registerOpen]);

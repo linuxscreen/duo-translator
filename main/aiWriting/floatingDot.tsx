@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Dispatch, SetStateAction, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { autoUpdate } from "@floating-ui/dom";
 import {
@@ -18,13 +18,13 @@ import {
     DB_ACTION,
     DEFAULT_VALUE,
     LANGUAGES,
-    type TranslateServiceMeta,
 } from "@/main/constants";
 import { sendMessageToBackground } from "@/utils/message";
 import type { AiProvider } from "@/main/aiService";
 import { startAiChatStream } from "@/main/aiService";
-import { buildServiceOptions, getAiTranslateService, type ServiceOption } from "@/utils/service";
+import { buildAiTranslateService, buildServiceOptions, type ServiceOption } from "@/utils/service";
 import { getConfig, setConfig } from "@/utils/db";
+import { useConfig } from "@/utils/reactiveConfig";
 import {
     AiTarget,
     createLastTargetRef,
@@ -49,6 +49,11 @@ import { shareConfig } from "../content";
 
 const HOST_ID = "duo-ai-dot-host";
 
+// Stable empty defaults for `useConfig` array keys — a fresh `[]` literal each
+// render would break the hook's pre-hydration snapshot stability.
+const EMPTY_PROVIDERS: AiProvider[] = [];
+const EMPTY_STRINGS: string[] = [];
+
 // ---------------------------------------------------------------------------
 // Mount entry point — called once from main/content.ts
 // ---------------------------------------------------------------------------
@@ -64,10 +69,11 @@ const SERVICES_TAB_ID = 'services'
 export async function mountAiWritingDot(opts: MountOptions): Promise<() => void> {
     if (document.getElementById(HOST_ID)) return () => { };
 
-    const [globalSwitch, whitelistMode, domainDoc] = await Promise.all([
+    const [globalSwitch, whitelistMode, domainDoc, mode] = await Promise.all([
         getConfig(CONFIG_KEY.AI_WRITING_SWITCH),
         getConfig(CONFIG_KEY.AI_WRITING_WHITELIST_MODE),
         sendMessageToBackground({ action: DB_ACTION.DOMAIN_GET, data: { domain: opts.domain } }),
+        getConfig(CONFIG_KEY.AI_DEFAULT_ENHANCE_MODE)
     ]);
     const enabled = globalSwitch === undefined ? !!DEFAULT_VALUE.AI_WRITING_SWITCH : !!globalSwitch;
     if (!enabled) return () => { };
@@ -89,7 +95,7 @@ export async function mountAiWritingDot(opts: MountOptions): Promise<() => void>
     mount.className = "duo-ai-root";
     shadow.appendChild(mount);
     const root = createRoot(mount);
-    root.render(<FloatingDotApp domain={opts.domain} />);
+    root.render(<FloatingDotApp domain={opts.domain} taskMode={mode} />);
 
     ensureWorkbenchMounted();
 
@@ -115,7 +121,7 @@ type ResultPanel = null | {
     serviceKey: string;
 };
 
-function FloatingDotApp({ domain }: { domain: string }) {
+function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TASK }) {
     // Subscribe to interface-language changes so labels re-render when the
     // user flips the language in Options.
     useLang();
@@ -140,15 +146,33 @@ function FloatingDotApp({ domain }: { domain: string }) {
     // right-aligned position.
     const [resultShiftRight, setResultShiftRight] = useState(0);
 
-    // Preferences (hydrated from config).
-    const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANGUAGE);
-    const [translateChoice, setTranslateChoice] = useState<TranslateServiceChoice>({
-        kind: "trans", service: String(DEFAULT_VALUE.AI_TRANSLATE_SERVICE),
-    });
-    const [enhanceProviderId, setEnhanceProviderId] = useState<string>("");
-    const [providers, setProviders] = useState<AiProvider[]>([]);
-    const [hasConfiguredProviders, setHasConfiguredProviders] = useState(false);
-    const [translateServices, setTranslateServices] = useState<TranslateServiceMeta[]>([]);
+    // Preferences — reactive views over config. Editing any of these in Options
+    // (or the popup, or this same panel) now updates the dot live via
+    // chrome.storage's change event; no reload needed. See utils/reactiveConfig.
+    const aiTargetLanguage = useConfig<string>(CONFIG_KEY.AI_TARGET_LANGUAGE, DEFAULT_VALUE.AI_TARGET_LANGUAGE);
+    const aiTranslateKey = useConfig<string | undefined>(CONFIG_KEY.AI_TRANSLATE_SERVICE, undefined);
+    const aiActiveProviderId = useConfig<string>(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID, "");
+    const aiProvidersRaw = useConfig<AiProvider[]>(CONFIG_KEY.AI_PROVIDERS, EMPTY_PROVIDERS);
+    const disabledTranslateServices = useConfig<string[]>(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES, EMPTY_STRINGS);
+
+    // Derive the translate context synchronously from the raw config above.
+    const { enabledTranslateServices, enabledAiProviders, totalAiProviders, activeService } = useMemo(
+        () => buildAiTranslateService(aiTranslateKey, aiProvidersRaw, disabledTranslateServices),
+        [aiTranslateKey, aiProvidersRaw, disabledTranslateServices],
+    );
+    const targetLang = aiTargetLanguage || DEFAULT_VALUE.AI_TARGET_LANGUAGE;
+    const translateChoice = useMemo<TranslateServiceChoice>(
+        () => parseTranslateServiceKey(activeService),
+        [activeService],
+    );
+    const providers = enabledAiProviders;
+    const translateServices = enabledTranslateServices;
+    const hasConfiguredProviders = totalAiProviders > 0;
+    // Resolve the enhance provider with the saved-id → first-enabled fallback.
+    const enhanceProviderId = useMemo(
+        () => enabledAiProviders.find((p) => p.id === aiActiveProviderId)?.id || enabledAiProviders[0]?.id || "",
+        [enabledAiProviders, aiActiveProviderId],
+    );
 
     const lastTargetRef = useMemo(createLastTargetRef, []);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -168,36 +192,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
     settingsOpenRef.current = settingsOpen;
     closeMenuOpenRef.current = closeMenuOpen;
     resultRef.current = result;
-
-    // ---- Hydrate prefs -----------------------------------------------------
-    useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            const [transKey, activeId] = await Promise.all([
-                getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
-                getConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID),
-            ]);
-            if (cancelled) return;
-            setTargetLang(shareConfig.aiTargetLanguage || DEFAULT_VALUE.AI_TARGET_LANGUAGE);
-            // Shared loader: enabled translators + enabled AI providers, plus the
-            // resolved active translate service (falls back when the saved value
-            // is no longer valid — same logic the popup/options use).
-            const { activeService, enabledTranslateServices, enabledAiProviders, totalAiProviders } =
-                await getAiTranslateService(transKey);
-            if (cancelled) return;
-            setTranslateServices(enabledTranslateServices);
-            setProviders(enabledAiProviders);
-            setHasConfiguredProviders(totalAiProviders > 0);
-            setTranslateChoice(parseTranslateServiceKey(activeService));
-            // Resolve enhance provider with fallback chain:
-            // explicit AI_ACTIVE_PROVIDER_ID → first
-            const resolved = enabledAiProviders.find((p) => p.id === activeId)?.id
-                || enabledAiProviders[0]?.id
-                || "";
-            setEnhanceProviderId(resolved);
-        })();
-        return () => { cancelled = true; };
-    }, []);
+    const [task, setTask] = useState<AI_TASK>(taskMode);
 
     // ---- Focus tracking ----------------------------------------------------
     // IMPORTANT: deps must NOT include `target` — the focus tracker keeps its
@@ -388,18 +383,19 @@ function FloatingDotApp({ domain }: { domain: string }) {
         return getElementText(el);
     };
 
+    // These write config only — the reactive `useConfig` views above re-render
+    // the panel when the change lands back through chrome.storage. The
+    // `shareConfig` mirror stays until content.ts adopts the reactive store, so
+    // the page-translation pipeline keeps seeing the latest AI-writing choice.
     const persistTargetLang = async (v: string) => {
-        setTargetLang(v);
         await setConfig(CONFIG_KEY.AI_TARGET_LANGUAGE, v);
         shareConfig.aiTargetLanguage = v;
     };
     const persistTranslateChoice = async (c: TranslateServiceChoice) => {
-        setTranslateChoice(c);
         await setConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE, buildTranslateServiceKey(c));
         shareConfig.aiTranslateServiceChoice = c;
     };
     const persistEnhanceProvider = async (id: string) => {
-        setEnhanceProviderId(id);
         await setConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID, id);
     };
 
@@ -595,6 +591,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
                             onSwitchLang={onPickTargetLang}
                             onSwitchTranslate={onPickTranslateService}
                             onOpenOptions={openOptions}
+                            setTask={setTask}
                         />
                     </div>
                 )}
@@ -658,7 +655,7 @@ function FloatingDotApp({ domain }: { domain: string }) {
                             />
                             <ToolBtn
                                 label={t("aiBetterWriting", "Better writing")}
-                                onClick={() => runEnhance(AI_TASK.POLISH)}
+                                onClick={() => runEnhance(task)}
                                 icon={<PenLine className="h-3.5 w-3.5" />}
                             />
                             <ToolBtn
@@ -946,6 +943,7 @@ function ResultBubble({
     onSwitchLang,
     onSwitchTranslate,
     onOpenOptions,
+    setTask
 }: {
     result: NonNullable<ResultPanel>;
     providers: AiProvider[];
@@ -962,6 +960,7 @@ function ResultBubble({
     onSwitchLang: (lang: string) => void;
     onSwitchTranslate: (key: string) => void;
     onOpenOptions: (tab: string) => void;
+    setTask: Dispatch<SetStateAction<AI_TASK>>;
 }) {
     useLang();
     const [copied, copy] = useCopyFeedback();
@@ -1007,8 +1006,12 @@ function ResultBubble({
                         <>
                             <select
                                 value={result.task}
-                                onChange={(e) => onSwitchMode(e.target.value as AI_TASK)}
-                                title={t("aiBetterWriting", "Better writing")}
+                                onChange={(e) => {
+                                    let task = e.target.value as AI_TASK
+                                    setTask(task)
+                                    onSwitchMode(task)
+                                }}
+                                title={t("aiBetterWritingWith", "Better writing with")}
                                 className={selectCls + " max-w-[90px]"}
                                 disabled={isNoProvider}
                             >
