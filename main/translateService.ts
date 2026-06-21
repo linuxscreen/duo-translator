@@ -1,4 +1,4 @@
-import { ACTION, AI_PREFIX, APP_NAME_WITH_SUFFIX, CONFIG_KEY, EXCLUDE_CHILD_ELEMENT_TAGS, PORT_NAME, TRANS_SERVICE, VIEW_STRATEGY } from "@/main/constants";
+import { ACTION, AI_PREFIX, APP_NAME_WITH_SUFFIX, CONFIG_KEY, EXCLUDE_CHILD_ELEMENT_TAGS, PORT_NAME, TRANSLATE_SERVICE, VIEW_STRATEGY } from "@/main/constants";
 import { sendMessageToBackground } from "../utils/message";
 import { getConfig } from "@/utils/db";
 import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
@@ -189,7 +189,7 @@ export abstract class TranslateService {
 // ---------------------------------------------------------------------------
 
 export class GoogleTranslateService extends TranslateService {
-    readonly name = TRANS_SERVICE.GOOGLE;
+    readonly name = TRANSLATE_SERVICE.GOOGLE;
     // TODO: support a configurable mirror URL and automatic failover.
     private readonly endpoint = "https://translate-pa.googleapis.com/v1/translateHtml";
     private readonly apiKey: string;
@@ -283,7 +283,7 @@ const MS_BATCH_ITEM_LIMIT = 900;
 const utf8Encoder = new TextEncoder();
 
 export class MicrosoftTranslateService extends TranslateService {
-    readonly name = TRANS_SERVICE.MICROSOFT;
+    readonly name = TRANSLATE_SERVICE.MICROSOFT;
     private authToken: Token = new Token("", 0);
 
     private async fetchToken(): Promise<Token> {
@@ -465,7 +465,7 @@ export class MicrosoftTranslateService extends TranslateService {
 // ---------------------------------------------------------------------------
 
 export class DeepLTranslateService extends TranslateService {
-    readonly name = TRANS_SERVICE.DEEPL;
+    readonly name = TRANSLATE_SERVICE.DEEPL;
 
     constructor() {
         super();
@@ -747,7 +747,7 @@ interface CachedTranslation {
 }
 
 // Memoized cache-enabled flag. Invalidated by the content script when the
-// Options switch broadcasts ACTION.TRANSLATION_CACHE_SWITCH_CHANGE.
+// Options switch broadcasts.
 let cacheEnabledMemo: boolean | null = null;
 
 /** Reset (or directly set) the memoized cache-enabled flag. */

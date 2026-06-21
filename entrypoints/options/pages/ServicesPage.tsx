@@ -2,7 +2,7 @@ import { Pencil, Loader2, FlaskConical } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { browser } from 'wxt/browser';
-import { ACTION, CONFIG_KEY, STATUS_SUCCESS, TRANS_SERVICE, TRANSLATE_SERVICES } from '@/main/constants';
+import { ACTION, CONFIG_KEY, STATUS_SUCCESS, TRANSLATE_SERVICE, TRANSLATE_SERVICES } from '@/main/constants';
 import { getConfig, setConfig } from '@/utils/db';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -88,7 +88,7 @@ export function ServicesPage() {
     };
 
     const openEdit = (value: string) => {
-        if (value !== TRANS_SERVICE.DEEPL) return;
+        if (value !== TRANSLATE_SERVICE.DEEPL) return;
         setDeeplKeyDraft(deeplApiKey);
         setDialogTest({ kind: 'idle' });
         setDeeplDialogOpen(true);
@@ -100,7 +100,7 @@ export function ServicesPage() {
         try {
             const resp: any = await browser.runtime.sendMessage({
                 action: ACTION.TRANSLATE_SERVICE_TEST,
-                data: { service: TRANS_SERVICE.DEEPL, targetLang: 'zh-CN', apiKey: deeplKeyDraft.trim() },
+                data: { service: TRANSLATE_SERVICE.DEEPL, targetLang: 'zh-CN', apiKey: deeplKeyDraft.trim() },
             });
             if (resp?.status === STATUS_SUCCESS) {
                 setDialogTest({ kind: 'ok' });
@@ -117,7 +117,7 @@ export function ServicesPage() {
         setDeeplApiKey(key);
         await setConfig(CONFIG_KEY.DEEPL_API_KEY, key);
         // Saving a key clears any stale DeepL test result.
-        setTestStates((s) => ({ ...s, [TRANS_SERVICE.DEEPL]: { kind: 'idle' } }));
+        setTestStates((s) => ({ ...s, [TRANSLATE_SERVICE.DEEPL]: { kind: 'idle' } }));
         setDeeplDialogOpen(false);
     };
 
@@ -128,9 +128,9 @@ export function ServicesPage() {
 
     const toggleService = async (row: Row, next: boolean) => {
         // Enabling DeepL requires an API key — prompt for it first.
-        if (next && row.value === TRANS_SERVICE.DEEPL && !deeplApiKey.trim()) {
+        if (next && row.value === TRANSLATE_SERVICE.DEEPL && !deeplApiKey.trim()) {
             alert(t('deeplApiKeyRequired', 'Please configure the DeepL API Key first.'));
-            openEdit(TRANS_SERVICE.DEEPL);
+            openEdit(TRANSLATE_SERVICE.DEEPL);
             return;
         }
         if (!next) {

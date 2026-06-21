@@ -2,10 +2,10 @@ import {
     STATUS_FAIL,
     STATUS_SUCCESS,
     DOMAIN_STRATEGY,
-    TRANS_ACTION,
-    TRANS_SERVICE, CONFIG_KEY,
+    TRANSLATE_ACTION,
+    TRANSLATE_SERVICE, CONFIG_KEY,
     TRANSLATE_STATUS_KEY,
-    TB_ACTION,
+    TAB_ACTION,
     DB_ACTION,
     STORAGE_ACTION,
     ACTION,
@@ -86,7 +86,7 @@ export async function background() {
     let paraTranslateStatus = false
     let paraContextMenuShowStatus = false
 
-    let contextMenuSwitch : boolean = DEFAULT_VALUE.CONTEXT_MENU_SWITCH
+    let contextMenuSwitch: boolean = DEFAULT_VALUE.CONTEXT_MENU_SWITCH
     let contextMenuSwitchConfig = await configRepo.get(CONFIG_KEY.CONTEXT_MENU_SWITCH)
     if (contextMenuSwitchConfig !== undefined) {
         contextMenuSwitch = contextMenuSwitchConfig as boolean
@@ -329,14 +329,14 @@ export async function background() {
                 }).catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
                 return true
             }
-            case SYNC_ACTION.AUTO_CONFIG_CHANGED: {
+            case SYNC_ACTION.AUTO_SYNC_CONFIG_CHANGED: {
                 applyAutoSyncConfig().then(() => {
                     sendResponse({ status: STATUS_SUCCESS, data: null });
                 }).catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
                 return true
             }
-            // get the language of the tab
-            case TB_ACTION.LANG_GET:
+            case TAB_ACTION.LANGUAGE_GET:
+                // get the language of the tab
                 // try get tabId from message data and sender tab
                 let tabId = sender.tab?.id || message.data.id
                 if (!tabId) {
@@ -353,11 +353,11 @@ export async function background() {
                 })
                 return true;
             // get browser native language
-            case TB_ACTION.NATIVE_LANGUAGE_GET:
+            case TAB_ACTION.NATIVE_LANGUAGE_GET:
                 // let lang = browser.i18n.getUILanguage()
                 sendResponse({ status: STATUS_SUCCESS, data: navigator.language.split('-')[0] });
                 break
-            case TB_ACTION.TAB_DOMAIN_GET:
+            case TAB_ACTION.TAB_DOMAIN_GET:
                 browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
                     if (tabs.length === 0) {
                         sendResponse({ status: STATUS_FAIL, data: "tabs is null" });
@@ -374,7 +374,7 @@ export async function background() {
                     sendResponse({ status: STATUS_FAIL, data: e.message })
                 });
                 return true
-            case TB_ACTION.ID_GET:
+            case TAB_ACTION.ID_GET:
                 browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
                     let tab = tabs[0].id
                     sendResponse({ status: STATUS_SUCCESS, data: tab })
@@ -403,22 +403,7 @@ export async function background() {
                     sendResponse({ status: STATUS_FAIL, data: e.message })
                 });
                 return true
-            case TB_ACTION.CONTEXT_MENU_SHOW:
-                console.log('showContextMenu', message.data)
-                // updateContextMenu(message.data as number)
-                break
-            case TB_ACTION.CONTEXT_MENU_SWITCH:
-                console.log('contextMenuSwitch', message.data)
-                let data = message.data.contextMenuSwitch
-                if (typeof data !== 'boolean') return
-                contextMenuSwitch = data
-                if (contextMenuSwitch) {
-                    rebuildContextMenus()
-                } else {
-                    browser.contextMenus.removeAll()
-                }
-                break
-            case ACTION.INTERFACE_LANG_CHANGE: {
+            case ACTION.INTERFACE_LANGUAGE_CHANGED: {
                 const lang = normalizeInterfaceLang(message.data)
                 if (lang) {
                     currentInterfaceLang = lang
@@ -445,8 +430,8 @@ export async function background() {
                 sendResponse({ status: STATUS_SUCCESS, data: null })
                 break
             }
-            case TRANS_ACTION.TRANSLATE_STATUS_CHANGE:
-                console.log('translateStatusChange', message.data)
+            case TRANSLATE_ACTION.TRANSLATE_STATUS_CHANGED:
+                console.log('translateStatusChanged', message.data)
                 if (typeof message.data.status === 'boolean') {
                     translateStatus = message.data.status
                     if (!contextMenuSwitch) return
@@ -518,12 +503,12 @@ export async function background() {
                         const targetLang: string = message.data?.targetLang || 'zh-CN';
                         const sample = 'Hello, world.';
                         let reply = '';
-                        if (svc === TRANS_SERVICE.GOOGLE) {
+                        if (svc === TRANSLATE_SERVICE.GOOGLE) {
                             const r = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(sample)}`);
                             if (!r.ok) throw new Error(`HTTP ${r.status}`);
                             const j = await r.json();
                             reply = j?.[0]?.[0]?.[0] || 'OK';
-                        } else if (svc === TRANS_SERVICE.MICROSOFT) {
+                        } else if (svc === TRANSLATE_SERVICE.MICROSOFT) {
                             const token = await getMicrosoftToken();
                             if (!token?.token) throw new Error('Failed to obtain Microsoft token');
                             const r = await fetch(`https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=${encodeURIComponent(targetLang)}`, {
@@ -534,7 +519,7 @@ export async function background() {
                             if (!r.ok) throw new Error(`HTTP ${r.status}`);
                             const j = await r.json();
                             reply = j?.[0]?.translations?.[0]?.text || 'OK';
-                        } else if (svc === TRANS_SERVICE.DEEPL) {
+                        } else if (svc === TRANSLATE_SERVICE.DEEPL) {
                             const key: string = (message.data?.apiKey ?? '') || ((await configRepo.get(CONFIG_KEY.DEEPL_API_KEY)) as string) || '';
                             if (!key) throw new Error('DeepL API key is not configured');
                             const url = key.endsWith(':fx') ? 'https://api-free.deepl.com/v2/translate' : 'https://api.deepl.com/v2/translate';
@@ -634,19 +619,6 @@ export async function background() {
                 sendResponse({ status: STATUS_SUCCESS });
                 break;
             }
-            case ACTION.GLOBAL_SWITCH_CHANGE:
-                console.log('globalSwitchChange', message.data)
-                let globalSwitch = message.data
-                if (typeof globalSwitch === 'boolean') {
-                    if (globalSwitch) {
-                        initContextMenu()
-                        initShortcutKey()
-                    } else {
-                        removeContextMenu()
-                        removeShortcutKey()
-                    }
-                }
-                break
             case ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU:
                 (async () => {
                     let translateStatus = message.data.translated as boolean
@@ -752,11 +724,46 @@ export async function background() {
                     sendResponse({ status: STATUS_FAIL, data: { name: e?.name, message: e?.message } })
                 })
                 return true
+            case ACTION.CONFIG_CHANGED:
+                if (typeof message.data !== 'object') return
+                Object.entries(message.data).forEach(([key, value]) => {
+                    onConfigChanged(key, value)
+                })
             default:
                 break
         }
         return
     });
+
+    async function onConfigChanged(key: string, value: any) {
+        switch (key) {
+            case CONFIG_KEY.GLOBAL_SWITCH:
+                console.log('global switch changed', value)
+                let globalSwitch = value
+                if (typeof globalSwitch === 'boolean') {
+                    if (globalSwitch) {
+                        initContextMenu()
+                        initShortcutKey()
+                    } else {
+                        removeContextMenu()
+                        removeShortcutKey()
+                    }
+                }
+                break
+            case CONFIG_KEY.CONTEXT_MENU_SWITCH:
+                console.log('contextMenuSwitch changed: ', value)
+                if (typeof value !== 'boolean') return
+                contextMenuSwitch = value
+                if (contextMenuSwitch) {
+                    rebuildContextMenus()
+                } else {
+                    browser.contextMenus.removeAll()
+                }
+                break
+            default:
+                break
+        }
+    }
 
     // add context menu to translate page
     configRepo.get(CONFIG_KEY.CONTEXT_MENU_SWITCH).then((value) => {
@@ -783,24 +790,40 @@ export async function background() {
         switch (info.menuItemId) {
             case CONTEXT_MENU.TRANSLATE_RESTORE_PAGE:
                 if (!translateStatus) {
-                    browser.tabs.sendMessage(tab.id, { action: TRANS_ACTION.TRANSLATE });
+                    browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE });
                 } else {
-                    browser.tabs.sendMessage(tab.id, { action: TRANS_ACTION.SHOW_ORIGINAL });
+                    browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.SHOW_ORIGINAL });
                 }
                 break
             case CONTEXT_MENU.TRANSLATE_TEXT_BOX:
-                browser.tabs.sendMessage(tab.id, { action: TRANS_ACTION.TRANSLATE_TEXT_BOX });
+                browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_TEXT_BOX });
                 break
             case CONTEXT_MENU.TRANSLATE_RESTORE_PARA:
                 console.log('translatePara', info, tab)
-                let act = paraTranslateStatus ? TRANS_ACTION.SHOW_ORIGINAL_PARA : TRANS_ACTION.TRANSLATE_PARA
+                let act = paraTranslateStatus ? TRANSLATE_ACTION.SHOW_ORIGINAL_PARA : TRANSLATE_ACTION.TRANSLATE_PARA
                 browser.tabs.sendMessage(tab.id, { action: act });
                 break
             case CONTEXT_MENU.TRANSLATE_SELECTION:
-                browser.tabs.sendMessage(tab.id, { action: TRANS_ACTION.TRANSLATE_SELECTION, data: info.selectionText });
+                browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_SELECTION, data: info.selectionText });
                 break
         }
 
+    }
+
+    async function tabsActivatedListener(activeInfo: Browser.tabs.OnActivatedInfo) {
+        // only process http or https url
+        let tab = await browser.tabs.get(activeInfo.tabId)
+        if (!tab?.url?.startsWith('http')) {
+            return
+        }
+        console.log('tabs.onActivated', activeInfo)
+        // get current tab translate status
+        let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + activeInfo.tabId
+        browser.storage.session.get(tabTranslateStatusKey).then((value) => {
+            translateStatus = !!value[tabTranslateStatusKey]
+            if (!contextMenuSwitch) return
+            updateContextMenu(translateStatus)
+        })
     }
 
     function initContextMenu() {
@@ -808,21 +831,7 @@ export async function background() {
 
         browser.contextMenus.onClicked.addListener(contextMenuClickLister)
         // Listen for tab activation events
-        browser.tabs.onActivated.addListener(async (activeInfo) => {
-            // only process http or https url
-            let tab = await browser.tabs.get(activeInfo.tabId)
-            if (!tab?.url?.startsWith('http')) {
-                return
-            }
-            console.log('tabs.onActivated', activeInfo)
-            // get current tab translate status
-            let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + activeInfo.tabId
-            browser.storage.session.get(tabTranslateStatusKey).then((value) => {
-                translateStatus = !!value[tabTranslateStatusKey]
-                if (!contextMenuSwitch) return
-                updateContextMenu(translateStatus)
-            })
-        });
+        browser.tabs.onActivated.addListener(tabsActivatedListener);
     }
 
     function rebuildContextMenus() {
@@ -852,21 +861,24 @@ export async function background() {
 
     function removeContextMenu() {
         browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
-        browser.contextMenus.onClicked.removeListener(() => { })
-        browser.tabs.onActivated.removeListener(() => { })
+        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
+        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_SELECTION)
+        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_TEXT_BOX)
+        browser.contextMenus.onClicked.removeListener(contextMenuClickLister)
+        browser.tabs.onActivated.removeListener(tabsActivatedListener)
     }
 
     let shortcutKeyListener = (command: string) => {
         let action = ""
         if (command === 'shortcut-toggle') {
             // send message to current tab, toggle translate status
-            action = TRANS_ACTION.TOGGLE
+            action = TRANSLATE_ACTION.TOGGLE
         } else if (command === 'shortcut-translate') {
             // send message to current tab, toggle translate status
-            action = TRANS_ACTION.TRANSLATE
+            action = TRANSLATE_ACTION.TRANSLATE
         } else if (command === 'shortcut-restore') {
             // send message to current tab, restore page
-            action = TRANS_ACTION.SHOW_ORIGINAL
+            action = TRANSLATE_ACTION.SHOW_ORIGINAL
         } else if (command === 'shortcut-ai-workbench') {
             action = ACTION.AI_OPEN_WORKBENCH
         }
@@ -924,7 +936,7 @@ export async function background() {
 
     async function initTokenMap() {
         let token = await getMicrosoftToken()
-        serviceTokenMap.set(TRANS_SERVICE.MICROSOFT, token)
+        serviceTokenMap.set(TRANSLATE_SERVICE.MICROSOFT, token)
     }
 
     // -----------------------------------------------------------------

@@ -11,7 +11,7 @@ import zhCNJson from "@/assets/locales/zh-CN.json";
  * Why not `browser.i18n.getMessage` (chrome `_locales`): that API resolves
  * against the *browser UI language*, ignoring the user's choice made in
  * Options. The popup/options pages drive their own i18next from
- * `CONFIG_KEY.INTERFACE_LANG` and broadcast `ACTION.INTERFACE_LANG_CHANGE`
+ * `CONFIG_KEY.INTERFACE_LANGUAGE` and broadcast config value
  * when the user changes it — content scripts must follow the same source
  * of truth, or the floating dot stays English when Options is switched to
  * Chinese.
@@ -50,7 +50,7 @@ void getConfig(CONFIG_KEY.INTERFACE_LANGUAGE).then((stored) => setLang(stored));
 
 // Live updates broadcast from the options page when the user changes language.
 browser.runtime.onMessage.addListener((msg: any) => {
-    if (msg?.action === ACTION.INTERFACE_LANG_CHANGE) setLang(msg.data);
+    if (msg?.action === ACTION.INTERFACE_LANGUAGE_CHANGED) setLang(msg.data);
 });
 
 /**

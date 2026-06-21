@@ -33,7 +33,7 @@ void (async () => {
 })();
 
 browser.runtime.onMessage.addListener((msg: any) => {
-  if (msg?.action === ACTION.INTERFACE_LANG_CHANGE && isSupported(msg.data)) {
+  if (msg?.action === ACTION.INTERFACE_LANGUAGE_CHANGED && isSupported(msg.data)) {
     void i18n.changeLanguage(msg.data);
   }
 });

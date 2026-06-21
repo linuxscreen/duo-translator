@@ -4,7 +4,7 @@ import {
   ACTION,
   CONFIG_KEY,
   INTERFACE_LANGUAGES,
-  TB_ACTION,
+  TAB_ACTION,
   type InterfaceLang,
 } from '@/main/constants';
 import { sendMessageToAllTabs, sendMessageToBackground } from '@/utils/message';
@@ -55,23 +55,24 @@ export function SettingsPage() {
     setInterfaceLang(v);
     void setConfig(CONFIG_KEY.INTERFACE_LANGUAGE, v);
     void i18n.changeLanguage(v);
-    void sendMessageToBackground({ action: ACTION.INTERFACE_LANG_CHANGE, data: v });
-    void sendMessageToAllTabs({ action: ACTION.INTERFACE_LANG_CHANGE, data: v }, false);
+    void sendMessageToBackground({ action: ACTION.INTERFACE_LANGUAGE_CHANGED, data: v });
+    void sendMessageToAllTabs({ action: ACTION.INTERFACE_LANGUAGE_CHANGED, data: v }, false);
   };
 
   const onGlobalSwitch = (v: boolean) => {
     setGlobalSwitch(v);
     void setConfig(CONFIG_KEY.GLOBAL_SWITCH, v);
+    let message = { action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.GLOBAL_SWITCH]: v } };
+    void sendMessageToAllTabs(message, false);
+    void sendMessageToBackground(message);
   };
 
   const onContextMenu = (v: boolean) => {
     setContextMenu(v);
     void setConfig(CONFIG_KEY.CONTEXT_MENU_SWITCH, v);
-    void sendMessageToBackground({
-      action: TB_ACTION.CONTEXT_MENU_SWITCH,
-      data: { contextMenuSwitch: v },
-    });
-    void sendMessageToAllTabs({ action: TB_ACTION.CONTEXT_MENU_SWITCH, data: v });
+    let message = { action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.CONTEXT_MENU_SWITCH]: v } }
+    void sendMessageToBackground(message);
+    void sendMessageToAllTabs(message, false);
   };
 
   if (!ready) {

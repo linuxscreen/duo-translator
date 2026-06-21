@@ -11,7 +11,7 @@ import {
   DOMAIN_STRATEGY,
   HIGHLIGHT_COLORS,
   LANGUAGES,
-  TB_ACTION,
+  TAB_ACTION,
   TRANSLATION_BG_COLORS,
   TRANSLATION_FONT_COLORS,
   STYLE_GROUPS,
@@ -63,8 +63,8 @@ function formatBytes(bytes: number): string {
   return `${i === 0 ? value : value.toFixed(1)} ${units[i]}`;
 }
 
-function broadcastStyleChange() {
-  void sendMessageToAllTabs({ action: ACTION.STYLE_CHANGE });
+function broadcastStyleChanged() {
+  void sendMessageToAllTabs({ action: ACTION.STYLE_CHANGED });
 }
 
 export function TranslationPage() {
@@ -229,7 +229,7 @@ export function TranslationPage() {
   const onHighlight = (v: boolean) => {
     setHighlight(v);
     void setConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH, v);
-    broadcastStyleChange();
+    broadcastStyleChanged();
   };
 
   const onMinSentencesInput = (raw: string) => {
@@ -244,12 +244,14 @@ export function TranslationPage() {
       : Number(DEFAULT_VALUE.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES);
     setMinSentencesInput(String(next));
     void setConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES, next);
+    sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES]: next } }, false)
   };
 
   const onMinSentencesReset = () => {
     const def = Number(DEFAULT_VALUE.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES);
     setMinSentencesInput(String(def));
     void setConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES, def);
+    sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES]: def } }, false)
   };
 
   const onLineBreakInput = (raw: string) => {
@@ -263,18 +265,20 @@ export function TranslationPage() {
       : Number(DEFAULT_VALUE.TRANSLATION_LINE_BREAK_MIN_CHARS);
     setLineBreakInput(String(next));
     void setConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS, next);
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS]: next } }, false)
   };
 
   const onLineBreakReset = () => {
     const def = Number(DEFAULT_VALUE.TRANSLATION_LINE_BREAK_MIN_CHARS);
     setLineBreakInput(String(def));
     void setConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS, def);
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS]: def } }, false)
   };
 
   const onTranslationCache = (v: boolean) => {
     setTranslationCache(v);
     void setConfig(CONFIG_KEY.TRANSLATION_CACHE_SWITCH, v);
-    void sendMessageToAllTabs({ action: ACTION.TRANSLATION_CACHE_SWITCH_CHANGE, data: v });
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.TRANSLATION_CACHE_SWITCH]: v } });
   };
 
   const onClearCacheClick = async () => {
@@ -293,31 +297,31 @@ export function TranslationPage() {
   const onFloatBall = (v: boolean) => {
     setFloatBall(v);
     void setConfig(CONFIG_KEY.FLOAT_BALL_SWITCH, v);
-    void sendMessageToAllTabs({ action: TB_ACTION.FLOAT_BALL_SWITCH, data: v });
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.FLOAT_BALL_SWITCH]: v } });
   };
 
   const onViewStrategy = (v: string) => {
     setViewStrategy(v);
     void setConfig(CONFIG_KEY.VIEW_STRATEGY, v);
-    void sendMessageToAllTabs({ action: ACTION.VIEW_STRATEGY_CHANGE, data: v });
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.VIEW_STRATEGY]: v } });
   };
 
   const onTargetLang = (v: string) => {
     setTargetLang(v);
     void setConfig(CONFIG_KEY.TARGET_LANGUAGE, v);
-    void sendMessageToAllTabs({ action: ACTION.TARGET_LANG_CHANGE, data: v });
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.TARGET_LANGUAGE]: v } }, false);
   };
 
   const onTranslateService = (v: string) => {
     setTranslateService(v);
     void setConfig(CONFIG_KEY.TRANSLATE_SERVICE, v);
-    void sendMessageToAllTabs({ action: ACTION.TRANSLATE_SERVICE_CHANGE, data: v });
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.TRANSLATE_SERVICE]: v } });
   };
 
   const onDefaultStrategyChange = (v: DEFAULT_STRATEGY) => {
     setDefaultStrategy(v);
     void setConfig(CONFIG_KEY.DEFAULT_STRATEGY, v);
-    void sendMessageToAllTabs({ action: ACTION.DEFAULT_STRATEGY_CHANGE, data: v });
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.DEFAULT_STRATEGY]: v } });
   };
 
   // Per-key debounce. Color-picker drag fires many onChange events per second;
@@ -336,7 +340,7 @@ export function TranslationPage() {
     persistTimers.current[id] = setTimeout(() => {
       void setConfig(colorKey, color);
       void setConfig(indexKey, index);
-      broadcastStyleChange();
+      broadcastStyleChanged();
     }, 120);
   };
   useEffect(() => {
@@ -349,7 +353,7 @@ export function TranslationPage() {
   const onStyle = (v: string) => {
     setStyle(v);
     void setConfig(CONFIG_KEY.STYLE, v);
-    broadcastStyleChange();
+    broadcastStyleChanged();
   };
   const onBgColor = (c: string, i: number) => {
     setBgColor(c);
@@ -385,7 +389,7 @@ export function TranslationPage() {
   const onHighlightStyle = (v: string) => {
     setHighlightStyle(v);
     void setConfig(CONFIG_KEY.HIGHLIGHT_STYLE, v);
-    broadcastStyleChange();
+    broadcastStyleChanged();
   };
   const onHighlightBorderColor = (c: string, i: number) => {
     setHighlightBorderColor(c);
@@ -646,135 +650,135 @@ export function TranslationPage() {
           </button>
         </div>
         {styleOpen && <>
-        <SettingRow className=' border-line border-b'
-          label={t('translationStyle', 'Translation style')}
-          control
-        />
-        <SettingRow
-          label={t('border', 'border')}
-          control={renderStyleSelect(style, onStyle)}
-        />
-        <SettingRow
-          label={t('backgroundColor', 'background color')}
-          control={
-            <ColorPicker
-              value={bgColor}
-              selectedIndex={bgColorIndex}
-              presets={TRANSLATION_BG_COLORS}
-              onChange={onBgColor}
-            />
-          }
-        />
-        <SettingRow
-          label={t('fontColor', 'font color')}
-          control={
-            <ColorPicker
-              value={fontColor}
-              selectedIndex={fontColorIndex}
-              presets={TRANSLATION_FONT_COLORS}
-              onChange={onFontColor}
-            />
-          }
-        />
-        {styleHasBorder(style) && (
+          <SettingRow className=' border-line border-b'
+            label={t('translationStyle', 'Translation style')}
+            control
+          />
           <SettingRow
-            label={t('borderColor', 'border color')}
+            label={t('border', 'border')}
+            control={renderStyleSelect(style, onStyle)}
+          />
+          <SettingRow
+            label={t('backgroundColor', 'background color')}
             control={
               <ColorPicker
-                value={borderColor}
-                selectedIndex={borderColorIndex}
+                value={bgColor}
+                selectedIndex={bgColorIndex}
                 presets={TRANSLATION_BG_COLORS}
-                onChange={onBorderColor}
+                onChange={onBgColor}
               />
             }
           />
-        )}
+          <SettingRow
+            label={t('fontColor', 'font color')}
+            control={
+              <ColorPicker
+                value={fontColor}
+                selectedIndex={fontColorIndex}
+                presets={TRANSLATION_FONT_COLORS}
+                onChange={onFontColor}
+              />
+            }
+          />
+          {styleHasBorder(style) && (
+            <SettingRow
+              label={t('borderColor', 'border color')}
+              control={
+                <ColorPicker
+                  value={borderColor}
+                  selectedIndex={borderColorIndex}
+                  presets={TRANSLATION_BG_COLORS}
+                  onChange={onBorderColor}
+                />
+              }
+            />
+          )}
 
-        <SettingRow className=' border-line border-b border-t'
-          label={t('bilingualHighlightingStyle', 'Highlighting style')}
-          control
-        />
-        <SettingRow
-          label={t('border', 'border')}
-          control={renderStyleSelect(highlightStyle, onHighlightStyle)}
-        />
-        <SettingRow
-          label={t('backgroundColor', 'background color')}
-          control={
-            <ColorPicker
-              value={highlightBg}
-              selectedIndex={highlightBgIndex}
-              presets={HIGHLIGHT_COLORS}
-              onChange={onHighlightBg}
-            />
-          }
-        />
-        <SettingRow
-          label={t('fontColor', 'font color')}
-          control={
-            <ColorPicker
-              value={highlightFontColor}
-              selectedIndex={highlightFontColorIndex}
-              presets={TRANSLATION_FONT_COLORS}
-              onChange={onHighlightFont}
-            />
-          }
-        />
-        {styleHasBorder(highlightStyle) && (
+          <SettingRow className=' border-line border-b border-t'
+            label={t('bilingualHighlightingStyle', 'Highlighting style')}
+            control
+          />
           <SettingRow
-            label={t('borderColor', 'border color')}
+            label={t('border', 'border')}
+            control={renderStyleSelect(highlightStyle, onHighlightStyle)}
+          />
+          <SettingRow
+            label={t('backgroundColor', 'background color')}
             control={
               <ColorPicker
-                value={highlightBorderColor}
-                selectedIndex={highlightBorderColorIndex}
-                presets={TRANSLATION_BG_COLORS}
-                onChange={onHighlightBorderColor}
+                value={highlightBg}
+                selectedIndex={highlightBgIndex}
+                presets={HIGHLIGHT_COLORS}
+                onChange={onHighlightBg}
               />
             }
           />
-        )}
-        <SettingRow className=' border-line border-b border-t'
-          label={t('stylePreview', 'Style preview')}
-          control
-        />
-        <div className="flex flex-col gap-2 text-[14px] leading-7 px-4 py-4">
-          <p>
-            <span
-              className="cursor-pointer rounded-[2px] px-0.5 transition-colors"
-              style={hoverPart === 1 ? highlightCss : undefined}
-              onMouseEnter={() => highlight && setHoverPart(1)}
-              onMouseLeave={() => setHoverPart(null)}
-            >
-              {originalText1}
-            </span>{' '}
-            <span
-              className="cursor-pointer rounded-[2px] px-0.5 transition-colors"
-              style={hoverPart === 2 ? highlightCss : undefined}
-              onMouseEnter={() => highlight && setHoverPart(2)}
-              onMouseLeave={() => setHoverPart(null)}
-            >
-              {originalText2}
-            </span>
-          </p>
-          <p style={translationStyle} className="inline-block rounded px-1 py-0.5">
-            <span
-              className="cursor-pointer rounded-[2px] px-0.5 transition-colors"
-              style={hoverPart === 1 ? highlightCss : undefined}
-              onMouseEnter={() => highlight && setHoverPart(1)}
-              onMouseLeave={() => setHoverPart(null)}
-            >
-              {translatedText1}
-            </span>{!targetLang.startsWith('zh') && ' '}
-            <span
-              className="cursor-pointer rounded-[2px] px-0.5 transition-colors"
-              style={hoverPart === 2 ? highlightCss : undefined}
-              onMouseEnter={() => highlight && setHoverPart(2)}
-              onMouseLeave={() => setHoverPart(null)}
-            >
-              {translatedText2}
-            </span>
-          </p>
-        </div>
+          <SettingRow
+            label={t('fontColor', 'font color')}
+            control={
+              <ColorPicker
+                value={highlightFontColor}
+                selectedIndex={highlightFontColorIndex}
+                presets={TRANSLATION_FONT_COLORS}
+                onChange={onHighlightFont}
+              />
+            }
+          />
+          {styleHasBorder(highlightStyle) && (
+            <SettingRow
+              label={t('borderColor', 'border color')}
+              control={
+                <ColorPicker
+                  value={highlightBorderColor}
+                  selectedIndex={highlightBorderColorIndex}
+                  presets={TRANSLATION_BG_COLORS}
+                  onChange={onHighlightBorderColor}
+                />
+              }
+            />
+          )}
+          <SettingRow className=' border-line border-b border-t'
+            label={t('stylePreview', 'Style preview')}
+            control
+          />
+          <div className="flex flex-col gap-2 text-[14px] leading-7 px-4 py-4">
+            <p>
+              <span
+                className="cursor-pointer rounded-[2px] px-0.5 transition-colors"
+                style={hoverPart === 1 ? highlightCss : undefined}
+                onMouseEnter={() => highlight && setHoverPart(1)}
+                onMouseLeave={() => setHoverPart(null)}
+              >
+                {originalText1}
+              </span>{' '}
+              <span
+                className="cursor-pointer rounded-[2px] px-0.5 transition-colors"
+                style={hoverPart === 2 ? highlightCss : undefined}
+                onMouseEnter={() => highlight && setHoverPart(2)}
+                onMouseLeave={() => setHoverPart(null)}
+              >
+                {originalText2}
+              </span>
+            </p>
+            <p style={translationStyle} className="inline-block rounded px-1 py-0.5">
+              <span
+                className="cursor-pointer rounded-[2px] px-0.5 transition-colors"
+                style={hoverPart === 1 ? highlightCss : undefined}
+                onMouseEnter={() => highlight && setHoverPart(1)}
+                onMouseLeave={() => setHoverPart(null)}
+              >
+                {translatedText1}
+              </span>{!targetLang.startsWith('zh') && ' '}
+              <span
+                className="cursor-pointer rounded-[2px] px-0.5 transition-colors"
+                style={hoverPart === 2 ? highlightCss : undefined}
+                onMouseEnter={() => highlight && setHoverPart(2)}
+                onMouseLeave={() => setHoverPart(null)}
+              >
+                {translatedText2}
+              </span>
+            </p>
+          </div>
         </>}
       </div>
 

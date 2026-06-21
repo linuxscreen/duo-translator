@@ -65,6 +65,18 @@ export function ensureWorkbenchMounted(): void {
     );
 }
 
+/**
+ * Tear down the workbench singleton — unmount the React root, drop the Shadow
+ * host, and clear module state so a later `ensureWorkbenchMounted` re-mounts
+ * cleanly. Called from content.ts `unload()` on global-switch off.
+ */
+export function destroyWorkbench(): void {
+    try { workbenchRoot?.unmount(); } catch { }
+    workbenchRoot = null;
+    openSignal = null;
+    document.getElementById(HOST_ID)?.remove();
+}
+
 export function openWorkbench(seed: WorkbenchSeed): void {
     ensureWorkbenchMounted();
     // openSignal is set synchronously by initial render via useEffect on the

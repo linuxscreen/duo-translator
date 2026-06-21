@@ -58,11 +58,11 @@ export enum SYNC_ACTION {
     REMOTE_DELETE = 'remoteDelete',
     // Options notifies background after toggling auto-sync / changing the
     // interval so the background can reschedule its alarms.
-    AUTO_CONFIG_CHANGED = 'autoSyncConfigChanged',
+    AUTO_SYNC_CONFIG_CHANGED = 'autoSyncConfigChanged',
     // Read the persisted WebDAV credentials back so the config form can be
     // pre-filled (the options page is part of the extension, so exposing the
     // locally-stored password to it is fine).
-    WEBDAV_CONFIG_GET = 'webdavConfigGet',
+    WEBDAV_CONFIG_GET = 'getWebdavConfig',
 }
 
 export enum SYNC_PROVIDER_ID {
@@ -80,15 +80,11 @@ export enum STORAGE_ACTION {
 }
 
 // action for tab, get the domain, get the page language, etc.
-export enum TB_ACTION {
-    LANG_GET = 'getTabLanguage',
+export enum TAB_ACTION {
+    LANGUAGE_GET = 'getTabLanguage',
     TAB_DOMAIN_GET = 'getTabDomain',
     ID_GET = 'getTabId',
-    CONTEXT_MENU_SHOW = 'showContextMenu',
-    CONTEXT_MENU_SWITCH = 'contextMenuSwitch',
-    FLOAT_BALL_SWITCH = "floatBallSwitch",
     NATIVE_LANGUAGE_GET = "getNativeLanguage",
-
 }
 
 export enum ELEMENT_STATUS {
@@ -101,7 +97,6 @@ export enum DOMAIN_STRATEGY {
     NEVER = 'never',
     ALWAYS = 'always',
     AUTO = 'auto',
-    ASK = 'ask',
 }
 
 export enum DEFAULT_STRATEGY {
@@ -121,8 +116,7 @@ export enum COMMON {
     AUTO = 'auto',
 }
 
-// Translation service
-export enum TRANS_SERVICE {
+export enum TRANSLATE_SERVICE {
     MICROSOFT = 'microsoft',
     GOOGLE = 'google',
     DEEPL = 'deepl',
@@ -140,14 +134,13 @@ export const DEFAULT_STRATEGY_OPTIONS: { value: DEFAULT_STRATEGY; title: string;
     { value: DEFAULT_STRATEGY.NEVER, title: 'notTranslateAllWebsites', fallback: "Don't translate all websites" },
 ];
 
-// translation action
-export enum TRANS_ACTION {
+export enum TRANSLATE_ACTION {
     TRANSLATE = 'translate',
     DOUBLE = 'doubleTranslate',
     SINGLE = 'singleTranslate',
     TOGGLE = 'toggleTranslate',
     SHOW_ORIGINAL = 'showOriginal',
-    TRANSLATE_STATUS_CHANGE = "translateStatusChange",
+    TRANSLATE_STATUS_CHANGED = "translateStatusChanged",
     TRANSLATE_TEXT_BOX = 'translateTextBox',
     TRANSLATE_PARA = 'translatePara',
     SHOW_ORIGINAL_PARA = 'showOriginalPara',
@@ -157,14 +150,9 @@ export enum TRANS_ACTION {
 export enum ACTION {
     ACCESS_TOKEN_GET = 'getAccessToken',
     TRANSLATE_HTML = 'translateHtml',
-    STYLE_CHANGE = 'styleChange',
-    DOMAIN_STRATEGY_CHANGE = 'domainStrategyChange',
-    DEFAULT_STRATEGY_CHANGE = 'defaultStrategyChange',
-    GLOBAL_SWITCH_CHANGE = 'globalSwitchChange',
-    VIEW_STRATEGY_CHANGE = 'viewStrategyChange',
-    TARGET_LANG_CHANGE = 'targetLangChange',
+    STYLE_CHANGED = 'styleChanged',
+    DOMAIN_STRATEGY_CHANGED = 'domainStrategyChanged',
     TOGGLE_SELECTION_MODE = 'toggleSelectionMode',
-    TRANSLATE_SERVICE_CHANGE = 'translateChange',
     LEAVE_SELECTION_MODE = 'leaveSelectionMode',
     AI_OPEN_WORKBENCH = 'aiOpenWorkbench',
     AI_PROVIDER_TEST = 'aiProviderTest',
@@ -191,7 +179,7 @@ export enum ACTION {
     OPEN_POPUP = 'openPopup',
     // Broadcast from Options when the user picks a UI language. Background
     // listens to update context menu; other extension UIs listen to swap i18n.
-    INTERFACE_LANG_CHANGE = 'interfaceLangChange',
+    INTERFACE_LANGUAGE_CHANGED = 'interfaceLanguageChanged',
     SHOW_TRANSLATE_RESTORE_PARA_MENU = 'showTranslateRestoreParaMenu',
     HIDE_TRANSLATE_RESTORE_PARA_MENU = 'hideTranslateRestoreParaMenu',
     // Persistent translation-result cache (LRU, IndexedDB in background).
@@ -204,43 +192,14 @@ export enum ACTION {
     // Current approximate cache size in bytes (for the Options "clear cache"
     // confirmation prompt).
     TRANSLATION_CACHE_SIZE = 'translationCacheSize',
-    // Broadcast from Options when the cache switch toggles so content scripts
-    // drop their memoized enabled-flag.
-    TRANSLATION_CACHE_SWITCH_CHANGE = 'translationCacheSwitchChange',
     // Top-frame → sub-frames fan-out. The top-frame content script sends this to
     // background with `data` = an inner Message; background re-broadcasts that
     // inner message to every frame of the sender's tab. Used to drive iframe
     // translation on manual toggles / float-ball clicks, which the top frame
     // cannot deliver to cross-origin iframes itself.
     RELAY_FRAMES = 'relayFrames',
-    UPDATE_ACTIVE_TRANSLATE_SERVICE = "updateActiveTranslateService",
-}
-
-/**
- * Long-lived port names used for streaming background <-> content traffic.
- * For OpenAI-compatible SSE we tunnel deltas over a runtime port instead of
- * one-shot sendMessage so the content side can consume with `for await`.
- */
-export enum PORT_NAME {
-    AI_CHAT_STREAM = 'aiChatStream',
-    // Page-translation request to an AI provider. Port-based (not sendMessage)
-    // so the content script can disconnect to abort the in-flight fetch in
-    // background — `runtime.sendMessage` has no native cancellation path.
-    AI_TRANSLATE = 'aiTranslate',
-}
-
-/** What the AI writing pipeline is being asked to do. */
-export enum AI_TASK {
-    TRANSLATE = 'translate',
-    GRAMMAR = 'grammar',
-    POLISH = 'polish',
-    FORMAL = 'formal',
-    CASUAL = 'casual',
-    CUSTOM = 'custom',
-    /** Page-translation: AI receives a JSON-stringified array of paragraph
-     *  texts (with <bN> placeholder tags) and must return a JSON array of the
-     *  same length with translations preserving the placeholders. */
-    PAGE_TRANSLATE = 'pageTranslate',
+    ACTIVE_TRANSLATE_SERVICE_CHANGED = "activeTranslateServiceChanged",
+    CONFIG_CHANGED = "configChanged",
 }
 
 export enum CONFIG_KEY {
@@ -292,7 +251,7 @@ export enum CONFIG_KEY {
     AI_WRITING_WHITELIST_MODE = 'aiWritingWhitelistMode',
     AI_DEFAULT_ENHANCE_MODE = 'aiDefaultEnhanceMode',
     // Per-task service selection for the floating dot.
-    // AI_TRANSLATE_SERVICE: either a TRANS_SERVICE value ('microsoft' |
+    // AI_TRANSLATE_SERVICE: either a TRANSLATE_SERVICE value ('microsoft' |
     // 'google' | 'deepl') or `ai:<providerId>` to route translate through an
     // AI provider. Default: 'microsoft'.
     AI_TRANSLATE_SERVICE = 'aiTranslateService',
@@ -313,7 +272,7 @@ export enum CONFIG_KEY {
     // Automatic sync: when on, sync runs on startup, 30s-debounced after any
     // config change, and on a periodic alarm. Off by default. Per-device pref
     // (excluded from the synced snapshot).
-    SYNC_AUTO = 'syncAuto',
+    AUTO_SYNC_CONFIG_SWITCH = 'autoSyncConfigSwitch',
     // Periodic auto-sync interval in minutes (5..60, default 15). Per-device.
     SYNC_INTERVAL_MINUTES = 'syncIntervalMinutes',
 }
@@ -347,6 +306,33 @@ export const DEFAULT_VALUE = {
 export const CONFIG_VALUE_TO_KEY: Record<string, string> = Object.fromEntries(
     Object.entries(CONFIG_KEY).map(([k, v]) => [v as string, k])
 );
+
+/**
+ * Long-lived port names used for streaming background <-> content traffic.
+ * For OpenAI-compatible SSE we tunnel deltas over a runtime port instead of
+ * one-shot sendMessage so the content side can consume with `for await`.
+ */
+export enum PORT_NAME {
+    AI_CHAT_STREAM = 'aiChatStream',
+    // Page-translation request to an AI provider. Port-based (not sendMessage)
+    // so the content script can disconnect to abort the in-flight fetch in
+    // background — `runtime.sendMessage` has no native cancellation path.
+    AI_TRANSLATE = 'aiTranslate',
+}
+
+/** What the AI writing pipeline is being asked to do. */
+export enum AI_TASK {
+    TRANSLATE = 'translate',
+    GRAMMAR = 'grammar',
+    POLISH = 'polish',
+    FORMAL = 'formal',
+    CASUAL = 'casual',
+    CUSTOM = 'custom',
+    /** Page-translation: AI receives a JSON-stringified array of paragraph
+     *  texts (with <bN> placeholder tags) and must return a JSON array of the
+     *  same length with translations preserving the placeholders. */
+    PAGE_TRANSLATE = 'pageTranslate',
+}
 
 export type InterfaceLang = 'en' | 'zh-CN';
 

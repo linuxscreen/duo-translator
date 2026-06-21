@@ -13,8 +13,8 @@ import {
   DOMAIN_STRATEGY,
   LANGUAGES,
   STORAGE_ACTION,
-  TB_ACTION,
-  TRANS_ACTION,
+  TAB_ACTION,
+  TRANSLATE_ACTION,
   TRANSLATE_SERVICES,
   TRANSLATE_STATUS_KEY,
   TranslateServiceMeta,
@@ -84,7 +84,7 @@ export default function App() {
     console.log("popup mount")
     let cancelled = false;
     const listener = (message: any, sender: Browser.runtime.MessageSender, sendResponse: (response?: any) => void) => {
-      if (message.action === TRANS_ACTION.TRANSLATE_STATUS_CHANGE) {
+      if (message.action === TRANSLATE_ACTION.TRANSLATE_STATUS_CHANGED) {
         console.log("receive message:", message, tabId)
         if (tabId !== undefined && message.data.tabId === tabId && typeof message.data.status === 'boolean') {
           setTranslateActive(message.data.status)
@@ -104,8 +104,8 @@ export default function App() {
         getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
         getConfig(CONFIG_KEY.DEFAULT_STRATEGY),
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
-        sendMessageToBackground({ action: TB_ACTION.TAB_DOMAIN_GET }),
-        sendMessageToBackground({ action: TB_ACTION.ID_GET }),
+        sendMessageToBackground({ action: TAB_ACTION.TAB_DOMAIN_GET }),
+        sendMessageToBackground({ action: TAB_ACTION.ID_GET }),
       ]);
       tabId = id
       let { activeService, enabledTranslateServices, enabledAiProviders, aiUsedForTranslatePage } = await getTranslateService(ts);
@@ -172,31 +172,32 @@ export default function App() {
   const onGlobalSwitchToggle = (v: boolean) => {
     setGlobalOn(v);
     void setConfig(CONFIG_KEY.GLOBAL_SWITCH, v);
-    sendMessageToAllTabs({ action: ACTION.GLOBAL_SWITCH_CHANGE, data: v })
-    void sendMessageToBackground({ action: ACTION.GLOBAL_SWITCH_CHANGE, data: v });
+    let message = { action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.GLOBAL_SWITCH]: v } };
+    void sendMessageToAllTabs(message, false)
+    void sendMessageToBackground(message);
   };
 
   const onViewStrategyChange = (v: VIEW_STRATEGY) => {
     setMode(v);
     void setConfig(CONFIG_KEY.VIEW_STRATEGY, v);
-    void sendMessageToAllTabs({ action: ACTION.VIEW_STRATEGY_CHANGE, data: v });
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.VIEW_STRATEGY]: v } });
   };
 
   const onTargetLanguageChange = (v: string) => {
     setTargetLanguage(v);
     void setConfig(CONFIG_KEY.TARGET_LANGUAGE, v);
-    void sendMessageToAllTabs({ action: ACTION.TARGET_LANG_CHANGE, data: v });
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.TARGET_LANGUAGE]: v } });
   };
 
   const onServiceChange = (v: string) => {
     setService(v);
     void setConfig(CONFIG_KEY.TRANSLATE_SERVICE, v);
-    void sendMessageToAllTabs({ action: ACTION.TRANSLATE_SERVICE_CHANGE, data: v })
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.TRANSLATE_SERVICE]: v } });
   };
 
   const onTranslateToggle = (active: boolean) => {
     setTranslateActive(active);
-    void sendMessageToTab({ action: active ? TRANS_ACTION.TRANSLATE : TRANS_ACTION.SHOW_ORIGINAL }).then(() => {
+    void sendMessageToTab({ action: active ? TRANSLATE_ACTION.TRANSLATE : TRANSLATE_ACTION.SHOW_ORIGINAL }).then(() => {
       window.close()
     });
   };
@@ -204,7 +205,7 @@ export default function App() {
   const onDefaultStrategyChange = (v: DEFAULT_STRATEGY) => {
     setDefaultStrategy(v);
     void setConfig(CONFIG_KEY.DEFAULT_STRATEGY, v);
-    void sendMessageToAllTabs({ action: ACTION.DEFAULT_STRATEGY_CHANGE, data: v })
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.DEFAULT_STRATEGY]: v } });
   };
 
   const onDomainStrategyChange = (v: DOMAIN_STRATEGY) => {
@@ -214,13 +215,13 @@ export default function App() {
       action: DB_ACTION.DOMAIN_UPDATE,
       data: { domain, strategy: v },
     });
-    void sendMessageToTab({ action: ACTION.DOMAIN_STRATEGY_CHANGE, data: v });
+    void sendMessageToTab({ action: ACTION.DOMAIN_STRATEGY_CHANGED, data: v });
   };
 
   const onHighlightToggle = (v: boolean) => {
     setHighlight(v);
     void setConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH, v);
-    void sendMessageToTab({ action: ACTION.STYLE_CHANGE, data: { highlight: v } });
+    void sendMessageToTab({ action: ACTION.STYLE_CHANGED });
   };
 
   const openOptions = () => {
@@ -240,7 +241,7 @@ export default function App() {
   };
 
   const openShortcutsPage = () => {
-    browser.tabs.create({ url : "options.html#shortcuts"});
+    browser.tabs.create({ url: "options.html#shortcuts" });
   }
 
   const openFeedbackPage = () => {

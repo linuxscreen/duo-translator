@@ -1,5 +1,5 @@
 import { AiProvider, normalizeProvider } from "@/main/aiService";
-import { ACTION, AI_PREFIX, CONFIG_KEY, TRANS_SERVICE, TRANSLATE_SERVICES, TranslateServiceMeta } from "@/main/constants";
+import { ACTION, AI_PREFIX, CONFIG_KEY, TRANSLATE_SERVICE, TRANSLATE_SERVICES, TranslateServiceMeta } from "@/main/constants";
 import { getConfig } from "./db";
 import { parseTranslateServiceKey } from "@/main/aiWriting/translateRunner";
 import { sendMessageToAllTabs } from "./message";
@@ -35,7 +35,7 @@ export function resolveActiveService(
 ): string {
     const firstEnabled = enabledTranslateServices.length > 0
         ? enabledTranslateServices[0].value
-        : TRANS_SERVICE.MICROSOFT;
+        : TRANSLATE_SERVICE.MICROSOFT;
     if (!configValue) return firstEnabled;
     if (configValue.startsWith(AI_PREFIX)) {
         const id = configValue.slice(AI_PREFIX.length);
@@ -172,5 +172,5 @@ export async function getActiveTranslateService() {
 
 export async function notifyUpdateActiveTranslateService() {
     let data = await getActiveTranslateService();
-    await sendMessageToAllTabs({ action: ACTION.UPDATE_ACTIVE_TRANSLATE_SERVICE, data: data })
+    await sendMessageToAllTabs({ action: ACTION.ACTIVE_TRANSLATE_SERVICE_CHANGED, data: data })
 }

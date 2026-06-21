@@ -1,4 +1,4 @@
-import { AI_PREFIX, AI_TASK, DEFAULT_VALUE, TRANS_SERVICE } from "@/main/constants";
+import { AI_PREFIX, AI_TASK, DEFAULT_VALUE, TRANSLATE_SERVICE } from "@/main/constants";
 import { translationServices } from "@/main/translateService";
 import { startAiChatStream } from "@/main/aiService";
 

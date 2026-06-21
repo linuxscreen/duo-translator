@@ -1,6 +1,6 @@
 import { franc } from "franc";
 import { split } from "sentence-splitter";
-import { TB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANS_SERVICE, DOMAIN_STRATEGY, TRANS_ACTION, ACTION, STORAGE_ACTION, iso6393To1Map, excludedTagSet, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, EXCLUDE_CHILD_ELEMENT_TAGS, DEFAULT_VALUE, STATUS_SUCCESS } from "./constants";
+import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, iso6393To1Map, excludedTagSet, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, EXCLUDE_CHILD_ELEMENT_TAGS, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP } from "./constants";
 import { restore, translationServices, translateParams, getTranslateResult, translate, TranslateResult, resetTranslationCacheEnabled } from "./translateService";
 import { sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
@@ -8,7 +8,7 @@ import { shuffle } from "@/utils/arrays";
 import { mountFloatBall, type FloatBallController } from "./floatBall";
 import { mountAiWritingDot } from "./aiWriting/floatingDot";
 import { isAiWritingTarget } from "./aiWriting/inputDetector";
-import { openWorkbench, ensureWorkbenchMounted } from "./aiWriting/workbench";
+import { openWorkbench, ensureWorkbenchMounted, destroyWorkbench } from "./aiWriting/workbench";
 import { openSelectionTranslate } from "./aiWriting/selectionPopup";
 import { getConfig, listRuleFromDB } from "@/utils/db";
 import { createRuleMode, type RuleModeController } from "./ruleMode";
@@ -60,22 +60,37 @@ function getTopFrameDomain(): string {
  * would be pure waste. `mountAiWritingDot` itself re-checks the global switch
  * and per-domain disable (keyed off the TOP domain), so all gating still holds.
  */
-async function initAiWritingDotInFrame() {
+function initAiWritingDotInFrame(): () => void {
     const domain = getTopFrameDomain();
-    if (domain === "") return;
+    if (domain === "") return () => { };
     let mounted = false;
+    let disposed = false;
+    let unmount: (() => void) | null = null;
     const tryMount = (el: Element | null) => {
-        if (mounted || !isAiWritingTarget(el)) return;
+        if (mounted || disposed || !isAiWritingTarget(el)) return;
         mounted = true;
         document.removeEventListener("focusin", onFocusIn, true);
-        mountAiWritingDot({ domain }).catch((err) =>
-            console.warn(APP_NAME_WITH_SUFFIX, "mountAiWritingDot (iframe) failed", err),
-        );
+        mountAiWritingDot({ domain })
+            .then((teardown) => {
+                // Unloaded while the async mount was in flight — undo it.
+                if (disposed) { teardown(); return; }
+                unmount = teardown;
+            })
+            .catch((err) =>
+                console.warn(APP_NAME_WITH_SUFFIX, "mountAiWritingDot (iframe) failed", err),
+            );
     };
     const onFocusIn = (e: FocusEvent) => tryMount(e.target as Element | null);
     document.addEventListener("focusin", onFocusIn, true);
     // Seed: the field may already be focused (e.g. an autofocused iframe editor).
     tryMount(document.activeElement);
+    // Disposer: drop the pending focus listener and unmount if already up.
+    return () => {
+        disposed = true;
+        document.removeEventListener("focusin", onFocusIn, true);
+        unmount?.();
+        unmount = null;
+    };
 }
 
 export const shareConfig: {
@@ -120,7 +135,7 @@ export async function content() {
     const encoder = new TextEncoder();
 
     let pageLanguage = "und"
-    let tabId = await sendMessageToBackground({ action: TB_ACTION.ID_GET })
+    let tabId = await sendMessageToBackground({ action: TAB_ACTION.ID_GET })
     if (!tabId) {
         return
     }
@@ -135,6 +150,11 @@ export async function content() {
     }
     const ruleMode: RuleModeController = createRuleMode(domainWithPort)
     let floatBall: FloatBallController | null = null
+    // AI Writing dot teardown. Top frame: the mount's unmount fn. Sub-frame: the
+    // deferred-mount disposer (drops the focus listener + unmounts if up). Reset
+    // on each init() so a global-switch off→on cycle re-mounts cleanly.
+    let aiWritingDotDispose: (() => void) | null = null
+    let aiWritingDotDisposed = false
 
     // return
     // set translate status to false when the page is loaded
@@ -184,20 +204,18 @@ export async function content() {
     // Accept messages from popups, process the task
     // ===============================  message listener start  ===================================
     browser.runtime.onMessage.addListener(async (message, sender, sendResponse: (t: any) => void) => {
+        if (!message) return
         console.log('content script receive message:', message)
         switch (message.action) {
-            case TRANS_ACTION.TRANSLATE:
+            case TRANSLATE_ACTION.TRANSLATE:
                 console.log('start translate page')
                 await translateAction()
                 break
-            case TRANS_ACTION.SHOW_ORIGINAL:
+            case TRANSLATE_ACTION.SHOW_ORIGINAL:
                 console.log('start restore original page')
                 await restoreOriginalAction()
                 break
-            case TRANS_ACTION.DOUBLE:
-            case TRANS_ACTION.SINGLE:
-                break
-            case TRANS_ACTION.TOGGLE:
+            case TRANSLATE_ACTION.TOGGLE:
                 // Toggle is decided by the top frame only; it then relays the
                 // explicit translate/restore to sub-frames (toggleTranslateStatus).
                 // Sub-frames must NOT toggle their own status or they'd drift
@@ -233,190 +251,35 @@ export async function content() {
                 if (!isTopFrame) break
                 ruleMode.deactivateSelectInteraction()
                 break
-            case ACTION.STYLE_CHANGE:
+            case ACTION.STYLE_CHANGED:
                 // process style change action
                 console.log("process style change action")
-                await processStyleChangeAction()
+                await updateStyle()
                 break
-            case ACTION.DOMAIN_STRATEGY_CHANGE:
-                console.log('strategy change:', message)
-                if (message && message.data && typeof message.data === "string") {
-                    domainStrategy = message.data || DOMAIN_STRATEGY.AUTO
-                    manualTrigger = true
-                    switch (domainStrategy) {
-                        case DOMAIN_STRATEGY.AUTO:
-                            switch (defaultStrategy) {
-                                case DEFAULT_STRATEGY.AUTO:
-                                    manualTrigger = false
-                                    let needTranslate = targetLanguage != pageLanguage
-                                    if (translateStatus && !needTranslate) {
-                                        await restoreOriginalAction()
-                                        return false
-                                    } else if (!translateStatus && needTranslate) {
-                                        await translateAction()
-                                        return true
-                                    }
-                                    break
-                                case DEFAULT_STRATEGY.NEVER:
-                                    if (translateStatus) {
-                                        await restoreOriginalAction()
-                                    }
-                                    return false
-                                case DEFAULT_STRATEGY.ALWAYS:
-                                    if (!translateStatus) {
-                                        await translateAction()
-                                    }
-                                    return true
-                            }
-                            break
-                        case DOMAIN_STRATEGY.NEVER:
-                            if (translateStatus) {
-                                await restoreOriginalAction()
-                            }
-                            return false
-                        case DOMAIN_STRATEGY.ALWAYS:
-                            if (!translateStatus) {
-                                await translateAction()
-                            }
-                            return true
-                    }
-                }
-                break
-            case ACTION.TRANSLATE_SERVICE_CHANGE:
-                console.log('translate service change:', message.data)
-                let service = message.data as string
-                if (service && service != "") {
-                    translateService = service
-                }
-                if (message.active) {
-                    if (translateStatus) {
-                        await restoreOriginalAction()
-                        await translateAction()
-                    }
-                }
-                break
-            case ACTION.DEFAULT_STRATEGY_CHANGE:
-                if (typeof message.data === "string") {
-                    defaultStrategy = message.data
-                }
-                if (!globalSwitch) {
-                    return
-                }
-                if (domainStrategy == DOMAIN_STRATEGY.ALWAYS || domainStrategy == DOMAIN_STRATEGY.NEVER) {
-                    return
-                }
-                manualTrigger = true // other condition always true
-                switch (defaultStrategy) {
-                    case DEFAULT_STRATEGY.AUTO:
-                        if (domainStrategy == DOMAIN_STRATEGY.AUTO) {
-                            manualTrigger = false
-                        }
-                        if (translateStatus && targetLanguage === pageLanguage) {
-                            await restoreOriginalAction()
-                        }
-                        if (!translateStatus && targetLanguage !== pageLanguage) {
-                            await translateAction()
-                        }
-                        console.log('default strategy:', translateStatus)
-                        return translateStatus;
-                    case DEFAULT_STRATEGY.NEVER:
-                        if (translateStatus) {
-                            await restoreOriginalAction()
-                        }
-                        return false
-                    case DEFAULT_STRATEGY.ALWAYS:
-                        if (!translateStatus) {
-                            await translateAction()
-                        }
-                        return true // deprecated, return translate status to notify the home page
-                    default:
-                        break
-
-                }
-                break
-            case ACTION.GLOBAL_SWITCH_CHANGE:
-                console.log('global switch change:', message.data)
-                if (typeof message.data === "boolean" && globalSwitch != message.data) {
-                    console.log('global switch:', message.data)
-                    manualTrigger = false
-                    globalSwitch = message.data
-                    if (!message.active) {
+            case ACTION.DOMAIN_STRATEGY_CHANGED:
+                console.log('domain strategy changed:', message)
+                if (message.data && typeof message.data === "string") {
+                    let strategy = message.data as string
+                    if (!Object.values(DOMAIN_STRATEGY).includes(strategy as DOMAIN_STRATEGY) || strategy === domainStrategy) {
                         return
                     }
-                    if (!globalSwitch) {
-                        await unload()
-                        return false
-                    } else {
-                        await init()
-                    }
-                }
-                // return undefined
-                // process the global switch change
-                break
-            case ACTION.VIEW_STRATEGY_CHANGE:
-                let oldViewStrategy: VIEW_STRATEGY
-                if (message.data && message.data != "" && viewStrategy != message.data) {
-                    oldViewStrategy = viewStrategy
-                    viewStrategy = message.data
-                } else {
-                    return
-                }
-                if (!message.active) {
-                    return
-                }
-                // process the view strategy change
-                if (translateStatus) {
-                    await restoreOriginalAction(oldViewStrategy)
-                    await translateAction()
+                    updateDomainStrategy(strategy)
                 }
                 break
-            case ACTION.TRANSLATION_CACHE_SWITCH_CHANGE:
-                // Drop the memoized cache-enabled flag so the next translate
-                // batch re-reads the toggle.
-                resetTranslationCacheEnabled(typeof message.data === "boolean" ? message.data : undefined)
-                break
-            case ACTION.TARGET_LANG_CHANGE:
-                let newLang = message?.data
-                if (typeof newLang === "string" && newLang != "" && targetLanguage != newLang) {
-                    targetLanguage = newLang
-                } else {
-                    return
-                }
-                if (message.active && whetherTranslate()) {
-                    await restoreOriginalAction()
-                    await translateAction()
-                }
-                break
-            case TB_ACTION.FLOAT_BALL_SWITCH:
-                if (typeof message.data === "boolean") {
-                    console.log('float ball switch:', message.data, "floatBallSwitch:", floatBallSwitch)
-                    let newFloatBallSwitch: boolean = message.data
-                    floatBallSwitch = newFloatBallSwitch
-                    if (newFloatBallSwitch) {
-                        await initFloatBall()
-                    } else {
-                        await removeFloatBall()
-                    }
-
-                }
-            case TRANS_ACTION.TRANSLATE_TEXT_BOX:
+            case TRANSLATE_ACTION.TRANSLATE_TEXT_BOX:
                 translateTextBox();
-            case TRANS_ACTION.TRANSLATE_PARA:
+            case TRANSLATE_ACTION.TRANSLATE_PARA:
                 if (!lastRightClickElement) return
                 translateParagraphElements([lastRightClickElement]);
                 break
-            case TRANS_ACTION.SHOW_ORIGINAL_PARA:
+            case TRANSLATE_ACTION.SHOW_ORIGINAL_PARA:
                 if (!lastRightClickElement) return
                 restoreOriginalParagraphElement(lastRightClickElement);
                 break
-            case TRANS_ACTION.TRANSLATE_SELECTION:
+            case TRANSLATE_ACTION.TRANSLATE_SELECTION:
                 translateSelectionAction(message.data as string)
                 break
-            case TB_ACTION.CONTEXT_MENU_SWITCH:
-                if (typeof message.data === "boolean") {
-                    contextMenuSwitch = message.data
-                }
-            case ACTION.UPDATE_ACTIVE_TRANSLATE_SERVICE:
+            case ACTION.ACTIVE_TRANSLATE_SERVICE_CHANGED:
                 let activeTranslateService = message.data.activeTranslateService
                 if (activeTranslateService !== undefined) {
                     translateService = activeTranslateService
@@ -425,10 +288,200 @@ export async function content() {
                 if (activeAiTranslateServiceChoice !== undefined) {
                     shareConfig.aiTranslateServiceChoice = activeAiTranslateServiceChoice
                 }
+            case ACTION.CONFIG_CHANGED:
+                if (typeof message.data !== "object") return
+                let activeFlag = !!message.active
+                Object.entries(message.data).forEach(([key, value]) => {
+                    onConfigChanged(key, value, activeFlag)
+                })
+                break
             default:
                 break
         }
     });
+
+    async function onConfigChanged(key: string, value: any, activeFlag: boolean) {
+        switch (key) {
+            case CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS:
+                if (typeof value !== "number") return
+                translationLineBreakMinChars = value
+                break
+            case CONFIG_KEY.TRANSLATE_SERVICE:
+                console.log('translate service changed:', value)
+                if (!value || typeof value !== "string") return
+                let service = value
+                translateService = service
+                if (activeFlag) {
+                    if (translateStatus) {
+                        await restoreOriginalAction()
+                        await translateAction()
+                    }
+                }
+                break
+            case CONFIG_KEY.DEFAULT_STRATEGY:
+                if (!value || typeof value !== "string") return
+                if (!Object.values(DEFAULT_STRATEGY).includes(value as DEFAULT_STRATEGY) || defaultStrategy === value) return
+                await updateDefaultStrategy(value, activeFlag)
+                break
+            case CONFIG_KEY.GLOBAL_SWITCH:
+                console.log('global switch changed:', value)
+                if (typeof value === "boolean" && globalSwitch != value) {
+                    manualTrigger = false
+                    globalSwitch = value
+                    if (!globalSwitch) {
+                        await unload()
+                        return false
+                    } else {
+                        await init()
+                    }
+                }
+                break
+            case CONFIG_KEY.VIEW_STRATEGY:
+                if (!value || typeof value !== "string") return
+                let newViewStrategy = value as VIEW_STRATEGY
+                if (!Object.values(VIEW_STRATEGY).includes(newViewStrategy) || viewStrategy === newViewStrategy) return
+                let oldViewStrategy = viewStrategy
+
+                if (viewStrategy != value) {
+                    viewStrategy = newViewStrategy
+                } else {
+                    return
+                }
+                if (!activeFlag) {
+                    return
+                }
+                // process the view strategy change
+                if (translateStatus) {
+                    await restoreOriginalAction(oldViewStrategy)
+                    await translateAction()
+                }
+                break
+            case CONFIG_KEY.TRANSLATION_CACHE_SWITCH:
+                // Drop the memoized cache-enabled flag so the next translate
+                // batch re-reads the toggle.
+                if (typeof value !== "boolean") return
+                resetTranslationCacheEnabled(value)
+            case CONFIG_KEY.TARGET_LANGUAGE:
+                if (typeof value === "string" && targetLanguage !== value && LANGUAGES_MAP.has(value)) {
+                    targetLanguage = value
+                    if (activeFlag && whetherTranslate()) {
+                        await restoreOriginalAction()
+                        await translateAction()
+                    }
+                }
+                break
+            case CONFIG_KEY.FLOAT_BALL_SWITCH:
+                if (typeof value !== "boolean") return
+                if (value === floatBallSwitch) return
+                console.log('float ball switch changed from ', floatBallSwitch, "to ", value)
+                floatBallSwitch = value
+                if (floatBallSwitch) {
+                    await initFloatBall()
+                } else {
+                    await removeFloatBall()
+                }
+                break
+            case CONFIG_KEY.CONTEXT_MENU_SWITCH:
+                if (typeof value === "boolean") {
+                    contextMenuSwitch = value
+                }
+                break
+            case CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES:
+                if (typeof value === "number") {
+                    bilingualHighlightingMinSentences = value
+                }
+                break
+            default:
+                break
+        }
+
+    }
+
+    async function updateDomainStrategy(strategy: string) {
+        domainStrategy = strategy
+        manualTrigger = true
+        switch (domainStrategy) {
+            case DOMAIN_STRATEGY.AUTO:
+                switch (defaultStrategy) {
+                    case DEFAULT_STRATEGY.AUTO:
+                        manualTrigger = false
+                        let needTranslate = targetLanguage != pageLanguage
+                        if (translateStatus && !needTranslate) {
+                            await restoreOriginalAction()
+                        } else if (!translateStatus && needTranslate) {
+                            await translateAction()
+                        }
+                        break
+                    case DEFAULT_STRATEGY.NEVER:
+                        if (translateStatus) {
+                            await restoreOriginalAction()
+                        }
+                        break
+                    case DEFAULT_STRATEGY.ALWAYS:
+                        if (!translateStatus) {
+                            await translateAction()
+                        }
+                        break
+                    default:
+                        break
+                }
+                break
+            case DOMAIN_STRATEGY.NEVER:
+                if (translateStatus) {
+                    await restoreOriginalAction()
+                }
+                break
+            case DOMAIN_STRATEGY.ALWAYS:
+                if (!translateStatus) {
+                    await translateAction()
+                }
+                break
+            default:
+                break
+        }
+    }
+
+    async function updateDefaultStrategy(strategy: string, activeFlag: boolean) {
+        defaultStrategy = strategy
+        if (!activeFlag) {
+            return
+        }
+        if (!globalSwitch) {
+            return
+        }
+        if (domainStrategy == DOMAIN_STRATEGY.ALWAYS || domainStrategy == DOMAIN_STRATEGY.NEVER) {
+            return
+        }
+        manualTrigger = true // other condition always true
+        switch (defaultStrategy) {
+            case DEFAULT_STRATEGY.AUTO:
+                if (domainStrategy == DOMAIN_STRATEGY.AUTO) {
+                    manualTrigger = false
+                }
+                if (translateStatus && targetLanguage === pageLanguage) {
+                    await restoreOriginalAction()
+                }
+                if (!translateStatus && targetLanguage !== pageLanguage) {
+                    await translateAction()
+                }
+                console.log('default strategy:', translateStatus)
+                break
+            case DEFAULT_STRATEGY.NEVER:
+                if (translateStatus) {
+                    await restoreOriginalAction()
+                }
+                break
+            case DEFAULT_STRATEGY.ALWAYS:
+                if (!translateStatus) {
+                    await translateAction()
+                }
+                break
+            default:
+                break
+
+        }
+    }
+
     // ===============================  message listener end  =====================================
 
     let lastRightClickElement: HTMLElement | null = null
@@ -727,15 +780,29 @@ export async function content() {
         // page translation is off / restricted, the writing assistant should
         // still be available on user input fields. In sub-frames the dot mounts
         // inside the iframe and is deferred until an input there is focused.
+        aiWritingDotDisposed = false
         if (isTopFrame) {
-            mountAiWritingDot({ domain: domainWithPort }).catch((err) =>
-                console.warn(APP_NAME_WITH_SUFFIX, "mountAiWritingDot failed", err),
-            )
+            mountAiWritingDot({ domain: domainWithPort })
+                .then((teardown) => {
+                    // Unloaded while the async mount was in flight — undo it.
+                    if (aiWritingDotDisposed) { teardown(); return; }
+                    aiWritingDotDispose = teardown
+                })
+                .catch((err) =>
+                    console.warn(APP_NAME_WITH_SUFFIX, "mountAiWritingDot failed", err),
+                )
         } else {
-            initAiWritingDotInFrame().catch((err) =>
-                console.warn(APP_NAME_WITH_SUFFIX, "initAiWritingDotInFrame failed", err),
-            )
+            aiWritingDotDispose = initAiWritingDotInFrame()
         }
+    }
+
+    async function removeAiWritingDot() {
+        aiWritingDotDisposed = true
+        aiWritingDotDispose?.()
+        aiWritingDotDispose = null
+        // The workbench is a separate Shadow-DOM singleton mounted alongside the
+        // dot (ensureWorkbenchMounted in mountAiWritingDot) — tear it down too.
+        destroyWorkbench()
     }
 
     /**
@@ -745,6 +812,7 @@ export async function content() {
         removeCSS()
         observer.disconnect()
         removeFloatBall()
+        removeAiWritingDot()
         restoreOriginalPage(true, true)
     }
 
@@ -784,7 +852,7 @@ export async function content() {
         // boxes), not a `.duo-selected` outline — an outline here would be clipped
         // by the page's `overflow:hidden` ancestors just like the hover highlight.
         document.head.appendChild(ruleModeStyle)
-        await processStyleChangeAction()
+        await updateStyle()
     }
 
     async function removeCSS() {
@@ -844,8 +912,8 @@ export async function content() {
         floatBall = await mountFloatBall({
             domain: domainWithPort,
             initiallyActive: translateStatus,
-            onTranslate: () => { translateAction(); relayToSubframes(TRANS_ACTION.TRANSLATE) },
-            onRestore: () => { restoreOriginalAction(); relayToSubframes(TRANS_ACTION.SHOW_ORIGINAL) },
+            onTranslate: () => { translateAction(); relayToSubframes(TRANSLATE_ACTION.TRANSLATE) },
+            onRestore: () => { restoreOriginalAction(); relayToSubframes(TRANSLATE_ACTION.SHOW_ORIGINAL) },
             onClose: () => {
                 floatBallSwitch = false
                 // Defer teardown: onClose fires from inside the ball's own React
@@ -897,7 +965,7 @@ export async function content() {
         })
         // notify the popup and background to set translate status
         browser.runtime.sendMessage({
-            action: TRANS_ACTION.TRANSLATE_STATUS_CHANGE,
+            action: TRANSLATE_ACTION.TRANSLATE_STATUS_CHANGED,
             data: {
                 tabId: tabId,
                 status: status
@@ -1242,7 +1310,7 @@ export async function content() {
         }
         // fallback to use microsoft translate to detect the language
         try {
-            lang = await translationServices.get(TRANS_SERVICE.MICROSOFT)?.detectLanguage?.([text]) || "und"
+            lang = await translationServices.get(TRANSLATE_SERVICE.MICROSOFT)?.detectLanguage?.([text]) || "und"
             console.log("detect language by microsoft translate: %s", lang)
             return lang
         }
@@ -1261,10 +1329,10 @@ export async function content() {
         manualTrigger = true
         if (translateStatus) {
             restoreOriginalAction()
-            relayToSubframes(TRANS_ACTION.SHOW_ORIGINAL)
+            relayToSubframes(TRANSLATE_ACTION.SHOW_ORIGINAL)
         } else {
             translateAction()
-            relayToSubframes(TRANS_ACTION.TRANSLATE)
+            relayToSubframes(TRANSLATE_ACTION.TRANSLATE)
         }
     }
 
@@ -1310,7 +1378,7 @@ export async function content() {
         return blocks.join('\n')
     }
 
-    async function processStyleChangeAction() {
+    async function updateStyle() {
         let [
             bgColor, fontColor, borderStyle, borderColor,
             highlightBg, highlightFontColor, highlightStyle, highlightBorderColor,
@@ -1721,7 +1789,7 @@ export async function content() {
                 console.log('context.targetTranslateService:', context.targetTranslateService)
             }
             if (service == "") {
-                service = TRANS_SERVICE.MICROSOFT
+                service = TRANSLATE_SERVICE.MICROSOFT
             }
 
             let translateResults = await getTranslateResult(service, elements, targetLanguage, viewStrategyCopy, controller?.signal)

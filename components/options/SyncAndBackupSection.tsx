@@ -16,7 +16,7 @@ import {
 import { useToast } from '@/components/ui/toast';
 import { sendMessageToBackground } from '@/utils/message';
 import { getConfig, setConfig } from '@/utils/db';
-import { APP_NAME, APP_NAME_KEBAB_CASE, CONFIG_KEY, DB_ACTION, SYNC_ACTION, SYNC_PROVIDER_ID } from '@/main/constants';
+import { ACTION, APP_NAME, APP_NAME_KEBAB_CASE, CONFIG_KEY, DB_ACTION, SYNC_ACTION, SYNC_PROVIDER_ID } from '@/main/constants';
 
 const SYNC_INTERVAL_OPTIONS = [5, 10, 15, 20, 30, 45, 60];
 
@@ -113,7 +113,7 @@ export function SyncAndBackupSection() {
         void refreshStatus();
         void loadWebdavConfig();
         void getConfig(CONFIG_KEY.SYNC_INCLUDE_SECRETS).then((v) => setSyncSecrets(!!v));
-        void getConfig(CONFIG_KEY.SYNC_AUTO).then((v) => setAutoSync(!!v));
+        void getConfig(CONFIG_KEY.AUTO_SYNC_CONFIG_SWITCH).then((v) => setAutoSync(!!v));
         void getConfig(CONFIG_KEY.SYNC_INTERVAL_MINUTES).then((v) => {
             const n = Number(v);
             if (Number.isFinite(n) && n > 0) setIntervalMinutes(n);
@@ -127,15 +127,15 @@ export function SyncAndBackupSection() {
 
     const onToggleAutoSync = async (next: boolean) => {
         setAutoSync(next);
-        await setConfig(CONFIG_KEY.SYNC_AUTO, next);
-        await sendMessageToBackground({ action: SYNC_ACTION.AUTO_CONFIG_CHANGED });
+        await setConfig(CONFIG_KEY.AUTO_SYNC_CONFIG_SWITCH, next);
+        await sendMessageToBackground({ action: SYNC_ACTION.AUTO_SYNC_CONFIG_CHANGED });
     };
 
     const onChangeInterval = async (value: string) => {
         const n = Number(value);
         setIntervalMinutes(n);
         await setConfig(CONFIG_KEY.SYNC_INTERVAL_MINUTES, n);
-        await sendMessageToBackground({ action: SYNC_ACTION.AUTO_CONFIG_CHANGED });
+        await sendMessageToBackground({ action: SYNC_ACTION.AUTO_SYNC_CONFIG_CHANGED });
     };
 
     const onConnectGdrive = async () => {

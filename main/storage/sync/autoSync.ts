@@ -21,7 +21,7 @@ const ALARM_DEBOUNCE = 'duo-sync-debounce';
 const DEBOUNCE_MINUTES = 0.5;
 
 async function isAutoOn(): Promise<boolean> {
-    return !!(await getConfigItem(CONFIG_KEY.SYNC_AUTO));
+    return !!(await getConfigItem(CONFIG_KEY.AUTO_SYNC_CONFIG_SWITCH));
 }
 
 async function getIntervalMinutes(): Promise<number> {
