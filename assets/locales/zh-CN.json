@@ -10,6 +10,8 @@
   "makeTimeForCivilization": "给岁月以文明，而不是给文明以岁月。",
   "wereAllWorms": "我们都是阴沟里的虫子，但总还是得有人仰望星空。",
   "translationColorPropNotSame": "背景颜色和字体颜色不能相同！",
+  "colorLowContrastWarning": "背景颜色与字体颜色之间对比度过低，文字可能难以辨认。",
+  "fixContrast": "修复",
   "helpDocument": "帮助文档",
   "settings": "设置",
   "restoreOriginalFirst": "页面已经被翻译,请先恢复原文",

@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import { STYLE_NONE } from '@/main/constants';
+import { effectiveFontColor } from '@/utils/color';
 
 // Build inline CSS for the translation style preview.
 // `borderColor` is only applied when the style produces a border (not for underline/text-decoration styles).
@@ -11,7 +12,9 @@ export function buildStylePreview(opts: {
 }): CSSProperties {
   const css: CSSProperties = {};
   if (opts.bgColor) css.backgroundColor = opts.bgColor;
-  if (opts.fontColor) css.color = opts.fontColor;
+  // Mirror the live page: nudge font to a near-color when it equals the bg.
+  const fontColor = effectiveFontColor(opts.bgColor, opts.fontColor);
+  if (fontColor) css.color = fontColor;
   switch (opts.style) {
     case STYLE_NONE:
       css.border = 'none';

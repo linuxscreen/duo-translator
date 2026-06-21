@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, Check, Trash2 } from 'lucide-react';
+import { ChevronDown, Check, Trash2, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import {
   ACTION,
@@ -24,6 +24,7 @@ import {
   sendMessageToBackground,
 } from '@/utils/message';
 import { getConfig, setConfig, clearTranslationCache, getTranslationCacheSize } from '@/utils/db';
+import { isReadableContrast, readableFontColor } from '@/utils/color';
 import { SettingRow } from '@/components/options/SettingRow';
 import { ColorPicker } from '@/components/options/ColorPicker';
 import { NumberInputWithReset } from '@/components/options/NumberInputWithReset';
@@ -365,6 +366,14 @@ export function TranslationPage() {
     setFontColorIndex(i);
     persistColorDebounced(CONFIG_KEY.FONT_COLOR, CONFIG_KEY.FONT_COLOR_INDEX, c, i);
   };
+  // Auto-fix: set the font color to black/white (whichever reads against bg),
+  // committed to the picker's custom slot (index === presets length).
+  const onFixTranslationContrast = () => {
+    onFontColor(readableFontColor(bgColor), TRANSLATION_FONT_COLORS.length);
+  };
+  const onFixHighlightContrast = () => {
+    onHighlightFont(readableFontColor(highlightBg), TRANSLATION_FONT_COLORS.length);
+  };
   const onBorderColor = (c: string, i: number) => {
     setBorderColor(c);
     setBorderColorIndex(i);
@@ -432,6 +441,18 @@ export function TranslationPage() {
         borderColor: highlightBorderColor,
       }),
     [highlightStyle, highlightBg, highlightFontColor, highlightBorderColor],
+  );
+
+  // Readability guardrails — flag (don't block) bg/font pairs whose contrast is
+  // too low to read. Pairs with a default/transparent color aren't evaluable
+  // and are left alone. See utils/color.
+  const translationLowContrast = useMemo(
+    () => !isReadableContrast(bgColor, fontColor),
+    [bgColor, fontColor],
+  );
+  const highlightLowContrast = useMemo(
+    () => !isReadableContrast(highlightBg, highlightFontColor),
+    [highlightBg, highlightFontColor],
   );
 
   if (!ready) {
@@ -680,6 +701,9 @@ export function TranslationPage() {
               />
             }
           />
+          {translationLowContrast && (
+            <ContrastWarning onFix={onFixTranslationContrast} />
+          )}
           {styleHasBorder(style) && (
             <SettingRow
               label={t('borderColor', 'border color')}
@@ -724,6 +748,9 @@ export function TranslationPage() {
               />
             }
           />
+          {highlightLowContrast && (
+            <ContrastWarning onFix={onFixHighlightContrast} />
+          )}
           {styleHasBorder(highlightStyle) && (
             <SettingRow
               label={t('borderColor', 'border color')}
@@ -837,6 +864,24 @@ export function TranslationPage() {
           })}
         </p>
       </Dialog>
+    </div>
+  );
+}
+
+
+function ContrastWarning({ onFix }: { onFix: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-center gap-2 px-4 py-2 text-[12px] text-amber-500">
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
+      <span className="flex-1">{t('colorLowContrastWarning', 'Low contrast between background and font — text may be hard to read.')}</span>
+      <button
+        type="button"
+        onClick={onFix}
+        className="shrink-0 rounded-md border border-amber-500/40 px-2 py-0.5 text-amber-500 transition hover:bg-amber-500/10"
+      >
+        {t('fixContrast', 'Fix')}
+      </button>
     </div>
   );
 }

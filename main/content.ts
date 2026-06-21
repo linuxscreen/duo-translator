@@ -18,6 +18,7 @@ import { applyTextToTarget } from "./aiWriting/applyText";
 import { getElementText } from "@/utils/dom";
 import { getDomainWithPortFromUrl } from "@/utils/url";
 import { getAiTranslateService, getTranslateService } from "@/utils/service";
+import { effectiveFontColor } from "@/utils/color";
 
 /**
  * Resolve the TOP document's domain from within a sub-frame. The dot's
@@ -1355,7 +1356,10 @@ export async function content() {
         // Translation style — applied to the appended translation copy.
         const translationDecls: string[] = []
         if (opts.bgColor) translationDecls.push(`background-color: ${opts.bgColor};`)
-        if (opts.fontColor) translationDecls.push(`color: ${opts.fontColor};`)
+        // Nudge the font to a near-color only when it exactly matches the bg, so
+        // identical bg+font text stays visible (config is untouched).
+        const translationFont = effectiveFontColor(opts.bgColor, opts.fontColor)
+        if (translationFont) translationDecls.push(`color: ${translationFont};`)
         const translationRule = getCSSRuleString(opts.borderStyle, opts.borderColor)
         if (translationRule) translationDecls.push(translationRule)
         if (translationDecls.length > 0) {
@@ -1366,7 +1370,8 @@ export async function content() {
         if (opts.highlightSwitch) {
             const highlightDecls: string[] = []
             if (opts.highlightBg) highlightDecls.push(`background-color: ${opts.highlightBg};`)
-            if (opts.highlightFontColor) highlightDecls.push(`color: ${opts.highlightFontColor};`)
+            const highlightFont = effectiveFontColor(opts.highlightBg, opts.highlightFontColor)
+            if (highlightFont) highlightDecls.push(`color: ${highlightFont};`)
             const highlightRule = getCSSRuleString(opts.highlightStyle, opts.highlightBorderColor)
             if (highlightRule) highlightDecls.push(highlightRule)
             if (highlightDecls.length > 0) {

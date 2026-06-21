@@ -10,6 +10,8 @@
   "makeTimeForCivilization": "Make time for civilization, for civilization won't make time.",
   "wereAllWorms": "We are all worms in the gutter, while some of us are always looking at the stars.",
   "translationColorPropNotSame": "The background color and the font color cannot be the same!",
+  "colorLowContrastWarning": "Low contrast between background and font — text may be hard to read.",
+  "fixContrast": "Fix",
   "helpDocument": "Help document",
   "settings": "Settings",
   "restoreOriginalFirst": "Please restore the original first because page is translated",
