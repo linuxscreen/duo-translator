@@ -351,23 +351,19 @@ function FloatBallApp({
                         expanded ? "opacity-100" : "opacity-[0.35]",
                     ].join(" ")}
                 >
-                    {/* Knob geometry/slide is driven via inline style rather
-                        than Tailwind's translate utilities: v4 composes
-                        `translate` from @property-registered CSS variables,
-                        which don't register reliably inside a Shadow DOM, so
-                        the utility silently produces no movement. The
-                        `left: calc(100% - 2px)` + `translateX(-100%)` pins the
-                        knob's right side 2px from the track when active,
-                        mirroring the 2px left inset at rest. */}
                     <span
                         className="absolute w-[20px] h-[20px] rounded-full bg-[#ECECEC] border-2 border-white"
                         style={{
                             top: "50%",
-                            left: active ? "calc(100% - 2px)" : "2px",
-                            transform: active
-                                ? "translate(-100%, -50%)"
-                                : "translate(0, -50%)",
-                            transition: "left 0.2s ease, transform 0.2s ease",
+                            // Slide via a single GPU-composited transform (left is
+                            // static). Animating `left` is a main-thread layout
+                            // property and stutters on the cold first toggle after
+                            // page load; transform stays smooth from frame one.
+                            // 18px(travel) = 42px(track, button width) − 20px(knob, self width) − 2px * 2(inset each side)
+                            left: "2px",
+                            transform: `translate(${active ? 18 : 0}px, -50%)`,
+                            transition: "transform 0.2s ease",
+                            willChange: "transform",
                         }}
                     />
                 </button>
