@@ -263,7 +263,7 @@
   "contextMenuRestore": "恢复原文",
   "contextMenuTranslatePara": "翻译此段落",
   "contextMenuRestorePara": "恢复此段落",
-  "contextMenuTranslateTextBox": "翻译输入框",
+  "contextMenuTranslateInputBox": "翻译输入框",
   "contextMenuTranslateSelection": "翻译选中文本",
   "bilingualHighlightingHint": "原文译文逐句对照高亮",
   "bilingualHighlightingEnableHint": "鼠标悬停原文或译文时触发",

@@ -6,7 +6,7 @@
     "message": "Open-source translation extension with bilingual display, contrast highlighting, and rule mode features"
   },
   "shortcutToggleTranslation": {
-    "message": "Translate/restore page"
+    "message": "Translate / Restore page"
   },
   "shortcutTranslate": {
     "message": "Translate page"
@@ -17,7 +17,10 @@
   "shortcutAiWorkbench": {
     "message": "Open AI writing workbench"
   },
-  "confirmCloseFloatBall": {
-    "message": "Confirm to close the bilingual translation floating ball? You can re-enable it in the settings"
+  "shortcutTranslateRestoreParagraph": {
+    "message": "Translate / Restore mouse-over paragraph"
+  },
+  "shortcutTranslateSelectionInput": {
+    "message": "Translate selection / input box"
   }
 }

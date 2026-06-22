@@ -58,6 +58,12 @@ export default defineConfig({
                 },
                 "description": '__MSG_shortcutAiWorkbench__'
             },
+            "shortcut-translate-restore-paragraph": {
+                "description": '__MSG_shortcutTranslateRestoreParagraph__'
+            },
+            "shortcut-translate-selection-input":{
+                "description": '__MSG_shortcutTranslateSelectionInput__'
+            }
         },
         // fix chrome load extension error: DevTools failed to load source map: Could not load:ERR_BLOCKED_BY_CLIENT
         // web_accessible_resources: [

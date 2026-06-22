@@ -75,7 +75,7 @@ const CONTEXT_MENU_TRANSLATE_TITLE = 'contextMenuTranslate'
 const CONTEXT_MENU_RESTORE_TITLE = 'contextMenuRestore'
 const CONTEXT_MENU_TRANSLATE_PARA_TITLE = 'contextMenuTranslatePara'
 const CONTEXT_MENU_RESTORE_PARA_TITLE = 'contextMenuRestorePara'
-const CONTEXT_MENU_TRANSLATE_TEXT_BOX_TITLE = 'contextMenuTranslateTextBox'
+const CONTEXT_MENU_TRANSLATE_INPUT_BOX_TITLE = 'contextMenuTranslateInputBox'
 const CONTEXT_MENU_TRANSLATE_SELECTION_TITLE = 'contextMenuTranslateSelection'
 
 
@@ -423,7 +423,7 @@ export async function background() {
                                     : getMsg(CONTEXT_MENU_TRANSLATE_TITLE)
                             })
                         }
-                        browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_TEXT_BOX, { title: getMsg(CONTEXT_MENU_TRANSLATE_TEXT_BOX_TITLE) })
+                        browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_INPUT_BOX, { title: getMsg(CONTEXT_MENU_TRANSLATE_INPUT_BOX_TITLE) })
                         browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_SELECTION, { title: getMsg(CONTEXT_MENU_TRANSLATE_SELECTION_TITLE) })
                     } catch { }
                 }
@@ -795,8 +795,8 @@ export async function background() {
                     browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.SHOW_ORIGINAL });
                 }
                 break
-            case CONTEXT_MENU.TRANSLATE_TEXT_BOX:
-                browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_TEXT_BOX });
+            case CONTEXT_MENU.TRANSLATE_INPUT_BOX:
+                browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_INPUT_BOX });
                 break
             case CONTEXT_MENU.TRANSLATE_RESTORE_PARA:
                 console.log('translatePara', info, tab)
@@ -848,8 +848,8 @@ export async function background() {
             contexts: ["page"] //"selection"
         });
         browser.contextMenus.create({
-            id: CONTEXT_MENU.TRANSLATE_TEXT_BOX,
-            title: getMsg(CONTEXT_MENU_TRANSLATE_TEXT_BOX_TITLE),
+            id: CONTEXT_MENU.TRANSLATE_INPUT_BOX,
+            title: getMsg(CONTEXT_MENU_TRANSLATE_INPUT_BOX_TITLE),
             contexts: ["editable"]
         });
         browser.contextMenus.create({
@@ -863,7 +863,7 @@ export async function background() {
         browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
         browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
         browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_SELECTION)
-        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_TEXT_BOX)
+        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_INPUT_BOX)
         browser.contextMenus.onClicked.removeListener(contextMenuClickLister)
         browser.tabs.onActivated.removeListener(tabsActivatedListener)
     }
@@ -881,11 +881,18 @@ export async function background() {
             action = TRANSLATE_ACTION.SHOW_ORIGINAL
         } else if (command === 'shortcut-ai-workbench') {
             action = ACTION.AI_OPEN_WORKBENCH
+        } else if (command === 'shortcut-translate-restore-paragraph') {
+            action = TRANSLATE_ACTION.TOGGLE_TRANSLATE_PARA
+        } else if (command === 'shortcut-translate-selection-input') {
+            action = TRANSLATE_ACTION.TRANSLATE_SELECTION_INPUT_BOX
         }
         if (!action) return
         browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
+            if (tabs.length === 0) {
+                return
+            }
             let tab = tabs[0]
-            if (!tab || !tab.id) {
+            if (!tab.id) {
                 return
             }
             browser.tabs.sendMessage(tab.id, { action: action });
@@ -1176,6 +1183,6 @@ function normalizeInterfaceLang(v: unknown): InterfaceLang | undefined {
 enum CONTEXT_MENU {
     TRANSLATE_RESTORE_PAGE = 'translateRestorePage',
     TRANSLATE_RESTORE_PARA = 'translateRestorePara',
-    TRANSLATE_TEXT_BOX = 'translateTextBox',
+    TRANSLATE_INPUT_BOX = 'translateInputBox',
     TRANSLATE_SELECTION = 'translateSelection'
 }

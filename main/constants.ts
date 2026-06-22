@@ -141,10 +141,12 @@ export enum TRANSLATE_ACTION {
     TOGGLE = 'toggleTranslate',
     SHOW_ORIGINAL = 'showOriginal',
     TRANSLATE_STATUS_CHANGED = "translateStatusChanged",
-    TRANSLATE_TEXT_BOX = 'translateTextBox',
+    TRANSLATE_INPUT_BOX = 'translateInputBox',
     TRANSLATE_PARA = 'translatePara',
     SHOW_ORIGINAL_PARA = 'showOriginalPara',
+    TOGGLE_TRANSLATE_PARA = 'toggleTranslatePara',
     TRANSLATE_SELECTION = 'translateSelection',
+    TRANSLATE_SELECTION_INPUT_BOX = 'translateSelectionInputBox',
 }
 
 export enum ACTION {

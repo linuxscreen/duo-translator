@@ -81,7 +81,7 @@ export default function App() {
 
   // Hydrate from background storage on mount
   useEffect(() => {
-    console.log("popup mount")
+    console.log("popup loaded")
     let cancelled = false;
     const listener = (message: any, sender: Browser.runtime.MessageSender, sendResponse: (response?: any) => void) => {
       if (message.action === TRANSLATE_ACTION.TRANSLATE_STATUS_CHANGED) {

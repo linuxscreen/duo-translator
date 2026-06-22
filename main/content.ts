@@ -115,8 +115,6 @@ export async function content() {
     // even across origins (no property access).
     const isTopFrame = window.top === window.self;
 
-    let translateElements: Set<HTMLElement> = new Set()
-
     // Constructable Stylesheet for translation + bilingual highlighting CSS.
     // - Lives in document.adoptedStyleSheets, not the DOM, so it doesn't
     //   trigger our own MutationObserver and can't be removed by hostile pages.
@@ -267,8 +265,8 @@ export async function content() {
                     updateDomainStrategy(strategy)
                 }
                 break
-            case TRANSLATE_ACTION.TRANSLATE_TEXT_BOX:
-                translateTextBox();
+            case TRANSLATE_ACTION.TRANSLATE_INPUT_BOX:
+                translateInputBox();
             case TRANSLATE_ACTION.TRANSLATE_PARA:
                 if (!lastRightClickElement) return
                 translateParagraphElements([lastRightClickElement]);
@@ -295,6 +293,12 @@ export async function content() {
                 Object.entries(message.data).forEach(([key, value]) => {
                     onConfigChanged(key, value, activeFlag)
                 })
+                break
+            case TRANSLATE_ACTION.TOGGLE_TRANSLATE_PARA:
+                toggleTranslateParagraph()
+                break
+            case TRANSLATE_ACTION.TRANSLATE_SELECTION_INPUT_BOX:
+                translateSelectionInputBox()
                 break
             default:
                 break
@@ -486,8 +490,25 @@ export async function content() {
     // ===============================  message listener end  =====================================
 
     let lastRightClickElement: HTMLElement | null = null
-    let lastParaTranslateStatus: boolean = false
     let lastEditableElement: HTMLElement | null = null
+
+    function translateSelectionInputBox() {
+        let selection = window.getSelection()
+        // console.log('translateSelectionInputBox selection: ', selection)
+        let text = selection?.toString().trim()
+        if (!text) {
+            // translate input box
+            const active = document.activeElement
+            if (!active || !(active instanceof HTMLElement) || IsEditableElement(active)) return
+            lastEditableElement = active
+            translateInputBox()
+            // console.log('translateSelectionInputBox active: ', active)
+            return
+        }
+        // console.log('translateSelectionInputBox text: ', text)
+        translateSelection(text, selection)
+
+    }
 
     // Decide whether the pointer is over the paragraph's text — counting both
     // glyphs themselves and the blank gaps *between* lines (line-height leading,
@@ -514,6 +535,27 @@ export async function content() {
         return hasAbove && hasBelow;
     };
 
+    let lastX = 0, lastY = 0;
+    document.addEventListener('mousemove', e => { lastX = e.clientX; lastY = e.clientY; }, { passive: true });
+
+    function toggleTranslateParagraph() {
+        let ele = document.elementFromPoint(lastX, lastY) as Element | null
+        let target = ele?.closest(".duo-paragraph")
+        if (!(target instanceof HTMLElement)) return
+        if (!target) return
+        let translated = false;
+        if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
+            translated = duoTranslatedElementSet.has(target)
+        } else {
+            translated = translatedElementMap.has(target)
+        }
+        if (translated) {
+            restoreOriginalParagraphElement(target)
+        } else {
+            translateParagraphElements([target])
+        }
+    }
+
     // add 'Translate/Restore this paragraph' menu when mouse is over the text of
     // a paragraph element and right mouse clicked
     // Due to chrome limitations, currently context menu of 'Translate/Restore this paragraph' can only be implemented in this way.
@@ -531,22 +573,15 @@ export async function content() {
             if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
                 translated = duoTranslatedElementSet.has(para);
             } else {
-                translated = translateElements.has(para);
+                translated = translatedElementMap.has(para);
             }
-            // if (lastRightClickElement !== null && lastParaTranslateStatus === translated) {
-            //     return
-            // }
             browser.runtime.sendMessage({ action: ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU, data: { translated: translated } }).then((msg) => {
                 if (msg.status === STATUS_SUCCESS) {
                     lastRightClickElement = para
-                    lastParaTranslateStatus = translated
                 }
             });
 
         } else {
-            // if (lastRightClickElement === null) {
-            //     return
-            // }
             browser.runtime.sendMessage({ action: ACTION.HIDE_TRANSLATE_RESTORE_PARA_MENU }).then((msg) => {
                 if (msg.status === STATUS_SUCCESS) {
                     lastRightClickElement = null
@@ -621,7 +656,7 @@ export async function content() {
     let pendingProcessTimer: number | null = null;
     let processingActive = false;
 
-    async function translateTextBox() {
+    async function translateInputBox() {
         if (!lastEditableElement) return
         const originalText = getElementText(lastEditableElement);
         if (originalText === "") return
@@ -630,7 +665,7 @@ export async function content() {
         for await (const chunk of runStream.stream) {
             translatedText += chunk;
         }
-        console.log("translateTextBox: ", translatedText);
+        console.log("translateInputBox: ", translatedText);
         applyTextToTarget(lastEditableElement, translatedText);
 
     }
@@ -642,6 +677,7 @@ export async function content() {
     // anchored to the selection.
     function translateSelectionAction(selectionText: string) {
         const selection = window.getSelection()
+
         const localSelection = selection?.toString().trim() || ""
         // No local selection → the selection lives in another frame; skip so we
         // don't pop up a duplicate empty card here.
@@ -649,6 +685,10 @@ export async function content() {
         const text = (selectionText && selectionText.trim() !== "") ? selectionText : localSelection
         if (text.trim() === "") return
 
+        translateSelection(text, selection)
+    }
+
+    function translateSelection(text: string, selection: Selection | null) {
         let rect: DOMRect | null = null
         try {
             if (selection && selection.rangeCount > 0) {

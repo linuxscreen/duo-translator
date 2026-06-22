@@ -17,7 +17,10 @@
   "shortcutAiWorkbench": {
     "message": "打开 AI 写作工作台"
   },
-  "confirmCloseFloatBall": {
-    "message": "确认关闭双语翻译悬浮球？可到设置中重新开启"
+  "shortcutTranslateRestoreParagraph": {
+    "message": "翻译/恢复 鼠标悬停段落"
+  },
+  "shortcutTranslateSelectionInput": {
+    "message": "翻译 选中文本/输入框"
   }
 }

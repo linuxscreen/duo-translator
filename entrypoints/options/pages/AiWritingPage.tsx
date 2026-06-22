@@ -154,7 +154,7 @@ export function AiWritingPage() {
           label={t('aiEnable', 'Enable')}
           hint={t(
             'aiEnableHint',
-            'Show small dot on the right of the text box',
+            'Show small dot on the right of the input box',
           )}
           control={<Switch checked={enabled} onCheckedChange={(v) => void toggleEnabled(v)} />}
         />
