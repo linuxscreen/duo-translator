@@ -934,7 +934,6 @@ export async function background() {
         } catch (e) {
             console.error(APP_NAME_WITH_SUFFIX, "getMicrosoftToken error", e)
             return new Token("", 0)
-            // first get token from db
         } finally {
             release();
         }

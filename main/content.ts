@@ -542,7 +542,6 @@ export async function content() {
         let ele = document.elementFromPoint(lastX, lastY) as Element | null
         let target = ele?.closest(".duo-paragraph")
         if (!(target instanceof HTMLElement)) return
-        if (!target) return
         let translated = false;
         if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
             translated = duoTranslatedElementSet.has(target)
@@ -921,17 +920,6 @@ export async function content() {
 
     // return // for debug
 
-    // ======================== float ball ========================
-
-    function setFloatBallSwitchStatus(status: boolean) {
-        floatBall?.setActive(status)
-    }
-
-    async function removeFloatBall() {
-        floatBall?.destroy()
-        floatBall = null
-    }
-
     // Fan a translate/restore out to this tab's sub-frames. The top frame can't
     // reach cross-origin iframes directly, so it asks the background to
     // re-broadcast the action to every frame of the tab. The echoed action also
@@ -941,6 +929,15 @@ export async function content() {
     // diverges from the top frame's.
     function relayToSubframes(action: string) {
         void sendMessageToBackground({ action: ACTION.RELAY_FRAMES, data: { action } })
+    }
+
+    function setFloatBallSwitchStatus(status: boolean) {
+        floatBall?.setActive(status)
+    }
+
+    async function removeFloatBall() {
+        floatBall?.destroy()
+        floatBall = null
     }
 
     async function initFloatBall() {
@@ -964,8 +961,6 @@ export async function content() {
             },
         })
     }
-
-    // ======================== float ball end ========================
 
     // deprecated
     async function translateWholePage() {
@@ -1273,6 +1268,7 @@ export async function content() {
         })
     }
 
+    // @deprecated
     function getElementTextLength(element: HTMLElement): number {
         let text = getElementTextContent(element)
         return encoder.encode(text).length; // Calculate byte length
@@ -1513,7 +1509,6 @@ export async function content() {
     // input still mark-completes without freezing the page. Behaviour matches
     // the previous recursive version (depth limit, text-node→duo-span wrapping,
     // mutation suppression around our own DOM writes).
-
     async function markParagraphElement(element: HTMLElement): Promise<HTMLElement[]> {
         let notTranslate = false;
         const rawElement = element;
@@ -1608,6 +1603,7 @@ export async function content() {
     }
 
     /**
+     * @deprecated
      * extract the domain name from the url
      * @param url
      */
@@ -1632,6 +1628,7 @@ export async function content() {
         return false
     }
 
+    // @deprecated
     function splitHtml(originHtml: string): string[] {
         let sentences = split(originHtml)
 
@@ -1657,6 +1654,7 @@ export async function content() {
         return sentenceWithWhiteSpace
     }
 
+    // @deprecated
     function startsWithIgnoringWhitespace(input: string, searchString: string): boolean {
         // Trim the input string to ignore leading spaces and line breaks
         const trimmedInput = input.trimStart();
@@ -1664,7 +1662,7 @@ export async function content() {
     }
 
     /**
-     * deprecated
+     * @deprecated
      * Remove all comment nodes recursively
      */
     function removeCommentNodesRecursively(element: HTMLElement) {
@@ -1708,6 +1706,7 @@ export async function content() {
     }
 
     /**
+     * @deprecated
      * remove all non-text child elements
      * @param element
      */
