@@ -194,8 +194,10 @@ export async function content() {
     shareConfig.aiTranslateServiceChoice = parsedAiTranslateService
     let targetLanguage = targetLanguageConfig || navigator.language.split('-')[0]
     let domainStrategy = (rawDomainStrategy?.strategy || DOMAIN_STRATEGY.AUTO) as string
+    let lastX = 0, lastY = 0
+    let lastRightClickElement: HTMLElement | null = null
+    let lastEditableElement: HTMLElement | null = null
 
-    const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
     // console.debug("get config:", "ruleStrategy: ", ruleStrategy, "viewStrategy: ", viewStrategy,
     //     "targetLanguage: ", targetLanguage, "translateService: ", translateService, "globalSwitch: ",
     //     globalSwitch, "defaultStrategy: ", defaultStrategy, "domainStrategy: ", domainStrategy)
@@ -369,7 +371,7 @@ export async function content() {
             case CONFIG_KEY.TARGET_LANGUAGE:
                 if (typeof value === "string" && targetLanguage !== value && LANGUAGES_MAP.has(value)) {
                     targetLanguage = value
-                    if (activeFlag && whetherTranslate()) {
+                    if (activeFlag && isNeedsTranslate()) {
                         await restoreOriginalAction()
                         await translateAction()
                     }
@@ -489,9 +491,6 @@ export async function content() {
 
     // ===============================  message listener end  =====================================
 
-    let lastRightClickElement: HTMLElement | null = null
-    let lastEditableElement: HTMLElement | null = null
-
     function translateSelectionInputBox() {
         let selection = window.getSelection()
         // console.log('translateSelectionInputBox selection: ', selection)
@@ -535,7 +534,6 @@ export async function content() {
         return hasAbove && hasBelow;
     };
 
-    let lastX = 0, lastY = 0;
     document.addEventListener('mousemove', e => { lastX = e.clientX; lastY = e.clientY; }, { passive: true });
 
     function toggleTranslateParagraph() {
@@ -918,8 +916,6 @@ export async function content() {
         });
     }
 
-    // return // for debug
-
     // Fan a translate/restore out to this tab's sub-frames. The top frame can't
     // reach cross-origin iframes directly, so it asks the background to
     // re-broadcast the action to every frame of the tab. The echoed action also
@@ -960,22 +956,6 @@ export async function content() {
                 setTimeout(() => removeFloatBall(), 0)
             },
         })
-    }
-
-    // deprecated
-    async function translateWholePage() {
-        if (manualTrigger) {
-            // if manually trigger, we can determine the translate status
-            await persistTranslateStatus(true)
-        }
-        await translateAllElements()
-    }
-
-    // deprecated
-    async function translateAllElements() {
-        let elements = document.querySelectorAll(".duo-needs-translate")
-        let elementsArray = Array.from(elements) as HTMLElement[]
-        await translateParagraphElements(elementsArray)
     }
 
     /**
@@ -1268,7 +1248,6 @@ export async function content() {
         })
     }
 
-    // @deprecated
     function getElementTextLength(element: HTMLElement): number {
         let text = getElementTextContent(element)
         return encoder.encode(text).length; // Calculate byte length
@@ -1602,21 +1581,6 @@ export async function content() {
         return collectElements;
     }
 
-    /**
-     * @deprecated
-     * extract the domain name from the url
-     * @param url
-     */
-    function getDomainFromUrl(url: string) {
-        try {
-            const parsedUrl = new URL(url);
-            return parsedUrl.hostname;
-        } catch (error) {
-            console.error(APP_NAME_WITH_SUFFIX, 'Invalid URL:', error);
-            return null;
-        }
-    }
-
     function isParagraphElement(element: HTMLElement): boolean {
         // An element is considered a paragraph when its children contains a text node whose textContent is not empty
         for (let i = 0; i < element.childNodes.length; i++) {
@@ -1626,100 +1590,6 @@ export async function content() {
             }
         }
         return false
-    }
-
-    // @deprecated
-    function splitHtml(originHtml: string): string[] {
-        let sentences = split(originHtml)
-
-        let whiteSpace: string[] = []
-        let sentenceWithWhiteSpace = []
-        for (let sentence of sentences) {
-            if (sentence.type == "WhiteSpace") {
-                whiteSpace.push(sentence.raw)
-            } else if (sentence.type == "Sentence") {
-                sentenceWithWhiteSpace.push((whiteSpace[whiteSpace.length - 1] == undefined ? "" : whiteSpace.pop()) + sentence.raw)
-            }
-        }
-        for (let i = 0; i < sentenceWithWhiteSpace.length; i++) {
-            if (sentenceWithWhiteSpace[i].trim().startsWith("</")) {
-                if (i > 0) {
-                    sentenceWithWhiteSpace[i - 1] += sentenceWithWhiteSpace[i]
-                    sentenceWithWhiteSpace.splice(i, 1)
-                }
-            }
-        }
-        sentenceWithWhiteSpace[sentenceWithWhiteSpace.length - 1] += whiteSpace[whiteSpace.length - 1] == undefined ? "" : whiteSpace.pop()
-        // console.log("splitHtml", whiteSpace)
-        return sentenceWithWhiteSpace
-    }
-
-    // @deprecated
-    function startsWithIgnoringWhitespace(input: string, searchString: string): boolean {
-        // Trim the input string to ignore leading spaces and line breaks
-        const trimmedInput = input.trimStart();
-        return trimmedInput.startsWith(searchString);
-    }
-
-    /**
-     * @deprecated
-     * Remove all comment nodes recursively
-     */
-    function removeCommentNodesRecursively(element: HTMLElement) {
-        for (let i = 0; i < element.childNodes.length; i++) {
-            if (element.childNodes[i].nodeType === Node.COMMENT_NODE) {
-                console.log("remove comment node:", element.childNodes[i])
-                element.removeChild(element.childNodes[i]);
-            } else if (element.childNodes[i].nodeType === Node.ELEMENT_NODE) {
-                removeCommentNodesRecursively(element.childNodes[i] as HTMLElement)
-            }
-        }
-    }
-
-    /**
-     * determine whether translate the page according to the strategy
-     * @returns boolean
-     */
-    function whetherTranslate(): boolean {
-        if (!globalSwitch) {
-            return false
-        }
-        if (manualTrigger) {
-            // console.log('manualTriggerTranslate:', manualTrigger, translateStatus)
-            return translateStatus;
-        }
-        if (domainStrategy == DOMAIN_STRATEGY.NEVER) {
-            return false
-        }
-        if (domainStrategy == DOMAIN_STRATEGY.ALWAYS) {
-            return true
-        }
-        switch (defaultStrategy) {
-            case DOMAIN_STRATEGY.AUTO:
-                return targetLanguage != pageLanguage
-            case DOMAIN_STRATEGY.NEVER:
-                return false
-            case DOMAIN_STRATEGY.ALWAYS:
-                return true
-        }
-        return false
-    }
-
-    /**
-     * @deprecated
-     * remove all non-text child elements
-     * @param element
-     */
-    function removeAllNonTextChildElements(element: HTMLElement) {
-        for (let child of element.children) {
-            if (child.nodeType === Node.ELEMENT_NODE) {
-                if (child.textContent?.trim() === "") {
-                    element.removeChild(child)
-                } else {
-                    removeAllNonTextChildElements(child as HTMLElement)
-                }
-            }
-        }
     }
 
     function highlightHandler(span: HTMLElement, originalElement: HTMLElement, translatedElement: HTMLElement) {
@@ -1973,6 +1843,9 @@ export async function content() {
      * @returns {boolean}
      */
     function isNeedsTranslate(): boolean {
+        if (!globalSwitch) {
+            return false
+        }
         if (domainStrategy == DOMAIN_STRATEGY.NEVER) {
             return false
         }

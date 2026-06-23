@@ -63,7 +63,7 @@ type Tag = { match: string; tagName: string; index: number };
  * APIs (which often mangle real HTML) preserve the structure. A fresh
  * instance must be used per request — state is request-scoped.
  */
-class TagReplacer {
+export class TagReplacer {
     private tagCounter = 11;
     private tagStack: Tag[] = [];
     private tagMap: Record<string, Tag> = {};
@@ -122,7 +122,7 @@ export function convertAToBTags(html: string): string {
     return finalResult;
 }
 
-function transferLanguageCode(language: string, text?: string): string {
+export function transferLanguageCode(language: string, text?: string): string {
     if (language === "zh-Hans") return "zh-CN";
     if (language === "zh-Hant") return "zh-TW";
     if (language === "ZH") {
@@ -871,7 +871,7 @@ class PreProcessResult {
     }
 }
 
-function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STRATEGY): PreProcessResult {
+export function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STRATEGY): PreProcessResult {
     let i = 0;
     let totalTextNodesLength = 0;
     let text = "";
@@ -939,7 +939,7 @@ function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STR
     return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, totalTextNodesLength, text };
 }
 
-function updateTranslateElementContent(rawTranslatedHtml: string, originalElements: HTMLElement[]) {
+export function updateTranslateElementContent(rawTranslatedHtml: string, originalElements: HTMLElement[]) {
     if (originalElements.length === 0 || rawTranslatedHtml === "") return;
 
     const translatedElement = document.createElement("div");

@@ -23,13 +23,6 @@ web-ext.config.ts
 *.sln
 *.sw?
 
-utils/generateI18nJsonFile.ts
-utils/messages.json
-demo/*
-
-# temp
-entrypoints/test
-
 # env file
 .env
 .env.local
@@ -44,3 +37,6 @@ AGENTS.md
 
 # others
 .dev
+demo
+utils/generateI18nJsonFile.ts
+utils/messages.json
