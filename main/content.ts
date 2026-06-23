@@ -1,10 +1,8 @@
-import { franc } from "franc";
-import { split } from "sentence-splitter";
-import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, iso6393To1Map, excludedTagSet, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, EXCLUDE_CHILD_ELEMENT_TAGS, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP } from "./constants";
-import { restore, translationServices, translateParams, getTranslateResult, translate, TranslateResult, resetTranslationCacheEnabled } from "./translateService";
+import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
+import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP } from "./constants";
+import { restore, translateParams, getTranslateResult, translate, TranslateResult, resetTranslationCacheEnabled } from "./translateService";
 import { sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
-import { shuffle } from "@/utils/arrays";
 import { mountFloatBall, type FloatBallController } from "./floatBall";
 import { mountAiWritingDot } from "./aiWriting/floatingDot";
 import { isAiWritingTarget } from "./aiWriting/inputDetector";
@@ -12,13 +10,16 @@ import { openWorkbench, ensureWorkbenchMounted, destroyWorkbench } from "./aiWri
 import { openSelectionTranslate } from "./aiWriting/selectionPopup";
 import { getConfig, listRuleFromDB } from "@/utils/db";
 import { createRuleMode, type RuleModeController } from "./ruleMode";
-import { isTraditionalChinese } from "@/utils/language";
+import { detectLanguage, getElementTextContent } from "@/main/lang";
 import { parseTranslateServiceKey, startTranslate, TranslateServiceChoice } from "./aiWriting/translateRunner";
 import { applyTextToTarget } from "./aiWriting/applyText";
 import { getElementText } from "@/utils/dom";
 import { getDomainWithPortFromUrl } from "@/utils/url";
 import { getAiTranslateService, getTranslateService } from "@/utils/service";
-import { effectiveFontColor } from "@/utils/color";
+import { buildTranslationCss } from "@/main/css";
+import { needsTranslate } from "@/main/strategy";
+import { isEditable, isNotMarkElement, isNotTranslateElement, isParagraphElement } from "@/main/dom/predicates";
+import { getLastContainingTextChild, getTextNodesAndText, removeDuoClassAndAttribute, removeTextNodes } from "@/main/dom/textNodes";
 
 /**
  * Resolve the TOP document's domain from within a sub-frame. The dot's
@@ -198,12 +199,78 @@ export async function content() {
     let lastRightClickElement: HTMLElement | null = null
     let lastEditableElement: HTMLElement | null = null
 
+    // ===== Mutation queue + cooperative scheduling =====
+    //
+    // The MutationObserver callback only does cheap work (filter + dedupe into
+    // a Set). All paragraph-marking happens in processPendingMutations(),
+    // which yields to the browser every MARK_BUDGET_MS so the page never sees
+    // a long task — even when shadcn-style sites flood us with mutations.
+    const PROCESS_DEBOUNCE_MS = 50;
+    let pendingMarkRoots = new Set<HTMLElement>();
+    let pendingProcessTimer: number | null = null;
+    let processingActive = false;
+
+    const observer = new MutationObserver(async mutations => {
+        for (const mutation of mutations) {
+            if (mutation.type !== 'childList') continue;
+            if (mutation.target.nodeType !== 1) continue;
+            const target = mutation.target as HTMLElement;
+            // Cheap structural skip — bail before queueing.
+            if (isIgnoreMutationElement(target)) continue;
+            // console.log('start mutation');
+            // Removal cleanup must happen now while removed nodes are still
+            // identifiable; it touches only Map entries, no DOM scan.
+            mutation.removedNodes.forEach(cleanupRemovedSubtree);
+            pendingMarkRoots.add(target);
+        }
+        if (pendingMarkRoots.size > 0) scheduleMutationProcess();
+    });
+
+    const intersectionObserver = new IntersectionObserver(items => {
+        // console.log("intersectionObserver items: ", items.length)
+        if (!translateStatus) {
+            return
+        }
+        for (const item of items) {
+            const el = item.target as HTMLElement;
+            if (!item.isIntersecting) {
+                continue
+            }
+            // translated and translating elements should be ignored
+            if (paragraphElementMap.get(el) != ELEMENT_STATUS.ORIGINAL) {
+                continue
+            }
+            batchElements.push(el)
+            paragraphElementMap.set(el, ELEMENT_STATUS.PENDING)
+            // console.log("IntersectionObserver in item", el.textContent)
+        }
+        if (batchTimer == null) {
+            batchTimer = setTimeout(() => {
+                const task = translateParagraphElements(batchElements)
+                pendingTranslateParagraphElementsTask.add(task)
+                task.finally(() => {
+                    pendingTranslateParagraphElementsTask.delete(task)
+                })
+                console.log("batchElements translated", batchElements.length)
+                batchElements = [];
+                batchTimer = null
+            }, 50);
+        }
+    }, {
+        rootMargin: '300px 0px',
+    });
+
+    if (globalSwitch) {
+        await init()
+    }
+
     // console.debug("get config:", "ruleStrategy: ", ruleStrategy, "viewStrategy: ", viewStrategy,
     //     "targetLanguage: ", targetLanguage, "translateService: ", translateService, "globalSwitch: ",
     //     globalSwitch, "defaultStrategy: ", defaultStrategy, "domainStrategy: ", domainStrategy)
 
-    // Accept messages from popups, process the task
     // ===============================  message listener start  ===================================
+
+    // Accept messages from popups, process the task
     browser.runtime.onMessage.addListener(async (message, sender, sendResponse: (t: any) => void) => {
         if (!message) return
         console.log('content script receive message:', message)
@@ -307,6 +374,56 @@ export async function content() {
         }
     });
 
+    // ===============================  message listener end  =====================================
+
+    // event listeners
+    document.addEventListener('mousemove', e => { lastX = e.clientX; lastY = e.clientY; }, { passive: true });
+
+    // add 'Translate/Restore this paragraph' menu when mouse is over the text of
+    // a paragraph element and right mouse clicked
+    // Due to chrome limitations, currently context menu of 'Translate/Restore this paragraph' can only be implemented in this way.
+    // known issue: The context menu that is not triggered by the right mouse button may be abnormal.
+    document.addEventListener("mousedown", (e) => {
+        // return
+        if (e.button !== 2 || !contextMenuSwitch) { // ignore non right click
+            return
+        }
+        const target = e.target as HTMLElement | null;
+        const para = target?.closest(".duo-paragraph") as HTMLElement | null;
+
+        if (para && isPointOverText(e.clientX, e.clientY, para)) {
+            let translated
+            if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
+                translated = duoTranslatedElementSet.has(para);
+            } else {
+                translated = translatedElementMap.has(para);
+            }
+            browser.runtime.sendMessage({ action: ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU, data: { translated: translated } }).then((msg) => {
+                if (msg.status === STATUS_SUCCESS) {
+                    lastRightClickElement = para
+                }
+            });
+
+        } else {
+            browser.runtime.sendMessage({ action: ACTION.HIDE_TRANSLATE_RESTORE_PARA_MENU }).then((msg) => {
+                if (msg.status === STATUS_SUCCESS) {
+                    lastRightClickElement = null
+                }
+            });
+        }
+    }, true);
+
+    document.addEventListener("contextmenu", (e) => {
+        if (!contextMenuSwitch) {
+            return
+        }
+        const target = e.target as HTMLElement | null;
+        if (target && IsEditableElement(target)) {
+            // console.log("isContentEditable", target);
+            lastEditableElement = target
+        }
+    })
+
     async function onConfigChanged(key: string, value: any, activeFlag: boolean) {
         switch (key) {
             case CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS:
@@ -371,7 +488,7 @@ export async function content() {
             case CONFIG_KEY.TARGET_LANGUAGE:
                 if (typeof value === "string" && targetLanguage !== value && LANGUAGES_MAP.has(value)) {
                     targetLanguage = value
-                    if (activeFlag && isNeedsTranslate()) {
+                    if (activeFlag && needsTranslate({ globalSwitch, domainStrategy, defaultStrategy, targetLang: targetLanguage, pageLang: pageLanguage })) {
                         await restoreOriginalAction()
                         await translateAction()
                     }
@@ -489,8 +606,6 @@ export async function content() {
         }
     }
 
-    // ===============================  message listener end  =====================================
-
     function translateSelectionInputBox() {
         let selection = window.getSelection()
         // console.log('translateSelectionInputBox selection: ', selection)
@@ -519,7 +634,7 @@ export async function content() {
     // line fragment, or in a vertical gap that has a text line both above AND
     // below it at the same x (an inter-line gap) — outer padding only ever has a
     // line on one side, so it is correctly rejected.
-    const isPointOverText = (x: number, y: number, container: HTMLElement): boolean => {
+    function isPointOverText(x: number, y: number, container: HTMLElement): boolean {
         const range = document.createRange();
         range.selectNodeContents(container);
         const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
@@ -533,8 +648,6 @@ export async function content() {
         const hasBelow = overX.some((r) => r.top >= y);
         return hasAbove && hasBelow;
     };
-
-    document.addEventListener('mousemove', e => { lastX = e.clientX; lastY = e.clientY; }, { passive: true });
 
     function toggleTranslateParagraph() {
         let ele = document.elementFromPoint(lastX, lastY) as Element | null
@@ -553,51 +666,6 @@ export async function content() {
         }
     }
 
-    // add 'Translate/Restore this paragraph' menu when mouse is over the text of
-    // a paragraph element and right mouse clicked
-    // Due to chrome limitations, currently context menu of 'Translate/Restore this paragraph' can only be implemented in this way.
-    // known issue: The context menu that is not triggered by the right mouse button may be abnormal.
-    document.addEventListener("mousedown", (e) => {
-        // return
-        if (e.button !== 2 || !contextMenuSwitch) { // ignore non right click
-            return
-        }
-        const target = e.target as HTMLElement | null;
-        const para = target?.closest(".duo-paragraph") as HTMLElement | null;
-
-        if (para && isPointOverText(e.clientX, e.clientY, para)) {
-            let translated
-            if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-                translated = duoTranslatedElementSet.has(para);
-            } else {
-                translated = translatedElementMap.has(para);
-            }
-            browser.runtime.sendMessage({ action: ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU, data: { translated: translated } }).then((msg) => {
-                if (msg.status === STATUS_SUCCESS) {
-                    lastRightClickElement = para
-                }
-            });
-
-        } else {
-            browser.runtime.sendMessage({ action: ACTION.HIDE_TRANSLATE_RESTORE_PARA_MENU }).then((msg) => {
-                if (msg.status === STATUS_SUCCESS) {
-                    lastRightClickElement = null
-                }
-            });
-        }
-    }, true);
-
-    document.addEventListener("contextmenu", (e) => {
-        if (!contextMenuSwitch) {
-            return
-        }
-        const target = e.target as HTMLElement | null;
-        if (target && IsEditableElement(target)) {
-            // console.log("isContentEditable", target);
-            lastEditableElement = target
-        }
-    })
-
     function IsEditableElement(element: HTMLElement): boolean {
         if (element.isContentEditable) {
             return true
@@ -607,51 +675,6 @@ export async function content() {
         }
         return false
     }
-
-    const intersectionObserver = new IntersectionObserver(items => {
-        // console.log("intersectionObserver items: ", items.length)
-        if (!translateStatus) {
-            return
-        }
-        for (const item of items) {
-            const el = item.target as HTMLElement;
-            if (!item.isIntersecting) {
-                continue
-            }
-            // translated and translating elements should be ignored
-            if (paragraphElementMap.get(el) != ELEMENT_STATUS.ORIGINAL) {
-                continue
-            }
-            batchElements.push(el)
-            paragraphElementMap.set(el, ELEMENT_STATUS.PENDING)
-            // console.log("IntersectionObserver in item", el.textContent)
-        }
-        if (batchTimer == null) {
-            batchTimer = setTimeout(() => {
-                const task = translateParagraphElements(batchElements)
-                pendingTranslateParagraphElementsTask.add(task)
-                task.finally(() => {
-                    pendingTranslateParagraphElementsTask.delete(task)
-                })
-                console.log("batchElements translated", batchElements.length)
-                batchElements = [];
-                batchTimer = null
-            }, 50);
-        }
-    }, {
-        rootMargin: '300px 0px',
-    });
-
-    // ===== Mutation queue + cooperative scheduling =====
-    //
-    // The MutationObserver callback only does cheap work (filter + dedupe into
-    // a Set). All paragraph-marking happens in processPendingMutations(),
-    // which yields to the browser every MARK_BUDGET_MS so the page never sees
-    // a long task — even when shadcn-style sites flood us with mutations.
-    const PROCESS_DEBOUNCE_MS = 50;
-    let pendingMarkRoots = new Set<HTMLElement>();
-    let pendingProcessTimer: number | null = null;
-    let processingActive = false;
 
     async function translateInputBox() {
         if (!lastEditableElement) return
@@ -760,26 +783,6 @@ export async function content() {
         }
     }
 
-    let observer = new MutationObserver(async mutations => {
-        for (const mutation of mutations) {
-            if (mutation.type !== 'childList') continue;
-            if (mutation.target.nodeType !== 1) continue;
-            const target = mutation.target as HTMLElement;
-            // Cheap structural skip — bail before queueing.
-            if (isIgnoreMutationElement(target)) continue;
-            // console.log('start mutation');
-            // Removal cleanup must happen now while removed nodes are still
-            // identifiable; it touches only Map entries, no DOM scan.
-            mutation.removedNodes.forEach(cleanupRemovedSubtree);
-            pendingMarkRoots.add(target);
-        }
-        if (pendingMarkRoots.size > 0) scheduleMutationProcess();
-    });
-
-    if (globalSwitch) {
-        await init()
-    }
-
     function isIgnoreMutationElement(element: HTMLElement) {
         // closest() is a native O(depth) walk — faster than the JS loop and
         // catches the common UI-framework patterns in one shot.
@@ -858,7 +861,7 @@ export async function content() {
         startObserveDom()
         let htmlElements = await markParagraphElement(document.body);
         pageLanguage = await detectLanguage(htmlElements);
-        let shouldTranslate = isNeedsTranslate()
+        let shouldTranslate = needsTranslate({ globalSwitch, domainStrategy, defaultStrategy, targetLang: targetLanguage, pageLang: pageLanguage })
         // Late-loading sub-frame catch-up: an iframe created AFTER the user
         // already turned translation on (e.g. a button that opens an iframe
         // dialog) must sync to the tab's current state. The top frame only
@@ -1197,43 +1200,6 @@ export async function content() {
         }
     }
 
-    function removeDuoClassAndAttribute(element: HTMLElement) {
-        let attributes = element.getAttributeNames()
-        for (let attribute of attributes) {
-            if (attribute.startsWith("duo-")) {
-                element.removeAttribute(attribute)
-            }
-        }
-        let classList: string[] = []
-        element.classList.forEach(className => {
-            if (className.startsWith("duo-")) {
-                classList.push(className)
-            }
-        })
-        for (let className of classList) {
-            element.classList.remove(className)
-        }
-    }
-
-    function removeTextNodes(element: HTMLElement) {
-        function getTextNodes(element: HTMLElement) {
-            let textNodes: Text[] = []
-            let children = element.childNodes
-            for (let child of children) {
-                if (child instanceof Text) {
-                    textNodes.push(child)
-                } else if (child instanceof HTMLElement) {
-                    textNodes.push(...getTextNodes(child))
-                }
-            }
-            return textNodes
-        }
-        let textNodes = getTextNodes(element)
-        for (let textNode of textNodes) {
-            textNode.remove()
-        }
-    }
-
     async function setSessionStorage(key: string, value: any) {
         await sendMessageToBackground({
             action: STORAGE_ACTION.SESSION_SET,
@@ -1247,94 +1213,6 @@ export async function content() {
             data: { key: key }
         })
     }
-
-    function getElementTextLength(element: HTMLElement): number {
-        let text = getElementTextContent(element)
-        return encoder.encode(text).length; // Calculate byte length
-    }
-
-    function getElementTextContent(element: HTMLElement): string {
-        let text = "";
-
-        function traverse(node: Node) {
-            if (!node) {
-                return
-            }
-            if (node.nodeType === Node.TEXT_NODE) {
-                text += node.textContent?.trim() || ""; // Get text node content
-            } else if (node.nodeType === Node.ELEMENT_NODE) {
-                if (excludedTagSet.has(node.nodeName.toLowerCase())) {
-                    return;
-                }
-                // Recursively process child elements
-                for (let child of node.childNodes) {
-                    traverse(child);
-                }
-            }
-        }
-
-        traverse(element);
-        return text
-    }
-
-
-    function getTextLanguage(text: string) {
-        let lang = franc(text, { minLength: 10 })
-        if (lang == "cmn") {
-            if (isTraditionalChinese(text)) {
-                lang = 'zh-TW'
-            } else {
-                lang = 'zh-CN'
-            }
-        } else {
-            lang = iso6393To1Map.get(lang) || "und"
-        }
-        return lang
-    }
-
-    async function detectLanguage(elements: HTMLElement[]) {
-        // use franc to detect the language locally
-        let text = ""
-        // randomly select elements, max 2000 characters
-        elements = shuffle(elements)
-        let utf8Length = 0
-        for (let index = 0; index < elements.length; index++) {
-            const element = elements[index];
-            let content = getElementTextContent(element) + "\n"
-            text += content
-            utf8Length += encoder.encode(content).length
-            if (utf8Length > 2000) {
-                break
-            }
-        }
-
-        text.trimEnd()
-        let lang = 'und'
-        if (utf8Length > 500) {
-            lang = getTextLanguage(text)
-            console.log("detect language by franc: %s, text length: %d", lang, utf8Length)
-        }
-
-        if (lang != "und") {
-            return lang
-        }
-        // Empty / near-empty frame (common for ad & tracking iframes): skip the
-        // Microsoft detect round-trip — there's nothing to translate anyway, and
-        // firing a network call per junk iframe would be wasteful.
-        if (utf8Length === 0) {
-            return "und"
-        }
-        // fallback to use microsoft translate to detect the language
-        try {
-            lang = await translationServices.get(TRANSLATE_SERVICE.MICROSOFT)?.detectLanguage?.([text]) || "und"
-            console.log("detect language by microsoft translate: %s", lang)
-            return lang
-        }
-        catch {
-            return "und"
-        }
-    }
-
 
     // Only ever invoked in the top frame (the TOGGLE message case is gated).
     // After deciding translate-vs-restore from the top frame's status, fan the
@@ -1350,52 +1228,6 @@ export async function content() {
             translateAction()
             relayToSubframes(TRANSLATE_ACTION.TRANSLATE)
         }
-    }
-
-    // Builds the full stylesheet text for translation styling + bilingual
-    // highlighting from current config. Always returns a complete CSS string
-    // so the caller can swap the stylesheet atomically via replaceSync.
-    function buildTranslationCss(opts: {
-        bgColor: string
-        fontColor: string
-        borderStyle: string
-        borderColor: string
-        highlightBg: string
-        highlightFontColor: string
-        highlightStyle: string
-        highlightBorderColor: string
-        highlightSwitch: boolean
-    }): string {
-        const blocks: string[] = []
-
-        // Translation style — applied to the appended translation copy.
-        const translationDecls: string[] = []
-        if (opts.bgColor) translationDecls.push(`background-color: ${opts.bgColor};`)
-        // Nudge the font to a near-color only when it exactly matches the bg, so
-        // identical bg+font text stays visible (config is untouched).
-        const translationFont = effectiveFontColor(opts.bgColor, opts.fontColor)
-        if (translationFont) translationDecls.push(`color: ${translationFont};`)
-        const translationRule = getCSSRuleString(opts.borderStyle, opts.borderColor)
-        if (translationRule) translationDecls.push(translationRule)
-        if (translationDecls.length > 0) {
-            blocks.push(`.duo-translation { ${translationDecls.join(' ')} }`)
-        }
-
-        // Bilingual highlighting — unified across original + translation spans.
-        if (opts.highlightSwitch) {
-            const highlightDecls: string[] = []
-            if (opts.highlightBg) highlightDecls.push(`background-color: ${opts.highlightBg};`)
-            const highlightFont = effectiveFontColor(opts.highlightBg, opts.highlightFontColor)
-            if (highlightFont) highlightDecls.push(`color: ${highlightFont};`)
-            const highlightRule = getCSSRuleString(opts.highlightStyle, opts.highlightBorderColor)
-            if (highlightRule) highlightDecls.push(highlightRule)
-            if (highlightDecls.length > 0) {
-                blocks.push(
-                    `.duo-highlight-original, .duo-highlight-translation { ${highlightDecls.join(' ')} }`,
-                )
-            }
-        }
-        return blocks.join('\n')
     }
 
     async function updateStyle() {
@@ -1433,49 +1265,6 @@ export async function content() {
         // replaceSync replaces all rules atomically; far cheaper than re-parsing
         // an innerText concatenation on every drag tick from the color picker.
         translationStyleSheet.replaceSync(css)
-    }
-
-    function isNotTranslateElement(element: HTMLElement): boolean {
-        return element.classList.contains('duo-no-translate')
-    }
-
-    /**
-     * judge whether to mark the element
-     * @param element
-     */
-    function isNotMarkElement(element: HTMLElement): boolean {
-        // todo support user defined class to exclude translation
-        // todo support user defined tag to exclude
-        return element.classList.contains("duo-translation") || isExcludedNodeType(element)
-    }
-
-    /**
-     * check the element editable status, if true no need to process translation
-     * @param element
-     * @returns boolean
-     */
-    function isEditable(element: HTMLElement): boolean {
-        // Check if the element is content editable
-        if (element.isContentEditable) {
-            return true;
-        }
-
-        // Check if it's an input, textarea, or select element and not disabled or readonly
-        if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-            return !element.disabled && !element.readOnly;
-        }
-
-        if (element instanceof HTMLSelectElement) {
-            return !element.disabled;
-        }
-
-        // If none of the above, it's not editable
-        return false;
-    }
-
-    function isExcludedNodeType(node: Node): boolean {
-        let nodeName = node.nodeName.toLowerCase();
-        return excludedTagSet.has(nodeName);
     }
 
     /**
@@ -1581,17 +1370,6 @@ export async function content() {
         return collectElements;
     }
 
-    function isParagraphElement(element: HTMLElement): boolean {
-        // An element is considered a paragraph when its children contains a text node whose textContent is not empty
-        for (let i = 0; i < element.childNodes.length; i++) {
-            // /\p{Cf}/gu: Contains all zero-width characters
-            if (element.childNodes[i].nodeType === Node.TEXT_NODE && element.childNodes[i].textContent!.replace(/\p{Cf}/gu, '').trim() !== "") {
-                return true
-            }
-        }
-        return false
-    }
-
     function highlightHandler(span: HTMLElement, originalElement: HTMLElement, translatedElement: HTMLElement) {
         span.onmouseover = function () {
             let sequence = parseInt(span.getAttribute("duo-sequence")!)
@@ -1622,46 +1400,6 @@ export async function content() {
                 element.classList.remove("duo-highlight-translation")
             })
         }
-    }
-
-    function wrapTextNode2Span(textNodes: Text[], sentences: string[]): HTMLElement[] {
-        let j = 0
-        let spans: HTMLElement[] = []
-        for (let i = 0; i < sentences.length; i++) {
-            let sentence = sentences[i];
-            while (j < textNodes.length) {
-                let text = textNodes[j].textContent
-                if (!text) {
-                    continue
-                }
-                if (sentence.length >= text.length) {
-                    if (sentence.startsWith(text)) {
-                        let span = document.createElement("duo-span")
-                        span.setAttribute("duo-sequence", i.toString())
-                        textNodes[j]?.parentElement?.insertBefore(span, textNodes[j])
-                        span.appendChild(textNodes[j])
-                        spans.push(span)
-                        sentence = sentence.slice(text.length)
-                        j++
-                        ignoreMutationElements.add(span)
-                    } else {
-                        break
-                    }
-                } else {
-                    if (text.startsWith(sentence)) {
-                        textNodes[j].textContent = text.slice(sentence.length)
-                        let span = document.createElement("duo-span")
-                        span.setAttribute("duo-sequence", i.toString())
-                        span.textContent = sentence
-                        textNodes[j].parentElement?.insertBefore(span, textNodes[j])
-                        spans.push(span)
-                        ignoreMutationElements.add(span)
-                    }
-                    break
-                }
-            }
-        }
-        return spans
     }
 
     /**
@@ -1777,9 +1515,9 @@ export async function content() {
                         if (translatedSentences.length != originalSentences.length) {
                             return
                         }
-                        let spans = wrapTextNode2Span(originalTextResult.textNodes, originalSentences)
+                        let spans = wrapTextNode2Span(originalTextResult.textNodes, originalSentences, ignoreMutationElements)
 
-                        spans.push(...wrapTextNode2Span(translatedTextResult.textNodes, translatedSentences))
+                        spans.push(...wrapTextNode2Span(translatedTextResult.textNodes, translatedSentences, ignoreMutationElements))
                         for (let span of spans) {
                             highlightHandler(span, element, translatedElement)
                         }
@@ -1807,145 +1545,6 @@ export async function content() {
                 }
             })
         }
-    }
-
-    function getLastContainingTextChild(element: Node) {
-        let lastChild = element.lastChild
-        while (lastChild && !isContainsValidTextElement(lastChild)) {
-            lastChild = lastChild.previousSibling
-        }
-        return lastChild
-    }
-
-    function isContainsValidTextElement(element: Node) {
-        if (element.nodeType === Node.TEXT_NODE) {
-            return true
-        }
-        let stack = [element]
-        while (stack.length > 0) {
-            let pop = stack.pop()
-            if (!pop) continue
-            if (pop.nodeType === Node.TEXT_NODE && pop.textContent?.replace(/\p{Cf}/gu, '') != "") {
-                return true
-            }
-            if (pop.nodeType === Node.ELEMENT_NODE) {
-                let ele = pop as HTMLElement
-                if (EXCLUDE_CHILD_ELEMENT_TAGS.has(ele.tagName)) {
-                    continue
-                }
-                stack.push(...pop.childNodes)
-            }
-        }
-    }
-
-    /**
-     * Check if translate webpage
-     * @returns {boolean}
-     */
-    function isNeedsTranslate(): boolean {
-        if (!globalSwitch) {
-            return false
-        }
-        if (domainStrategy == DOMAIN_STRATEGY.NEVER) {
-            return false
-        }
-        if (domainStrategy == DOMAIN_STRATEGY.ALWAYS) {
-            return true
-        }
-        if (defaultStrategy == DEFAULT_STRATEGY.NEVER) {
-            return false
-        }
-        if (defaultStrategy == DEFAULT_STRATEGY.ALWAYS) {
-            return true
-        }
-        return targetLanguage != pageLanguage
-    }
-
-    function getTextNodesAndText(element: Node) {
-        let text = ""
-        let textNodes: Text[] = []
-        const process = function (element: Node) {
-            if (element.nodeType === Node.TEXT_NODE && element.textContent?.replace(/\p{Cf}/gu, '') != "") {
-                textNodes.push(element as Text)
-                text += element.textContent
-            }
-            if (element.nodeType === Node.ELEMENT_NODE) {
-                let ele = element as HTMLElement
-                if (EXCLUDE_CHILD_ELEMENT_TAGS.has(ele.tagName)) {
-                    return
-                }
-                let children = element.childNodes
-                for (let child of children) {
-                    process(child)
-                }
-            }
-        }
-        process(element)
-
-        return { textNodes, text }
-    }
-
-    function splitSentence(text: string | null) {
-        if (!text) {
-            return []
-        }
-        let results = split(text)
-        let sentences: string[] = []
-        let sentence = ""
-        results.forEach(result => {
-            sentence += result.raw
-            if (result.type == "Sentence") {
-                sentences.push(sentence)
-                sentence = ""
-            }
-        })
-        return sentences
-    }
-
-    function getCSSRuleString(style: string, color?: string) {
-        let cssRule = ""
-        const isBorder = style === 'solidBorder' || style === 'dottedBorder' || style === 'dashedBorder'
-        const isUnderline = !!style && style.endsWith("Line")
-        switch (style) {
-            case 'noneStyleSelect':
-                cssRule = 'border: none;'
-                break;
-            case 'solidBorder':
-                cssRule = 'border: 2px solid;'
-                break
-            case 'dottedBorder':
-                cssRule = 'border: 2px dotted;'
-                break
-            case 'dashedBorder':
-                cssRule = 'border: 2px dashed;'
-                break;
-            case "wavyLine":
-                cssRule = 'text-decoration: wavy underline;'
-                break;
-            case "doubleLine":
-                cssRule = 'text-decoration: underline double;'
-                break;
-            case "underLine":
-                cssRule = 'text-decoration: underline;'
-                break;
-            case "dottedLine":
-                cssRule = 'text-decoration: underline dotted;'
-                break;
-            case "dashedLine":
-                cssRule = 'text-decoration: underline dashed;'
-                break;
-        }
-        if (color) {
-            if (isBorder) {
-                cssRule += `border-color: ${color};`
-            } else if (isUnderline) {
-                cssRule += `text-decoration-color: ${color};`
-            }
-        }
-        if (isUnderline) {
-            cssRule += `text-underline-offset: 4px;`
-        }
-        return cssRule
     }
 
 }
