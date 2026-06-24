@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Duo Translator e2e — iframe host</title>
+</head>
+<body>
+    <h1>Top frame heading for the iframe test</h1>
+    <p id="top">This paragraph lives in the top frame and should be translated.</p>
+    <!-- Same-origin child frame so the content script (all_frames) injects and
+         resolves the top-domain strategy consistently. -->
+    <iframe id="child" src="frame-child.html" width="600" height="300"></iframe>
+</body>
+</html>

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Duo Translator e2e — dynamic content</title>
+</head>
+<body>
+    <h1>Dynamic content test</h1>
+    <p id="static">This paragraph is present at initial load time.</p>
+    <div id="host"></div>
+    <script>
+        // Inject a new paragraph after load to exercise the MutationObserver
+        // path of the content script.
+        setTimeout(() => {
+            const p = document.createElement('p');
+            p.id = 'injected';
+            p.textContent = 'This paragraph was injected dynamically after the page loaded.';
+            document.getElementById('host').appendChild(p);
+        }, 1000);
+    </script>
+</body>
+</html>
