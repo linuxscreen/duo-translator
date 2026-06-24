@@ -242,6 +242,9 @@ export enum CONFIG_KEY {
     FLOAT_BALL_SWITCH = 'floatBallSwitch',
     CONTEXT_MENU_SWITCH = 'contextMenuSwitch',
     DISABLED_TRANSLATE_SERVICES = 'disabledTranslateServices',
+    // When true, the one-time hint shown on entering "Set no-translate area"
+    // (rule mode) is suppressed — the user checked "don't remind me again".
+    RULE_MODE_HINT_HIDDEN = 'ruleModeHintHidden',
     // AI Writing
     AI_WRITING_SWITCH = 'aiWritingDotSwitch',
     AI_PROVIDERS = 'aiProviders',

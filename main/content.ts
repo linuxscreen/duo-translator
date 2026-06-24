@@ -10,6 +10,7 @@ import { openWorkbench, ensureWorkbenchMounted, destroyWorkbench } from "./aiWri
 import { openSelectionTranslate } from "./aiWriting/selectionPopup";
 import { getConfig, listRuleFromDB } from "@/utils/db";
 import { createRuleMode, type RuleModeController } from "./ruleMode";
+import { confirmRuleModeHint } from "./ruleHintDialog";
 import { detectLanguage, getElementTextContent } from "@/main/lang";
 import { parseTranslateServiceKey, startTranslate, TranslateServiceChoice } from "./aiWriting/translateRunner";
 import { applyTextToTarget } from "./aiWriting/applyText";
@@ -313,6 +314,9 @@ export async function content() {
                 // Rule-selection mode (picking elements to exclude) is a
                 // top-frame interaction; don't activate it inside iframes.
                 if (!isTopFrame) break
+                // Show the one-time entry hint first (unless suppressed); only
+                // enter rule mode after the user confirms.
+                await confirmRuleModeHint()
                 await ruleMode.activeSelectInteraction()
                 break
             case ACTION.LEAVE_SELECTION_MODE:

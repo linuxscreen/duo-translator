@@ -233,10 +233,12 @@ export default function App() {
     window.close();
   };
 
-  const enterSelectionMode = async () => {
+  const enterSelectionMode = () => {
     setMoreOpen(false);
-    await sendMessageToTab({ action: ACTION.TOGGLE_SELECTION_MODE });
-    // Close the popup so the user can interact with the page to pick regions.
+    // Fire-and-forget: the content handler now awaits a confirmation dialog, so
+    // awaiting here would keep the popup open until the user confirms. Close it
+    // immediately so the dialog shows on the (unobstructed) page.
+    void sendMessageToTab({ action: ACTION.TOGGLE_SELECTION_MODE });
     window.close();
   };
 
