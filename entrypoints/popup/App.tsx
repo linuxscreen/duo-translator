@@ -238,7 +238,7 @@ export default function App() {
     // Fire-and-forget: the content handler now awaits a confirmation dialog, so
     // awaiting here would keep the popup open until the user confirms. Close it
     // immediately so the dialog shows on the (unobstructed) page.
-    void sendMessageToTab({ action: ACTION.TOGGLE_SELECTION_MODE });
+    void sendMessageToTab({ action: ACTION.ENTER_SELECTION_MODE });
     window.close();
   };
 

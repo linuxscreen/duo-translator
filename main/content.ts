@@ -22,90 +22,8 @@ import { needsTranslate } from "@/main/strategy";
 import { isEditable, isNotMarkElement, isNotTranslateElement, isParagraphElement } from "@/main/dom/predicates";
 import { getLastContainingTextChild, getTextNodesAndText, removeDuoClassAndAttribute, removeTextNodes } from "@/main/dom/textNodes";
 
-/**
- * Resolve the TOP document's domain from within a sub-frame. The dot's
- * per-domain disable must key off the page the user actually sees (the address
- * bar), not the iframe's own origin — otherwise "disable on this site" written
- * against the top domain would never match an iframe-mounted dot.
- *
- * `location.ancestorOrigins` is ordered parent→top and is readable even across
- * origins in Chromium, so its last entry is the top document's origin. Falls
- * back to a guarded same-origin `window.top.location` read, then to the
- * iframe's own domain if nothing else is available.
- */
-function getTopFrameDomain(): string {
-    const origins = window.location.ancestorOrigins;
-    if (origins && origins.length > 0) {
-        const topOrigin = origins[origins.length - 1];
-        if (topOrigin && topOrigin !== "null") {
-            const d = getDomainWithPortFromUrl(topOrigin);
-            if (d !== "") return d;
-        }
-    }
-    try {
-        const href = window.top?.location?.href;
-        if (href) {
-            const d = getDomainWithPortFromUrl(href);
-            if (d !== "") return d;
-        }
-    } catch { /* cross-origin top — not reachable, fall through */ }
-    return getDomainWithPortFromUrl(window.location.href);
-}
-
-/**
- * Bring up the AI Writing dot inside a sub-frame. The dot MUST live in the
- * iframe's own document: focus events don't cross frame boundaries and
- * `position: fixed` resolves against the iframe viewport, so a top-frame dot
- * could never anchor to an input that lives in the iframe.
- *
- * Mounting is deferred until a real text field in this frame is focused —
- * eagerly spinning up a React root + workbench in every ad/tracking iframe
- * would be pure waste. `mountAiWritingDot` itself re-checks the global switch
- * and per-domain disable (keyed off the TOP domain), so all gating still holds.
- */
-function initAiWritingDotInFrame(): () => void {
-    const domain = getTopFrameDomain();
-    if (domain === "") return () => { };
-    let mounted = false;
-    let disposed = false;
-    let unmount: (() => void) | null = null;
-    const tryMount = (el: Element | null) => {
-        if (mounted || disposed || !isAiWritingTarget(el)) return;
-        mounted = true;
-        document.removeEventListener("focusin", onFocusIn, true);
-        mountAiWritingDot({ domain })
-            .then((teardown) => {
-                // Unloaded while the async mount was in flight — undo it.
-                if (disposed) { teardown(); return; }
-                unmount = teardown;
-            })
-            .catch((err) =>
-                console.warn(APP_NAME_WITH_SUFFIX, "mountAiWritingDot (iframe) failed", err),
-            );
-    };
-    const onFocusIn = (e: FocusEvent) => tryMount(e.target as Element | null);
-    document.addEventListener("focusin", onFocusIn, true);
-    // Seed: the field may already be focused (e.g. an autofocused iframe editor).
-    tryMount(document.activeElement);
-    // Disposer: drop the pending focus listener and unmount if already up.
-    return () => {
-        disposed = true;
-        document.removeEventListener("focusin", onFocusIn, true);
-        unmount?.();
-        unmount = null;
-    };
-}
-
-export const shareConfig: {
-    aiTranslateServiceChoice: TranslateServiceChoice,
-    aiTargetLanguage: string,
-    rules: string[]
-} = {
-    aiTranslateServiceChoice: { kind: 'trans', service: DEFAULT_VALUE.AI_TRANSLATE_SERVICE },
-    aiTargetLanguage: DEFAULT_VALUE.AI_TARGET_LANGUAGE, rules: []
-};
-
 export async function content() {
+    //#region main
     console.log('content script loaded');
 
     // The script runs in all frames. The translation pipeline runs in every
@@ -264,13 +182,13 @@ export async function content() {
     if (globalSwitch) {
         await init()
     }
+    //#endregion
 
     // console.debug("get config:", "ruleStrategy: ", ruleStrategy, "viewStrategy: ", viewStrategy,
     //     "targetLanguage: ", targetLanguage, "translateService: ", translateService, "globalSwitch: ",
     //     globalSwitch, "defaultStrategy: ", defaultStrategy, "domainStrategy: ", domainStrategy)
 
-    // ===============================  message listener start  ===================================
-
+    //#region message listener
     // Accept messages from popups, process the task
     browser.runtime.onMessage.addListener(async (message, sender, sendResponse: (t: any) => void) => {
         if (!message) return
@@ -310,7 +228,7 @@ export async function content() {
                 openWorkbench({ text: seedText, targetEl: active ?? null })
                 break
             }
-            case ACTION.TOGGLE_SELECTION_MODE:
+            case ACTION.ENTER_SELECTION_MODE:
                 // Rule-selection mode (picking elements to exclude) is a
                 // top-frame interaction; don't activate it inside iframes.
                 if (!isTopFrame) break
@@ -377,10 +295,9 @@ export async function content() {
                 break
         }
     });
+    //#endregion
 
-    // ===============================  message listener end  =====================================
-
-    // event listeners
+    //#region event listeners
     document.addEventListener('mousemove', e => { lastX = e.clientX; lastY = e.clientY; }, { passive: true });
 
     // add 'Translate/Restore this paragraph' menu when mouse is over the text of
@@ -427,7 +344,9 @@ export async function content() {
             lastEditableElement = target
         }
     })
+    //#endregion
 
+    //#region functions
     async function onConfigChanged(key: string, value: any, activeFlag: boolean) {
         switch (key) {
             case CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS:
@@ -1550,5 +1469,91 @@ export async function content() {
             })
         }
     }
+    //#endregion
 
 }
+
+//#region outer
+export const shareConfig: {
+    aiTranslateServiceChoice: TranslateServiceChoice,
+    aiTargetLanguage: string,
+    rules: string[]
+} = {
+    aiTranslateServiceChoice: { kind: 'trans', service: DEFAULT_VALUE.AI_TRANSLATE_SERVICE },
+    aiTargetLanguage: DEFAULT_VALUE.AI_TARGET_LANGUAGE, rules: []
+};
+
+/**
+ * Resolve the TOP document's domain from within a sub-frame. The dot's
+ * per-domain disable must key off the page the user actually sees (the address
+ * bar), not the iframe's own origin — otherwise "disable on this site" written
+ * against the top domain would never match an iframe-mounted dot.
+ *
+ * `location.ancestorOrigins` is ordered parent→top and is readable even across
+ * origins in Chromium, so its last entry is the top document's origin. Falls
+ * back to a guarded same-origin `window.top.location` read, then to the
+ * iframe's own domain if nothing else is available.
+ */
+function getTopFrameDomain(): string {
+    const origins = window.location.ancestorOrigins;
+    if (origins && origins.length > 0) {
+        const topOrigin = origins[origins.length - 1];
+        if (topOrigin && topOrigin !== "null") {
+            const d = getDomainWithPortFromUrl(topOrigin);
+            if (d !== "") return d;
+        }
+    }
+    try {
+        const href = window.top?.location?.href;
+        if (href) {
+            const d = getDomainWithPortFromUrl(href);
+            if (d !== "") return d;
+        }
+    } catch { /* cross-origin top — not reachable, fall through */ }
+    return getDomainWithPortFromUrl(window.location.href);
+}
+
+/**
+ * Bring up the AI Writing dot inside a sub-frame. The dot MUST live in the
+ * iframe's own document: focus events don't cross frame boundaries and
+ * `position: fixed` resolves against the iframe viewport, so a top-frame dot
+ * could never anchor to an input that lives in the iframe.
+ *
+ * Mounting is deferred until a real text field in this frame is focused —
+ * eagerly spinning up a React root + workbench in every ad/tracking iframe
+ * would be pure waste. `mountAiWritingDot` itself re-checks the global switch
+ * and per-domain disable (keyed off the TOP domain), so all gating still holds.
+ */
+function initAiWritingDotInFrame(): () => void {
+    const domain = getTopFrameDomain();
+    if (domain === "") return () => { };
+    let mounted = false;
+    let disposed = false;
+    let unmount: (() => void) | null = null;
+    const tryMount = (el: Element | null) => {
+        if (mounted || disposed || !isAiWritingTarget(el)) return;
+        mounted = true;
+        document.removeEventListener("focusin", onFocusIn, true);
+        mountAiWritingDot({ domain })
+            .then((teardown) => {
+                // Unloaded while the async mount was in flight — undo it.
+                if (disposed) { teardown(); return; }
+                unmount = teardown;
+            })
+            .catch((err) =>
+                console.warn(APP_NAME_WITH_SUFFIX, "mountAiWritingDot (iframe) failed", err),
+            );
+    };
+    const onFocusIn = (e: FocusEvent) => tryMount(e.target as Element | null);
+    document.addEventListener("focusin", onFocusIn, true);
+    // Seed: the field may already be focused (e.g. an autofocused iframe editor).
+    tryMount(document.activeElement);
+    // Disposer: drop the pending focus listener and unmount if already up.
+    return () => {
+        disposed = true;
+        document.removeEventListener("focusin", onFocusIn, true);
+        unmount?.();
+        unmount = null;
+    };
+}
+//#endregion

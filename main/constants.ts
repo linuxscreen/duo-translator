@@ -154,7 +154,7 @@ export enum ACTION {
     TRANSLATE_HTML = 'translateHtml',
     STYLE_CHANGED = 'styleChanged',
     DOMAIN_STRATEGY_CHANGED = 'domainStrategyChanged',
-    TOGGLE_SELECTION_MODE = 'toggleSelectionMode',
+    ENTER_SELECTION_MODE = 'enterSelectionMode',
     LEAVE_SELECTION_MODE = 'leaveSelectionMode',
     AI_OPEN_WORKBENCH = 'aiOpenWorkbench',
     AI_PROVIDER_TEST = 'aiProviderTest',

@@ -140,7 +140,13 @@ export const configRepo = {
         }
         return value;
     },
-
+    async getT<T>(name: string) : Promise<T> {
+        const value = await storage.getItem<T>(configKey(name))
+        if (value === null) {
+            return defaultForConfig(name) as T;
+        }
+        return value
+    },
     async set(name: string, value: unknown): Promise<void> {
         await storage.setItem(configKey(name), value);
         await touchKey(dataConfigKey(name));

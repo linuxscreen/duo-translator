@@ -48,51 +48,29 @@ import { registerAutoSyncListeners, startAutoSync, applyAutoSyncConfig } from "@
 import { getWebdavConfig, type WebDavCredentials } from "@/main/storage/sync/webdavProvider";
 import { sendMessageToTab } from "@/utils/message";
 
-// Module-top: react to install/update events. `update` triggers the one-shot
-// PouchDB → chrome.storage.local migration. `install` skips it (no legacy data).
-// MV3 SW can be killed mid-listener, so background() also fires a safety-net
-// tail call on every boot.
-browser.runtime.onInstalled.addListener(({ reason }) => {
-    if (reason === 'update') {
-        void migrateFromPouchIfNeeded({ trigger: 'onInstalled' });
-    } else if (reason === 'install') {
-        // Fresh install — still mark the migration done so the startup tail
-        // doesn't try to open PouchDB on every boot.
-        void migrateFromPouchIfNeeded({ trigger: 'onInstalled' });
-    }
-});
-
-// In-extension locale tables for strings the background needs to render itself
-// (currently the context menu title). Chrome's chrome.i18n.getMessage is locked
-// to the browser UI language at install time, so for a user-overridable UI
-// language we have to do the lookup ourselves.
-const LOCALES: Record<InterfaceLang, Record<string, string>> = {
-    en: enLocale as Record<string, string>,
-    'zh-CN': zhCNLocale as Record<string, string>,
-};
-const SEPARATOR_TAG = "<sep/>"
-const CONTEXT_MENU_TRANSLATE_TITLE = 'contextMenuTranslate'
-const CONTEXT_MENU_RESTORE_TITLE = 'contextMenuRestore'
-const CONTEXT_MENU_TRANSLATE_PARA_TITLE = 'contextMenuTranslatePara'
-const CONTEXT_MENU_RESTORE_PARA_TITLE = 'contextMenuRestorePara'
-const CONTEXT_MENU_TRANSLATE_INPUT_BOX_TITLE = 'contextMenuTranslateInputBox'
-const CONTEXT_MENU_TRANSLATE_SELECTION_TITLE = 'contextMenuTranslateSelection'
-
-
 export async function background() {
+    //#region main
     console.log("background loaded")
     const mutex = new Mutex();
     let translateStatus = false
     let paraTranslateStatus = false
     let paraContextMenuShowStatus = false
 
-    let contextMenuSwitch: boolean = DEFAULT_VALUE.CONTEXT_MENU_SWITCH
-    let contextMenuSwitchConfig = await configRepo.get(CONFIG_KEY.CONTEXT_MENU_SWITCH)
-    if (contextMenuSwitchConfig !== undefined) {
-        contextMenuSwitch = contextMenuSwitchConfig as boolean
-    }
+    let [contextMenuSwitch, interfaceLang, globalSwitch] = await Promise.all([
+        configRepo.getT<boolean>(CONFIG_KEY.CONTEXT_MENU_SWITCH),
+        configRepo.get(CONFIG_KEY.INTERFACE_LANGUAGE),
+        configRepo.getT<boolean>(CONFIG_KEY.GLOBAL_SWITCH)
+    ])
 
-    let currentInterfaceLang = normalizeInterfaceLang(await configRepo.get(CONFIG_KEY.INTERFACE_LANGUAGE)) || detectDefaultInterfaceLang()
+    let currentInterfaceLang = normalizeInterfaceLang(interfaceLang) || detectDefaultInterfaceLang()
+    const getMsg = (key: string) => LOCALES[currentInterfaceLang][key] ?? key
+
+    if (globalSwitch) {
+        initShortcutKey()
+        if (contextMenuSwitch) {
+            initContextMenu()
+        }
+    }
 
     // Register auto-sync alarm/storage listeners synchronously at SW startup so
     // an alarm that wakes the worker is always caught.
@@ -106,8 +84,9 @@ export async function background() {
         void startAutoSync();
         initTokenMap();
     });
-    const getMsg = (key: string) => LOCALES[currentInterfaceLang][key] ?? key
+    //#endregion
 
+    //#region message listener
     browser.runtime.onMessage.addListener((message, sender, sendResponse: (t: any) => void) => {
         // messages are received to manipulate the db database
         function errorResponse(e: any) {
@@ -734,217 +713,9 @@ export async function background() {
         }
         return
     });
+    //#endregion
 
-    async function onConfigChanged(key: string, value: any) {
-        switch (key) {
-            case CONFIG_KEY.GLOBAL_SWITCH:
-                console.log('global switch changed', value)
-                let globalSwitch = value
-                if (typeof globalSwitch === 'boolean') {
-                    if (globalSwitch) {
-                        initContextMenu()
-                        initShortcutKey()
-                    } else {
-                        removeContextMenu()
-                        removeShortcutKey()
-                    }
-                }
-                break
-            case CONFIG_KEY.CONTEXT_MENU_SWITCH:
-                console.log('contextMenuSwitch changed: ', value)
-                if (typeof value !== 'boolean') return
-                contextMenuSwitch = value
-                if (contextMenuSwitch) {
-                    rebuildContextMenus()
-                } else {
-                    browser.contextMenus.removeAll()
-                }
-                break
-            default:
-                break
-        }
-    }
-
-    // add context menu to translate page
-    configRepo.get(CONFIG_KEY.CONTEXT_MENU_SWITCH).then((value) => {
-        console.log("contextMenuSwitch", value);
-        let contextMenuSwitch = value === undefined ? true : value
-        // judge global switch
-        configRepo.get(CONFIG_KEY.GLOBAL_SWITCH).then((globalSwitch) => {
-            globalSwitch = globalSwitch === undefined ? true : globalSwitch
-            if (contextMenuSwitch && globalSwitch) {
-                console.log('initContextMenu')
-                initContextMenu()
-            }
-            if (globalSwitch) {
-                initShortcutKey()
-            }
-        })
-    })
-
-    let contextMenuClickLister = (info: Browser.contextMenus.OnClickData, tab: Browser.tabs.Tab | undefined): void => {
-        console.log('contextMenus.onClicked', info, tab, translateStatus)
-        if (!tab || !tab.id) {
-            return
-        }
-        switch (info.menuItemId) {
-            case CONTEXT_MENU.TRANSLATE_RESTORE_PAGE:
-                if (!translateStatus) {
-                    browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE });
-                } else {
-                    browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.SHOW_ORIGINAL });
-                }
-                break
-            case CONTEXT_MENU.TRANSLATE_INPUT_BOX:
-                browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_INPUT_BOX });
-                break
-            case CONTEXT_MENU.TRANSLATE_RESTORE_PARA:
-                console.log('translatePara', info, tab)
-                let act = paraTranslateStatus ? TRANSLATE_ACTION.SHOW_ORIGINAL_PARA : TRANSLATE_ACTION.TRANSLATE_PARA
-                browser.tabs.sendMessage(tab.id, { action: act });
-                break
-            case CONTEXT_MENU.TRANSLATE_SELECTION:
-                browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_SELECTION, data: info.selectionText });
-                break
-        }
-
-    }
-
-    async function tabsActivatedListener(activeInfo: Browser.tabs.OnActivatedInfo) {
-        // only process http or https url
-        let tab = await browser.tabs.get(activeInfo.tabId)
-        if (!tab?.url?.startsWith('http')) {
-            return
-        }
-        console.log('tabs.onActivated', activeInfo)
-        // get current tab translate status
-        let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + activeInfo.tabId
-        browser.storage.session.get(tabTranslateStatusKey).then((value) => {
-            translateStatus = !!value[tabTranslateStatusKey]
-            if (!contextMenuSwitch) return
-            updateContextMenu(translateStatus)
-        })
-    }
-
-    function initContextMenu() {
-        addAllContextMenus()
-
-        browser.contextMenus.onClicked.addListener(contextMenuClickLister)
-        // Listen for tab activation events
-        browser.tabs.onActivated.addListener(tabsActivatedListener);
-    }
-
-    function rebuildContextMenus() {
-        paraContextMenuShowStatus = false
-        addAllContextMenus()
-    }
-
-    function addAllContextMenus() {
-        let t: string = translateStatus ? CONTEXT_MENU_RESTORE_TITLE : CONTEXT_MENU_TRANSLATE_TITLE
-        browser.contextMenus.removeAll()
-        browser.contextMenus.create({
-            id: CONTEXT_MENU.TRANSLATE_RESTORE_PAGE,
-            title: getMsg(t),
-            contexts: ["page"] //"selection"
-        });
-        browser.contextMenus.create({
-            id: CONTEXT_MENU.TRANSLATE_INPUT_BOX,
-            title: getMsg(CONTEXT_MENU_TRANSLATE_INPUT_BOX_TITLE),
-            contexts: ["editable"]
-        });
-        browser.contextMenus.create({
-            id: CONTEXT_MENU.TRANSLATE_SELECTION,
-            title: getMsg(CONTEXT_MENU_TRANSLATE_SELECTION_TITLE),
-            contexts: ["selection"]
-        });
-    }
-
-    function removeContextMenu() {
-        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
-        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
-        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_SELECTION)
-        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_INPUT_BOX)
-        browser.contextMenus.onClicked.removeListener(contextMenuClickLister)
-        browser.tabs.onActivated.removeListener(tabsActivatedListener)
-    }
-
-    let shortcutKeyListener = (command: string) => {
-        let action = ""
-        if (command === 'shortcut-toggle') {
-            // send message to current tab, toggle translate status
-            action = TRANSLATE_ACTION.TOGGLE
-        } else if (command === 'shortcut-translate') {
-            // send message to current tab, toggle translate status
-            action = TRANSLATE_ACTION.TRANSLATE
-        } else if (command === 'shortcut-restore') {
-            // send message to current tab, restore page
-            action = TRANSLATE_ACTION.SHOW_ORIGINAL
-        } else if (command === 'shortcut-ai-workbench') {
-            action = ACTION.AI_OPEN_WORKBENCH
-        } else if (command === 'shortcut-translate-restore-paragraph') {
-            action = TRANSLATE_ACTION.TOGGLE_TRANSLATE_PARA
-        } else if (command === 'shortcut-translate-selection-input') {
-            action = TRANSLATE_ACTION.TRANSLATE_SELECTION_INPUT_BOX
-        }
-        if (!action) return
-        browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
-            if (tabs.length === 0) {
-                return
-            }
-            let tab = tabs[0]
-            if (!tab.id) {
-                return
-            }
-            browser.tabs.sendMessage(tab.id, { action: action });
-        });
-    }
-
-    function initShortcutKey() {
-        // process shortcut key command
-        browser.commands.onCommand.addListener(shortcutKeyListener);
-    }
-
-    function removeShortcutKey() {
-        browser.commands.onCommand.removeListener(shortcutKeyListener)
-    }
-
-    function updateContextMenu(status: boolean) {
-        console.log('updateContextMenu', status)
-        if (paraContextMenuShowStatus) return
-
-        browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {
-            title: translateStatus ? getMsg(CONTEXT_MENU_RESTORE_TITLE) : getMsg(CONTEXT_MENU_TRANSLATE_TITLE),
-        })
-    }
-
-    async function getMicrosoftToken(): Promise<Token> {
-        const release = await mutex.acquire(); // Acquire the lock
-        try {
-            let tokenFromDB = (await configRepo.get(CONFIG_KEY.MICROSOFT_TOKEN)) as Token | null
-            // if token is null or "" and token is expired, get token from server
-            console.debug("getMicrosoftToken tokenFromDB", tokenFromDB)
-            if (tokenFromDB == null || tokenFromDB.token == "" || (tokenFromDB.expireTime || 0) < Date.now()) {
-                let token = await fetch(tokenUrl).then(response => response.text());
-                // save token to db
-                let freshToken = new Token(token, Date.now() + 10 * 60 * 1000)
-                await configRepo.set(CONFIG_KEY.MICROSOFT_TOKEN, freshToken)
-                return freshToken
-            }
-            return tokenFromDB
-        } catch (e) {
-            console.error(APP_NAME_WITH_SUFFIX, "getMicrosoftToken error", e)
-            return new Token("", 0)
-        } finally {
-            release();
-        }
-
-    }
-
-    async function initTokenMap() {
-        let token = await getMicrosoftToken()
-        serviceTokenMap.set(TRANSLATE_SERVICE.MICROSOFT, token)
-    }
-
+    //#region other listeners
     // -----------------------------------------------------------------
     // Page translation via AI: port-based so the content script can abort
     // the in-flight fetch by disconnecting. One request per port — the
@@ -1049,7 +820,235 @@ export async function background() {
             }
         });
     });
+    //#endregion
+
+    //#region functions
+    function contextMenuClickLister(info: Browser.contextMenus.OnClickData, tab: Browser.tabs.Tab | undefined): void {
+        console.log('contextMenus.onClicked', info, tab, translateStatus)
+        if (!tab || !tab.id) {
+            return
+        }
+        switch (info.menuItemId) {
+            case CONTEXT_MENU.TRANSLATE_RESTORE_PAGE:
+                if (!translateStatus) {
+                    browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE });
+                } else {
+                    browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.SHOW_ORIGINAL });
+                }
+                break
+            case CONTEXT_MENU.TRANSLATE_INPUT_BOX:
+                browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_INPUT_BOX });
+                break
+            case CONTEXT_MENU.TRANSLATE_RESTORE_PARA:
+                console.log('translatePara', info, tab)
+                let act = paraTranslateStatus ? TRANSLATE_ACTION.SHOW_ORIGINAL_PARA : TRANSLATE_ACTION.TRANSLATE_PARA
+                browser.tabs.sendMessage(tab.id, { action: act });
+                break
+            case CONTEXT_MENU.TRANSLATE_SELECTION:
+                browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_SELECTION, data: info.selectionText });
+                break
+        }
+
+    }
+
+    async function onConfigChanged(key: string, value: any) {
+        switch (key) {
+            case CONFIG_KEY.GLOBAL_SWITCH:
+                console.log('global switch changed', value)
+                let globalSwitch = value
+                if (typeof globalSwitch === 'boolean') {
+                    if (globalSwitch) {
+                        initContextMenu()
+                        initShortcutKey()
+                    } else {
+                        removeContextMenu()
+                        removeShortcutKey()
+                    }
+                }
+                break
+            case CONFIG_KEY.CONTEXT_MENU_SWITCH:
+                console.log('contextMenuSwitch changed: ', value)
+                if (typeof value !== 'boolean') return
+                contextMenuSwitch = value
+                if (contextMenuSwitch) {
+                    rebuildContextMenus()
+                } else {
+                    browser.contextMenus.removeAll()
+                }
+                break
+            default:
+                break
+        }
+    }
+
+    async function tabsActivatedListener(activeInfo: Browser.tabs.OnActivatedInfo) {
+        // only process http or https url
+        let tab = await browser.tabs.get(activeInfo.tabId)
+        if (!tab?.url?.startsWith('http')) {
+            return
+        }
+        console.log('tabs.onActivated', activeInfo)
+        // get current tab translate status
+        let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + activeInfo.tabId
+        browser.storage.session.get(tabTranslateStatusKey).then((value) => {
+            translateStatus = !!value[tabTranslateStatusKey]
+            if (!contextMenuSwitch) return
+            updateContextMenu(translateStatus)
+        })
+    }
+
+    function initContextMenu() {
+        addAllContextMenus()
+
+        browser.contextMenus.onClicked.addListener(contextMenuClickLister)
+        // Listen for tab activation events
+        browser.tabs.onActivated.addListener(tabsActivatedListener);
+    }
+
+    function rebuildContextMenus() {
+        paraContextMenuShowStatus = false
+        addAllContextMenus()
+    }
+
+    function addAllContextMenus() {
+        let t: string = translateStatus ? CONTEXT_MENU_RESTORE_TITLE : CONTEXT_MENU_TRANSLATE_TITLE
+        browser.contextMenus.removeAll()
+        browser.contextMenus.create({
+            id: CONTEXT_MENU.TRANSLATE_RESTORE_PAGE,
+            title: getMsg(t),
+            contexts: ["page"] //"selection"
+        });
+        browser.contextMenus.create({
+            id: CONTEXT_MENU.TRANSLATE_INPUT_BOX,
+            title: getMsg(CONTEXT_MENU_TRANSLATE_INPUT_BOX_TITLE),
+            contexts: ["editable"]
+        });
+        browser.contextMenus.create({
+            id: CONTEXT_MENU.TRANSLATE_SELECTION,
+            title: getMsg(CONTEXT_MENU_TRANSLATE_SELECTION_TITLE),
+            contexts: ["selection"]
+        });
+    }
+
+    function removeContextMenu() {
+        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
+        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
+        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_SELECTION)
+        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_INPUT_BOX)
+        browser.contextMenus.onClicked.removeListener(contextMenuClickLister)
+        browser.tabs.onActivated.removeListener(tabsActivatedListener)
+    }
+
+    function shortcutKeyListener(command: string) {
+        let action = ""
+        if (command === 'shortcut-toggle') {
+            // send message to current tab, toggle translate status
+            action = TRANSLATE_ACTION.TOGGLE
+        } else if (command === 'shortcut-translate') {
+            // send message to current tab, toggle translate status
+            action = TRANSLATE_ACTION.TRANSLATE
+        } else if (command === 'shortcut-restore') {
+            // send message to current tab, restore page
+            action = TRANSLATE_ACTION.SHOW_ORIGINAL
+        } else if (command === 'shortcut-ai-workbench') {
+            action = ACTION.AI_OPEN_WORKBENCH
+        } else if (command === 'shortcut-translate-restore-paragraph') {
+            action = TRANSLATE_ACTION.TOGGLE_TRANSLATE_PARA
+        } else if (command === 'shortcut-translate-selection-input') {
+            action = TRANSLATE_ACTION.TRANSLATE_SELECTION_INPUT_BOX
+        }
+        if (!action) return
+        browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
+            if (tabs.length === 0) {
+                return
+            }
+            let tab = tabs[0]
+            if (!tab.id) {
+                return
+            }
+            browser.tabs.sendMessage(tab.id, { action: action });
+        });
+    }
+
+    function initShortcutKey() {
+        // process shortcut key command
+        browser.commands.onCommand.addListener(shortcutKeyListener);
+    }
+
+    function removeShortcutKey() {
+        browser.commands.onCommand.removeListener(shortcutKeyListener)
+    }
+
+    function updateContextMenu(status: boolean) {
+        console.log('updateContextMenu', status)
+        if (paraContextMenuShowStatus) return
+
+        browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {
+            title: translateStatus ? getMsg(CONTEXT_MENU_RESTORE_TITLE) : getMsg(CONTEXT_MENU_TRANSLATE_TITLE),
+        })
+    }
+
+    async function getMicrosoftToken(): Promise<Token> {
+        const release = await mutex.acquire(); // Acquire the lock
+        try {
+            let tokenFromDB = (await configRepo.get(CONFIG_KEY.MICROSOFT_TOKEN)) as Token | null
+            // if token is null or "" and token is expired, get token from server
+            console.debug("getMicrosoftToken tokenFromDB", tokenFromDB)
+            if (tokenFromDB == null || tokenFromDB.token == "" || (tokenFromDB.expireTime || 0) < Date.now()) {
+                let token = await fetch(tokenUrl).then(response => response.text());
+                // save token to db
+                let freshToken = new Token(token, Date.now() + 10 * 60 * 1000)
+                await configRepo.set(CONFIG_KEY.MICROSOFT_TOKEN, freshToken)
+                return freshToken
+            }
+            return tokenFromDB
+        } catch (e) {
+            console.error(APP_NAME_WITH_SUFFIX, "getMicrosoftToken error", e)
+            return new Token("", 0)
+        } finally {
+            release();
+        }
+
+    }
+
+    async function initTokenMap() {
+        let token = await getMicrosoftToken()
+        serviceTokenMap.set(TRANSLATE_SERVICE.MICROSOFT, token)
+    }
+    //#endregion
 }
+
+//#region outer
+// Module-top: react to install/update events. `update` triggers the one-shot
+// PouchDB → chrome.storage.local migration. `install` skips it (no legacy data).
+// MV3 SW can be killed mid-listener, so background() also fires a safety-net
+// tail call on every boot.
+browser.runtime.onInstalled.addListener(({ reason }) => {
+    if (reason === 'update') {
+        void migrateFromPouchIfNeeded({ trigger: 'onInstalled' });
+    } else if (reason === 'install') {
+        // Fresh install — still mark the migration done so the startup tail
+        // doesn't try to open PouchDB on every boot.
+        void migrateFromPouchIfNeeded({ trigger: 'onInstalled' });
+    }
+});
+
+// In-extension locale tables for strings the background needs to render itself
+// (currently the context menu title). Chrome's chrome.i18n.getMessage is locked
+// to the browser UI language at install time, so for a user-overridable UI
+// language we have to do the lookup ourselves.
+const LOCALES: Record<InterfaceLang, Record<string, string>> = {
+    en: enLocale as Record<string, string>,
+    'zh-CN': zhCNLocale as Record<string, string>,
+};
+
+const SEPARATOR_TAG = "<sep/>"
+const CONTEXT_MENU_TRANSLATE_TITLE = 'contextMenuTranslate'
+const CONTEXT_MENU_RESTORE_TITLE = 'contextMenuRestore'
+const CONTEXT_MENU_TRANSLATE_PARA_TITLE = 'contextMenuTranslatePara'
+const CONTEXT_MENU_RESTORE_PARA_TITLE = 'contextMenuRestorePara'
+const CONTEXT_MENU_TRANSLATE_INPUT_BOX_TITLE = 'contextMenuTranslateInputBox'
+const CONTEXT_MENU_TRANSLATE_SELECTION_TITLE = 'contextMenuTranslateSelection'
 
 // In-flight AbortControllers for one-shot AI_TRANSLATE_TEXT requests, keyed by
 // the content-supplied requestId. AI_TRANSLATE_ABORT looks one up to cancel the
@@ -1185,3 +1184,4 @@ enum CONTEXT_MENU {
     TRANSLATE_INPUT_BOX = 'translateInputBox',
     TRANSLATE_SELECTION = 'translateSelection'
 }
+//#endregion

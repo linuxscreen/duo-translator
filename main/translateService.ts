@@ -5,6 +5,7 @@ import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
 import { browser } from "wxt/browser";
 import { isTraditionalChinese } from "@/utils/language";
 
+//#region types
 // ---------------------------------------------------------------------------
 // Domain types
 // ---------------------------------------------------------------------------
@@ -96,42 +97,9 @@ export class TagReplacer {
         });
     }
 }
+//#endregion
 
-export function convertAToBTags(html: string): string {
-    if (html === "") return "";
-    let result = html.replace(/<a\s+i=(\d+)>/g, "<b$1>").replace(/<\/a>/g, "</b>");
-
-    const openTags: string[] = [];
-    let finalResult = "";
-    for (let i = 0; i < result.length; i++) {
-        if (result.substring(i, i + 2) === "<b") {
-            const numEnd = result.indexOf(">", i);
-            const tagNum = result.substring(i + 2, numEnd);
-            openTags.push(tagNum);
-            finalResult += `<b${tagNum}>`;
-            i = numEnd;
-        } else if (result.substring(i, i + 4) === "</b>") {
-            const lastTag = openTags.pop() || "";
-            finalResult += `</b${lastTag}>`;
-            i += 3;
-        } else {
-            finalResult += result[i];
-        }
-    }
-
-    return finalResult;
-}
-
-export function transferLanguageCode(language: string, text?: string): string {
-    if (language === "zh-Hans") return "zh-CN";
-    if (language === "zh-Hant") return "zh-TW";
-    if (language === "ZH") {
-        if (!text) return "zh-CN";
-        return isTraditionalChinese(text) ? "zh-TW" : "zh-CN";
-    }
-    return language;
-}
-
+//#region translate service classes
 // ---------------------------------------------------------------------------
 // TranslateService — abstract base shared by every provider
 // ---------------------------------------------------------------------------
@@ -703,6 +671,7 @@ export class AiTranslateService extends TranslateService {
         return translated;
     }
 }
+//#endregion
 
 // ---------------------------------------------------------------------------
 // Service registry
@@ -719,6 +688,7 @@ export const translationServices = new Map<string, TranslateService>([
     [deeplTranslationService.name, deeplTranslationService],
 ]);
 
+//#region functions
 /**
  * Resolve a service identifier to a TranslateService instance.
  * Identifiers may be either a built-in name (`microsoft|google|deepl`) or
@@ -731,6 +701,43 @@ export function resolveTranslateService(service: string): TranslateService | und
     return translationServices.get(service);
 }
 
+export function convertAToBTags(html: string): string {
+    if (html === "") return "";
+    let result = html.replace(/<a\s+i=(\d+)>/g, "<b$1>").replace(/<\/a>/g, "</b>");
+
+    const openTags: string[] = [];
+    let finalResult = "";
+    for (let i = 0; i < result.length; i++) {
+        if (result.substring(i, i + 2) === "<b") {
+            const numEnd = result.indexOf(">", i);
+            const tagNum = result.substring(i + 2, numEnd);
+            openTags.push(tagNum);
+            finalResult += `<b${tagNum}>`;
+            i = numEnd;
+        } else if (result.substring(i, i + 4) === "</b>") {
+            const lastTag = openTags.pop() || "";
+            finalResult += `</b${lastTag}>`;
+            i += 3;
+        } else {
+            finalResult += result[i];
+        }
+    }
+
+    return finalResult;
+}
+
+export function transferLanguageCode(language: string, text?: string): string {
+    if (language === "zh-Hans") return "zh-CN";
+    if (language === "zh-Hant") return "zh-TW";
+    if (language === "ZH") {
+        if (!text) return "zh-CN";
+        return isTraditionalChinese(text) ? "zh-TW" : "zh-CN";
+    }
+    return language;
+}
+//#endregion
+
+//#region translate cache
 // ---------------------------------------------------------------------------
 // Translation result cache (content-side client)
 //
@@ -851,7 +858,9 @@ async function translateTextsWithCache(
     cachePutMany(service, targetLang, toCache);
     return results;
 }
+//#endregion
 
+//#region dom
 // ---------------------------------------------------------------------------
 // DOM-level helpers used by content scripts
 // ---------------------------------------------------------------------------
@@ -1062,3 +1071,4 @@ export async function restore(results: TranslateResult[]): Promise<void> {
         updateTranslateElementContent(result.rawMappedHtmlText, result.originalSliceElement || []);
     }
 }
+//#endregion
