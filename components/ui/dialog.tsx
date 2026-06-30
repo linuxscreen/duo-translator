@@ -41,19 +41,17 @@ export function Dialog({ open, onClose, title, children, footer, widthClass = 'w
             }}
         >
             <div className={`${widthClass} max-w-[92vw] max-h-[88vh] flex flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-2xl`}>
-                {(title || onClose) && (
-                    <div className="flex items-center justify-between border-b border-line px-4 py-3">
-                        <div className="font-medium text-[14px] text-ink">{title}</div>
-                        <button
-                            type="button"
-                            onClick={onClose}
-                            aria-label="Close"
-                            className="inline-flex h-7 w-7 items-center justify-center rounded text-ink-mute hover:bg-line/60 hover:text-ink"
-                        >
-                            <X className="h-4 w-4" strokeWidth={1.8} />
-                        </button>
-                    </div>
-                )}
+                <div className="flex items-center justify-between border-b border-line px-4 py-3">
+                    <div className="font-medium text-[14px] text-ink">{title}</div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        aria-label="Close"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded text-ink-mute hover:bg-line/60 hover:text-ink"
+                    >
+                        <X className="h-4 w-4" strokeWidth={1.8} />
+                    </button>
+                </div>
                 <div className="flex-1 overflow-y-auto px-4 py-3">{children}</div>
                 {footer && (
                     <div className="flex items-center justify-end gap-2 border-t border-line bg-surface/80 px-4 py-3">

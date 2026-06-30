@@ -525,7 +525,7 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
                 });
             } else {
                 await sendMessageToBackground({
-                    action: DB_ACTION.DOMAIN_UPDATE,
+                    action: DB_ACTION.DOMAIN_UPSERT,
                     data: { domain, aiWritingDisabled: true },
                 });
             }

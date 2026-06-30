@@ -1,4 +1,4 @@
-import { diffArrays, type Change } from "diff";
+import { diffArrays, type ArrayChange } from "diff";
 
 /**
  * Tokenizer that produces sensible diff hunks for mixed-language text.
@@ -57,10 +57,10 @@ export interface DiffPart {
 export function diffTexts(original: string, rewritten: string): DiffPart[] {
     const a = tokenizeMixed(original);
     const b = tokenizeMixed(rewritten);
-    const changes: Change[] = diffArrays(a, b);
+    const changes: ArrayChange<string>[] = diffArrays(a, b);
     const parts: DiffPart[] = [];
     for (const c of changes) {
-        const text = (c.value as string[]).join("");
+        const text = c.value.join("");
         if (c.added) parts.push({ kind: "ins", text });
         else if (c.removed) parts.push({ kind: "del", text });
         else parts.push({ kind: "eq", text });

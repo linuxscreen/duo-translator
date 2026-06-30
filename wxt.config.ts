@@ -30,38 +30,38 @@ export default defineConfig({
             }
         ],
         commands: {
-            "shortcut-toggle": {
+            "shortcut-translate-restore-page": {
                 "suggested_key": {
-                    "default": "Ctrl+Shift+E",
-                    "linux": "Ctrl+Shift+E"
+                    "default": "Alt+S",
+                    "linux": "Alt+S"
                 },
-                "description": '__MSG_shortcutToggleTranslation__'
+                "description": '__MSG_shortcutTranslateRestorePage__'
             },
             "shortcut-translate": {
-                "suggested_key": {
-                    "default": "Ctrl+Shift+T",
-                    "linux": "Ctrl+Shift+T"
-                },
                 "description": '__MSG_shortcutTranslate__'
             },
             "shortcut-restore": {
-                "suggested_key": {
-                    "default": "Ctrl+Shift+R",
-                    "linux": "Ctrl+Shift+R"
-                },
                 "description": '__MSG_shortcutRestore__'
             },
             "shortcut-ai-workbench": {
                 "suggested_key": {
-                    "default": "Ctrl+Shift+W",
-                    "linux": "Ctrl+Shift+W"
+                    "default": "Alt+W",
+                    "linux": "Alt+W"
                 },
                 "description": '__MSG_shortcutAiWorkbench__'
             },
             "shortcut-translate-restore-paragraph": {
+                "suggested_key": {
+                    "default": "Alt+Q",
+                    "linux": "Alt+Q"
+                },
                 "description": '__MSG_shortcutTranslateRestoreParagraph__'
             },
-            "shortcut-translate-selection-input":{
+            "shortcut-translate-selection-input": {
+                "suggested_key": {
+                    "default": "Alt+A",
+                    "linux": "Alt+A"
+                },
                 "description": '__MSG_shortcutTranslateSelectionInput__'
             }
         },

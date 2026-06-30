@@ -5,6 +5,7 @@ import { AirplayIcon, Ban, Globe, HelpCircle, PenLine, Settings as SettingsIcon,
 import {
   ACTION,
   APP_NAME,
+  APP_NAME_PASCAL_CASE,
   CONFIG_KEY,
   DB_ACTION,
   DEFAULT_STRATEGY,
@@ -212,7 +213,7 @@ export default function App() {
     setSiteRule(v);
     if (!domain) return;
     void sendMessageToBackground({
-      action: DB_ACTION.DOMAIN_UPDATE,
+      action: DB_ACTION.DOMAIN_UPSERT,
       data: { domain, strategy: v },
     });
     void sendMessageToTab({ action: ACTION.DOMAIN_STRATEGY_CHANGED, data: v });
@@ -267,7 +268,7 @@ export default function App() {
       {/* Header */}
       <div className="relative z-10 flex items-center justify-between border-b border-line bg-surface px-3 py-2">
         <button type="button" className="flex items-center gap-2 text-left">
-          <img className='w-5 h-5' src={`${APP_NAME}.svg`}></img>
+          <img className='w-5 h-5' src={`${APP_NAME_PASCAL_CASE}.svg`}></img>
           <span className='font-bold'>{APP_NAME}</span>
         </button>
         <div className="flex shrink-0 items-center gap-1.5">

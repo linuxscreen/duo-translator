@@ -10,7 +10,7 @@ import { TranslationPage } from './pages/TranslationPage';
 import { AiWritingPage } from './pages/AiWritingPage';
 import { browser } from 'wxt/browser';
 import { ServicesPage } from './pages/ServicesPage';
-import { APP_NAME } from '@/main/constants';
+import { APP_NAME, APP_NAME_PASCAL_CASE } from '@/main/constants';
 
 type TabId = 'settings' | 'services' | 'translation' | 'aiWriting' | 'shortcuts';
 
@@ -80,7 +80,7 @@ export default function App() {
       {/* Top bar */}
       <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-line bg-bg/80 px-6 backdrop-blur-md">
         <div className="flex items-center gap-3">
-          <img src={`${APP_NAME}.svg`} alt="" className="h-5 w-5" />
+          <img src={`${APP_NAME_PASCAL_CASE}.svg`} alt="" className="h-5 w-5" />
           <div className="flex items-baseline gap-2">
             <span className="text-[15px] font-semibold tracking-tight text-ink">DUO</span>
             <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">

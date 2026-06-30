@@ -105,7 +105,7 @@ export function DomainListSection({
       return;
     }
     await sendMessageToBackground({
-      action: DB_ACTION.DOMAIN_UPDATE,
+      action: DB_ACTION.DOMAIN_UPSERT,
       data: buildUpdatePayload(d),
     });
     setInput('');
@@ -158,7 +158,7 @@ export function DomainListSection({
       data: { domain: oldDomain, field: kind.field },
     });
     await sendMessageToBackground({
-      action: DB_ACTION.DOMAIN_UPDATE,
+      action: DB_ACTION.DOMAIN_UPSERT,
       data: buildUpdatePayload(next),
     });
     cancelEdit();

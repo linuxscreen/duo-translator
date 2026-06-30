@@ -238,7 +238,7 @@ function FloatBallApp({
             // Per-site blacklist: persist domain.floatBallDisabled. content.ts
             // checks it on next mount; for this session we just hide.
             await sendMessageToBackground({
-                action: DB_ACTION.DOMAIN_UPDATE,
+                action: DB_ACTION.DOMAIN_UPSERT,
                 data: { domain: deps.domain, floatBallDisabled: true },
             });
             setSessionHidden(true);

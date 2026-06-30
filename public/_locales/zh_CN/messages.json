@@ -5,7 +5,7 @@
   "extDescription": {
     "message": "开源免费并且开箱即用的翻译插件，具有双语、对比高亮和规则模式等功能"
   },
-  "shortcutToggleTranslation": {
+  "shortcutTranslateRestorePage": {
     "message": "翻译/恢复 页面"
   },
   "shortcutTranslate": {

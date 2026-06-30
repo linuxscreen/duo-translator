@@ -160,7 +160,7 @@ export async function background() {
                     errorResponse(e)
                 })
                 return true
-            case DB_ACTION.DOMAIN_UPDATE: {
+            case DB_ACTION.DOMAIN_UPSERT: {
                 const { domain: domainHost, ...patch } = (message.data ?? {}) as { domain: string } & DomainDoc;
                 domainRepo.update(domainHost, patch as DomainDoc).then(() => {
                     sendResponse({ status: STATUS_SUCCESS, data: "insert success" });
@@ -941,7 +941,7 @@ export async function background() {
 
     function shortcutKeyListener(command: string) {
         let action = ""
-        if (command === 'shortcut-toggle') {
+        if (command === 'shortcut-translate-restore-page') {
             // send message to current tab, toggle translate status
             action = TRANSLATE_ACTION.TOGGLE
         } else if (command === 'shortcut-translate') {

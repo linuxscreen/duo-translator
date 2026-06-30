@@ -22,6 +22,7 @@ export class TranslateServiceMeta {
 export const APP_NAME = import.meta.env.VITE_APP_NAME;
 export const APP_NAME_WITH_SUFFIX = APP_NAME + ' - ';
 export const APP_NAME_KEBAB_CASE = import.meta.env.VITE_APP_NAME_KEBAB_CASE;
+export const APP_NAME_PASCAL_CASE = import.meta.env.VITE_APP_NAME_PASCAL_CASE;
 
 export const STATUS_SUCCESS = '200';
 export const STATUS_FAIL = '500';
@@ -36,8 +37,7 @@ export enum DB_ACTION {
     RULE_GET_ALL = 'getAllRule',
     RULE_LIST = 'listRule',
     RULE_SEARCH = 'searchRule',
-    DOMAIN_INSERT = 'insertDomain',
-    DOMAIN_UPDATE = 'updateDomain',
+    DOMAIN_UPSERT = 'upsertDomain',
     DOMAIN_GET = 'getDomain',
     DOMAIN_DELETE = 'deleteDomain',
     DOMAIN_LIST = 'listDomain',
@@ -136,8 +136,6 @@ export const DEFAULT_STRATEGY_OPTIONS: { value: DEFAULT_STRATEGY; title: string;
 
 export enum TRANSLATE_ACTION {
     TRANSLATE = 'translate',
-    DOUBLE = 'doubleTranslate',
-    SINGLE = 'singleTranslate',
     TOGGLE = 'toggleTranslate',
     SHOW_ORIGINAL = 'showOriginal',
     TRANSLATE_STATUS_CHANGED = "translateStatusChanged",

@@ -1,11 +1,11 @@
 {
   "extName": {
-    "message": "DuoTranslator"
+    "message": "Duo Translator"
   },
   "extDescription": {
     "message": "Open-source translation extension with bilingual display, contrast highlighting, and rule mode features"
   },
-  "shortcutToggleTranslation": {
+  "shortcutTranslateRestorePage": {
     "message": "Translate / Restore page"
   },
   "shortcutTranslate": {
