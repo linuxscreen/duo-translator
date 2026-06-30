@@ -1379,16 +1379,13 @@ export async function content() {
                     translateResults.splice(i, 1)
                     elements.splice(i, 1)
                 } else if (viewStrategyCopy == VIEW_STRATEGY.SINGLE) {
-                    result.textNodes?.forEach(element => {
-                        element.remove()
-                    });
                     translatedElementMap.set(elements[i], result)
                 }
             }
 
             // the elements will be replaced(translated) in single view strategy
             // the copy of elements will be replaced(translated) in double view strategy
-            await translate(translateResults)
+            await translate(translateService, translateResults)
 
             // append translated copy element to original element in double view strategy
             if (viewStrategyCopy == VIEW_STRATEGY.DOUBLE) {

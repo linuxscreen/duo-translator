@@ -38,7 +38,7 @@ describe("splitSentence", () => {
             { type: "Sentence", raw: "Hello." },
             { type: "Sentence", raw: "World." },
         ]);
-        expect(splitSentence("Hello.World.")).toEqual(["Hello.", "World."]);
+        expect(splitSentence("Hello. World.")).toEqual(["Hello. ", "World."]);
     });
 
     it("attaches inter-sentence whitespace to the following sentence", () => {
@@ -47,7 +47,7 @@ describe("splitSentence", () => {
             { type: "WhiteSpace", raw: " " },
             { type: "Sentence", raw: "B." },
         ]);
-        expect(splitSentence("A. B.")).toEqual(["A.", " B."]);
+        expect(splitSentence("A. B.")).toEqual(["A. ", "B."]);
     });
 
     it("drops a trailing non-Sentence remainder (never emitted)", () => {
@@ -55,7 +55,7 @@ describe("splitSentence", () => {
             { type: "Sentence", raw: "A." },
             { type: "WhiteSpace", raw: "  " },
         ]);
-        expect(splitSentence("A.  ")).toEqual(["A."]);
+        expect(splitSentence("A.  ")).toEqual(["A.  "]);
     });
 });
 

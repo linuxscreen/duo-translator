@@ -135,7 +135,7 @@ describe("getTranslateResult + translate/restore (SINGLE)", () => {
         expect(results[0].translatedMappedHtmlText).toBe("译:Hello");
         expect(results[0].rawMappedHtmlText).toBe("Hello");
         expect(results[0].rawText).toBe("Hello");
-        expect(results[0].originalSliceElement?.[0]).toBe(p);
+        expect(results[0].originalSliceElements?.[0]).toBe(p);
     });
 
     it("translate() writes the translation into the DOM; restore() puts the original back", async () => {
@@ -144,7 +144,7 @@ describe("getTranslateResult + translate/restore (SINGLE)", () => {
         registerFake(() => [new TranslateResult("你好", "en", 1)]);
 
         const results = await getTranslateResult("fake", [p], "zh-CN", VIEW_STRATEGY.SINGLE);
-        await translate(results);
+        await translate("fake", results);
         expect(p.textContent).toContain("你好");
 
         await restore(results);

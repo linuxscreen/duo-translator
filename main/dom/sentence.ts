@@ -12,17 +12,11 @@ export function splitSentence(text: string | null): string[] {
     if (!text) {
         return [];
     }
-    const results = split(text);
-    const sentences: string[] = [];
-    let sentence = "";
-    results.forEach((result) => {
-        sentence += result.raw;
-        if (result.type == "Sentence") {
-            sentences.push(sentence);
-            sentence = "";
-        }
-    });
-    return sentences;
+    const segmenter = new Intl.Segmenter(undefined, {
+        granularity: "sentence",
+    })
+
+    return Array.from(segmenter.segment(text), x => x.segment)
 }
 
 /**

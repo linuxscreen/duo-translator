@@ -1,4 +1,4 @@
-import { ACTION, AI_PREFIX, APP_NAME_WITH_SUFFIX, CONFIG_KEY, EXCLUDE_CHILD_ELEMENT_TAGS, PORT_NAME, TRANSLATE_SERVICE, VIEW_STRATEGY } from "@/main/constants";
+import { ACTION, AI_PREFIX, APP_NAME_WITH_SUFFIX, CONFIG_KEY, EXCLUDE_CHILD_ELEMENT_TAGS, PORT_NAME, TRANSLATE_SERVICE, TRANSLATE_SERVICES, VIEW_STRATEGY } from "@/main/constants";
 import { sendMessageToBackground } from "../utils/message";
 import { getConfig } from "@/utils/db";
 import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
@@ -19,17 +19,19 @@ export class Token {
 }
 
 export class TranslateResult {
-    translatedMappedHtmlText: string; // translated innerHtml of the mapped tag element, for example <b0>translated text</b0>
+    translatedMappedHtmlText: string; // translated innerHtml of the mapped tag element, for example <b0>translated text</b0>, or <a i=0>translated text</a>(google translate)
     sourceLang: string;
     score: number;
     rawText: string = "";
     rawTextLength: number = 0; // original text length, sum of all text nodes length
     translatedCopyElement?: HTMLElement; // a translated copy of the original element use for double view strategy
-    originalSliceElement?: HTMLElement[];
+    originalSliceElements?: HTMLElement[]; // first element is the original element itself, then are child elements of the original element
     rawMappedHtmlText?: string; // original innerHtml of the mapped tag element, for example <b0>original text</b0>
     translatedHtmlText?: string; // translated innerHtml of the original tag element, for example <p class="x" id="y">translated text</p>
     targetLang?: string;
     textNodes?: Text[];
+    textIndexMap?: Map<number, number>; // key: text node index, value: corresponding childNode of original element(ancestor of text node) index
+    replacedTextNodes?: Text[]; // use for SINGLE view strategy, text nodes that have been replaced(has been translated or restored)
 
     constructor(rawTranslatedText: string, sourceLang: string, score: number) {
         this.translatedMappedHtmlText = rawTranslatedText;
@@ -175,17 +177,13 @@ export class GoogleTranslateService extends TranslateService {
     ): Promise<TranslateResult[]> {
         if (texts.length === 0) return [];
 
-        const payload = texts.map((text) =>
-            text.replaceAll("<b", "<a i=").replaceAll(/<\/b\d+>/g, "</a>")
-        );
-
         const response = await fetch(this.endpoint, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json+protobuf",
                 "x-goog-api-key": this.apiKey,
             },
-            body: JSON.stringify([[payload, "auto", targetLang], "te_lib"]),
+            body: JSON.stringify([[texts, "auto", targetLang], "te_lib"]),
             signal: signal,
         });
 
@@ -199,8 +197,7 @@ export class GoogleTranslateService extends TranslateService {
 
         const result: TranslateResult[] = [];
         for (let i = 0; i < data[0].length; i++) {
-            const translated = convertAToBTags(data[0][i]);
-            result.push(new TranslateResult(translated, data[1][i], 1));
+            result.push(new TranslateResult(data[0][i], data[1][i], 1));
         }
         return result;
     }
@@ -701,6 +698,11 @@ export function resolveTranslateService(service: string): TranslateService | und
     return translationServices.get(service);
 }
 
+/**
+ * @deprecated
+ * @param html 
+ * @returns 
+ */
 export function convertAToBTags(html: string): string {
     if (html === "") return "";
     let result = html.replace(/<a\s+i=(\d+)>/g, "<b$1>").replace(/<\/a>/g, "</b>");
@@ -870,13 +872,15 @@ class PreProcessResult {
     textNodes: Text[]; // text nodes that need to be deleted, which come from the child text nodes of element
     text: string;
     totalTextNodesLength: number;
+    textIndexMap: Map<number, number>
 
-    constructor(elements: HTMLElement[], mappedHtmlText: string, textNodes: Text[], text: string, totalTextNodesLength: number) {
+    constructor(elements: HTMLElement[], mappedHtmlText: string, textNodes: Text[], text: string, totalTextNodesLength: number, textIndexMap: Map<number, number>) {
         this.elements = elements;
         this.mappedHtmlText = mappedHtmlText;
         this.textNodes = textNodes;
         this.text = text;
         this.totalTextNodesLength = totalTextNodesLength;
+        this.textIndexMap = textIndexMap
     }
 }
 
@@ -914,7 +918,9 @@ export function getElementPreProcessResult(element: HTMLElement, viewStrategy: V
 
     elements.push(element);
     const removeChildren: HTMLElement[] = []
-    const process = (node: Node | null, parent: HTMLElement) => {
+    let textIndex = 0
+    let textIndexMap = new Map<number, number>()
+    const process = (index: number, node: Node | null, parent: HTMLElement) => {
         if (!node) return;
         if (node.nodeType === 1) {
             const ele = node as HTMLElement;
@@ -929,7 +935,7 @@ export function getElementPreProcessResult(element: HTMLElement, viewStrategy: V
             parent.appendChild(rootProcessedElement);
             elements.push(ele);
             i++;
-            for (const child of node.childNodes) process(child, rootProcessedElement);
+            for (const child of node.childNodes) process(index, child, rootProcessedElement);
         }
         if (node.nodeType === 3) {
             const textNode = node as Text;
@@ -937,15 +943,19 @@ export function getElementPreProcessResult(element: HTMLElement, viewStrategy: V
             totalTextNodesLength += textNode.textContent.length;
             text += textNode.textContent;
             textNodes.push(textNode);
+            textIndexMap.set(textIndex, index)
+            textIndex++
             parent.appendChild(textNode.cloneNode(true));
         }
     };
-
-    for (const child of element.childNodes) process(child, processParent);
+    for (let index = 0; index < element.childNodes.length; index++) {
+        let child = element.childNodes[index]
+        process(index, child, processParent);
+    }
     if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
         removeChildren.forEach(child => child.remove())
     }
-    return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, totalTextNodesLength, text };
+    return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, totalTextNodesLength, text, textIndexMap };
 }
 
 export function updateTranslateElementContent(rawTranslatedHtml: string, originalElements: HTMLElement[]) {
@@ -953,6 +963,7 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
 
     const translatedElement = document.createElement("div");
     translatedElement.innerHTML = rawTranslatedHtml;
+    const replacedTextNodes: Text[] = [];
 
     function getOriginalElement(tagName: string) {
         if (tagName === "DIV") {
@@ -971,7 +982,9 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
             if (!textParent) return;
             const original = getOriginalElement(textParent.tagName)
             if (!original) return;
-            original.appendChild(node.cloneNode(true));
+            let textNode = node.cloneNode(true) as Text;
+            replacedTextNodes.push(textNode);
+            original.appendChild(textNode);
             return;
         }
         if (node.nodeType === 1) {
@@ -988,6 +1001,7 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
         }
     }
     translatedElement.childNodes.forEach(translate);
+    return replacedTextNodes
 }
 
 export async function getTranslateResult(
@@ -1004,6 +1018,7 @@ export async function getTranslateResult(
 
     const needRemoveElementIdx: number[] = []
     const translatedCopyElements: HTMLElement[] = [];
+    const rawMappedHtmlTexts: string[] = []
     for (let i = 0; i < elements.length; i++) {
         let element = elements[i]
         if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
@@ -1019,8 +1034,18 @@ export async function getTranslateResult(
         if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
             translatedCopyElements.push(element)
         }
+        if (service === TRANSLATE_SERVICE.GOOGLE) {
+            let text = ""
+            for (let index = 0; index < result.textNodes.length; index++) {
+                text += `<a i=${index}>${result.textNodes[index].textContent}</a>`
 
-        texts.push(result.mappedHtmlText);
+            }
+            texts.push(text);
+        } else {
+            texts.push(result.mappedHtmlText);
+        }
+        rawMappedHtmlTexts.push(result.mappedHtmlText)
+
         preProcessResults.push(result);
     }
 
@@ -1039,36 +1064,131 @@ export async function getTranslateResult(
             results.splice(i, 1);
         }
         let preProcessResult = preProcessResults[i]
-        result.originalSliceElement = preProcessResult.elements
-        result.rawMappedHtmlText = texts[i];
+        result.originalSliceElements = preProcessResult.elements
+        result.rawMappedHtmlText = rawMappedHtmlTexts[i];
         result.rawTextLength = preProcessResult.totalTextNodesLength;
         result.rawText = preProcessResult.text
+        service === TRANSLATE_SERVICE.GOOGLE && (result.textIndexMap = preProcessResult.textIndexMap)
         if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-            // We render against a copy in DOUBLE mode, so the original text
-            // nodes can be discarded outright.
-            preProcessResult.textNodes?.forEach((textNode) => textNode?.remove());
             result.translatedCopyElement = translatedCopyElements[i];
-            result.textNodes = preProcessResult.textNodes
-        } else {
-            // SINGLE may leave the element untranslated; keep the originals.
-            result.textNodes = preProcessResult.textNodes
         }
+        result.textNodes = preProcessResult.textNodes
     }
     return results;
 }
 
-// replace the element content with the translated text
-export async function translate(results: TranslateResult[]): Promise<void> {
+export function parseIndexedText(input: string): { index: number, text: string }[] {
+    const result: { index: number, text: string }[] = []
+
+    const regex = /<a\b[^>]*\bi\s*=\s*["']?(-?\d+)["']?[^>]*>([\s\S]*?)<\/a>/gi
+
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+
+    while ((match = regex.exec(input)) !== null) {
+        const beforeText = input.slice(lastIndex, match.index)
+
+        if (beforeText) {
+            result.push({ index: -1, text: beforeText })
+        }
+
+        const index = Number(match[1])
+        const text = match[2]
+
+        if (text) {
+            result.push({ index: Number.isFinite(index) ? index : -1, text })
+        }
+
+        lastIndex = regex.lastIndex
+    }
+
+    const restText = input.slice(lastIndex)
+
+    if (restText) {
+        result.push({ index: -1, text: restText })
+    }
+
+    return result
+}
+
+export function googleTranslate(results: TranslateResult[]) {
     for (const result of results) {
-        updateTranslateElementContent(result.translatedMappedHtmlText, result.originalSliceElement || []);
+        if (!result.originalSliceElements || result.originalSliceElements.length === 0) continue;
+        let targetElement = result.originalSliceElements[0]
+        let targetElementChildNodes = Array.from(result.originalSliceElements[0].childNodes)
+        let textNodes = result.textNodes
+        if (textNodes === undefined) return
+        let indexedTexts = parseIndexedText(result.translatedMappedHtmlText)
+        let replacedTextNodes = [...textNodes]
+
+        let movedNodeSet = new Set<number>()
+        let lastMovedNodeIndex = -1
+        let lastMovedNode: ChildNode | null = null
+        let lastTextNodeIndex = -1
+        for (const indexedText of indexedTexts) {
+            if (indexedText.text === "") continue
+            if (indexedText.index === -1) {
+                let textNode = document.createTextNode(indexedText.text)
+                if (!lastMovedNode) {
+                    targetElement.prepend(textNode)
+                } else {
+                    lastMovedNode.after(textNode)
+                }
+                lastMovedNode = textNode
+                if (indexedText.text.trim() === "") continue
+                lastMovedNodeIndex = -1
+                replacedTextNodes.push(textNode)
+                continue
+            }
+            let num = indexedText.index
+            if (num < 0 || num >= textNodes.length) continue
+            textNodes[num].textContent = indexedText.text
+            let childIndex = result.textIndexMap?.get(num)
+            if (childIndex === undefined) continue
+            if (movedNodeSet.has(childIndex)) {
+                if (lastMovedNodeIndex === childIndex && lastTextNodeIndex < num) continue
+                lastMovedNode!.after(textNodes[num])
+                lastMovedNode = textNodes[num]
+                continue
+            }
+            if (!lastMovedNode) {
+                targetElement.prepend(targetElementChildNodes[childIndex])
+            } else {
+                lastMovedNode.after(targetElementChildNodes[childIndex])
+            }
+            lastMovedNode = targetElementChildNodes[childIndex]
+            lastMovedNodeIndex = childIndex
+            lastTextNodeIndex = num
+            movedNodeSet.add(childIndex)
+        }
+        result.replacedTextNodes = replacedTextNodes
+    }
+
+}
+
+// replace the element content with the translated text
+export async function translate(service: string, results: TranslateResult[]): Promise<void> {
+    if (service === TRANSLATE_SERVICE.GOOGLE) {
+        googleTranslate(results)
+        return
+    }
+    for (const result of results) {
+        result.textNodes?.forEach(element => {
+            element.remove()
+        });
+        let textNodes = updateTranslateElementContent(result.translatedMappedHtmlText, result.originalSliceElements || []);
+        result.replacedTextNodes = textNodes
     }
 }
 
-// replace the element content with the original text
+// replace the element content with the original text, use for SINGLE view strategy
 export async function restore(results: TranslateResult[]): Promise<void> {
     for (const result of results) {
         if (!result.rawMappedHtmlText) continue;
-        updateTranslateElementContent(result.rawMappedHtmlText, result.originalSliceElement || []);
+        result.replacedTextNodes?.forEach(element => {
+            element.remove()
+        })
+        updateTranslateElementContent(result.rawMappedHtmlText, result.originalSliceElements || []);
     }
 }
 //#endregion

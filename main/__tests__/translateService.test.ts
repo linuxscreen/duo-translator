@@ -22,6 +22,7 @@ import {
     DeepLTranslateService,
     AiTranslateService,
     resolveTranslateService,
+    parseIndexedText,
     translationServices,
     googleTranslationService,
     microsoftTranslationService,
@@ -200,8 +201,8 @@ describe("GoogleTranslateService.translateText", () => {
     it("converts <a i=N> tags in the response to <bN>", async () => {
         (fetch as Mock).mockResolvedValue(jsonResponse([["<a i=0>你好</a>"], ["en"]]));
         const svc = new GoogleTranslateService("k");
-        const out = await svc.translateText(["<b0>hello</b0>"], "zh-CN");
-        expect(out[0].translatedMappedHtmlText).toBe("<b0>你好</b0>");
+        const out = await svc.translateText(["<a i=0>hello</a>"], "zh-CN");
+        expect(out[0].translatedMappedHtmlText).toBe("<a i=0>你好</a>");
     });
 
     it("returns [] on a non-200 response", async () => {
@@ -432,5 +433,76 @@ describe("resolveTranslateService", () => {
     it("registers all three built-ins in translationServices", () => {
         expect(translationServices.get(TRANSLATE_SERVICE.GOOGLE)).toBe(googleTranslationService);
         expect(translationServices.size).toBeGreaterThanOrEqual(3);
+    });
+});
+
+describe("parseIndexedText", () => {
+    it("returns an empty array for an empty string", () => {
+        expect(parseIndexedText("")).toEqual([]);
+    });
+
+    it("treats text with no tags as a single index -1 chunk", () => {
+        expect(parseIndexedText("hello world")).toEqual([
+            { index: -1, text: "hello world" },
+        ]);
+    });
+
+    it("parses a single indexed tag", () => {
+        expect(parseIndexedText("<a i=0>hello</a>")).toEqual([
+            { index: 0, text: "hello" },
+        ]);
+    });
+
+    it("parses multiple consecutive indexed tags", () => {
+        expect(parseIndexedText("<a i=0>foo</a><a i=1>bar</a>")).toEqual([
+            { index: 0, text: "foo" },
+            { index: 1, text: "bar" },
+        ]);
+    });
+
+    it("captures loose text before, between, and after tags as index -1", () => {
+        expect(parseIndexedText("pre<a i=0>foo</a>mid<a i=1>bar</a>post")).toEqual([
+            { index: -1, text: "pre" },
+            { index: 0, text: "foo" },
+            { index: -1, text: "mid" },
+            { index: 1, text: "bar" },
+            { index: -1, text: "post" },
+        ]);
+    });
+
+    it("accepts double- and single-quoted index values", () => {
+        expect(parseIndexedText('<a i="2">x</a>')).toEqual([{ index: 2, text: "x" }]);
+        expect(parseIndexedText("<a i='3'>y</a>")).toEqual([{ index: 3, text: "y" }]);
+    });
+
+    it("keeps a negative tag index as-is", () => {
+        expect(parseIndexedText("<a i=-1>z</a>")).toEqual([{ index: -1, text: "z" }]);
+    });
+
+    it("skips tags with empty content", () => {
+        expect(parseIndexedText("<a i=0></a>")).toEqual([]);
+        expect(parseIndexedText("before<a i=0></a>")).toEqual([
+            { index: -1, text: "before" },
+        ]);
+    });
+
+    it("ignores additional attributes around the i= attribute", () => {
+        expect(parseIndexedText('<a class="duo" i=5 data-x="1">t</a>')).toEqual([
+            { index: 5, text: "t" },
+        ]);
+    });
+
+    it("tolerates whitespace around the equals sign", () => {
+        expect(parseIndexedText("<a i = 7 >t</a>")).toEqual([{ index: 7, text: "t" }]);
+    });
+
+    it("matches tags case-insensitively", () => {
+        expect(parseIndexedText("<A I=0>t</A>")).toEqual([{ index: 0, text: "t" }]);
+    });
+
+    it("captures multi-line tag content", () => {
+        expect(parseIndexedText("<a i=0>line1\nline2</a>")).toEqual([
+            { index: 0, text: "line1\nline2" },
+        ]);
     });
 });
