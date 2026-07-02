@@ -11,8 +11,15 @@ export default defineConfig({
         name: '__MSG_extName__',
         description: '__MSG_extDescription__',
         default_locale: 'en',
-        permissions: ['storage', 'tabs', 'activeTab', 'contextMenus', 'commands', 'identity', 'alarms'],
-        host_permissions: ['https://www.googleapis.com/*', 'https://oauth2.googleapis.com/*', 'https://accounts.google.com/*'],
+        permissions: ['storage', 'tabs', 'activeTab', 'contextMenus', 'identity', 'alarms'],
+        host_permissions: [
+            // firefox mv2 needs these
+            // 'https://translate-pa.googleapis.com/*',
+            // 'https://api.cognitive.microsofttranslator.com/*',
+            // 'https://api-free.deepl.com/*',
+            // google drive
+            // 'https://www.googleapis.com/*', 'https://oauth2.googleapis.com/*', 'https://accounts.google.com/*'
+        ],
         // WebDAV URL is user-supplied at runtime, so we request the matching
         // origin via `browser.permissions.request` on connect. <all_urls> here
         // is what we ask for at runtime, not granted at install time.

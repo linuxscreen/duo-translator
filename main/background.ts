@@ -16,6 +16,7 @@ import {
     SYNC_ACTION,
     SYNC_PROVIDER_ID,
     DEFAULT_VALUE,
+    IS_FIREFOX,
 } from "@/main/constants";
 import { Browser, browser } from "wxt/browser";
 import { Token } from "@/main/translateService";
@@ -611,6 +612,10 @@ export async function background() {
                             sendResponse({ status: STATUS_FAIL });
                             return
                         }
+                        if (IS_FIREFOX) {
+                            //@ts-ignore
+                            browser.contextMenus.refresh()
+                        }
                         sendResponse({ status: STATUS_SUCCESS });
                         return
                     }
@@ -630,6 +635,10 @@ export async function background() {
                             console.error('Error creating context menu:', browser.runtime.lastError.message);
                             sendResponse({ status: STATUS_FAIL });
                             return
+                        }
+                        if (IS_FIREFOX) {
+                            //@ts-ignore
+                            browser.contextMenus.refresh()
                         }
                         sendResponse({ status: STATUS_SUCCESS });
                         paraContextMenuShowStatus = true;
@@ -660,6 +669,10 @@ export async function background() {
                             console.error('Error creating context menu:', browser.runtime.lastError.message);
                             sendResponse({ status: STATUS_FAIL });
                             return
+                        }
+                        if (IS_FIREFOX) {
+                            //@ts-ignore
+                            browser.contextMenus.refresh()
                         }
                         sendResponse({ status: STATUS_SUCCESS });
                         paraContextMenuShowStatus = false

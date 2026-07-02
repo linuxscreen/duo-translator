@@ -91,7 +91,7 @@ export default function App() {
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => openUrl(import.meta.env.VITE_WEBSITE)}>
             <Globe className="h-3.5 w-3.5" strokeWidth={1.6} />
-            {t('officialWebsite', 'Official Website')}
+            {t('officialWebsite', 'Website')}
           </Button>
           <Button
             size="sm"

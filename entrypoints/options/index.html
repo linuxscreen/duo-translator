@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>%VITE_APP_NAME% — Options</title>
     <meta name="manifest.type" content="browser_action" />
+    <!-- Open settings in a full tab, not embedded in about:addons. Firefox
+         forbids permissions.request() from an options page embedded inside
+         about:addons (throws "may only be called from a user input handler"),
+         which breaks the WebDAV host-permission prompt. A real tab fixes it. -->
+    <meta name="manifest.open_in_tab" content="true" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

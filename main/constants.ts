@@ -30,6 +30,7 @@ export const STATUS_FAIL = '500';
 export const TRANSLATE_STATUS_KEY = 'tabTranslateStatus#'
 
 export const AI_PREFIX = "ai:";
+export const IS_FIREFOX = import.meta.env.FIREFOX;
 
 export enum DB_ACTION {
     RULE_ADD = 'addRule',

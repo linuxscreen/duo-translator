@@ -116,15 +116,13 @@ class WebDavProviderImpl implements SyncProvider {
         }
 
         const origin = parsed.origin + '/*';
-        try {
-            const granted = await browser.permissions.request({ origins: [origin] });
-            if (!granted) {
-                throw new Error('Host permission was denied');
-            }
-        } catch (e) {
-            // Some browsers throw instead of returning false when the user
-            // dismisses the prompt; surface a consistent error.
-            throw e instanceof Error ? e : new Error('Host permission request failed');
+        // The host permission must already be granted by the UI before we get
+        // here: Firefox only allows permissions.request() from a user-input
+        // handler, which the background service worker is not. So the options
+        // page requests it inside the click handler and we merely verify here.
+        const granted = await browser.permissions.contains({ origins: [origin] });
+        if (!granted) {
+            throw new Error('Host permission was denied');
         }
 
         const folderUrl = buildFolderUrl(creds);

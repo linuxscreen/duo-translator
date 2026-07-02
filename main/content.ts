@@ -1,5 +1,5 @@
 import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
-import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP } from "./constants";
+import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX } from "./constants";
 import { restore, translateParams, getTranslateResult, translate, TranslateResult, resetTranslationCacheEnabled } from "./translateService";
 import { sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
@@ -41,6 +41,11 @@ export async function content() {
     // - replaceSync() swaps the whole rule set in one call (no innerText
     //   re-parsing on every keystroke from the options color picker).
     let translationStyleSheet: CSSStyleSheet | null = null
+    // Firefox content scripts access the page document through an Xray wrapper,
+    // where document.adoptedStyleSheets / constructable stylesheets are not
+    // reliably usable (reading it yields undefined → "not iterable"). On Firefox
+    // we use a plain <style> node instead; Chrome keeps the adoptedStyleSheets path.
+    let translationStyleElement: HTMLStyleElement | null = null
 
     let batchElements: HTMLElement[] = [];
     let batchTimer: NodeJS.Timeout | null = null
@@ -115,7 +120,7 @@ export async function content() {
     let targetLanguage = targetLanguageConfig || navigator.language.split('-')[0]
     let domainStrategy = (rawDomainStrategy?.strategy || DOMAIN_STRATEGY.AUTO) as string
     let lastX = 0, lastY = 0
-    let lastRightClickElement: HTMLElement | null = null
+    let lastContextMenuElement: HTMLElement | null = null
     let lastEditableElement: HTMLElement | null = null
 
     // ===== Mutation queue + cooperative scheduling =====
@@ -259,12 +264,12 @@ export async function content() {
             case TRANSLATE_ACTION.TRANSLATE_INPUT_BOX:
                 translateInputBox();
             case TRANSLATE_ACTION.TRANSLATE_PARA:
-                if (!lastRightClickElement) return
-                translateParagraphElements([lastRightClickElement]);
+                if (!lastContextMenuElement) return
+                translateParagraphElements([lastContextMenuElement]);
                 break
             case TRANSLATE_ACTION.SHOW_ORIGINAL_PARA:
-                if (!lastRightClickElement) return
-                restoreOriginalParagraphElement(lastRightClickElement);
+                if (!lastContextMenuElement) return
+                restoreOriginalParagraphElement(lastContextMenuElement);
                 break
             case TRANSLATE_ACTION.TRANSLATE_SELECTION:
                 translateSelectionAction(message.data as string)
@@ -303,36 +308,20 @@ export async function content() {
     // add 'Translate/Restore this paragraph' menu when mouse is over the text of
     // a paragraph element and right mouse clicked
     // Due to chrome limitations, currently context menu of 'Translate/Restore this paragraph' can only be implemented in this way.
-    // known issue: The context menu that is not triggered by the right mouse button may be abnormal.
-    document.addEventListener("mousedown", (e) => {
-        // return
-        if (e.button !== 2 || !contextMenuSwitch) { // ignore non right click
-            return
-        }
-        const target = e.target as HTMLElement | null;
-        const para = target?.closest(".duo-paragraph") as HTMLElement | null;
-
-        if (para && isPointOverText(e.clientX, e.clientY, para)) {
-            let translated
-            if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-                translated = duoTranslatedElementSet.has(para);
-            } else {
-                translated = translatedElementMap.has(para);
+    // chrome known issue: The context menu that is not triggered by the right mouse button may be abnormal.
+    if (!IS_FIREFOX) {
+        document.addEventListener("mousedown", (e) => {
+            // return
+            if (e.button !== 2 || !contextMenuSwitch) { // ignore non right click
+                return
             }
-            browser.runtime.sendMessage({ action: ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU, data: { translated: translated } }).then((msg) => {
-                if (msg.status === STATUS_SUCCESS) {
-                    lastRightClickElement = para
-                }
-            });
+            const target = e.target as HTMLElement | null;
+            const para = target?.closest(".duo-paragraph") as HTMLElement | null;
 
-        } else {
-            browser.runtime.sendMessage({ action: ACTION.HIDE_TRANSLATE_RESTORE_PARA_MENU }).then((msg) => {
-                if (msg.status === STATUS_SUCCESS) {
-                    lastRightClickElement = null
-                }
-            });
-        }
-    }, true);
+            notifyParaContextMenuUpdate(e.clientX, e.clientY, para)
+        }, true);
+    }
+
 
     document.addEventListener("contextmenu", (e) => {
         if (!contextMenuSwitch) {
@@ -343,10 +332,39 @@ export async function content() {
             // console.log("isContentEditable", target);
             lastEditableElement = target
         }
+        if (IS_FIREFOX) {
+            let ele = document.elementFromPoint(lastX, lastY) as Element | null
+            const para = ele?.closest(".duo-paragraph") as HTMLElement | null;
+
+            notifyParaContextMenuUpdate(lastX, lastY, para)
+        }
     })
     //#endregion
 
     //#region functions
+    function notifyParaContextMenuUpdate(lastX: number, lastY: number, element: HTMLElement | null) {
+        if (element && isPointOverText(lastX, lastY, element)) {
+            let translated
+            if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
+                translated = duoTranslatedElementSet.has(element);
+            } else {
+                translated = translatedElementMap.has(element);
+            }
+            browser.runtime.sendMessage({ action: ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU, data: { translated: translated } }).then((msg) => {
+                if (msg.status === STATUS_SUCCESS) {
+                    lastContextMenuElement = element
+                }
+            });
+
+        } else {
+            browser.runtime.sendMessage({ action: ACTION.HIDE_TRANSLATE_RESTORE_PARA_MENU }).then((msg) => {
+                if (msg.status === STATUS_SUCCESS) {
+                    lastContextMenuElement = null
+                }
+            });
+        }
+    }
+
     async function onConfigChanged(key: string, value: any, activeFlag: boolean) {
         switch (key) {
             case CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS:
@@ -827,6 +845,10 @@ export async function content() {
             )
             translationStyleSheet = null
         }
+        if (translationStyleElement) {
+            translationStyleElement.remove()
+            translationStyleElement = null
+        }
         // Legacy cleanup — earlier versions used a <style id="duo-translation-style">.
         document.getElementById('duo-translation-style')?.remove()
     }
@@ -1181,13 +1203,23 @@ export async function content() {
             highlightSwitch: highlightSwitch == null ? true : !!highlightSwitch,
         })
 
-        if (!translationStyleSheet) {
-            translationStyleSheet = new CSSStyleSheet()
-            document.adoptedStyleSheets = [...document.adoptedStyleSheets, translationStyleSheet]
+        if (!translationStyleSheet && !translationStyleElement) {
+            if (import.meta.env.FIREFOX) {
+                translationStyleElement = document.createElement('style')
+                translationStyleElement.id = 'duo-translation-style'
+                document.head.appendChild(translationStyleElement)
+            } else {
+                translationStyleSheet = new CSSStyleSheet()
+                document.adoptedStyleSheets = [...document.adoptedStyleSheets, translationStyleSheet]
+            }
         }
         // replaceSync replaces all rules atomically; far cheaper than re-parsing
         // an innerText concatenation on every drag tick from the color picker.
-        translationStyleSheet.replaceSync(css)
+        if (translationStyleSheet) {
+            translationStyleSheet.replaceSync(css)
+        } else if (translationStyleElement) {
+            translationStyleElement.textContent = css
+        }
     }
 
     /**

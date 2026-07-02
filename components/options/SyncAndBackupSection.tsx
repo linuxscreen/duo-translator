@@ -14,9 +14,10 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
+import { browser } from 'wxt/browser';
 import { sendMessageToBackground } from '@/utils/message';
 import { getConfig, setConfig } from '@/utils/db';
-import { ACTION, APP_NAME, APP_NAME_KEBAB_CASE, CONFIG_KEY, DB_ACTION, SYNC_ACTION, SYNC_PROVIDER_ID } from '@/main/constants';
+import { ACTION, APP_NAME, APP_NAME_KEBAB_CASE, APP_NAME_PASCAL_CASE, CONFIG_KEY, DB_ACTION, SYNC_ACTION, SYNC_PROVIDER_ID } from '@/main/constants';
 
 const SYNC_INTERVAL_OPTIONS = [5, 10, 15, 20, 30, 45, 60];
 
@@ -62,7 +63,7 @@ export function SyncAndBackupSection() {
     const [wdUrl, setWdUrl] = useState('');
     const [wdUser, setWdUser] = useState('');
     const [wdPass, setWdPass] = useState('');
-    const [wdPath, setWdPath] = useState(`${APP_NAME}/`);
+    const [wdPath, setWdPath] = useState(`${APP_NAME_PASCAL_CASE}/`);
     const [wdAllowInsecure, setWdAllowInsecure] = useState(false);
     const [showWdPass, setShowWdPass] = useState(false);
 
@@ -162,6 +163,28 @@ export function SyncAndBackupSection() {
     };
 
     const onConnectWebdav = async () => {
+        // Firefox only allows permissions.request() from within a user-input
+        // handler, so request the host permission here (synchronously in the
+        // click, before any other await) instead of in the background — the
+        // background then just verifies it via permissions.contains.
+        let origin: string;
+        try {
+            origin = new URL(wdUrl.trim()).origin + '/*';
+        } catch {
+            fail(new Error(t('invalidDomain', 'Invalid website.')));
+            return;
+        }
+        try {
+            const granted = await browser.permissions.request({ origins: [origin] });
+            if (!granted) {
+                fail(new Error(t('hostPermissionDenied', 'Host permission was denied')));
+                return;
+            }
+        } catch (err: any) {
+            fail(err);
+            return;
+        }
+
         setBusy(true);
         try {
             const r = await sendMessageToBackground(
@@ -375,8 +398,9 @@ export function SyncAndBackupSection() {
 
     return (
         <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
+            {/* todo next version support google drive */}
             {/* Google Drive row */}
-            <SettingRow
+            {/* <SettingRow
                 label={t('syncProviderGoogleDrive', 'Google Drive')}
                 hint={
                     gdrive.authenticated
@@ -412,7 +436,7 @@ export function SyncAndBackupSection() {
                         </Button>
                     )
                 }
-            />
+            /> */}
 
             {/* WebDAV row */}
             <SettingRow

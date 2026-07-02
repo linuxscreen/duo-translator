@@ -397,6 +397,7 @@ export default function App() {
           <RadioGroup value={defaultStrategy} onValueChange={(v) => onDefaultStrategyChange(v as DEFAULT_STRATEGY)}>
             {DEFAULT_STRATEGY_OPTIONS.map((opt) => (
               <RadioGroupItem
+                key={opt.value}
                 value={opt.value}
                 label={t(opt.title, opt.fallback)}
               />
