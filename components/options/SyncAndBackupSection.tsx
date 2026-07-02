@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
 import { browser } from 'wxt/browser';
-import { sendMessageToBackground } from '@/utils/message';
+import { sendMessageToBackground, sendMessageToBackgroundOrThrow } from '@/utils/message';
 import { getConfig, setConfig } from '@/utils/db';
 import { ACTION, APP_NAME, APP_NAME_KEBAB_CASE, APP_NAME_PASCAL_CASE, CONFIG_KEY, DB_ACTION, SYNC_ACTION, SYNC_PROVIDER_ID } from '@/main/constants';
 
@@ -80,6 +80,10 @@ export function SyncAndBackupSection() {
     const [autoSync, setAutoSync] = useState(false);
     const [intervalMinutes, setIntervalMinutes] = useState(15);
 
+    // Gate the initial render until config is hydrated, so switches render with
+    // their real value from the first paint instead of animating from default.
+    const [ready, setReady] = useState(false);
+
     // Backup state — import always merges (file values win, local-only kept).
     const [includeSecrets, setIncludeSecrets] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -113,12 +117,18 @@ export function SyncAndBackupSection() {
     useEffect(() => {
         void refreshStatus();
         void loadWebdavConfig();
-        void getConfig(CONFIG_KEY.SYNC_INCLUDE_SECRETS).then((v) => setSyncSecrets(!!v));
-        void getConfig(CONFIG_KEY.AUTO_SYNC_CONFIG_SWITCH).then((v) => setAutoSync(!!v));
-        void getConfig(CONFIG_KEY.SYNC_INTERVAL_MINUTES).then((v) => {
-            const n = Number(v);
+        (async () => {
+            const [secrets, auto, interval] = await Promise.all([
+                getConfig(CONFIG_KEY.SYNC_INCLUDE_SECRETS),
+                getConfig(CONFIG_KEY.AUTO_SYNC_CONFIG_SWITCH),
+                getConfig(CONFIG_KEY.SYNC_INTERVAL_MINUTES),
+            ]);
+            setSyncSecrets(!!secrets);
+            setAutoSync(!!auto);
+            const n = Number(interval);
             if (Number.isFinite(n) && n > 0) setIntervalMinutes(n);
-        });
+            setReady(true);
+        })();
     }, []);
 
     const onToggleSyncSecrets = async (next: boolean) => {
@@ -142,13 +152,11 @@ export function SyncAndBackupSection() {
     const onConnectGdrive = async () => {
         setBusy(true);
         try {
-            const r = await sendMessageToBackground({ action: SYNC_ACTION.AUTH_GDRIVE }, 60_000);
-            if (r) {
-                await refreshStatus();
-                toast(t('syncConnected', 'Connected'));
-            } else {
-                fail();
-            }
+            await sendMessageToBackgroundOrThrow({ action: SYNC_ACTION.AUTH_GDRIVE }, 60_000);
+            await refreshStatus();
+            toast(t('syncConnected', 'Connected'));
+        } catch (err: any) {
+            fail(err);
         } finally {
             setBusy(false);
         }
@@ -187,7 +195,7 @@ export function SyncAndBackupSection() {
 
         setBusy(true);
         try {
-            const r = await sendMessageToBackground(
+            await sendMessageToBackgroundOrThrow(
                 {
                     action: SYNC_ACTION.AUTH_WEBDAV,
                     data: {
@@ -200,15 +208,11 @@ export function SyncAndBackupSection() {
                 },
                 30_000,
             );
-            if (r) {
-                setConfigOpen(false);
-                await refreshStatus();
-                toast(t('syncConnected', 'Connected'));
-            } else {
-                // Keep the dialog open on failure so the user can fix the input.
-                fail();
-            }
+            setConfigOpen(false);
+            await refreshStatus();
+            toast(t('syncConnected', 'Connected'));
         } catch (err: any) {
+            // Keep the dialog open on failure so the user can fix the input.
             fail(err);
         } finally {
             setBusy(false);
@@ -356,6 +360,11 @@ export function SyncAndBackupSection() {
     const gdrive = status[SYNC_PROVIDER_ID.GDRIVE];
     const webdav = status[SYNC_PROVIDER_ID.WEBDAV];
 
+    // Plain-HTTP servers require explicit opt-in; block connect/save until the
+    // user acknowledges the risk (the checkbox only shows for http:// URLs).
+    const isInsecureUrl = /^http:\/\//i.test(wdUrl.trim());
+    const webdavSubmitDisabled = busy || !wdUrl || !wdUser || (isInsecureUrl && !wdAllowInsecure);
+
     // Body of the "manage synced file" dialog, shared across providers.
     const renderManageBody = (id: SYNC_PROVIDER_ID) => {
         if (remoteLoading) {
@@ -395,6 +404,10 @@ export function SyncAndBackupSection() {
             </div>
         );
     };
+
+    if (!ready) {
+        return <div className="h-60 rounded-xl border border-line bg-surface/60 backdrop-blur-sm" />;
+    }
 
     return (
         <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
@@ -568,7 +581,7 @@ export function SyncAndBackupSection() {
                         <Button variant="outline" size="sm" onClick={() => setConfigOpen(false)} disabled={busy}>
                             {t('cancel', 'Cancel')}
                         </Button>
-                        <Button size="sm" onClick={onConnectWebdav} disabled={busy || !wdUrl || !wdUser}>
+                        <Button size="sm" onClick={onConnectWebdav} disabled={webdavSubmitDisabled}>
                             {webdav.authenticated ? t('save', 'Save') : t('syncConnect', 'Connect')}
                         </Button>
                     </>

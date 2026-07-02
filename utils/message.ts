@@ -46,6 +46,42 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
 }
 
 /**
+ * Like {@link sendMessageToBackground}, but rejects with the background's error
+ * message on a STATUS_FAIL response (or a timeout) instead of silently
+ * resolving `undefined`. Use this when the caller needs to surface the real
+ * failure reason (e.g. WebDAV auth errors), not just a generic message.
+ *
+ * @param {Message} message The message to send.
+ * @param timeout
+ * @returns {Promise<any>} A promise that resolves with the response data.
+ * @throws {Error} When the response status is not STATUS_SUCCESS or on timeout.
+ */
+export function sendMessageToBackgroundOrThrow(message: Message, timeout: number = 5000): Promise<any> {
+    let timeoutId: NodeJS.Timeout;
+    return Promise.race([
+        new Promise((resolve, reject) => {
+            browser.runtime.sendMessage(message).then((response) => {
+                clearTimeout(timeoutId)
+                if (!response) {
+                    resolve(undefined)
+                    return
+                }
+                if (response.status === STATUS_SUCCESS) {
+                    resolve(response.data);
+                } else {
+                    reject(new Error(response.data ? String(response.data) : `${message.action} failed`))
+                }
+            }).catch(reject);
+        }),
+        new Promise((_resolve, reject) => {
+            timeoutId = setTimeout(() => {
+                reject(new Error(`${message.action} request timeout`))
+            }, timeout)
+        })
+    ]);
+}
+
+/**
  * Sends a message to the currently active and valid tab.
  *
  * @param message The message to send.
