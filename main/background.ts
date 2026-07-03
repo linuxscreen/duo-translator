@@ -38,6 +38,7 @@ import { getDomainWithPortFromUrl } from '@/utils/url';
 import { storage } from 'wxt/utils/storage';
 import { configRepo, domainRepo, getConfigItem, ruleRepo, type DomainDoc } from "@/main/storage/configStore";
 import * as translationCache from "@/main/storage/translationCache";
+import { synthesizeTts } from "@/main/ttsService";
 import { migrateFromPouchIfNeeded } from "@/main/storage/migrateFromPouch";
 import { buildSnapshot, applyImportedSnapshot, redactSecrets } from "@/main/storage/snapshot";
 import {
@@ -716,6 +717,21 @@ export async function background() {
                     sendResponse({ status: STATUS_FAIL, data: { name: e?.name, message: e?.message } })
                 })
                 return true
+            case ACTION.TTS_SYNTHESIZE: {
+                (async () => {
+                    try {
+                        const { text, lang, service } = (message.data || {}) as {
+                            text: string; lang: string; service: string;
+                        };
+                        const audios = await synthesizeTts(text, lang, service);
+                        sendResponse({ status: STATUS_SUCCESS, data: { audios } });
+                    } catch (e: any) {
+                        console.error(APP_NAME_WITH_SUFFIX, 'TTS synthesize failed:', e?.message || e);
+                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
+                    }
+                })();
+                return true;
+            }
             case ACTION.CONFIG_CHANGED:
                 if (typeof message.data !== 'object') return
                 Object.entries(message.data).forEach(([key, value]) => {

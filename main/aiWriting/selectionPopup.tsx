@@ -1,10 +1,20 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { Copy, Loader2, Pin, X } from "lucide-react";
+import { Check, ChevronRight, Copy, Loader2, Pin, Volume2, X } from "lucide-react";
 import { loadTailwindIntoShadow } from "./shadowStyle";
 import { t, useLang } from "./i18n";
 import { useCopyFeedback } from "./useCopyFeedback";
-import { startTranslate, type TranslateServiceChoice } from "./translateRunner";
+import { useTts } from "./useTts";
+import {
+    startTranslate,
+    parseTranslateServiceKey,
+    buildTranslateServiceKey,
+    type TranslateServiceChoice,
+} from "./translateRunner";
+import { CONFIG_KEY, LANGUAGES, LANGUAGES_MAP } from "@/main/constants";
+import { getTextLanguage } from "@/main/lang";
+import { getConfig, setConfig } from "@/utils/db";
+import { buildServiceOptions, getTranslateService, type ServiceOption } from "@/utils/service";
 
 // ---------------------------------------------------------------------------
 // Singleton mount — one popup per page (per frame). A fresh request replaces
@@ -115,6 +125,49 @@ function computePlacement(rect: DOMRect | null): Placement {
 // Component
 // ---------------------------------------------------------------------------
 
+/** Small play + copy button cluster shared by the original / translation rows. */
+function AudioActions({
+    ttsKey,
+    text,
+    lang,
+    tts,
+}: {
+    ttsKey: string;
+    text: string;
+    lang: string;
+    tts: ReturnType<typeof useTts>;
+}) {
+    const [copied, copy] = useCopyFeedback();
+    const playing = tts.playingKey === ttsKey;
+    const disabled = !text.trim();
+    const iconBtn =
+        "h-6 w-6 inline-flex items-center justify-center rounded hover:bg-[rgba(120,200,230,0.1)] disabled:opacity-40 disabled:hover:bg-transparent";
+    return (
+        <div className="flex items-center gap-0.5 shrink-0">
+            <button
+                type="button"
+                disabled={disabled}
+                onClick={() => tts.toggle(ttsKey, text, lang)}
+                title={playing ? t("selectionStopSpeech", "Stop") : t("selectionPlaySpeech", "Play")}
+                aria-label={playing ? t("selectionStopSpeech", "Stop") : t("selectionPlaySpeech", "Play")}
+                className={`${iconBtn} ${playing ? "text-[oklch(0.86_0.16_195)]" : "text-[#8a93a8]"}`}
+            >
+                <Volume2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+                type="button"
+                disabled={disabled}
+                onClick={() => copy(text)}
+                title={copied ? t("aiCopied", "Copied") : t("aiCopy", "Copy")}
+                aria-label={copied ? t("aiCopied", "Copied") : t("aiCopy", "Copy")}
+                className={`${iconBtn} ${copied ? "text-emerald-400" : "text-[#8a93a8]"}`}
+            >
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+            </button>
+        </div>
+    );
+}
+
 function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionSeed) => void) => void }) {
     useLang();
     const [open, setOpen] = useState(false);
@@ -123,8 +176,28 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
     const [error, setError] = useState<string | null>(null);
     const [pinned, setPinned] = useState(false);
     const [placement, setPlacement] = useState<Placement>({ left: -9999, top: -9999, maxHeight: MAX_HEIGHT });
-    const [copied, copy] = useCopyFeedback();
 
+    // The current selection (source text + the page's default service/lang).
+    const [seed, setSeed] = useState<SelectionSeed | null>(null);
+    // Detected language of the original text, used for its TTS playback.
+    const [origLang, setOrigLang] = useState("und");
+    // "Show original text" is collapsed by default.
+    const [origExpanded, setOrigExpanded] = useState(false);
+    // Header overrides — null means "follow the page translation" (the default).
+    // Persisted (CONFIG_KEY.SELECTION_*) so a chosen service / target language
+    // sticks across opens. The refs mirror the latest values so the stable
+    // `registerOpen` closure can read them without a stale capture.
+    const [serviceOverride, setServiceOverride] = useState<string | null>(null);
+    const [langOverride, setLangOverride] = useState<string | null>(null);
+    const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
+    const serviceOverrideRef = useRef<string | null>(null);
+    const langOverrideRef = useRef<string | null>(null);
+    serviceOverrideRef.current = serviceOverride;
+    langOverrideRef.current = langOverride;
+
+    const tts = useTts();
+    // Abort handle for the in-flight translate stream; also acts as a run token
+    // so a superseded stream's finally-block can't clobber a newer run's state.
     const abortRef = useRef<(() => void) | null>(null);
     const cardRef = useRef<HTMLDivElement>(null);
     const pinnedRef = useRef(false);
@@ -133,41 +206,98 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
     const close = () => {
         if (abortRef.current) abortRef.current();
         abortRef.current = null;
+        tts.stop();
         setRunning(false);
         setOpen(false);
     };
 
+    // Load the shared service picker list once (built-in translators + AI
+    // providers, gated the same way as page translation), plus the persisted
+    // header overrides so a previously chosen service / language is restored.
     useEffect(() => {
-        registerOpen((seed) => {
-            // Abort any in-flight stream from a previous selection.
-            if (abortRef.current) { abortRef.current(); abortRef.current = null; }
-            setOpen(true);
-            setOutput("");
-            setError(null);
-            setPinned(false);
-            setPlacement(computePlacement(seed.rect));
+        (async () => {
+            const [{ enabledTranslateServices, enabledAiProviders }, svc, lng] = await Promise.all([
+                getTranslateService(undefined),
+                getConfig(CONFIG_KEY.SELECTION_TRANSLATE_SERVICE),
+                getConfig(CONFIG_KEY.SELECTION_TARGET_LANGUAGE),
+            ]);
+            setServiceOptions(buildServiceOptions(enabledTranslateServices, enabledAiProviders));
+            const svcVal = typeof svc === "string" && svc ? svc : null;
+            const lngVal = typeof lng === "string" && lng ? lng : null;
+            serviceOverrideRef.current = svcVal;
+            langOverrideRef.current = lngVal;
+            setServiceOverride(svcVal);
+            setLangOverride(lngVal);
+        })();
+    }, []);
 
-            if (!seed.text.trim()) {
-                setRunning(false);
-                return;
-            }
-            setRunning(true);
-            const { stream, abort } = startTranslate(seed.text, seed.targetLang, seed.choice);
-            abortRef.current = abort;
-            (async () => {
-                try {
-                    for await (const delta of stream) {
-                        setOutput((prev) => prev + delta);
-                    }
-                } catch (e: any) {
-                    setError(e?.message || String(e));
-                } finally {
+    // Run (or re-run) the translation for the given text/lang/service.
+    const runTranslate = useCallback((text: string, targetLang: string, choice: TranslateServiceChoice) => {
+        if (abortRef.current) { abortRef.current(); abortRef.current = null; }
+        setOutput("");
+        setError(null);
+        if (!text.trim()) { setRunning(false); return; }
+        setRunning(true);
+        // Regular translators report the detected source language — far more
+        // reliable than franc on a short selection (which can pick a variant
+        // with no Bing voice, silently falling TTS back to Google). Use it for
+        // the original-text playback language when available.
+        const { stream, abort } = startTranslate(text, targetLang, choice, (src) => {
+            if (src && src !== "und") setOrigLang(src);
+        });
+        abortRef.current = abort;
+        const myAbort = abort;
+        (async () => {
+            try {
+                for await (const delta of stream) {
+                    if (abortRef.current !== myAbort) return; // superseded
+                    setOutput((prev) => prev + delta);
+                }
+            } catch (e: any) {
+                if (abortRef.current === myAbort) setError(e?.message || String(e));
+            } finally {
+                if (abortRef.current === myAbort) {
                     setRunning(false);
                     abortRef.current = null;
                 }
-            })();
+            }
+        })();
+    }, []);
+
+    useEffect(() => {
+        registerOpen((s) => {
+            tts.stop();
+            setSeed(s);
+            setOpen(true);
+            setPinned(false);
+            setOrigExpanded(false);
+            setOrigLang(getTextLanguage(s.text) || "und");
+            setPlacement(computePlacement(s.rect));
+            // Honor the persisted header overrides (null ⇒ follow the page).
+            const svc = serviceOverrideRef.current;
+            const lng = langOverrideRef.current;
+            const choice = svc ? parseTranslateServiceKey(svc) : s.choice;
+            runTranslate(s.text, lng ?? s.targetLang, choice);
         });
-    }, [registerOpen]);
+    }, [registerOpen, runTranslate]);
+
+    const onServiceChange = (value: string) => {
+        const next = value || null;
+        setServiceOverride(next);
+        void setConfig(CONFIG_KEY.SELECTION_TRANSLATE_SERVICE, value);
+        if (!seed) return;
+        const choice = next ? parseTranslateServiceKey(next) : seed.choice;
+        runTranslate(seed.text, langOverride ?? seed.targetLang, choice);
+    };
+
+    const onLangChange = (value: string) => {
+        const next = value || null;
+        setLangOverride(next);
+        void setConfig(CONFIG_KEY.SELECTION_TARGET_LANGUAGE, value);
+        if (!seed) return;
+        const choice = serviceOverride ? parseTranslateServiceKey(serviceOverride) : seed.choice;
+        runTranslate(seed.text, next ?? seed.targetLang, choice);
+    };
 
     // Esc always closes (even when pinned).
     useEffect(() => {
@@ -218,7 +348,7 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             next = { ...(next ?? placement), left: MARGIN } as Placement;
         }
         if (next) setPlacement(next);
-    }, [open, output]);
+    }, [open, output, origExpanded]);
 
     if (!open) return null;
 
@@ -232,6 +362,21 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         ...("top" in placement ? { top: placement.top } : { bottom: placement.bottom }),
     };
 
+    // "Follow page" labels for the first option of each header dropdown.
+    const followKey = seed ? buildTranslateServiceKey(seed.choice) : "";
+    const followServiceOpt = serviceOptions.find((o) => o.value === followKey);
+    const followServiceName = followServiceOpt
+        ? (followServiceOpt.i18nKey ? t(followServiceOpt.i18nKey, followServiceOpt.label) : followServiceOpt.label)
+        : followKey;
+    const followLangMeta = seed ? LANGUAGES_MAP.get(seed.targetLang) : undefined;
+    const followLangName = followLangMeta ? t(followLangMeta.title, followLangMeta.name) : (seed?.targetLang ?? "");
+    const followWith = (name: string) =>
+        t("selectionFollowWeb", "Follow page ({{name}})").replace("{{name}}", name);
+
+    const effectiveTargetLang = langOverride ?? seed?.targetLang ?? "";
+    const selectCls =
+        "h-6 min-w-0 flex-1 max-w-[160px] rounded border border-[rgba(140,180,230,0.18)] bg-[#0f1623] px-1.5 text-[11px] text-[#cfd6e4] outline-none focus:border-[oklch(0.86_0.16_195)]";
+
     return (
         <div
             ref={cardRef}
@@ -239,13 +384,35 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             style={style}
             onMouseDown={(e) => e.stopPropagation()}
         >
-            {/* Header */}
-            <div className="flex items-center justify-between px-3 py-1.5 border-b border-[rgba(140,180,230,0.1)] bg-[#141d2e]">
-                <div className="flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-[0.1em] text-[#8a93a8]">
-                    {/* {running && <Loader2 className="h-3 w-3 animate-spin" />} */}
-                    {t("selectionTranslateTitle", "Translation")}
-                </div>
-                <div className="flex items-center gap-0.5">
+            {/* Header — a single row: service + language pickers, then pin/close. */}
+            <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[rgba(140,180,230,0.1)] bg-[#141d2e]">
+                <select
+                    value={serviceOverride ?? ""}
+                    onChange={(e) => onServiceChange(e.target.value)}
+                    title={t("translateService", "Translate service")}
+                    className={selectCls}
+                >
+                    <option value="">{followWith(followServiceName)}</option>
+                    {serviceOptions.map((o) => (
+                        <option key={o.value} value={o.value}>
+                            {o.i18nKey ? t(o.i18nKey, o.label) : o.label}
+                        </option>
+                    ))}
+                </select>
+                <select
+                    value={langOverride ?? ""}
+                    onChange={(e) => onLangChange(e.target.value)}
+                    title={t("targetLanguage", "Target language")}
+                    className={selectCls}
+                >
+                    <option value="">{followWith(followLangName)}</option>
+                    {LANGUAGES.map((l) => (
+                        <option key={l.value} value={l.value}>
+                            {t(l.title, l.name)}
+                        </option>
+                    ))}
+                </select>
+                <div className="flex items-center gap-0.5 shrink-0 ml-auto">
                     <button
                         type="button"
                         onClick={() => setPinned((v) => !v)}
@@ -268,28 +435,44 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             </div>
 
             {/* Body */}
-            <div className="flex-1 min-h-0 overflow-auto px-3 py-2.5 text-[13px] leading-[1.5] text-[#eef1f8] whitespace-pre-wrap break-words">
-                {error ? (
-                    <span className="text-red-400">{error}</span>
-                ) : running && !output ? (
-                    <span className="inline-flex items-center gap-1.5 text-[#8a93a8]">
-                        <Loader2 className="h-3 w-3 animate-spin" /> {t("aiStreaming", "Streaming...")}
-                    </span>
-                ) : (
-                    output
-                )}
-            </div>
+            <div className="flex-1 min-h-0 overflow-auto">
+                {/* Original text (collapsible) */}
+                <div className="px-3 py-2 border-b border-[rgba(140,180,230,0.08)]">
+                    <div className="flex items-center justify-between gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setOrigExpanded((v) => !v)}
+                            className="flex items-center gap-1 text-[12px] text-[#8a93a8] hover:text-[#cfd6e4]"
+                        >
+                            <ChevronRight
+                                className={`h-3.5 w-3.5 transition-transform ${origExpanded ? "rotate-90" : ""}`}
+                            />
+                            {t("selectionShowOriginal", "Show original text")}
+                        </button>
+                        <AudioActions ttsKey="orig" text={seed?.text ?? ""} lang={origLang} tts={tts} />
+                    </div>
+                    {origExpanded && (
+                        <div className="mt-1.5 text-[13px] leading-normal text-[#cfd6e4] whitespace-pre-wrap wrap-break-word">
+                            {seed?.text}
+                        </div>
+                    )}
+                </div>
 
-            {/* Footer */}
-            <div className="flex items-center justify-end px-3 py-1.5 border-t border-[rgba(140,180,230,0.08)] bg-[#0a111c]">
-                <button
-                    type="button"
-                    onClick={() => copy(output)}
-                    disabled={!output}
-                    className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] hover:border-[oklch(0.86_0.16_195)] disabled:opacity-40"
-                >
-                    <Copy className="h-3 w-3" /> {copied ? t("aiCopied", "Copied") : t("aiCopy", "Copy")}
-                </button>
+                {/* Translation */}
+                <div className="flex items-start gap-2 px-3 py-2.5">
+                    <div className="flex-1 min-w-0 text-[13px] leading-normal text-[#eef1f8] whitespace-pre-wrap wrap-break-word">
+                        {error ? (
+                            <span className="text-red-400">{error}</span>
+                        ) : running && !output ? (
+                            <span className="inline-flex items-center gap-1.5 text-[#8a93a8]">
+                                <Loader2 className="h-3 w-3 animate-spin" /> {t("aiStreaming", "Streaming...")}
+                            </span>
+                        ) : (
+                            output
+                        )}
+                    </div>
+                    <AudioActions ttsKey="trans" text={output} lang={effectiveTargetLang} tts={tts} />
+                </div>
             </div>
         </div>
     );

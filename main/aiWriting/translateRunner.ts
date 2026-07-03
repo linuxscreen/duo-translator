@@ -34,6 +34,13 @@ export function startTranslate(
     text: string,
     targetLang: string,
     choice: TranslateServiceChoice,
+    /**
+     * Regular (non-AI) translators return the detected source language of the
+     * input. Callers that need it (e.g. picking a TTS voice for the original
+     * text) pass this callback; it fires once, when the translation resolves.
+     * AI providers don't report a source language, so it's never called there.
+     */
+    onSourceLang?: (lang: string) => void,
 ): RunningStream {
     if (choice.kind === "ai") {
         return startAiChatStream({
@@ -42,10 +49,15 @@ export function startTranslate(
             payload: { text, targetLang },
         });
     }
-    return startRegularTranslate(text, targetLang, choice.service);
+    return startRegularTranslate(text, targetLang, choice.service, onSourceLang);
 }
 
-function startRegularTranslate(text: string, targetLang: string, service: string): RunningStream {
+function startRegularTranslate(
+    text: string,
+    targetLang: string,
+    service: string,
+    onSourceLang?: (lang: string) => void,
+): RunningStream {
     let aborted = false;
     const stream: AsyncIterable<string> = {
         [Symbol.asyncIterator]() {
@@ -58,6 +70,8 @@ function startRegularTranslate(text: string, targetLang: string, service: string
                     if (!svc) throw new Error(`Unknown translate service: ${service}`);
                     const results = await svc.translateText([text], targetLang);
                     if (aborted) return { value: undefined as any, done: true };
+                    const sourceLang = results?.[0]?.sourceLang;
+                    if (sourceLang) onSourceLang?.(sourceLang);
                     const out = results?.[0]?.translatedMappedHtmlText ?? "";
                     return { value: out, done: false };
                 },

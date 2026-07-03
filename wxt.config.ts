@@ -19,6 +19,12 @@ export default defineConfig({
             // 'https://api-free.deepl.com/*',
             // google drive
             // 'https://www.googleapis.com/*', 'https://oauth2.googleapis.com/*', 'https://accounts.google.com/*'
+            // Text-to-speech endpoints. Fetched from the background service worker
+            // (their responses carry no CORS headers, and Bing needs a token
+            // scraped from its translator page). These are narrow, fixed origins,
+            // so they do NOT trigger the broad "all sites" install warning.
+            // 'https://translate.google.com/*',
+            // 'https://www.bing.com/*',
         ],
         // WebDAV URL is user-supplied at runtime, so we request the matching
         // origin via `browser.permissions.request` on connect. <all_urls> here

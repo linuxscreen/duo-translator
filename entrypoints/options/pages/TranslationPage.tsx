@@ -18,6 +18,7 @@ import {
   STYLE_NONE,
   VIEW_STRATEGIES,
   DEFAULT_STRATEGY_OPTIONS,
+  TTS_SERVICE_OPTIONS,
 } from '@/main/constants';
 import {
   sendMessageToAllTabs,
@@ -83,6 +84,7 @@ export function TranslationPage() {
   );
   const [floatBall, setFloatBall] = useState(true);
   const [translationCache, setTranslationCache] = useState(true);
+  const [ttsService, setTtsService] = useState<string>(DEFAULT_VALUE.TTS_SERVICE);
   // Transient "cleared" state for the clear-cache button (resets after ~1.5s).
   const [cacheCleared, setCacheCleared] = useState(false);
   // Clear-cache confirmation dialog.
@@ -152,7 +154,7 @@ export function TranslationPage() {
     let cancelled = false;
     (async () => {
       const [
-        bh, fb, vs, tl, ts, ds, ms, lb, tc,
+        bh, fb, vs, tl, ts, ds, ms, lb, tc, tts,
         styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg,
         hbCfg, hbIdxCfg, hfCfg, hfIdxCfg, hsCfg, hbcCfg, hbcIdxCfg,
       ] = await Promise.all([
@@ -165,6 +167,7 @@ export function TranslationPage() {
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES),
         getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS),
         getConfig(CONFIG_KEY.TRANSLATION_CACHE_SWITCH),
+        getConfig(CONFIG_KEY.TTS_SERVICE),
         getConfig(CONFIG_KEY.STYLE),
         getConfig(CONFIG_KEY.BG_COLOR),
         getConfig(CONFIG_KEY.BG_COLOR_INDEX),
@@ -194,6 +197,7 @@ export function TranslationPage() {
       setLineBreakInput(String(initialLb));
       setFloatBall(fb === undefined ? true : fb);
       setTranslationCache(tc === undefined ? true : tc);
+      setTtsService(typeof tts === 'string' && tts ? tts : DEFAULT_VALUE.TTS_SERVICE);
       setViewStrategy(vs === undefined ? DEFAULT_VALUE.VIEW_STRATEGY : vs);
       tl && setTargetLang(tl);
       // Same flat list (translators + AI providers) and active-service
@@ -280,6 +284,11 @@ export function TranslationPage() {
     setTranslationCache(v);
     void setConfig(CONFIG_KEY.TRANSLATION_CACHE_SWITCH, v);
     void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.TRANSLATION_CACHE_SWITCH]: v } });
+  };
+
+  const onTtsService = (v: string) => {
+    setTtsService(v);
+    void setConfig(CONFIG_KEY.TTS_SERVICE, v);
   };
 
   const onClearCacheClick = async () => {
@@ -607,6 +616,24 @@ export function TranslationPage() {
               </button>
               <Switch checked={translationCache} onCheckedChange={onTranslationCache} />
             </div>
+          }
+        />
+        <SettingRow
+          label={t('ttsService', 'Text-to-speech (TTS) service')}
+          hint={t('ttsServiceHint', 'Voice provider for reading original / translated text aloud')}
+          control={
+            <Select value={ttsService} onValueChange={onTtsService}>
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TTS_SERVICE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           }
         />
       </div>

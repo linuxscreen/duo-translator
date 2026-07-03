@@ -123,6 +123,17 @@ export enum TRANSLATE_SERVICE {
     DEEPL = 'deepl',
 }
 
+/** Text-to-speech provider for the selection-translate popup's play buttons. */
+export enum TTS_SERVICE {
+    GOOGLE = 'google',
+    BING = 'bing',
+}
+
+export const TTS_SERVICE_OPTIONS: { value: TTS_SERVICE; label: string }[] = [
+    { value: TTS_SERVICE.GOOGLE, label: 'Google' },
+    { value: TTS_SERVICE.BING, label: 'Bing' },
+];
+
 export const TRANSLATE_SERVICES: Map<string, TranslateServiceMeta> = new Map([
     ["microsoft", new TranslateServiceMeta("Microsoft", "microsoft", "microsoftTranslator", "MicrosoftTranslateDescription", false)],
     ["google", new TranslateServiceMeta("Google", "google", "googleTranslate", "GoogleTranslateDescription", false)],
@@ -201,6 +212,12 @@ export enum ACTION {
     RELAY_FRAMES = 'relayFrames',
     ACTIVE_TRANSLATE_SERVICE_CHANGED = "activeTranslateServiceChanged",
     CONFIG_CHANGED = "configChanged",
+    // Text-to-speech synthesis. content sends { text, lang, service }; background
+    // fetches the audio from Google / Bing (their endpoints have no CORS headers
+    // and Bing needs a page-scraped token, so the fetch must live in background)
+    // and returns an array of base64 `data:` URLs (one per <=170-char chunk) that
+    // the content script plays sequentially through an <audio> element.
+    TTS_SYNTHESIZE = 'ttsSynthesize',
 }
 
 export enum CONFIG_KEY {
@@ -234,6 +251,14 @@ export enum CONFIG_KEY {
     TRANSLATION_LINE_BREAK_MIN_CHARS = 'translationLineBreakMinChars',
     // Persistent translation-result cache toggle (LRU, 100MB cap). Default on.
     TRANSLATION_CACHE_SWITCH = 'translationCacheSwitch',
+    // Text-to-speech provider used by the selection-translate popup's play
+    // buttons: 'google' | 'bing'. Default 'google'.
+    TTS_SERVICE = 'ttsService',
+    // Selection-translate popup header overrides. Empty/undefined means "follow
+    // the page translation" (the default); a concrete value pins that service /
+    // target language for the popup, persisted across opens.
+    SELECTION_TRANSLATE_SERVICE = 'selectionTranslateService',
+    SELECTION_TARGET_LANGUAGE = 'selectionTargetLanguage',
     GLOBAL_SWITCH = 'globalSwitch',
     TRANSLATE_SERVICE = 'translateService',
     MICROSOFT_TOKEN = 'microsoftToken',
@@ -304,6 +329,7 @@ export const DEFAULT_VALUE = {
     DOMAIN_STRATEGY: 'auto',
     TRANSLATION_LINE_BREAK_MIN_CHARS: 40,
     TRANSLATION_CACHE_SWITCH: true,
+    TTS_SERVICE: 'google',
     SYNC_INTERVAL_MINUTES: 15,
     HIGHLIGHT_STYLE: 'underLine',
     HIGHLIGHT_BORDER_COLOR: '#df5f47',
