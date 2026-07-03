@@ -3,8 +3,12 @@ import { useEffect, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { browser } from 'wxt/browser';
-import { IS_FIREFOX } from '@/main/constants';
+import { CONFIG_KEY, DEFAULT_VALUE, IS_FIREFOX } from '@/main/constants';
+import { useConfig } from '@/utils/reactiveConfig';
+import { setConfig } from '@/utils/db';
 
 type CommandInfo = {
   name: string;
@@ -86,6 +90,82 @@ function eventToShortcut(e: ReactKeyboardEvent): string | null {
   return parts.join('+');
 }
 
+// Double-tap shortcuts: double-tapping Ctrl/Alt runs a quick action in the
+// content script. The modifier + the three per-action toggles are plain config
+// keys read live via useConfig; content.ts reads the same keys on trigger.
+function DoubleTapShortcutsCard() {
+  const { t } = useTranslation();
+  const modifier = useConfig<string>(CONFIG_KEY.DOUBLE_TAP_MODIFIER, DEFAULT_VALUE.DOUBLE_TAP_MODIFIER);
+  const translateSelection = useConfig<boolean>(
+    CONFIG_KEY.DOUBLE_TAP_TRANSLATE_SELECTION,
+    DEFAULT_VALUE.DOUBLE_TAP_TRANSLATE_SELECTION,
+  );
+  const toggleParagraph = useConfig<boolean>(
+    CONFIG_KEY.DOUBLE_TAP_TOGGLE_PARAGRAPH,
+    DEFAULT_VALUE.DOUBLE_TAP_TOGGLE_PARAGRAPH,
+  );
+  const translateInput = useConfig<boolean>(
+    CONFIG_KEY.DOUBLE_TAP_TRANSLATE_INPUT,
+    DEFAULT_VALUE.DOUBLE_TAP_TRANSLATE_INPUT,
+  );
+
+  const toggles: { key: CONFIG_KEY; label: string; checked: boolean }[] = [
+    {
+      key: CONFIG_KEY.DOUBLE_TAP_TRANSLATE_SELECTION,
+      label: t('doubleTapTranslateSelection', 'Translate selection'),
+      checked: translateSelection,
+    },
+    {
+      key: CONFIG_KEY.DOUBLE_TAP_TOGGLE_PARAGRAPH,
+      label: t('doubleTapToggleParagraph', 'Translate / restore mouse-over paragraph'),
+      checked: toggleParagraph,
+    },
+    {
+      key: CONFIG_KEY.DOUBLE_TAP_TRANSLATE_INPUT,
+      label: t('doubleTapTranslateInput', 'Translate input box'),
+      checked: translateInput,
+    },
+  ];
+
+  return (
+    <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
+      <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+        <Keyboard className="h-3.5 w-3.5 text-ink-soft" strokeWidth={1.6} />
+        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-mute">
+          {t('doubleTapShortcuts', 'Double-tap shortcuts')}
+        </span>
+      </div>
+      <div className="flex flex-col gap-4 px-4 py-3">
+        <p className="text-[12px] text-ink-soft">
+          {t('doubleTapShortcutsHint', 'Double-tap the modifier key to run a quick action')}
+        </p>
+        <div className="flex items-center justify-between gap-6">
+          <span className="text-[13.5px] text-ink">{t('doubleTapModifier', 'Modifier key')}</span>
+          <RadioGroup
+            className="flex-row gap-1"
+            value={modifier}
+            onValueChange={(v) => void setConfig(CONFIG_KEY.DOUBLE_TAP_MODIFIER, v)}
+          >
+            <RadioGroupItem value="ctrl" label="Ctrl" className="w-auto" />
+            <RadioGroupItem value="alt" label="Alt" className="w-auto" />
+          </RadioGroup>
+        </div>
+        <ul className="flex flex-col gap-3">
+          {toggles.map((item) => (
+            <li key={item.key} className="flex items-center justify-between gap-6">
+              <span className="text-[13.5px] text-ink">{item.label}</span>
+              <Switch
+                checked={item.checked}
+                onCheckedChange={(v) => void setConfig(item.key, v)}
+              />
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 export function ShortcutsPage() {
   const { t } = useTranslation();
   const [commands, setCommands] = useState<CommandInfo[]>([]);
@@ -160,6 +240,7 @@ export function ShortcutsPage() {
 
   return (
     <div className="flex flex-col gap-4">
+      <DoubleTapShortcutsCard />
       <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <Keyboard className="h-3.5 w-3.5 text-ink-soft" strokeWidth={1.6} />

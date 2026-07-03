@@ -15,6 +15,7 @@ import { detectLanguage, getElementTextContent } from "@/main/lang";
 import { parseTranslateServiceKey, startTranslate, TranslateServiceChoice } from "./aiWriting/translateRunner";
 import { applyTextToTarget } from "./aiWriting/applyText";
 import { getElementText } from "@/utils/dom";
+import { readConfig } from "@/utils/reactiveConfig";
 import { getDomainWithPortFromUrl } from "@/utils/url";
 import { getAiTranslateService, getTranslateService } from "@/utils/service";
 import { buildTranslationCss } from "@/main/css";
@@ -305,6 +306,31 @@ export async function content() {
     //#region event listeners
     document.addEventListener('mousemove', e => { lastX = e.clientX; lastY = e.clientY; }, { passive: true });
 
+    // Double-tap shortcut: pressing the configured modifier (Ctrl/Alt) twice in
+    // quick succession, with no other key in between, runs a quick action. The
+    // toggles are read live on trigger so the latest settings apply.
+    const DOUBLE_TAP_INTERVAL_MS = 400;
+    let lastModifierTapTime = 0;
+    document.addEventListener('keydown', (e) => {
+        // Ignore auto-repeat while the key is held.
+        if (e.repeat) return;
+        const modifier = readConfig<string>(CONFIG_KEY.DOUBLE_TAP_MODIFIER, DEFAULT_VALUE.DOUBLE_TAP_MODIFIER);
+        const expectedKey = modifier === 'alt' ? 'Alt' : 'Control';
+        if (e.key !== expectedKey) {
+            // Any non-modifier key (or the wrong modifier) breaks the tap sequence,
+            // so real combos like Ctrl+C never trigger a double-tap.
+            lastModifierTapTime = 0;
+            return;
+        }
+        const now = Date.now();
+        if (now - lastModifierTapTime <= DOUBLE_TAP_INTERVAL_MS) {
+            lastModifierTapTime = 0;
+            handleDoubleTapModifier();
+        } else {
+            lastModifierTapTime = now;
+        }
+    }, true);
+
     // add 'Translate/Restore this paragraph' menu when mouse is over the text of
     // a paragraph element and right mouse clicked
     // Due to chrome limitations, currently context menu of 'Translate/Restore this paragraph' can only be implemented in this way.
@@ -544,6 +570,35 @@ export async function content() {
             default:
                 break
 
+        }
+    }
+
+    // Double-tap modifier handler. Only one action fires per gesture, checked in
+    // priority order: an active text selection wins, then a focused editable
+    // input, then the paragraph under the mouse. Each is gated by its own toggle.
+    function handleDoubleTapModifier() {
+        const doSelection = readConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TRANSLATE_SELECTION, DEFAULT_VALUE.DOUBLE_TAP_TRANSLATE_SELECTION);
+        const doInput = readConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TRANSLATE_INPUT, DEFAULT_VALUE.DOUBLE_TAP_TRANSLATE_INPUT);
+        const doParagraph = readConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TOGGLE_PARAGRAPH, DEFAULT_VALUE.DOUBLE_TAP_TOGGLE_PARAGRAPH);
+
+        if (doSelection) {
+            const selection = window.getSelection();
+            const text = selection?.toString().trim();
+            if (text) {
+                translateSelection(text, selection);
+                return;
+            }
+        }
+        if (doInput) {
+            const active = document.activeElement;
+            if (active instanceof HTMLElement && IsEditableElement(active)) {
+                lastEditableElement = active;
+                translateInputBox();
+                return;
+            }
+        }
+        if (doParagraph) {
+            toggleTranslateParagraph();
         }
     }
 

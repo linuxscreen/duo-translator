@@ -279,6 +279,14 @@ export enum CONFIG_KEY {
     AUTO_SYNC_CONFIG_SWITCH = 'autoSyncConfigSwitch',
     // Periodic auto-sync interval in minutes (5..60, default 15). Per-device.
     SYNC_INTERVAL_MINUTES = 'syncIntervalMinutes',
+    // Double-tap shortcuts: double-tapping a modifier key runs a quick action.
+    // DOUBLE_TAP_MODIFIER: which modifier triggers it ('ctrl' | 'alt', default
+    // 'ctrl'). The three toggles below gate which action fires (checked in
+    // priority order: selection → input box → mouse-over paragraph); all default on.
+    DOUBLE_TAP_MODIFIER = 'doubleTapModifier',
+    DOUBLE_TAP_TRANSLATE_SELECTION = 'doubleTapTranslateSelection',
+    DOUBLE_TAP_TOGGLE_PARAGRAPH = 'doubleTapToggleParagraph',
+    DOUBLE_TAP_TRANSLATE_INPUT = 'doubleTapTranslateInput',
 }
 
 export const DEFAULT_VALUE = {
@@ -302,6 +310,10 @@ export const DEFAULT_VALUE = {
     HIGHLIGHT_BORDER_COLOR_INDEX: 1,
     DISABLED_TRANSLATE_SERVICES: ['deepl'],
     AI_TARGET_LANGUAGE: 'en',
+    DOUBLE_TAP_MODIFIER: 'ctrl',
+    DOUBLE_TAP_TRANSLATE_SELECTION: true,
+    DOUBLE_TAP_TOGGLE_PARAGRAPH: true,
+    DOUBLE_TAP_TRANSLATE_INPUT: true,
 } as const;
 
 // CONFIG_KEY value -> enum key name. Lets us look up a default for any config
