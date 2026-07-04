@@ -137,9 +137,9 @@ export async function content() {
 
     const observer = new MutationObserver(async mutations => {
         for (const mutation of mutations) {
-            if (mutation.type !== 'childList') continue;
             if (mutation.target.nodeType !== 1) continue;
             const target = mutation.target as HTMLElement;
+
             // Cheap structural skip — bail before queueing.
             if (isIgnoreMutationElement(target)) continue;
             // console.log('start mutation');
@@ -185,9 +185,6 @@ export async function content() {
         rootMargin: '300px 0px',
     });
 
-    if (globalSwitch) {
-        await init()
-    }
     //#endregion
 
     // console.debug("get config:", "ruleStrategy: ", ruleStrategy, "viewStrategy: ", viewStrategy,
@@ -302,6 +299,10 @@ export async function content() {
         }
     });
     //#endregion
+
+    if (globalSwitch) {
+        await init()
+    }
 
     //#region event listeners
     document.addEventListener('mousemove', e => { lastX = e.clientX; lastY = e.clientY; }, { passive: true });
@@ -913,7 +914,8 @@ export async function content() {
             childList: true,
             subtree: true,
             characterData: true,// text content change
-            // attributes: true,
+            attributeFilter: ['class'],
+            attributes: true,
             // characterDataOldValue: true,
             // attributeOldValue: true
         });

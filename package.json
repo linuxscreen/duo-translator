@@ -16,7 +16,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e:build": "cross-env WXT_OUTDIR=.output/e2e-build wxt build --mode development",
-    "e2e": "playwright test --config e2e/playwright.config.ts --grep-invert @real",
+    "e2e": "playwright test --config e2e/playwright.config.ts",
+    "e2e:no-real": "playwright test --config e2e/playwright.config.ts --grep-invert @real",
+    "e2e:core": "playwright test --config e2e/playwright.config.ts --grep @core",
     "e2e:real": "playwright test --config e2e/playwright.config.ts --grep @real",
     "postinstall": "wxt prepare"
   },
