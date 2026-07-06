@@ -466,10 +466,10 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
         }
     };
 
-    const apply = () => {
+    const apply = async () => {
         if (!result) return;
         const el = lastTargetRef.get();
-        if (applyTextToTarget(el, result.output)) setResult(null);
+        if (await applyTextToTarget(el, result.output)) setResult(null);
     };
 
     const onWorkbench = () => {

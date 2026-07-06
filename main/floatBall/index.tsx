@@ -70,16 +70,34 @@ export async function mountFloatBall(deps: FloatBallDeps): Promise<FloatBallCont
     // Bridge imperative controller calls to React state. The component
     // registers its `setActive` setter here on mount.
     const api: { setActive: (v: boolean) => void } = { setActive: () => { } };
+    // `root.render` (React 18) commits asynchronously, so the component's
+    // register-effect hasn't run yet when mountFloatBall resolves. A setActive()
+    // that arrives in that window (e.g. auto-translate flipping the ball on right
+    // after mount) would hit the no-op above and be silently lost — the ball then
+    // stays visually OFF on a freshly auto-translated page. Buffer the last value
+    // until the component registers, then flush it.
+    let registered = false;
+    let pendingActive: boolean | undefined;
 
     root.render(
         <FloatBallApp
             deps={deps}
-            register={(fn) => { api.setActive = fn; }}
+            register={(fn) => {
+                api.setActive = fn;
+                registered = true;
+                if (pendingActive !== undefined) {
+                    fn(pendingActive);
+                    pendingActive = undefined;
+                }
+            }}
         />,
     );
 
     return {
-        setActive: (active: boolean) => api.setActive(active),
+        setActive: (active: boolean) => {
+            if (registered) api.setActive(active);
+            else pendingActive = active;
+        },
         destroy: () => {
             try { root.unmount(); } catch { }
             host.remove();

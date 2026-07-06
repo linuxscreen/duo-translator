@@ -4,6 +4,7 @@ import { getConfig } from "@/utils/db";
 import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
 import { browser } from "wxt/browser";
 import { isTraditionalChinese } from "@/utils/language";
+import { contentInvisible, decodeHtmlText } from "@/utils/dom";
 
 //#region types
 // ---------------------------------------------------------------------------
@@ -155,13 +156,101 @@ export abstract class TranslateService {
 }
 
 // ---------------------------------------------------------------------------
+// Background-proxied fetch shared by the built-in providers (Google/Microsoft)
+// ---------------------------------------------------------------------------
+// Content-script fetches get no cross-origin privileges in MV3: Firefox
+// applies the host page's CSP connect-src (e.g. chatgpt.com blocks these
+// hosts outright) and Chrome applies page-origin CORS (works today only
+// because these endpoints answer permissive preflights). Background fetches
+// with the extension principal are subject to neither, so all provider HTTP
+// goes through ACTION.TRANSLATE_PROXY_FETCH — same reasoning as the existing
+// DeepL proxy (ACTION.DEEPL_REQUEST) and the TTS fetches.
+
+const GOOGLE_TRANSLATE_URL = "https://translate-pa.googleapis.com/v1/translateHtml";
+const MS_TRANSLATE_URL =
+    "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&includeSentenceLength=true&";
+const MS_DETECT_URL =
+    "https://api-edge.cognitive.microsofttranslator.com/detect?api-version=3.0";
+
+/**
+ * URL prefixes the background proxy is willing to fetch. Keep this list to
+ * fixed provider endpoints so the proxy can never be used as a generic
+ * fetch-with-extension-privileges primitive.
+ */
+export const TRANSLATE_PROXY_ALLOWED_URLS: readonly string[] = [
+    GOOGLE_TRANSLATE_URL,
+    MS_TRANSLATE_URL,
+    MS_DETECT_URL,
+];
+
+// The direct fetches this replaces had no timeout; keep the ceiling generous
+// so a large single-shot Google batch on a slow network still completes.
+const PROXY_FETCH_TIMEOUT = 60000;
+
+interface ProxyFetchInit {
+    method: string;
+    headers: Record<string, string>;
+    body: string;
+}
+
+interface ProxyFetchResponse {
+    status: number;
+    statusText: string;
+    json: () => Promise<any>;
+}
+
+/**
+ * fetch()-shaped wrapper over the background proxy. sendMessage has no native
+ * cancellation, so abort is relayed out of band with a requestId (same pattern
+ * as AI_TRANSLATE_TEXT/ABORT): background holds an AbortController per request
+ * and cancels the upstream fetch. Rejects with an AbortError like fetch would.
+ */
+async function proxyFetch(
+    url: string,
+    init: ProxyFetchInit,
+    signal?: AbortSignal | null,
+): Promise<ProxyFetchResponse> {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    const requestId =
+        (globalThis.crypto?.randomUUID?.() as string | undefined) ??
+        `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+    let onAbort: (() => void) | null = null;
+    if (signal) {
+        onAbort = () => {
+            void sendMessageToBackground({
+                action: ACTION.TRANSLATE_PROXY_ABORT,
+                data: { requestId },
+            });
+        };
+        signal.addEventListener("abort", onAbort);
+    }
+
+    try {
+        const resp = await sendMessageToBackground(
+            { action: ACTION.TRANSLATE_PROXY_FETCH, data: { requestId, url, init } },
+            PROXY_FETCH_TIMEOUT,
+        );
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        if (!resp) throw new Error("translate proxy fetch failed");
+        return {
+            status: resp.status,
+            statusText: resp.statusText,
+            json: async () => JSON.parse(resp.bodyText),
+        };
+    } finally {
+        if (onAbort) signal?.removeEventListener("abort", onAbort);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Google
 // ---------------------------------------------------------------------------
 
 export class GoogleTranslateService extends TranslateService {
     readonly name = TRANSLATE_SERVICE.GOOGLE;
     // TODO: support a configurable mirror URL and automatic failover.
-    private readonly endpoint = "https://translate-pa.googleapis.com/v1/translateHtml";
+    private readonly endpoint = GOOGLE_TRANSLATE_URL;
     private readonly apiKey: string;
 
     constructor(apiKey: string = import.meta.env.VITE_GOOGLE_API_KEY) {
@@ -177,15 +266,14 @@ export class GoogleTranslateService extends TranslateService {
     ): Promise<TranslateResult[]> {
         if (texts.length === 0) return [];
 
-        const response = await fetch(this.endpoint, {
+        const response = await proxyFetch(this.endpoint, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json+protobuf",
                 "x-goog-api-key": this.apiKey,
             },
             body: JSON.stringify([[texts, "auto", targetLang], "te_lib"]),
-            signal: signal,
-        });
+        }, signal);
 
         if (response.status !== 200) {
             console.error(APP_NAME_WITH_SUFFIX, "Google Translate API error:", response.statusText);
@@ -238,10 +326,6 @@ export class GoogleTranslateService extends TranslateService {
 // Microsoft
 // ---------------------------------------------------------------------------
 
-const MS_TRANSLATE_URL =
-    "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&includeSentenceLength=true&";
-const MS_DETECT_URL =
-    "https://api-edge.cognitive.microsofttranslator.com/detect?api-version=3.0";
 const MS_MAX_RETRY = 5;
 const MS_BATCH_CHAR_LIMIT = 4500;
 const MS_BATCH_ITEM_LIMIT = 900;
@@ -283,15 +367,14 @@ export class MicrosoftTranslateService extends TranslateService {
 
         await this.ensureToken();
         const url = MS_TRANSLATE_URL + "to=" + targetLang;
-        const response = await fetch(url, {
+        const response = await proxyFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 Authorization: "Bearer " + this.authToken.token,
             },
             body: JSON.stringify(texts.map((t) => ({ text: t }))),
-            signal: signal,
-        });
+        }, signal);
 
         if (response.status === 401) {
             const retryCount = (options.retryCount ?? 0) + 1;
@@ -394,7 +477,7 @@ export class MicrosoftTranslateService extends TranslateService {
 
     async detectLanguage(texts: string[]): Promise<string> {
         await this.ensureToken();
-        const response = await fetch(MS_DETECT_URL, {
+        const response = await proxyFetch(MS_DETECT_URL, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -893,67 +976,73 @@ export function getElementPreProcessResult(element: HTMLElement, viewStrategy: V
     const textNodes: Text[] = [];
 
     // flag all children of the element that textNode is not empty
-    let notEmptyNodes: Node[] = [];
-    let stack = [...element.childNodes];
-    while (stack.length > 0) {
-        let pop = stack.pop();
-        if (!pop) continue;
-        // /\p{Cf}/gu: Contains all zero-width characters
-        if (pop.nodeType === Node.TEXT_NODE && pop.textContent?.replace(/\p{Cf}/gu, '') !== '') {
-            notEmptyNodes.push(pop);
-        }
-        if (pop.nodeType === Node.ELEMENT_NODE) {
-            let p = pop as HTMLElement;
-            if (EXCLUDE_CHILD_ELEMENT_TAGS.has(p.tagName)) continue;
-            stack.push(...pop.childNodes);
-        }
-    }
     let textNotEmptyElementSet = new Set<HTMLElement>();
-    notEmptyNodes.forEach(node => {
-        while (node.parentNode !== element && node.parentNode?.nodeType === Node.ELEMENT_NODE) {
-            textNotEmptyElementSet.add(node.parentNode as HTMLElement);
-            node = node.parentNode;
+    if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
+        let notEmptyNodes: Node[] = [];
+        let stack = [...element.childNodes];
+        while (stack.length > 0) {
+            let pop = stack.pop();
+            if (!pop) continue;
+            if (pop.nodeType === Node.TEXT_NODE && !contentInvisible(pop)) {
+                notEmptyNodes.push(pop);
+            }
+            if (pop.nodeType === Node.ELEMENT_NODE) {
+                let p = pop as HTMLElement;
+                if (EXCLUDE_CHILD_ELEMENT_TAGS.has(p.tagName)) continue;
+                stack.push(...pop.childNodes);
+            }
         }
-    });
+        notEmptyNodes.forEach(node => {
+            while (node.parentNode !== element && node.parentNode?.nodeType === Node.ELEMENT_NODE) {
+                textNotEmptyElementSet.add(node.parentNode as HTMLElement);
+                node = node.parentNode;
+            }
+        });
+    }
 
     elements.push(element);
-    const removeChildren: HTMLElement[] = []
+    const removeChildren: Node[] = []
     let textIndex = 0
     let textIndexMap = new Map<number, number>()
-    const process = (index: number, node: Node | null, parent: HTMLElement) => {
+    let index = 0
+    const process = (isSon: boolean, node: Node | null, parent: HTMLElement) => {
         if (!node) return;
         if (node.nodeType === 1) {
             const ele = node as HTMLElement;
-            // ignore empty element
-            if (!textNotEmptyElementSet.has(ele)) {
-                if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-                    removeChildren.push(ele)
-                }
-                return;
+            // ignore empty element in double mode
+            if (viewStrategy === VIEW_STRATEGY.DOUBLE && !textNotEmptyElementSet.has(ele)) {
+                removeChildren.push(ele)
+                return
             }
             const rootProcessedElement = document.createElement("b" + i);
             parent.appendChild(rootProcessedElement);
             elements.push(ele);
             i++;
-            for (const child of node.childNodes) process(index, child, rootProcessedElement);
-        }
-        if (node.nodeType === 3) {
+            for (const child of node.childNodes) process(false, child, rootProcessedElement);
+            if (isSon) {
+                index++
+            }
+        } else if (node.nodeType === 3) {
             const textNode = node as Text;
-            if (textNode.textContent === "") return;
+            if (contentInvisible(textNode)) return;
             totalTextNodesLength += textNode.textContent.length;
             text += textNode.textContent;
             textNodes.push(textNode);
             textIndexMap.set(textIndex, index)
             textIndex++
+            if (isSon) {
+                index++
+            }
             parent.appendChild(textNode.cloneNode(true));
+        } else {
+            if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
+                removeChildren.push(node)
+            }
         }
     };
-    for (let index = 0; index < element.childNodes.length; index++) {
-        let child = element.childNodes[index]
-        process(index, child, processParent);
-    }
+    element.childNodes.forEach(child => process(true, child, processParent));
     if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-        removeChildren.forEach(child => child.remove())
+        removeChildren.forEach(child => child.parentNode?.removeChild(child))
     }
     return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, totalTextNodesLength, text, textIndexMap };
 }
@@ -1116,6 +1205,16 @@ export function googleTranslate(results: TranslateResult[]) {
         if (!result.originalSliceElements || result.originalSliceElements.length === 0) continue;
         let targetElement = result.originalSliceElements[0]
         let targetElementChildNodes = Array.from(result.originalSliceElements[0].childNodes)
+        let emptyNode: ChildNode | null = null
+        for (let index = 0; index < targetElementChildNodes.length; index++) {
+            const element = targetElementChildNodes[index];
+            if (contentInvisible(element)) {
+                emptyNode = element
+            } else {
+                break
+            }
+        }
+        // .filter(node => node.nodeType !== Node.COMMENT_NODE)
         let textNodes = result.textNodes
         if (textNodes === undefined) return
         let indexedTexts = parseIndexedText(result.translatedMappedHtmlText)
@@ -1128,7 +1227,7 @@ export function googleTranslate(results: TranslateResult[]) {
         for (const indexedText of indexedTexts) {
             if (indexedText.text === "") continue
             if (indexedText.index === -1) {
-                let textNode = document.createTextNode(indexedText.text)
+                let textNode = document.createTextNode(decodeHtmlText(indexedText.text))
                 if (!lastMovedNode) {
                     targetElement.prepend(textNode)
                 } else {
@@ -1142,7 +1241,8 @@ export function googleTranslate(results: TranslateResult[]) {
             }
             let num = indexedText.index
             if (num < 0 || num >= textNodes.length) continue
-            textNodes[num].textContent = indexedText.text
+            textNodes[num].textContent = decodeHtmlText(indexedText.text)
+            // console.log('debug', indexedText.text, textNodes[num].textContent, num, result.translatedCopyElement?.textContent)
             let childIndex = result.textIndexMap?.get(num)
             if (childIndex === undefined) continue
             if (movedNodeSet.has(childIndex)) {
@@ -1152,14 +1252,22 @@ export function googleTranslate(results: TranslateResult[]) {
                 continue
             }
             if (!lastMovedNode) {
-                targetElement.prepend(targetElementChildNodes[childIndex])
+                if (emptyNode) {
+                    emptyNode.after(targetElementChildNodes[childIndex])
+                } else {
+                    targetElement.prepend(targetElementChildNodes[childIndex])
+                }
             } else {
-                lastMovedNode.after(targetElementChildNodes[childIndex])
+                while (lastMovedNode?.nextSibling && contentInvisible(lastMovedNode?.nextSibling)) {
+                    lastMovedNode = lastMovedNode!.nextSibling
+                }
+                lastMovedNode!.after(targetElementChildNodes[childIndex])
             }
             lastMovedNode = targetElementChildNodes[childIndex]
             lastMovedNodeIndex = childIndex
             lastTextNodeIndex = num
             movedNodeSet.add(childIndex)
+            // console.log('debug', result.translatedCopyElement?.textContent)
         }
         result.replacedTextNodes = replacedTextNodes
     }

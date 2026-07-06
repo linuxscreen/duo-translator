@@ -34,6 +34,14 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
                     resolve(undefined)
                     console.warn(APP_NAME_WITH_SUFFIX, `sendMessageToBackground ${message.action} ${response.data}`);
                 }
+            }).catch((e) => {
+                // A rejection here (e.g. "Could not establish connection / receiving
+                // end does not exist" during an MV3 SW cold-start race) would
+                // otherwise be swallowed and hang until the timeout below. Fail
+                // fast instead of waiting out the full timeout.
+                clearTimeout(timeoutId)
+                resolve(undefined)
+                console.warn(APP_NAME_WITH_SUFFIX, `sendMessageToBackground ${message.action} error`, e)
             });
         }),
         new Promise((resolve) => {

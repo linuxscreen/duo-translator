@@ -264,8 +264,8 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
         setRunning(false);
     };
 
-    const apply = () => {
-        const ok = applyTextToTarget(targetRef.current, output);
+    const apply = async () => {
+        const ok = await applyTextToTarget(targetRef.current, output);
         if (ok) close();
     };
 

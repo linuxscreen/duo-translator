@@ -1,8 +1,10 @@
 // Unit tests for the non-DOM surface of main/translateService.ts.
 // Runs in the default `node` environment (WxtVitest sets no DOM) — these cover
 // pure string/tag transforms, data classes, and every provider's translateText
-// / detectLanguage / batching with network + message mocks. DOM-dependent
-// orchestration lives in translateService.dom.test.ts (jsdom env).
+// / detectLanguage / batching with message mocks. All provider HTTP goes
+// through the background proxy (ACTION.TRANSLATE_PROXY_FETCH), so network
+// behavior is mocked via sendMessageToBackground, not global fetch.
+// DOM-dependent orchestration lives in translateService.dom.test.ts (jsdom env).
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
 // --- module mocks (hoisted) ---------------------------------------------------
@@ -35,17 +37,35 @@ import { isTraditionalChinese } from "@/utils/language";
 const mockSend = sendMessageToBackground as unknown as Mock;
 const mockIsTraditional = isTraditionalChinese as unknown as Mock;
 
-/** Build a fetch Response-like object. */
-function jsonResponse(body: unknown, status = 200): any {
-    return { status, statusText: status === 200 ? "OK" : "ERR", json: async () => body };
+/** Build the background's TRANSLATE_PROXY_FETCH reply for a JSON payload. */
+function proxyReply(body: unknown, status = 200): any {
+    return { status, statusText: status === 200 ? "OK" : "ERR", bodyText: JSON.stringify(body) };
+}
+
+/** mockSend calls carrying the given action. */
+function sendCalls(action: string) {
+    return mockSend.mock.calls.filter(([msg]: any[]) => msg?.action === action);
+}
+
+/**
+ * Route mockSend by action: ACCESS_TOKEN_GET returns a valid token,
+ * TRANSLATE_PROXY_FETCH is answered by `handler(url, init)`.
+ */
+function mockProxyRoutes(handler: (url: string, init: any) => any) {
+    mockSend.mockImplementation(async (msg: any) => {
+        if (msg.action === ACTION.ACCESS_TOKEN_GET) {
+            return { token: "tok", expireTime: Date.now() + 600000 };
+        }
+        if (msg.action === ACTION.TRANSLATE_PROXY_FETCH) {
+            return handler(msg.data.url, msg.data.init);
+        }
+        return undefined;
+    });
 }
 
 beforeEach(() => {
     vi.clearAllMocks();
     mockIsTraditional.mockReturnValue(false);
-    // Fresh fetch mock per test. We avoid vi.unstubAllGlobals() because the
-    // setup file stubs `browser`/`chrome` globally and that would clobber them.
-    vi.stubGlobal("fetch", vi.fn());
 });
 
 // ---------------------------------------------------------------------------
@@ -183,30 +203,40 @@ describe("TranslateResult / TranslateParams", () => {
 // GoogleTranslateService.translateText
 // ---------------------------------------------------------------------------
 describe("GoogleTranslateService.translateText", () => {
-    it("returns [] for empty input without calling fetch", async () => {
+    it("returns [] for empty input without hitting the proxy", async () => {
         const svc = new GoogleTranslateService("k");
         expect(await svc.translateText([], "zh-CN")).toEqual([]);
-        expect(fetch).not.toHaveBeenCalled();
+        expect(mockSend).not.toHaveBeenCalled();
     });
 
-    it("parses translated text + detected language on 200", async () => {
-        (fetch as Mock).mockResolvedValue(jsonResponse([["你好"], ["en"]]));
+    it("sends a proxied request and parses text + detected language on 200", async () => {
+        mockSend.mockResolvedValue(proxyReply([["你好"], ["en"]]));
         const svc = new GoogleTranslateService("k");
         const out = await svc.translateText(["hello"], "zh-CN");
         expect(out).toHaveLength(1);
         expect(out[0].translatedMappedHtmlText).toBe("你好");
         expect(out[0].sourceLang).toBe("en");
+        expect(mockSend).toHaveBeenCalledWith(
+            expect.objectContaining({
+                action: ACTION.TRANSLATE_PROXY_FETCH,
+                data: expect.objectContaining({
+                    requestId: expect.any(String),
+                    url: expect.stringContaining("translate-pa.googleapis.com"),
+                }),
+            }),
+            expect.any(Number),
+        );
     });
 
     it("converts <a i=N> tags in the response to <bN>", async () => {
-        (fetch as Mock).mockResolvedValue(jsonResponse([["<a i=0>你好</a>"], ["en"]]));
+        mockSend.mockResolvedValue(proxyReply([["<a i=0>你好</a>"], ["en"]]));
         const svc = new GoogleTranslateService("k");
         const out = await svc.translateText(["<a i=0>hello</a>"], "zh-CN");
         expect(out[0].translatedMappedHtmlText).toBe("<a i=0>你好</a>");
     });
 
     it("returns [] on a non-200 response", async () => {
-        (fetch as Mock).mockResolvedValue(jsonResponse(null, 500));
+        mockSend.mockResolvedValue(proxyReply(null, 500));
         const svc = new GoogleTranslateService("k");
         expect(await svc.translateText(["hello"], "zh-CN")).toEqual([]);
     });
@@ -216,14 +246,9 @@ describe("GoogleTranslateService.translateText", () => {
 // MicrosoftTranslateService
 // ---------------------------------------------------------------------------
 describe("MicrosoftTranslateService.translateText", () => {
-    function tokenReply() {
-        return { token: "tok", expireTime: Date.now() + 600000 };
-    }
-
     it("fetches a token then parses the translation response", async () => {
-        mockSend.mockResolvedValue(tokenReply());
-        (fetch as Mock).mockResolvedValue(
-            jsonResponse([
+        mockProxyRoutes(() =>
+            proxyReply([
                 { translations: [{ text: "你好" }], detectedLanguage: { language: "en", score: 0.97 } },
             ]),
         );
@@ -238,13 +263,12 @@ describe("MicrosoftTranslateService.translateText", () => {
     });
 
     it("refreshes the token and retries on 401, giving up after MS_MAX_RETRY", async () => {
-        mockSend.mockResolvedValue(tokenReply());
-        (fetch as Mock).mockResolvedValue(jsonResponse(null, 401));
+        mockProxyRoutes(() => proxyReply(null, 401));
         const svc = new MicrosoftTranslateService();
         const out = await svc.translateText(["hello"], "zh-CN");
         expect(out).toEqual([]);
-        // initial attempt + 5 retries = 6 fetch calls
-        expect(fetch).toHaveBeenCalledTimes(6);
+        // initial attempt + 5 retries = 6 proxied requests
+        expect(sendCalls(ACTION.TRANSLATE_PROXY_FETCH)).toHaveLength(6);
     });
 
     it("returns [] for empty input", async () => {
@@ -255,10 +279,10 @@ describe("MicrosoftTranslateService.translateText", () => {
 
 describe("MicrosoftTranslateService.translateBatchText", () => {
     // Echo each request 1:1 so we can assert order/length across chunks.
-    function echoFetch() {
-        (fetch as Mock).mockImplementation(async (_url: string, init: any) => {
+    function echoRoutes() {
+        mockProxyRoutes((_url, init) => {
             const items: { text: string }[] = JSON.parse(init.body);
-            return jsonResponse(
+            return proxyReply(
                 items.map((it) => ({
                     translations: [{ text: it.text }],
                     detectedLanguage: { language: "en", score: 1 },
@@ -268,31 +292,28 @@ describe("MicrosoftTranslateService.translateBatchText", () => {
     }
 
     it("returns results 1:1 in order for a single chunk", async () => {
-        mockSend.mockResolvedValue({ token: "tok", expireTime: Date.now() + 600000 });
-        echoFetch();
+        echoRoutes();
         const svc = new MicrosoftTranslateService();
         const out = await svc.translateBatchText(["a", "b", "c"], "zh-CN");
         expect(out.map((r) => r.translatedMappedHtmlText)).toEqual(["a", "b", "c"]);
-        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(sendCalls(ACTION.TRANSLATE_PROXY_FETCH)).toHaveLength(1);
     });
 
     it("splits past the 900-item limit into multiple chunks, preserving order", async () => {
-        mockSend.mockResolvedValue({ token: "tok", expireTime: Date.now() + 600000 });
-        echoFetch();
+        echoRoutes();
         const inputs = Array.from({ length: 901 }, (_, i) => `t${i}`);
         const svc = new MicrosoftTranslateService();
         const out = await svc.translateBatchText(inputs, "zh-CN");
         expect(out).toHaveLength(901);
         expect(out.map((r) => r.translatedMappedHtmlText)).toEqual(inputs);
-        expect(fetch).toHaveBeenCalledTimes(2);
+        expect(sendCalls(ACTION.TRANSLATE_PROXY_FETCH)).toHaveLength(2);
     });
 });
 
 describe("MicrosoftTranslateService.detectLanguage", () => {
     it("returns the byte-weighted dominant language", async () => {
-        mockSend.mockResolvedValue({ token: "tok", expireTime: Date.now() + 600000 });
-        (fetch as Mock).mockResolvedValue(
-            jsonResponse([
+        mockProxyRoutes(() =>
+            proxyReply([
                 { language: "en", score: 0.99 },
                 { language: "fr", score: 0.99 },
             ]),
@@ -304,8 +325,7 @@ describe("MicrosoftTranslateService.detectLanguage", () => {
     });
 
     it("returns '' on a non-200 response", async () => {
-        mockSend.mockResolvedValue({ token: "tok", expireTime: Date.now() + 600000 });
-        (fetch as Mock).mockResolvedValue(jsonResponse(null, 500));
+        mockProxyRoutes(() => proxyReply(null, 500));
         const svc = new MicrosoftTranslateService();
         expect(await svc.detectLanguage(["x"])).toBe("");
     });

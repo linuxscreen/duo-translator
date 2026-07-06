@@ -1,6 +1,7 @@
 // Text-node / cleanup DOM helpers extracted from main/content.ts so they can be
 // unit tested in isolation (jsdom). Behaviour is preserved verbatim.
 import { EXCLUDE_CHILD_ELEMENT_TAGS } from "@/main/constants";
+import { contentVisible } from "@/utils/dom";
 
 /** Strip every `duo-*` class and attribute the extension added to an element. */
 export function removeDuoClassAndAttribute(element: HTMLElement) {
@@ -47,7 +48,7 @@ export function getTextNodesAndText(element: Node): { textNodes: Text[]; text: s
     let text = "";
     const textNodes: Text[] = [];
     const process = function (node: Node) {
-        if (node.nodeType === Node.TEXT_NODE && node.textContent?.replace(/\p{Cf}/gu, "") != "") {
+        if (node.nodeType === Node.TEXT_NODE && contentVisible(node)) {
             textNodes.push(node as Text);
             text += node.textContent;
         }
@@ -74,7 +75,7 @@ export function isContainsValidTextElement(element: Node): boolean | undefined {
     while (stack.length > 0) {
         const pop = stack.pop();
         if (!pop) continue;
-        if (pop.nodeType === Node.TEXT_NODE && pop.textContent?.replace(/\p{Cf}/gu, "") != "") {
+        if (pop.nodeType === Node.TEXT_NODE && contentVisible(pop)) {
             return true;
         }
         if (pop.nodeType === Node.ELEMENT_NODE) {

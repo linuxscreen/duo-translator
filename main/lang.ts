@@ -15,7 +15,7 @@ const utf8Encoder = new TextEncoder();
  * to zh-TW / zh-CN by script.
  */
 export function getTextLanguage(text: string): string {
-    let lang = franc(text, { minLength: 10 });
+    let lang = franc(text, { minLength: 5 });
     if (lang == "cmn") {
         lang = isTraditionalChinese(text) ? "zh-TW" : "zh-CN";
     } else {
@@ -48,44 +48,74 @@ export function getElementTextContent(element: HTMLElement): string {
 }
 
 /**
- * Detect the dominant language of a set of paragraph elements. Samples up to
- * ~2000 UTF-8 bytes (from a shuffled order so one section can't dominate),
- * tries franc locally when there's enough text (>500 bytes), and otherwise
- * falls back to the Microsoft detect API. Returns "und" when undeterminable.
+ * Detect the dominant language of a set of paragraph elements.
  */
-export async function detectLanguage(elements: HTMLElement[]): Promise<string> {
-    let text = "";
-    // Randomly sample elements, capping at ~2000 UTF-8 bytes.
+export async function detectLanguage(elements?: HTMLElement[]): Promise<string> {
+    let lang = "und";
+    if (elements === undefined) {
+        elements = new Array<HTMLElement>();
+        document.querySelectorAll(".duo-paragraph").forEach((e) => {
+            elements!.push(e as HTMLElement)
+        })
+    }
+
+    // Randomly sample elements
     elements = shuffle(elements);
-    let utf8Length = 0;
+    let conditionElements: { text: string, len: number }[] = []
+    let totalLen = 0
     for (let index = 0; index < elements.length; index++) {
         const element = elements[index];
-        const content = getElementTextContent(element) + "\n";
-        text += content;
-        utf8Length += utf8Encoder.encode(content).length;
-        if (utf8Length > 2000) {
-            break;
+        let content = getElementTextContent(element);
+        let len = utf8Encoder.encode(content).length
+        if (len <= 30) continue
+        // console.log("detectLanguage ", content)
+        conditionElements.push({ text: content, len })
+        totalLen += len
+        if (totalLen >= 2000) break
+    }
+    let langScoreMap: Map<string, number> = new Map()
+    let maxLangScore = 0
+    let maxLang = "und"
+    if (totalLen >= 500) {
+        conditionElements.forEach(element => {
+            let lang = getTextLanguage(element.text)
+            let score = (langScoreMap.get(lang) || 0) + element.len
+            langScoreMap.set(lang, score)
+            if (score > maxLangScore) {
+                maxLangScore = score
+                maxLang = lang
+            }
+        })
+        if (maxLang != "und" && maxLangScore / totalLen >= 0.6) {
+            console.log("detect language by franc: %s, divide: %f", maxLang, maxLangScore / totalLen);
+            return maxLang
         }
     }
 
-    let lang = "und";
-    if (utf8Length > 500) {
-        lang = getTextLanguage(text);
-        console.log("detect language by franc: %s, text length: %d", lang, utf8Length);
+    let needsDetectTexts: string[] = [];
+    if (totalLen >= 500) {
+        needsDetectTexts = conditionElements.map((item) => item.text)
+    } else {
+        let utf8Length = 0;
+        for (let index = 0; index < elements.length; index++) {
+            const element = elements[index];
+            let t = getElementTextContent(element)
+            if (t.length === 0) continue
+            needsDetectTexts.push(t)
+            utf8Length += utf8Encoder.encode(t).length;
+            if (utf8Length >= 2000) {
+                break;
+            }
+        }
     }
 
-    if (lang != "und") {
-        return lang;
+    if (needsDetectTexts.length === 0) {
+        return "und"
     }
-    // Empty / near-empty frame (common for ad & tracking iframes): skip the
-    // Microsoft detect round-trip — there's nothing to translate anyway, and
-    // firing a network call per junk iframe would be wasteful.
-    if (utf8Length === 0) {
-        return "und";
-    }
+
     // Fallback: ask the Microsoft translate service to detect the language.
     try {
-        lang = (await translationServices.get(TRANSLATE_SERVICE.MICROSOFT)?.detectLanguage?.([text])) || "und";
+        lang = (await translationServices.get(TRANSLATE_SERVICE.MICROSOFT)?.detectLanguage?.(needsDetectTexts)) || "und";
         console.log("detect language by microsoft translate: %s", lang);
         return lang;
     } catch {

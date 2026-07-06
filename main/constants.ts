@@ -184,6 +184,15 @@ export enum ACTION {
     // abort, so content fires this with the same requestId on signal abort;
     // background aborts the in-flight fetch for that request.
     AI_TRANSLATE_ABORT = 'aiTranslateAbort',
+    // HTTP proxy for the built-in translate providers (Google/Microsoft).
+    // Content-script fetches are subject to the host page's CSP connect-src in
+    // Firefox MV3 and to page-origin CORS in Chrome MV3, so the actual request
+    // is performed in the background (extension principal — neither applies).
+    // Restricted to TRANSLATE_PROXY_ALLOWED_URLS; never a generic fetch proxy.
+    TRANSLATE_PROXY_FETCH = 'translateProxyFetch',
+    // Out-of-band cancellation for TRANSLATE_PROXY_FETCH (same requestId
+    // mechanism as AI_TRANSLATE_ABORT).
+    TRANSLATE_PROXY_ABORT = 'translateProxyAbort',
     OPEN_OPTIONS_PAGE = 'openOptionsPage',
     // Open the toolbar action popup (popup.html) anchored to the extension
     // icon — same surface/position as a manual icon click. Requested from the
@@ -1275,9 +1284,10 @@ export const EXCLUDE_TAGS = [
     'img',
     'progress',
     'meter',
-    'summary',
+    // 'summary',
     // 'textarea', // todo
     "iron-a11y-announcer", // accessibility-labels
+    "pre",
     // 'form',
     // 'datalist',
     // 'output',

@@ -19,7 +19,6 @@ import { readConfig } from "@/utils/reactiveConfig";
 import { getDomainWithPortFromUrl } from "@/utils/url";
 import { getAiTranslateService, getTranslateService } from "@/utils/service";
 import { buildTranslationCss } from "@/main/css";
-import { needsTranslate } from "@/main/strategy";
 import { isEditable, isNotMarkElement, isNotTranslateElement, isParagraphElement } from "@/main/dom/predicates";
 import { getLastContainingTextChild, getTextNodesAndText, removeDuoClassAndAttribute, removeTextNodes } from "@/main/dom/textNodes";
 
@@ -59,7 +58,7 @@ export async function content() {
     // get the id of the current tab,which used unique defines the page
     const encoder = new TextEncoder();
 
-    let pageLanguage = "und"
+    let pageLanguage: string | undefined = undefined
     let tabId = await sendMessageToBackground({ action: TAB_ACTION.ID_GET })
     if (!tabId) {
         return
@@ -84,16 +83,19 @@ export async function content() {
     // return
     // set translate status to false when the page is loaded
     let translateStatus = false
-    persistTranslateStatus(false)
     let manualTrigger = false // @deprecated
     const ignoreMutationElements = new WeakSet();
     const paragraphElementMap = new Map<HTMLElement, ELEMENT_STATUS>();
+    // translated elements of DOUBLE view strategy
     let duoTranslatedElementSet = new Set<HTMLElement>()
+    // translated elements of SINGLE view strategy
     let translatedElementMap = new Map<HTMLElement, TranslateResult>()
     // get all config from storage
     let [rules, viewStrategy, targetLanguageConfig, translateServiceConfig, globalSwitch, defaultStrategy,
-        rawDomainStrategy, floatBallSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey, aiTargetLanguageConfig, contextMenuSwitch]
-        : [string[], VIEW_STRATEGY, string | undefined, string | undefined, boolean, string, any, boolean, number, number, string | undefined, string, boolean]
+        rawDomainStrategy, floatBallSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey,
+        aiTargetLanguageConfig, contextMenuSwitch, translateStatusConfig]
+        : [string[], VIEW_STRATEGY, string | undefined, string | undefined, boolean, string, any, boolean, number,
+            number, string | undefined, string, boolean, boolean]
         = await Promise.all(
             [
                 listRuleFromDB(domainWithPort),
@@ -108,9 +110,11 @@ export async function content() {
                 getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS),
                 getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
                 getConfig(CONFIG_KEY.AI_TARGET_LANGUAGE),
-                getConfig(CONFIG_KEY.CONTEXT_MENU_SWITCH)
+                getConfig(CONFIG_KEY.CONTEXT_MENU_SWITCH),
+                getSessionStorage(tabTranslateStatusKey)
             ]
         )
+    translateStatus = !!translateStatusConfig
     rules = rules || []
     shareConfig.rules = rules
     let translateService = (await getTranslateService(translateServiceConfig)).activeService
@@ -135,8 +139,30 @@ export async function content() {
     let pendingProcessTimer: number | null = null;
     let processingActive = false;
 
+    //#region observer
     const observer = new MutationObserver(async mutations => {
         for (const mutation of mutations) {
+            if (mutation.type === 'attributes') {
+                console.log('attributes', mutation);
+                continue
+            }
+            if (mutation.type === 'characterData') {
+                console.log('characterData', mutation);
+                if (mutation.target.nodeType === 3) {
+                    let t = mutation.target as Text
+                    let p = t.parentElement?.closest(".duo-needs-translate") as HTMLElement
+                    if (!p) continue
+                    if (isIgnoreMutationElement(p)) continue
+                    let text = t.textContent
+                    restoreOriginalParagraphElement(p).then(() => {
+                        p.textContent = text
+                        if (translateStatus) {
+                            translateParagraphElements([p])
+                        }
+                    })
+                    continue
+                }
+            }
             if (mutation.target.nodeType !== 1) continue;
             const target = mutation.target as HTMLElement;
 
@@ -184,6 +210,7 @@ export async function content() {
     }, {
         rootMargin: '300px 0px',
     });
+    //#endregion
 
     //#endregion
 
@@ -432,7 +459,6 @@ export async function content() {
                 if (!value || typeof value !== "string") return
                 let newViewStrategy = value as VIEW_STRATEGY
                 if (!Object.values(VIEW_STRATEGY).includes(newViewStrategy) || viewStrategy === newViewStrategy) return
-                let oldViewStrategy = viewStrategy
 
                 if (viewStrategy != value) {
                     viewStrategy = newViewStrategy
@@ -444,7 +470,7 @@ export async function content() {
                 }
                 // process the view strategy change
                 if (translateStatus) {
-                    await restoreOriginalAction(oldViewStrategy)
+                    await restoreOriginalAction()
                     await translateAction()
                 }
                 break
@@ -456,7 +482,7 @@ export async function content() {
             case CONFIG_KEY.TARGET_LANGUAGE:
                 if (typeof value === "string" && targetLanguage !== value && LANGUAGES_MAP.has(value)) {
                     targetLanguage = value
-                    if (activeFlag && needsTranslate({ globalSwitch, domainStrategy, defaultStrategy, targetLang: targetLanguage, pageLang: pageLanguage })) {
+                    if (activeFlag && needsTranslate()) {
                         await restoreOriginalAction()
                         await translateAction()
                     }
@@ -497,6 +523,9 @@ export async function content() {
                 switch (defaultStrategy) {
                     case DEFAULT_STRATEGY.AUTO:
                         manualTrigger = false
+                        if (pageLanguage === undefined) {
+                            pageLanguage = await detectLanguage()
+                        }
                         let needTranslate = targetLanguage != pageLanguage
                         if (translateStatus && !needTranslate) {
                             await restoreOriginalAction()
@@ -549,6 +578,9 @@ export async function content() {
             case DEFAULT_STRATEGY.AUTO:
                 if (domainStrategy == DOMAIN_STRATEGY.AUTO) {
                     manualTrigger = false
+                }
+                if (pageLanguage === undefined) {
+                    pageLanguage = await detectLanguage()
                 }
                 if (translateStatus && targetLanguage === pageLanguage) {
                     await restoreOriginalAction()
@@ -650,12 +682,7 @@ export async function content() {
         let ele = document.elementFromPoint(lastX, lastY) as Element | null
         let target = ele?.closest(".duo-paragraph")
         if (!(target instanceof HTMLElement)) return
-        let translated = false;
-        if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-            translated = duoTranslatedElementSet.has(target)
-        } else {
-            translated = translatedElementMap.has(target)
-        }
+        const translated = duoTranslatedElementSet.has(target) || translatedElementMap.has(target)
         if (translated) {
             restoreOriginalParagraphElement(target)
         } else {
@@ -683,7 +710,7 @@ export async function content() {
             translatedText += chunk;
         }
         console.log("translateInputBox: ", translatedText);
-        applyTextToTarget(lastEditableElement, translatedText);
+        await applyTextToTarget(lastEditableElement, translatedText);
 
     }
 
@@ -854,11 +881,30 @@ export async function content() {
         restoreOriginalPage(true, true)
     }
 
+    function needsTranslate(): boolean | undefined {
+        if (!globalSwitch) return false;
+        if (domainStrategy === DOMAIN_STRATEGY.NEVER) return false;
+        if (domainStrategy === DOMAIN_STRATEGY.ALWAYS) return true;
+        if (defaultStrategy === DEFAULT_STRATEGY.NEVER) return false;
+        if (defaultStrategy === DEFAULT_STRATEGY.ALWAYS) return true;
+        if (pageLanguage !== undefined) {
+            return pageLanguage !== targetLanguage
+        }
+    }
+
     async function initTranslate() {
         startObserveDom()
         let htmlElements = await markParagraphElement(document.body);
-        pageLanguage = await detectLanguage(htmlElements);
-        let shouldTranslate = needsTranslate({ globalSwitch, domainStrategy, defaultStrategy, targetLang: targetLanguage, pageLang: pageLanguage })
+        let shouldTranslate = false
+        if (isTopFrame) {
+            let needs = needsTranslate()
+            if (needs === undefined) {
+                pageLanguage = await detectLanguage(htmlElements)
+                needs = pageLanguage !== targetLanguage
+            }
+            shouldTranslate = needs
+        }
+
         // Late-loading sub-frame catch-up: an iframe created AFTER the user
         // already turned translation on (e.g. a button that opens an iframe
         // dialog) must sync to the tab's current state. The top frame only
@@ -868,12 +914,12 @@ export async function content() {
         // and persists the status to session storage — read it here. (Only the
         // manual-on case needs this; isNeedsTranslate already covers the
         // strategy/auto path, and the top frame manages its own status.)
-        if (!isTopFrame && !shouldTranslate) {
+        if (!isTopFrame) {
             const tabTranslated = await getSessionStorage(tabTranslateStatusKey)
             if (tabTranslated === true) shouldTranslate = true
         }
-        if (shouldTranslate) {
-            await persistTranslateStatus(true)
+        if (shouldTranslate || translateStatus) {
+            await updateTranslateStatus(true, !translateStatus)
             htmlElements.forEach((element) => {
                 paragraphElementMap.set(element, ELEMENT_STATUS.ORIGINAL)
                 intersectionObserver.observe(element)
@@ -933,6 +979,7 @@ export async function content() {
     }
 
     function setFloatBallSwitchStatus(status: boolean) {
+        console.log("setFloatBallSwitchStatus", floatBall + " " + status);
         floatBall?.setActive(status)
     }
 
@@ -967,7 +1014,7 @@ export async function content() {
      * save translate status, update float ball status and notify popup and background
      * @param status
      */
-    async function persistTranslateStatus(status: boolean) {
+    async function updateTranslateStatus(status: boolean, persist = true) {
         if (translateStatus === status) {
             return
         }
@@ -980,10 +1027,11 @@ export async function content() {
             return
         }
         console.log("persist translate status", status);
-        await setSessionStorage(tabTranslateStatusKey, status).then(() => {
-            translateStatus = status
-            setFloatBallSwitchStatus(status)
-        })
+        if (persist) {
+            await setSessionStorage(tabTranslateStatusKey, status)
+        }
+        translateStatus = status
+        setFloatBallSwitchStatus(status)
         // notify the popup and background to set translate status
         browser.runtime.sendMessage({
             action: TRANSLATE_ACTION.TRANSLATE_STATUS_CHANGED,
@@ -1007,7 +1055,9 @@ export async function content() {
             }
             controller = new AbortController()
             manualTrigger = true
-            await persistTranslateStatus(true)
+            await updateTranslateStatus(true)
+            // some elements probably have been translated
+            await restoreOriginalPage(false)
             document.querySelectorAll(".duo-needs-translate").forEach((element) => {
                 let ele = element as HTMLElement
                 paragraphElementMap.set(ele, ELEMENT_STATUS.ORIGINAL)
@@ -1022,7 +1072,7 @@ export async function content() {
 
     }
 
-    async function restoreOriginalAction(viewStrategy?: VIEW_STRATEGY) {
+    async function restoreOriginalAction() {
         if (restoreOriginalTask) {
             return
         }
@@ -1035,7 +1085,7 @@ export async function content() {
             }
 
             manualTrigger = true
-            await persistTranslateStatus(false)
+            await updateTranslateStatus(false)
             paragraphElementMap.clear()
             intersectionObserver.disconnect()
 
@@ -1052,7 +1102,7 @@ export async function content() {
             //     setTimeout(resolve, 2000);
             // })
             // restore original page
-            await restoreOriginalPage(false, false, viewStrategy)
+            await restoreOriginalPage(false, false)
         }
         restoreOriginalTask = action()
         restoreOriginalTask.finally(() => {
@@ -1061,7 +1111,7 @@ export async function content() {
     }
 
     async function restoreOriginalParagraphElement(element: HTMLElement) {
-        if (viewStrategy == VIEW_STRATEGY.DOUBLE) {
+        if (duoTranslatedElementSet.has(element)) {
             ignoreMutationElements.add(element)
             try {
                 let translation = element.querySelector(".duo-translation")
@@ -1086,7 +1136,7 @@ export async function content() {
                 ignoreMutationElements.delete(element)
                 duoTranslatedElementSet.delete(element)
             })
-        } else if (viewStrategy == VIEW_STRATEGY.SINGLE) {
+        } else if (translatedElementMap.has(element)) {
             let result = translatedElementMap.get(element)
             if (!result) return
             await restore([result])
@@ -1101,22 +1151,18 @@ export async function content() {
      * restore the original page
      * @param setStatus set the translation status to false and persist to storage
      */
-    async function restoreOriginalPage(setStatus: boolean = true, pure: boolean = false, vs?: VIEW_STRATEGY) {
+    async function restoreOriginalPage(setStatus: boolean = true, pure: boolean = false) {
         if (setStatus) {
-            await persistTranslateStatus(false)
+            await updateTranslateStatus(false)
         }
-        let viewStrategyCopy = vs || viewStrategy
 
-        if (viewStrategyCopy == VIEW_STRATEGY.DOUBLE) {
+        if (duoTranslatedElementSet.size > 0) {
             for (let element of duoTranslatedElementSet) {
                 if (!element) {
                     continue
                 }
                 ignoreMutationElements.add(element)
                 try {
-                    // if (element.textContent.startsWith("The Open Source Security Foundation")) {
-                    //     // debugger
-                    // }
                     let translation = element.querySelector(".duo-translation")
                     translation?.remove();
                     let divide = element.querySelector(".duo-divide")
@@ -1132,8 +1178,6 @@ export async function content() {
                     for (let span of spans) {
                         span.remove()
                     }
-                    // element.removeEventListener("mouseenter", handler)
-                    // element.removeAttribute("duo-no-observer")
                 } catch (e) {
                     console.error(APP_NAME_WITH_SUFFIX, "restore original page error:", e)
                 }
@@ -1152,7 +1196,8 @@ export async function content() {
                 }
                 duoTranslatedElementSet.clear()
             })
-        } else if (viewStrategyCopy == VIEW_STRATEGY.SINGLE) {
+        }
+        if (translatedElementMap.size > 0) {
             let results: TranslateResult[] = []
             translatedElementMap.forEach((result, element) => {
                 ignoreMutationElements.add(element)
@@ -1186,20 +1231,20 @@ export async function content() {
         // console.log('restore original page', duoTranslatedElementMap)
 
         // height and line limit restore
-        let heightBreakElements = document.querySelectorAll(".duo-height-break")
-        for (let heightBreakElement of heightBreakElements) {
-            let element = heightBreakElement as HTMLElement
-            element.style.maxHeight = element.getAttribute("duo-max-height") || ""
-            element.removeAttribute("duo-max-height")
-            element.classList.remove("duo-height-break")
-        }
-        let lineBreakElements = document.querySelectorAll(".duo-line-break")
-        for (let lineBreakElement of lineBreakElements) {
-            let element = lineBreakElement as HTMLElement
-            element.style.setProperty("-webkit-line-clamp", element.getAttribute("duo-webkit-line-clamp") || "")
-            element.removeAttribute("duo-webkit-line-clamp")
-            element.classList.remove("duo-line-break")
-        }
+        // let heightBreakElements = document.querySelectorAll(".duo-height-break")
+        // for (let heightBreakElement of heightBreakElements) {
+        //     let element = heightBreakElement as HTMLElement
+        //     element.style.maxHeight = element.getAttribute("duo-max-height") || ""
+        //     element.removeAttribute("duo-max-height")
+        //     element.classList.remove("duo-height-break")
+        // }
+        // let lineBreakElements = document.querySelectorAll(".duo-line-break")
+        // for (let lineBreakElement of lineBreakElements) {
+        //     let element = lineBreakElement as HTMLElement
+        //     element.style.setProperty("-webkit-line-clamp", element.getAttribute("duo-webkit-line-clamp") || "")
+        //     element.removeAttribute("duo-webkit-line-clamp")
+        //     element.classList.remove("duo-line-break")
+        // }
     }
 
     async function setSessionStorage(key: string, value: any) {
@@ -1467,14 +1512,20 @@ export async function content() {
                 if (result.sourceLang == targetLanguage && result.score >= 0.7) {
                     translateResults.splice(i, 1)
                     elements.splice(i, 1)
-                } else if (viewStrategyCopy == VIEW_STRATEGY.SINGLE) {
-                    translatedElementMap.set(elements[i], result)
                 }
             }
 
             // the elements will be replaced(translated) in single view strategy
             // the copy of elements will be replaced(translated) in double view strategy
             await translate(translateService, translateResults)
+
+            if (viewStrategyCopy == VIEW_STRATEGY.SINGLE) {
+                for (let index = 0; index < elements.length; index++) {
+                    const element = elements[index];
+                    const result = translateResults[index];
+                    translatedElementMap.set(element, result)
+                }
+            }
 
             // append translated copy element to original element in double view strategy
             if (viewStrategyCopy == VIEW_STRATEGY.DOUBLE) {

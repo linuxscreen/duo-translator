@@ -26,7 +26,7 @@ const FORBIDDEN_AUTOCOMPLETE = new Set([
     "cc-number", "cc-csc", "cc-exp", "cc-exp-month", "cc-exp-year",
 ]);
 
-const SENSITIVE_TEXT = /(password|otp|2fa|captcha|verif|密码|验证)/i;
+const SENSITIVE_TEXT = /(password|otp|2fa|captcha|verif|username|user_name|email|phone|identif|密码|验证|用户名|账号|身份|证件|手机|邮箱)/i;
 
 export type AiTarget = HTMLElement;
 
@@ -36,6 +36,14 @@ export function isAiWritingTarget(el: Element | null | undefined): el is AiTarge
     // Exclude our own shadow-hosted UI to avoid recursion when the workbench
     // textarea is itself focused.
     if (el.closest("[data-duo-ai-ui]")) return false;
+    // Code editors (CodeMirror 5/6, Monaco, Ace) — the focused element is the
+    // editor's input proxy, not the document: CM5 focuses a hidden textarea
+    // that only mirrors the selection / recent keystrokes (and its geometry
+    // sticks out of the editor, misplacing the dot), CM6/Monaco virtualize
+    // rendering so the DOM only holds the visible lines. We can neither read
+    // the full content nor write back safely without editor-specific APIs, so
+    // skip them entirely.
+    if (el.closest(".CodeMirror, .cm-editor, .monaco-editor, .ace_editor")) return false;
     // Visible?
     if (el.getClientRects().length === 0) return false;
 

@@ -83,9 +83,9 @@ describe("getElementPreProcessResult", () => {
     it("ignores zero-width-only text nodes", () => {
         document.body.innerHTML = "<p>​<b>x</b></p>";
         const p = document.body.querySelector("p")!;
-        const res = getElementPreProcessResult(p, VIEW_STRATEGY.SINGLE);
+        const res = getElementPreProcessResult(p, VIEW_STRATEGY.DOUBLE);
         // The zero-width text node is not counted; only "x" inside <b>.
-        expect(res.text).toBe("​x");
+        expect(res.text).toBe('x');
         expect(res.mappedHtmlText).toContain("<b0>x</b0>");
     });
 });

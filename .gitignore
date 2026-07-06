@@ -13,7 +13,7 @@ node_modules
 web-ext.config.ts
 
 # Editor directories and files
-.vscode/*
+.vscode
 !.vscode/extensions.json
 .idea
 .DS_Store

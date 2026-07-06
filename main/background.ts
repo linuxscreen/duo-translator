@@ -19,7 +19,7 @@ import {
     IS_FIREFOX,
 } from "@/main/constants";
 import { Browser, browser } from "wxt/browser";
-import { Token } from "@/main/translateService";
+import { Token, TRANSLATE_PROXY_ALLOWED_URLS } from "@/main/translateService";
 import { Mutex } from "async-mutex";
 import enLocale from "@/assets/locales/en.json";
 import zhCNLocale from "@/assets/locales/zh-CN.json";
@@ -58,34 +58,52 @@ export async function background() {
     let paraTranslateStatus = false
     let paraContextMenuShowStatus = false
 
-    let [contextMenuSwitch, interfaceLang, globalSwitch] = await Promise.all([
-        configRepo.getT<boolean>(CONFIG_KEY.CONTEXT_MENU_SWITCH),
-        configRepo.get(CONFIG_KEY.INTERFACE_LANGUAGE),
-        configRepo.getT<boolean>(CONFIG_KEY.GLOBAL_SWITCH)
-    ])
-
-    let currentInterfaceLang = normalizeInterfaceLang(interfaceLang) || detectDefaultInterfaceLang()
+    // `contextMenuSwitch` / `currentInterfaceLang` are hydrated from storage by
+    // the async bootstrap below, but must EXIST synchronously because the
+    // message/port listeners registered further down close over them. Seed the
+    // interface language from the browser UI language so getMsg() is usable even
+    // before the stored value loads.
+    let contextMenuSwitch = false
+    let currentInterfaceLang: InterfaceLang = detectDefaultInterfaceLang()
     const getMsg = (key: string) => LOCALES[currentInterfaceLang][key] ?? key
-
-    if (globalSwitch) {
-        initShortcutKey()
-        if (contextMenuSwitch) {
-            initContextMenu()
-        }
-    }
 
     // Register auto-sync alarm/storage listeners synchronously at SW startup so
     // an alarm that wakes the worker is always caught.
     registerAutoSyncListeners();
-    // Safety-net: in case the onInstalled-driven migration was killed by a SW
-    // shutdown, retry on every boot. The migration module itself is idempotent
-    // (flag-checked) so this is a near-free no-op once done.
-    void migrateFromPouchIfNeeded({ trigger: 'startup' }).then(() => {
+
+    // IMPORTANT (MV3): an idle SW is torn down and cold-started by the very event
+    // that needs it. runtime.onMessage / onConnect listeners MUST be registered
+    // during this first synchronous turn — if we `await` before reaching them,
+    // Chrome dispatches the wake-up message before the listener exists, the
+    // sender gets "receiving end does not exist", and (with no .catch on the
+    // content side) that surfaces as translation requests timing out whenever
+    // the extension had gone inactive. So the config load runs as a DETACHED
+    // bootstrap, NOT awaited on the path to the listeners below.
+    void (async () => {
+        const [ctxMenu, interfaceLang, globalSwitch] = await Promise.all([
+            configRepo.getT<boolean>(CONFIG_KEY.CONTEXT_MENU_SWITCH),
+            configRepo.get(CONFIG_KEY.INTERFACE_LANGUAGE),
+            configRepo.getT<boolean>(CONFIG_KEY.GLOBAL_SWITCH)
+        ])
+        contextMenuSwitch = ctxMenu
+        currentInterfaceLang = normalizeInterfaceLang(interfaceLang) || currentInterfaceLang
+
+        if (globalSwitch) {
+            initShortcutKey()
+            if (contextMenuSwitch) {
+                initContextMenu()
+            }
+        }
+
+        // Safety-net: in case the onInstalled-driven migration was killed by a
+        // SW shutdown, retry on every boot. The migration module itself is
+        // idempotent (flag-checked) so this is a near-free no-op once done.
+        await migrateFromPouchIfNeeded({ trigger: 'startup' });
         // Schedule periodic auto-sync + run the startup sync (if enabled) once
         // migration settled.
         void startAutoSync();
         initTokenMap();
-    });
+    })();
     //#endregion
 
     //#region message listener
@@ -562,6 +580,56 @@ export async function background() {
                 })();
                 return true;
             }
+            case ACTION.TRANSLATE_PROXY_FETCH: {
+                // HTTP proxy for the built-in translate providers. Content
+                // fetches are blocked by the host page's CSP connect-src in
+                // Firefox MV3 and depend on page-origin CORS in Chrome, so the
+                // request runs here with the extension principal instead.
+                // Only fixed provider endpoints are allowed — this must never
+                // become a generic fetch proxy.
+                (async () => {
+                    const { requestId, url, init } = (message.data || {}) as {
+                        requestId?: string;
+                        url?: string;
+                        init?: { method?: string; headers?: Record<string, string>; body?: string };
+                    };
+                    const controller = new AbortController();
+                    if (requestId) translateProxyAborters.set(requestId, controller);
+                    try {
+                        if (!url || !TRANSLATE_PROXY_ALLOWED_URLS.some((prefix) => url.startsWith(prefix))) {
+                            throw new Error(`URL not allowed by translate proxy: ${url}`);
+                        }
+                        const r = await fetch(url, {
+                            method: init?.method ?? 'GET',
+                            headers: init?.headers,
+                            body: init?.body,
+                            signal: controller.signal,
+                        });
+                        const bodyText = await r.text();
+                        sendResponse({
+                            status: STATUS_SUCCESS,
+                            data: { status: r.status, statusText: r.statusText, bodyText },
+                        });
+                    } catch (e: any) {
+                        console.error(APP_NAME_WITH_SUFFIX, 'Translate proxy fetch failed:', e?.message || e);
+                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
+                    } finally {
+                        if (requestId) translateProxyAborters.delete(requestId);
+                    }
+                })();
+                return true;
+            }
+            case ACTION.TRANSLATE_PROXY_ABORT: {
+                // Cancel the in-flight TRANSLATE_PROXY_FETCH for this requestId.
+                const requestId: string | undefined = message.data?.requestId;
+                const controller = requestId ? translateProxyAborters.get(requestId) : undefined;
+                if (controller) {
+                    controller.abort();
+                    translateProxyAborters.delete(requestId!);
+                }
+                sendResponse({ status: STATUS_SUCCESS });
+                break;
+            }
             case ACTION.AI_TRANSLATE_TEXT: {
                 // One-shot (non-streaming) page-translation via AI. content sends
                 // { requestId, providerId?, texts, targetLang }; we return the
@@ -745,6 +813,17 @@ export async function background() {
     //#endregion
 
     //#region other listeners
+    browser.webNavigation.onCommitted.addListener((details) => {
+        if (details.transitionType === 'reload' || details.transitionType === 'typed' && details.url.startsWith('http')) {
+            browser.storage.session.remove(TRANSLATE_STATUS_KEY + details.tabId)
+        }
+    })
+
+    browser.tabs.onRemoved.addListener((tabId, removeInfo) => {
+        // console.log('tab removed:', tabId, removeInfo);
+        browser.storage.session.remove(TRANSLATE_STATUS_KEY + tabId)
+    })
+
     // -----------------------------------------------------------------
     // Page translation via AI: port-based so the content script can abort
     // the in-flight fetch by disconnecting. One request per port — the
@@ -1083,6 +1162,9 @@ const CONTEXT_MENU_TRANSLATE_SELECTION_TITLE = 'contextMenuTranslateSelection'
 // the content-supplied requestId. AI_TRANSLATE_ABORT looks one up to cancel the
 // upstream fetch. Entries are removed when the request settles.
 const aiTranslateAborters = new Map<string, AbortController>();
+
+// Same pattern for TRANSLATE_PROXY_FETCH (Google/Microsoft background proxy).
+const translateProxyAborters = new Map<string, AbortController>();
 
 /**
  * Run a page-translation request against the configured AI provider and return

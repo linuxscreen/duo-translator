@@ -11,7 +11,7 @@ export default defineConfig({
         name: '__MSG_extName__',
         description: '__MSG_extDescription__',
         default_locale: 'en',
-        permissions: ['storage', 'tabs', 'activeTab', 'contextMenus', 'identity', 'alarms'],
+        permissions: ['storage', 'tabs', 'activeTab', 'contextMenus', 'identity', 'alarms', 'webNavigation'],
         host_permissions: [
             // firefox mv2 needs these
             // 'https://translate-pa.googleapis.com/*',
@@ -85,6 +85,11 @@ export default defineConfig({
         //         "matches": ["<all_urls>"]
         //     }
         // ]
+        browser_specific_settings: {
+            gecko: {
+                id: 'duo-translator-dev@example.com',
+            },
+        },
     },
     imports: false, // auto import cause sourcemap error, unable to set breakpoint into function
     vite: () => ({

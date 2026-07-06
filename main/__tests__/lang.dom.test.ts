@@ -75,7 +75,7 @@ describe("detectLanguage", () => {
         const lang = await detectLanguage([para("hola")]);
         expect(lang).toBe("es");
         // text is the element content plus the per-element newline separator.
-        expect(mockMsDetect).toHaveBeenCalledWith(["hola\n"]);
+        expect(mockMsDetect).toHaveBeenCalledWith(["hola"]);
     });
 
     it("returns 'und' when the Microsoft fallback rejects", async () => {

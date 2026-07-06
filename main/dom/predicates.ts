@@ -2,6 +2,7 @@
 // Extracted from main/content.ts so the marking/skip rules are unit-testable
 // without a full content() context.
 import { excludedTagSet } from "@/main/constants";
+import { contentValid, contentVisible } from "@/utils/dom";
 
 /** An element the user (or a rule) marked as a no-translate region. */
 export function isNotTranslateElement(element: HTMLElement): boolean {
@@ -43,10 +44,9 @@ export function isEditable(element: HTMLElement): boolean {
  */
 export function isParagraphElement(element: HTMLElement): boolean {
     for (let i = 0; i < element.childNodes.length; i++) {
-        // \p{Cf}: all zero-width / format characters.
         if (
             element.childNodes[i].nodeType === Node.TEXT_NODE &&
-            element.childNodes[i].textContent!.replace(/\p{Cf}/gu, "").trim() !== ""
+            contentValid(element.childNodes[i])
         ) {
             return true;
         }

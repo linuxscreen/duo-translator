@@ -7,10 +7,16 @@ import { sendMessageToBackground } from "@/utils/message";
  * Text-to-speech playback for the selection-translate popup.
  *
  * The background synthesizes the audio (Google / Bing) and returns an ordered
- * array of `data:` URLs (one per chunk); this hook plays them sequentially
- * through a single reused <audio> element. Only one utterance plays at a time,
- * tracked by a caller-supplied key (e.g. "orig" / "trans") so two buttons can
- * share one player and each reflect its own playing state.
+ * array of `data:` URLs (one per chunk). Playback uses the Web Audio API
+ * (decodeAudioData + AudioBufferSourceNode) instead of an <audio> element:
+ * a media element created by a content script belongs to the page's document,
+ * so its `src` load is subject to the PAGE's CSP `media-src` — sites like
+ * chatgpt.com / claude.ai don't allow `data:` there and block playback.
+ * Web Audio performs no URL resource load, so page CSP never applies.
+ *
+ * Only one utterance plays at a time, tracked by a caller-supplied key
+ * (e.g. "orig" / "trans") so two buttons can share one player and each
+ * reflect its own playing state.
  *
  * Returns:
  *   - `playingKey`  — the key currently playing, or null.
@@ -24,25 +30,30 @@ export function useTts(): {
     stop: () => void;
 } {
     const [playingKey, setPlayingKey] = useState<string | null>(null);
-    const audioRef = useRef<HTMLAudioElement | null>(null);
-    // Monotonic token so a stale async response (fetch that resolves after the
-    // user already stopped / switched) can't hijack the player.
+    const ctxRef = useRef<AudioContext | null>(null);
+    const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+    // Monotonic token so a stale async response (fetch/decode that resolves
+    // after the user already stopped / switched) can't hijack the player.
     const runIdRef = useRef(0);
 
     const stop = useCallback(() => {
         runIdRef.current++;
-        const a = audioRef.current;
-        if (a) {
-            a.onended = null;
-            a.onerror = null;
-            try { a.pause(); } catch { /* ignore */ }
-            a.src = "";
+        const source = sourceRef.current;
+        if (source) {
+            source.onended = null;
+            try { source.stop(); } catch { /* already stopped */ }
+            try { source.disconnect(); } catch { /* ignore */ }
+            sourceRef.current = null;
         }
         setPlayingKey(null);
     }, []);
 
-    // Stop playback if the component unmounts.
-    useEffect(() => stop, [stop]);
+    // Stop playback and release the AudioContext if the component unmounts.
+    useEffect(() => () => {
+        stop();
+        ctxRef.current?.close().catch(() => { /* ignore */ });
+        ctxRef.current = null;
+    }, [stop]);
 
     const toggle = useCallback((key: string, text: string, lang: string) => {
         // Clicking the utterance that's already playing stops it.
@@ -70,23 +81,50 @@ export function useTts(): {
                 setPlayingKey(null);
                 return;
             }
-            const audio = audioRef.current ?? (audioRef.current = new Audio());
-            let index = 0;
-            const playNext = () => {
+            const ctx = ctxRef.current ?? (ctxRef.current = new AudioContext());
+            // The context may start (or get) suspended by the autoplay policy;
+            // toggle is always invoked from a user click, so resume is allowed.
+            if (ctx.state === "suspended") {
+                try { await ctx.resume(); } catch { /* ignore */ }
                 if (runId !== runIdRef.current) return;
+            }
+            const fail = () => { if (runId === runIdRef.current) setPlayingKey(null); };
+            let index = 0;
+            const playNext = async () => {
+                if (runId !== runIdRef.current) return;
+                sourceRef.current = null;
                 if (index >= audios.length) {
                     // Finished the whole sequence — reset the button.
-                    if (runId === runIdRef.current) setPlayingKey(null);
+                    setPlayingKey(null);
                     return;
                 }
-                audio.src = audios[index++];
-                audio.onended = playNext;
-                audio.onerror = () => { if (runId === runIdRef.current) setPlayingKey(null); };
-                audio.play().catch(() => { if (runId === runIdRef.current) setPlayingKey(null); });
+                let buffer: AudioBuffer;
+                try {
+                    buffer = await ctx.decodeAudioData(dataUrlToArrayBuffer(audios[index++]));
+                } catch {
+                    fail();
+                    return;
+                }
+                if (runId !== runIdRef.current) return;
+                const source = ctx.createBufferSource();
+                source.buffer = buffer;
+                source.connect(ctx.destination);
+                source.onended = () => { void playNext(); };
+                sourceRef.current = source;
+                try { source.start(); } catch { fail(); }
             };
-            playNext();
+            void playNext();
         })();
     }, [playingKey, stop]);
 
     return { playingKey, toggle, stop };
+}
+
+/** Decode the base64 payload of a `data:` URL into an ArrayBuffer. */
+function dataUrlToArrayBuffer(dataUrl: string): ArrayBuffer {
+    const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
 }
