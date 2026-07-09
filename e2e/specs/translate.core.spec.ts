@@ -53,4 +53,46 @@ test.describe('@core page translation (mocked providers)', () => {
         // #injected is appended ~1s after load; the observer must pick it up.
         await expect(page.locator('#injected .duo-translation')).toContainText(ZH);
     });
+
+    test('text node dynamically update in single view', async ({ page, seedConfig, serviceWorker }) => {
+        await seedConfig({ config_viewStrategy: 'single', config_translateService: 'microsoft' });
+        await page.goto('/basic.html');
+        await expect(page.locator('#p1')).toContainText(ZH);
+        await expect(page.locator('#p4')).toContainText(ZH);
+        let newText = 'updated content';
+        await page.evaluate((arg) => {
+            const t1 = document.querySelector('#p1')?.firstChild as Text;
+            if (t1) t1.textContent = arg;
+
+            const t2 = document.querySelector('#p4')?.firstChild?.nextSibling as Text;
+            if (t2) t2.textContent = arg;
+        }, newText)
+        await expect(page.locator('#p1')).toContainText(ZH + newText);
+        await expect(page.locator('#p4')).toContainText(`${ZH}This is ${ZH}${newText}${ZH} English text.`);
+    });
+
+    test('text node dynamically update in double view', async ({ page, seedConfig, serviceWorker }) => {
+        await seedConfig({ config_viewStrategy: 'double', config_translateService: 'microsoft' });
+        await page.goto('/basic.html');
+        await expect(page.locator('#p1')).toContainText(ZH);
+        await expect(page.locator('#p4')).toContainText(ZH);
+        let newText = 'updated content';
+        await page.evaluate((arg) => {
+            const t1 = document.querySelector('#p1')?.firstChild as Text;
+            if (t1) t1.textContent = arg;
+
+            const t2 = document.querySelector('#p4')?.firstChild?.nextSibling as Text;
+            if (t2) t2.textContent = arg;
+        }, newText)
+        let text = await page.locator('#p1').evaluate(ele => ele.firstChild?.textContent)
+        expect(text).toEqual(newText);
+        await expect(page.locator('#p1 .duo-translation')).toContainText(ZH + newText);
+        const text1 = await page.locator('#p4').evaluate(ele => {
+            let text = ''
+            Array.from(ele.childNodes).slice(0, 3).forEach(node => text += node.textContent)
+            return text
+        });
+        expect(text1).toEqual('This is ' + newText + ' English text.');
+        await expect(page.locator('#p4 .duo-translation')).toContainText(`${ZH}This is ${ZH}${newText}${ZH} English text.`);
+    });
 });

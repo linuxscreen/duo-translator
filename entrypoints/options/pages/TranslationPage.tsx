@@ -234,6 +234,7 @@ export function TranslationPage() {
   const onHighlight = (v: boolean) => {
     setHighlight(v);
     void setConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH, v);
+    void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH]: v } }, false);
     broadcastStyleChanged();
   };
 

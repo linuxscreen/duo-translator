@@ -99,14 +99,14 @@ export async function content() {
     const ignoreMutationElements = new WeakSet();
     const paragraphElementMap = new Map<HTMLElement, ELEMENT_STATUS>();
     // translated elements of DOUBLE view strategy
-    let duoTranslatedElementSet = new Set<HTMLElement>()
+    let duoTranslatedElementMap = new Map<HTMLElement, { text: Text, content: string }[]>()
     // translated elements of SINGLE view strategy
     let translatedElementMap = new Map<HTMLElement, TranslateResult>()
     // get all config from storage
     let [rules, viewStrategy, targetLanguageConfig, translateServiceConfig, globalSwitch, defaultStrategy,
-        rawDomainStrategy, floatBallSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey,
+        rawDomainStrategy, floatBallSwitch, bilingualHighlightingSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey,
         aiTargetLanguageConfig, contextMenuSwitch, translateStatusConfig]
-        : [string[], VIEW_STRATEGY, string | undefined, string | undefined, boolean, string, any, boolean, number,
+        : [string[], VIEW_STRATEGY, string | undefined, string | undefined, boolean, string, any, boolean, boolean, number,
             number, string | undefined, string, boolean, boolean]
         = await Promise.all(
             [
@@ -118,6 +118,7 @@ export async function content() {
                 getConfig(CONFIG_KEY.DEFAULT_STRATEGY),
                 sendMessageToBackground({ action: DB_ACTION.DOMAIN_GET, data: { domain: domainWithPort } }),
                 getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
+                getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
                 getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES),
                 getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS),
                 getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
@@ -155,27 +156,41 @@ export async function content() {
     const observer = new MutationObserver(async mutations => {
         for (const mutation of mutations) {
             if (mutation.type === 'characterData') {
+                // continue
+                if (mutation.target.nodeType !== Node.TEXT_NODE) continue
+                let target = mutation.target as Text
+                if (ignoreMutationElements.has(target)) continue
+                // return
+                // if (target.length <= 5) continue // for debug
                 console.log('characterData', mutation);
-                if (mutation.target.nodeType === 3) {
-                    let t = mutation.target as Text
-                    let p = closestNeedsTranslate(t.parentElement)
-                    if (!p) continue
-                    if (isIgnoreMutationElement(p)) continue
-                    let text = t.textContent
-                    restoreOriginalParagraphElement(p).then(() => {
-                        p.textContent = text
-                        if (translateStatus) {
-                            translateParagraphElements([p])
-                        }
-                    })
-                    continue
-                }
+                let p = closestNeedsTranslate(target.parentElement)
+                if (!p) continue
+                if (isIgnoreMutationElement(p)) continue
+
+                let text = target.textContent
+
+                let translateStatus = duoTranslatedElementMap.has(p) || translatedElementMap.has(p)
+                restoreOriginalParagraphElement(p).then(() => {
+                    // probably get old original text
+                    if (target.textContent != text) {
+                        ignoreMutationElements.add(target)
+                        target.textContent = text
+                        Promise.resolve().then(() => {
+                            ignoreMutationElements.delete(target)
+                        })
+                    }
+                    if (translateStatus) {
+                        translateParagraphElements([p])
+                    }
+                })
+                continue
             }
-            if (mutation.target.nodeType !== 1) continue;
+            if (mutation.target.nodeType !== Node.ELEMENT_NODE) continue;
             const target = mutation.target as HTMLElement;
 
             // Cheap structural skip — bail before queueing.
             if (isIgnoreMutationElement(target)) continue;
+            console.log('mutation target', target);
             // console.log('start mutation');
             // Removal cleanup must happen now while removed nodes are still
             // identifiable; it touches only Map entries, no DOM scan.
@@ -408,7 +423,7 @@ export async function content() {
         if (element && isPointOverText(lastX, lastY, element)) {
             let translated
             if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-                translated = duoTranslatedElementSet.has(element);
+                translated = duoTranslatedElementMap.has(element);
             } else {
                 translated = translatedElementMap.has(element);
             }
@@ -517,6 +532,14 @@ export async function content() {
                     bilingualHighlightingMinSentences = value
                 }
                 break
+            case CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH:
+                if (typeof value === "boolean" && bilingualHighlightingSwitch !== value) {
+                    bilingualHighlightingSwitch = value
+                    if (activeFlag && translateStatus && viewStrategy === VIEW_STRATEGY.DOUBLE) {
+                        await restoreOriginalAction()
+                        await translateAction()
+                    }
+                }
             default:
                 break
         }
@@ -690,7 +713,7 @@ export async function content() {
         let ele = document.elementFromPoint(lastX, lastY) as Element | null
         let target = closestParagraph(ele)
         if (!(target instanceof HTMLElement)) return
-        const translated = duoTranslatedElementSet.has(target) || translatedElementMap.has(target)
+        const translated = duoTranslatedElementMap.has(target) || translatedElementMap.has(target)
         if (translated) {
             restoreOriginalParagraphElement(target)
         } else {
@@ -795,10 +818,10 @@ export async function content() {
     }
 
     function cleanupRemovedSubtree(removedNode: Node) {
-        if (removedNode.nodeType !== 1) return;
+        if (removedNode.nodeType !== Node.ELEMENT_NODE) return;
         const removed = removedNode as HTMLElement;
         if (isParagraph(removed)) {
-            duoTranslatedElementSet.delete(removed);
+            duoTranslatedElementMap.delete(removed);
             translatedElementMap.delete(removed);
             paragraphElementMap.delete(removed);
             cleanupParagraphMarks(removed);
@@ -810,7 +833,7 @@ export async function content() {
         if (paragraphElementMap.size === 0) return;
         for (const tracked of Array.from(paragraphElementMap.keys())) {
             if (removed.contains(tracked)) {
-                duoTranslatedElementSet.delete(tracked);
+                duoTranslatedElementMap.delete(tracked);
                 translatedElementMap.delete(tracked);
                 paragraphElementMap.delete(tracked);
             }
@@ -1127,7 +1150,8 @@ export async function content() {
     }
 
     async function restoreOriginalParagraphElement(element: HTMLElement) {
-        if (duoTranslatedElementSet.has(element)) {
+        let duoTexts = duoTranslatedElementMap.get(element)
+        if (duoTexts) {
             ignoreMutationElements.add(element)
             try {
                 let translation = element.querySelector(".duo-translation")
@@ -1136,28 +1160,37 @@ export async function content() {
                 divide?.remove();
                 let spans = element.querySelectorAll("duo-span")
                 for (let span of spans) {
-                    let textNode = span.firstChild as Text
-                    if (textNode && textNode.textContent != "") {
-                        span.parentElement?.insertBefore(textNode, span)
-                    }
-                }
-                for (let span of spans) {
                     span.remove()
                 }
             } catch (e) {
                 console.error(APP_NAME_WITH_SUFFIX, "restore original paragraph error:", e)
             }
+            duoTexts.forEach(t => {
+                ignoreMutationElements.add(t)
+                t.text.textContent = t.content
+            })
 
             Promise.resolve().then(() => {
                 ignoreMutationElements.delete(element)
-                duoTranslatedElementSet.delete(element)
+                duoTexts.forEach(t => {
+                    ignoreMutationElements.delete(t.text)
+                })
+                duoTranslatedElementMap.delete(element)
             })
-        } else if (translatedElementMap.has(element)) {
-            let result = translatedElementMap.get(element)
-            if (!result) return
+            return
+        }
+        let result = translatedElementMap.get(element)
+        if (result) {
+            ignoreMutationElements.add(element)
+            result.replacedTextNodes?.forEach(text => {
+                ignoreMutationElements.add(text)
+            })
             await restore([result])
             Promise.resolve().then(() => {
                 ignoreMutationElements.delete(element)
+                result.replacedTextNodes?.forEach(text => {
+                    ignoreMutationElements.delete(text)
+                })
                 translatedElementMap.delete(element)
             })
         }
@@ -1172,8 +1205,8 @@ export async function content() {
             await updateTranslateStatus(false)
         }
 
-        if (duoTranslatedElementSet.size > 0) {
-            for (let element of duoTranslatedElementSet) {
+        if (duoTranslatedElementMap.size > 0) {
+            for (let [element, texts] of duoTranslatedElementMap) {
                 if (!element) {
                     continue
                 }
@@ -1185,18 +1218,15 @@ export async function content() {
                     divide?.remove();
                     let spans = element.querySelectorAll("duo-span")
                     for (let span of spans) {
-                        let textNode = span.firstChild as Text
-                        // console.log("textNode:", textNode, span)
-                        if (textNode && textNode.textContent != "") {
-                            span.parentElement?.insertBefore(textNode, span)
-                        }
-                    }
-                    for (let span of spans) {
                         span.remove()
                     }
                 } catch (e) {
                     console.error(APP_NAME_WITH_SUFFIX, "restore original page error:", e)
                 }
+                texts.forEach(t => {
+                    ignoreMutationElements.add(t.text)
+                    t.text.textContent = t.content
+                })
             }
             // add delete ignoreMutationElements task to the macro-task queue, will process after observe task when next event loop starts
             // setTimeout(() => {
@@ -1207,10 +1237,13 @@ export async function content() {
 
             // add delete ignoreMutationElements task to the micro-task queue after observe task
             Promise.resolve().then(() => {
-                for (let element of duoTranslatedElementSet) {
+                for (let [element, texts] of duoTranslatedElementMap) {
                     ignoreMutationElements.delete(element)
+                    texts.forEach(t => {
+                        ignoreMutationElements.delete(t.text)
+                    })
                 }
-                duoTranslatedElementSet.clear()
+                duoTranslatedElementMap.clear()
             })
         }
         if (translatedElementMap.size > 0) {
@@ -1218,13 +1251,19 @@ export async function content() {
             translatedElementMap.forEach((result, element) => {
                 ignoreMutationElements.add(element)
                 // remote all text recursively node of element
-                removeTextNodes(element)
+                // removeTextNodes(element)
                 results.push(result)
+                result.replacedTextNodes?.forEach(text => {
+                    ignoreMutationElements.add(text)
+                })
             })
             await restore(results)
             Promise.resolve().then(() => {
                 translatedElementMap.forEach((result, element) => {
                     ignoreMutationElements.delete(element)
+                    result.replacedTextNodes?.forEach(text => {
+                        ignoreMutationElements.delete(text)
+                    })
                 })
                 translatedElementMap.clear()
             })
@@ -1237,16 +1276,6 @@ export async function content() {
             })
             clearParagraphMarks()
             resetNoTranslateMarks()
-            let spans = document.body.querySelectorAll("duo-span")
-            for (let span of spans) {
-                let textNode = span.firstChild as Text
-                if (textNode && textNode.textContent != "") {
-                    span.parentElement?.insertBefore(textNode, span)
-                }
-            }
-            for (let span of spans) {
-                span.remove()
-            }
         }
         // console.log('restore original page', duoTranslatedElementMap)
 
@@ -1488,7 +1517,7 @@ export async function content() {
         if (elements.length == 0) {
             return
         }
-        let ignoreElements: HTMLElement[] = []
+        let ignoreElements: Node[] = []
         try {
             console.log('translateParagraphElements: ', elements.length)
             // @debuglog
@@ -1531,7 +1560,12 @@ export async function content() {
                 if (result.sourceLang == targetLanguage && result.score >= 0.7) {
                     translateResults.splice(i, 1)
                     elements.splice(i, 1)
+                    continue
                 }
+                result.textNodes?.forEach(text => {
+                    ignoreElements.push(text)
+                    ignoreMutationElements.add(text)
+                })
             }
 
             // the elements will be replaced(translated) in single view strategy
@@ -1559,6 +1593,11 @@ export async function content() {
                         continue
                     }
                     let originalTextResult = getTextNodesAndText(element)
+                    let originalTexts: { text: Text, content: string }[] = []
+                    originalTextResult.textNodes.forEach(textNode => {
+                        ignoreElements.push(textNode)
+                        ignoreMutationElements.add(textNode)
+                    })
                     translatedElement.classList.add("duo-translation")
                     // find the last child that textContent is not empty
                     let lastChild = getLastContainingTextChild(element)
@@ -1594,6 +1633,9 @@ export async function content() {
                         if (translatedSentences.length != originalSentences.length) {
                             return
                         }
+                        originalTextResult.textNodes.forEach(textNode => {
+                            originalTexts.push({ text: textNode, content: textNode.textContent })
+                        })
                         let spans = wrapTextNode2Span(originalTextResult.textNodes, originalSentences, ignoreMutationElements)
 
                         spans.push(...wrapTextNode2Span(translatedTextResult.textNodes, translatedSentences, ignoreMutationElements))
@@ -1601,8 +1643,9 @@ export async function content() {
                             highlightHandler(span, element, translatedElement)
                         }
                     }
-                    handler()
-                    duoTranslatedElementSet.add(element)
+
+                    if (bilingualHighlightingSwitch) handler()
+                    duoTranslatedElementMap.set(element, originalTexts)
                 }
             }
 

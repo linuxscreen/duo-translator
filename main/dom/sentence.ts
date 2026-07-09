@@ -43,13 +43,15 @@ export function wrapTextNode2Span(
             if (sentence.length >= text.length) {
                 if (sentence.startsWith(text)) {
                     const span = document.createElement("duo-span");
+                    ignoreMutationElements.add(span);
                     span.setAttribute("duo-sequence", i.toString());
+                    let spanText = document.createTextNode(text);
+                    span.appendChild(spanText);
                     textNodes[j]?.parentElement?.insertBefore(span, textNodes[j]);
-                    span.appendChild(textNodes[j]);
+                    textNodes[j].textContent = "";
                     spans.push(span);
                     sentence = sentence.slice(text.length);
                     j++;
-                    ignoreMutationElements.add(span);
                 } else {
                     break;
                 }
@@ -57,11 +59,12 @@ export function wrapTextNode2Span(
                 if (text.startsWith(sentence)) {
                     textNodes[j].textContent = text.slice(sentence.length);
                     const span = document.createElement("duo-span");
+                    ignoreMutationElements.add(span);
                     span.setAttribute("duo-sequence", i.toString());
-                    span.textContent = sentence;
+                    let spanText = document.createTextNode(sentence);
+                    span.appendChild(spanText);
                     textNodes[j].parentElement?.insertBefore(span, textNodes[j]);
                     spans.push(span);
-                    ignoreMutationElements.add(span);
                 }
                 break;
             }

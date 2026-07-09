@@ -1007,7 +1007,7 @@ export function getElementPreProcessResult(element: HTMLElement, viewStrategy: V
     let index = 0
     const process = (isSon: boolean, node: Node | null, parent: HTMLElement) => {
         if (!node) return;
-        if (node.nodeType === 1) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
             const ele = node as HTMLElement;
             // ignore empty element in double mode
             if (viewStrategy === VIEW_STRATEGY.DOUBLE && !textNotEmptyElementSet.has(ele)) {
@@ -1022,7 +1022,7 @@ export function getElementPreProcessResult(element: HTMLElement, viewStrategy: V
             if (isSon) {
                 index++
             }
-        } else if (node.nodeType === 3) {
+        } else if (node.nodeType === Node.TEXT_NODE) {
             const textNode = node as Text;
             if (contentInvisible(textNode)) return;
             totalTextNodesLength += textNode.textContent.length;
@@ -1053,6 +1053,8 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
     const translatedElement = document.createElement("div");
     translatedElement.innerHTML = rawTranslatedHtml;
     const replacedTextNodes: Text[] = [];
+    const element2TextNodes: Map<HTMLElement, Text[]> = new Map();
+    const element2TextNodeIndex: Map<HTMLElement, number> = new Map();
 
     function getOriginalElement(tagName: string) {
         if (tagName === "DIV") {
@@ -1064,19 +1066,35 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
         }
     }
 
+    function getNextTextNode(element: HTMLElement) : Text {
+        let textNodes = element2TextNodes.get(element);
+        if (textNodes === undefined) {
+            textNodes = Array.from(element.childNodes).filter(node => node.nodeType === Node.TEXT_NODE) as Text[];
+            element2TextNodes.set(element, textNodes)
+            element2TextNodeIndex.set(element, 0)
+        }
+        let index = element2TextNodeIndex.get(element) || 0
+        if (index >= textNodes.length) {
+            return document.createTextNode('')
+        }
+        element2TextNodeIndex.set(element, index + 1)
+        return textNodes[index]
+    }
+
     function translate(node: Node | null) {
         if (!node) return;
-        if (node.nodeType === 3) {
+        if (node.nodeType === Node.TEXT_NODE) {
             const textParent = node.parentElement;
             if (!textParent) return;
             const original = getOriginalElement(textParent.tagName)
             if (!original) return;
-            let textNode = node.cloneNode(true) as Text;
+            let textNode = getNextTextNode(original)
+            textNode.textContent = node.textContent
             replacedTextNodes.push(textNode);
             original.appendChild(textNode);
             return;
         }
-        if (node.nodeType === 1) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
             const ele = node as HTMLElement;
             for (const child of node.childNodes) translate(child);
             const eleParent = ele.parentElement;
@@ -1281,8 +1299,8 @@ export async function translate(service: string, results: TranslateResult[]): Pr
         return
     }
     for (const result of results) {
-        result.textNodes?.forEach(element => {
-            element.remove()
+        result.textNodes?.forEach(text => {
+            text.textContent = ""
         });
         let textNodes = updateTranslateElementContent(result.translatedMappedHtmlText, result.originalSliceElements || []);
         result.replacedTextNodes = textNodes
@@ -1293,8 +1311,8 @@ export async function translate(service: string, results: TranslateResult[]): Pr
 export async function restore(results: TranslateResult[]): Promise<void> {
     for (const result of results) {
         if (!result.rawMappedHtmlText) continue;
-        result.replacedTextNodes?.forEach(element => {
-            element.remove()
+        result.replacedTextNodes?.forEach(text => {
+            text.textContent = ""
         })
         updateTranslateElementContent(result.rawMappedHtmlText, result.originalSliceElements || []);
     }
