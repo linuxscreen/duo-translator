@@ -3,10 +3,11 @@
 // without a full content() context.
 import { excludedTagSet } from "@/main/constants";
 import { contentValid, contentVisible } from "@/utils/dom";
+import { isNoTranslate } from "@/main/dom/paragraphMarks";
 
 /** An element the user (or a rule) marked as a no-translate region. */
 export function isNotTranslateElement(element: HTMLElement): boolean {
-    return element.classList.contains("duo-no-translate");
+    return isNoTranslate(element);
 }
 
 /** True for tags we never descend into / mark (script, style, our own UI, …). */

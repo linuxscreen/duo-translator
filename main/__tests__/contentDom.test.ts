@@ -18,6 +18,7 @@ import {
     isContainsValidTextElement,
     getLastContainingTextChild,
 } from "@/main/dom/textNodes";
+import { markNoTranslate, unmarkNoTranslate } from "@/main/dom/paragraphMarks";
 
 beforeEach(() => {
     document.body.innerHTML = "";
@@ -33,8 +34,12 @@ function el(html: string): HTMLElement {
 // predicates
 // ---------------------------------------------------------------------------
 describe("isNotTranslateElement", () => {
-    it("is true only for elements marked .duo-no-translate", () => {
-        expect(isNotTranslateElement(el('<p class="duo-no-translate">x</p>'))).toBe(true);
+    it("is true only for elements carrying the in-memory no-translate mark", () => {
+        const marked = el("<p>x</p>");
+        markNoTranslate(marked);
+        expect(isNotTranslateElement(marked)).toBe(true);
+        unmarkNoTranslate(marked);
+        expect(isNotTranslateElement(marked)).toBe(false);
         expect(isNotTranslateElement(el("<p>x</p>"))).toBe(false);
     });
 });
@@ -91,10 +96,10 @@ describe("isParagraphElement", () => {
 // ---------------------------------------------------------------------------
 describe("removeDuoClassAndAttribute", () => {
     it("strips only duo-* classes and attributes", () => {
-        const e = el('<p class="keep duo-paragraph" duo-id="5" title="t">x</p>');
+        const e = el('<p class="keep duo-test" duo-id="5" title="t">x</p>');
         removeDuoClassAndAttribute(e);
         expect(e.classList.contains("keep")).toBe(true);
-        expect(e.classList.contains("duo-paragraph")).toBe(false);
+        expect(e.classList.contains("duo-test")).toBe(false);
         expect(e.hasAttribute("duo-id")).toBe(false);
         expect(e.getAttribute("title")).toBe("t");
     });

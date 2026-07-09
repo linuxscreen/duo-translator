@@ -21,6 +21,18 @@ import { getAiTranslateService, getTranslateService } from "@/utils/service";
 import { buildTranslationCss } from "@/main/css";
 import { isEditable, isNotMarkElement, isNotTranslateElement, isParagraphElement } from "@/main/dom/predicates";
 import { getLastContainingTextChild, getTextNodesAndText, removeDuoClassAndAttribute, removeTextNodes } from "@/main/dom/textNodes";
+import {
+    allParagraphs,
+    cleanupParagraphMarks,
+    clearParagraphMarks,
+    closestNeedsTranslate,
+    closestParagraph,
+    isParagraph,
+    markNoTranslate,
+    markParagraph,
+    needsTranslateParagraphs,
+    resetNoTranslateMarks,
+} from "@/main/dom/paragraphMarks";
 
 export async function content() {
     //#region main
@@ -142,15 +154,11 @@ export async function content() {
     //#region observer
     const observer = new MutationObserver(async mutations => {
         for (const mutation of mutations) {
-            if (mutation.type === 'attributes') {
-                console.log('attributes', mutation);
-                continue
-            }
             if (mutation.type === 'characterData') {
                 console.log('characterData', mutation);
                 if (mutation.target.nodeType === 3) {
                     let t = mutation.target as Text
-                    let p = t.parentElement?.closest(".duo-needs-translate") as HTMLElement
+                    let p = closestNeedsTranslate(t.parentElement)
                     if (!p) continue
                     if (isIgnoreMutationElement(p)) continue
                     let text = t.textContent
@@ -370,7 +378,7 @@ export async function content() {
                 return
             }
             const target = e.target as HTMLElement | null;
-            const para = target?.closest(".duo-paragraph") as HTMLElement | null;
+            const para = closestParagraph(target)
 
             notifyParaContextMenuUpdate(e.clientX, e.clientY, para)
         }, true);
@@ -388,7 +396,7 @@ export async function content() {
         }
         if (IS_FIREFOX) {
             let ele = document.elementFromPoint(lastX, lastY) as Element | null
-            const para = ele?.closest(".duo-paragraph") as HTMLElement | null;
+            const para = closestParagraph(ele)
 
             notifyParaContextMenuUpdate(lastX, lastY, para)
         }
@@ -680,7 +688,7 @@ export async function content() {
 
     function toggleTranslateParagraph() {
         let ele = document.elementFromPoint(lastX, lastY) as Element | null
-        let target = ele?.closest(".duo-paragraph")
+        let target = closestParagraph(ele)
         if (!(target instanceof HTMLElement)) return
         const translated = duoTranslatedElementSet.has(target) || translatedElementMap.has(target)
         if (translated) {
@@ -789,12 +797,14 @@ export async function content() {
     function cleanupRemovedSubtree(removedNode: Node) {
         if (removedNode.nodeType !== 1) return;
         const removed = removedNode as HTMLElement;
-        if (removed.classList.contains('duo-paragraph')) {
+        if (isParagraph(removed)) {
             duoTranslatedElementSet.delete(removed);
             translatedElementMap.delete(removed);
             paragraphElementMap.delete(removed);
+            cleanupParagraphMarks(removed);
             return;
         }
+        cleanupParagraphMarks(removed);
         // Walk our own tracking map instead of querySelectorAll on the removed
         // subtree — the map is much smaller than a re-scan of the whole subtree.
         if (paragraphElementMap.size === 0) return;
@@ -920,6 +930,13 @@ export async function content() {
         }
         if (shouldTranslate || translateStatus) {
             await updateTranslateStatus(true, !translateStatus)
+            // Push the decision to sub-frames as an explicit TRANSLATE instead
+            // of relying on them winning the session-storage race: a sub-frame
+            // whose catch-up read (above) ran BEFORE we persisted the status
+            // here would otherwise stay untranslated. Combined with the
+            // catch-up read this covers both init orders — the relay echo back
+            // to us and to already-translated frames is an idempotent no-op.
+            if (isTopFrame) relayToSubframes(TRANSLATE_ACTION.TRANSLATE)
             htmlElements.forEach((element) => {
                 paragraphElementMap.set(element, ELEMENT_STATUS.ORIGINAL)
                 intersectionObserver.observe(element)
@@ -956,14 +973,14 @@ export async function content() {
     }
 
     function startObserveDom() {
+        // No attribute observation: paragraph marks live in content-script
+        // memory (paragraphMarks.ts), so page-side class rewrites can't touch
+        // them and our own marking produces no attribute mutations to filter.
         observer.observe(document.body, {
             childList: true,
             subtree: true,
             characterData: true,// text content change
-            attributeFilter: ['class'],
-            attributes: true,
             // characterDataOldValue: true,
-            // attributeOldValue: true
         });
     }
 
@@ -1058,8 +1075,7 @@ export async function content() {
             await updateTranslateStatus(true)
             // some elements probably have been translated
             await restoreOriginalPage(false)
-            document.querySelectorAll(".duo-needs-translate").forEach((element) => {
-                let ele = element as HTMLElement
+            needsTranslateParagraphs().forEach((ele) => {
                 paragraphElementMap.set(ele, ELEMENT_STATUS.ORIGINAL)
                 // console.log("translateAction observe element");
                 intersectionObserver.observe(ele)
@@ -1214,9 +1230,13 @@ export async function content() {
             })
         }
         if (pure) {
-            document.body.querySelectorAll(".duo-paragraph").forEach(element => {
-                removeDuoClassAndAttribute(element as HTMLElement)
+            // Strip leftover duo-* attributes/classes from marked paragraphs
+            // BEFORE dropping the marks — the marks map is the only index left.
+            allParagraphs().forEach(element => {
+                removeDuoClassAndAttribute(element)
             })
+            clearParagraphMarks()
+            resetNoTranslateMarks()
             let spans = document.body.querySelectorAll("duo-span")
             for (let span of spans) {
                 let textNode = span.firstChild as Text
@@ -1325,7 +1345,7 @@ export async function content() {
     }
 
     /**
-     * search and add the duo-paragraph class to the paragraph element for marking
+     * search paragraph elements and record them as in-memory paragraph marks
      * @param element
      * @returns the elements that need to translate
      */
@@ -1339,7 +1359,7 @@ export async function content() {
         const rawElement = element;
         const collectElements: HTMLElement[] = [];
 
-        // Walk up — looking for an enclosing duo-paragraph (early return) or
+        // Walk up — looking for an enclosing paragraph mark (early return) or
         // an isNotTranslateElement ancestor (sets the flag for descent).
         const parentElements: HTMLElement[] = [];
         while (element.parentElement && element.parentElement != document.body) {
@@ -1350,7 +1370,7 @@ export async function content() {
             const p = parentElements[i];
             if (isNotMarkElement(p)) return collectElements;
             if (!notTranslate && isNotTranslateElement(p)) notTranslate = true;
-            if (p.classList.contains("duo-paragraph")) {
+            if (isParagraph(p)) {
                 if (!notTranslate) collectElements.push(p);
                 return collectElements;
             }
@@ -1380,7 +1400,9 @@ export async function content() {
             if (!nt && rules?.length > 0) {
                 try {
                     if (el.matches(rules.join(","))) {
-                        el.classList.add('duo-no-translate');
+                        // Cache the positive rule match so re-scans of this
+                        // subtree short-circuit via isNotTranslateElement.
+                        markNoTranslate(el);
                         nt = true
                     }
                 } catch (e) {
@@ -1388,18 +1410,15 @@ export async function content() {
                 }
             }
 
-            if (el.classList.contains("duo-paragraph")) {
+            if (isParagraph(el)) {
                 if (!nt) collectElements.push(el);
                 continue;
             }
             if (isEditable(el)) continue;
 
             if (isParagraphElement(el)) {
-                el.classList.add('duo-paragraph');
-                if (!nt) {
-                    if (!el.querySelector('.duo-translation')) collectElements.push(el);
-                    el.classList.add("duo-needs-translate");
-                }
+                markParagraph(el, !nt);
+                if (!nt && !el.querySelector('.duo-translation')) collectElements.push(el);
                 continue;
             }
 

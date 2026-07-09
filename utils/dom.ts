@@ -4,11 +4,11 @@ export function getElementText(el: HTMLElement): string {
 }
 
 function removeZeroWidthCharacters(text: string): string {
+    // /\p{Cf}/gu: Contains all zero-width characters
     return text.replace(/\p{Cf}/gu, '');
 }
 
 export function contentInvisible(node: Node): boolean {
-    // /\p{Cf}/gu: Contains all zero-width characters
     // only document and doctype nodes have no text content
     return removeZeroWidthCharacters(node.textContent!) === ''
 }
@@ -21,7 +21,7 @@ export function contentValid(node: Node): boolean {
     return removeZeroWidthCharacters(node.textContent!).trim() !== ''
 }
 
-let textarea : HTMLTextAreaElement | null = null
+let textarea: HTMLTextAreaElement | null = null
 
 export function decodeHtmlText(text: string): string {
     if (textarea === null) textarea = document.createElement("textarea")

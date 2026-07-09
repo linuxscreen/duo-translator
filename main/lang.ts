@@ -6,6 +6,7 @@ import { isTraditionalChinese } from "@/utils/language";
 import { iso6393To1Map, excludedTagSet, TRANSLATE_SERVICE } from "@/main/constants";
 import { shuffle } from "@/utils/arrays";
 import { translationServices } from "@/main/translateService";
+import { allParagraphs } from "@/main/dom/paragraphMarks";
 
 const utf8Encoder = new TextEncoder();
 
@@ -53,10 +54,7 @@ export function getElementTextContent(element: HTMLElement): string {
 export async function detectLanguage(elements?: HTMLElement[]): Promise<string> {
     let lang = "und";
     if (elements === undefined) {
-        elements = new Array<HTMLElement>();
-        document.querySelectorAll(".duo-paragraph").forEach((e) => {
-            elements!.push(e as HTMLElement)
-        })
+        elements = allParagraphs();
     }
 
     // Randomly sample elements

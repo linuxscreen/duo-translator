@@ -1,6 +1,7 @@
 import getCssSelector from "css-selector-generator";
 import { addRuleToDB, deleteRuleFromDB, listRuleFromDB } from "@/utils/db";
 import { shareConfig } from "./content";
+import { anyParagraphUnder, isParagraph, markNoTranslate, paragraphsUnder, setNeedsTranslate, unmarkNoTranslate } from "@/main/dom/paragraphMarks";
 
 const svgAddCursor = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M12 0C5.37259 0 0 5.37259 0 12C0 18.6274 5.37259 24 12 24C18.6274 24 24 18.6274 24 12C24 5.37259 18.6274 0 12 0Z" fill="white"/>
@@ -262,10 +263,13 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
         }
     }
 
-    function removeNoTranslateClass(element: Element) {
-        element.classList.remove("duo-no-translate");
-        element.querySelectorAll(".duo-paragraph").forEach((child) => {
-            child.classList.add("duo-needs-translate")
+    function removeNoTranslateMark(element: Element) {
+        unmarkNoTranslate(element);
+        // The element itself may be the paragraph (rule targets resolve to
+        // paragraphs) — restore its flag too, not just its descendants'.
+        setNeedsTranslate(element, true)
+        paragraphsUnder(element).forEach((child) => {
+            setNeedsTranslate(child, true)
         })
     }
 
@@ -280,8 +284,8 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
             // save to db
             let selector = getCssSelectorString(ele)
             deleteRuleFromDB(domainWithPort, selector)
-            // remove class duo-no-translate
-            removeNoTranslateClass(ele)
+            // remove the no-translate mark
+            removeNoTranslateMark(ele)
         } else {
             // if ele's parent element has duo-selected, remove it
             let parent = ele.parentElement
@@ -289,7 +293,7 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
                 if (parent.classList.contains("duo-selected")) {
                     parent.classList.remove("duo-selected")
                     deleteRuleFromDB(domainWithPort, getCssSelectorString(parent))
-                    removeNoTranslateClass(parent)
+                    removeNoTranslateMark(parent)
                     return
                 }
                 parent = parent.parentElement as HTMLElement
@@ -306,15 +310,15 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
                 // save to db
                 let selector = getCssSelectorString(child as HTMLElement)
                 await deleteRuleFromDB(domainWithPort, selector)
-                removeNoTranslateClass(child)
+                removeNoTranslateMark(child)
             }
             const selector = getCssSelectorString(ele)
             await addRuleToDB(domainWithPort, selector)
             shareConfig.rules.push(selector)
-            ele.classList.add("duo-no-translate")
-            ele.classList.remove("duo-needs-translate")
-            ele.querySelectorAll(".duo-needs-translate").forEach((element) => {
-                element.classList.remove("duo-needs-translate")
+            markNoTranslate(ele)
+            setNeedsTranslate(ele, false)
+            paragraphsUnder(ele).forEach((element) => {
+                setNeedsTranslate(element, false)
             })
         }
     }
@@ -340,15 +344,15 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
      * paragraph (or contains one), otherwise the nearest paragraph ancestor.
      */
     function resolveParagraph(element: HTMLElement): HTMLElement | undefined {
-        if (element.classList.contains("duo-paragraph")) {
+        if (isParagraph(element)) {
             return element
         }
-        if (element.querySelectorAll(".duo-paragraph").length > 0) {
+        if (anyParagraphUnder(element)) {
             return element
         }
         let parent = element.parentElement
         while (parent) {
-            if (parent.classList.contains("duo-paragraph")) {
+            if (isParagraph(parent)) {
                 return parent
             }
             parent = parent.parentElement
