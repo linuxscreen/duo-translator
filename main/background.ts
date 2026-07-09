@@ -98,7 +98,8 @@ export async function background() {
         // Safety-net: in case the onInstalled-driven migration was killed by a
         // SW shutdown, retry on every boot. The migration module itself is
         // idempotent (flag-checked) so this is a near-free no-op once done.
-        await migrateFromPouchIfNeeded({ trigger: 'startup' });
+        !IS_FIREFOX && await migrateFromPouchIfNeeded({ trigger: 'startup' });
+        
         // Schedule periodic auto-sync + run the startup sync (if enabled) once
         // migration settled.
         void startAutoSync();
@@ -1131,7 +1132,7 @@ export async function background() {
 // PouchDB → chrome.storage.local migration. `install` skips it (no legacy data).
 // MV3 SW can be killed mid-listener, so background() also fires a safety-net
 // tail call on every boot.
-browser.runtime.onInstalled.addListener(({ reason }) => {
+!IS_FIREFOX && browser.runtime.onInstalled.addListener(({ reason }) => {
     if (reason === 'update') {
         void migrateFromPouchIfNeeded({ trigger: 'onInstalled' });
     } else if (reason === 'install') {

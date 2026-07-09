@@ -57,7 +57,7 @@ async function runMigration(trigger: Trigger): Promise<void> {
         return;
     }
 
-    let docs: Array<{ _id: string; [k: string]: unknown }> = [];
+    let docs: Array<{ _id: string;[k: string]: unknown }> = [];
     try {
         const db = new PouchDB(POUCH_DB_NAME);
         const res = await db.allDocs({ include_docs: true });
@@ -73,20 +73,26 @@ async function runMigration(trigger: Trigger): Promise<void> {
     const writes: Array<{ key: `local:${string}`; value: unknown }> = [];
 
     for (const doc of docs) {
-        const id = doc._id;
+        let id = doc._id;
         if (id.startsWith(STORAGE_PREFIX.CONFIG)) {
             // ConfigStorage docs wrap the actual value in `.value`.
+            if (id == 'config_disabledTranslateService') {
+                id = 'config_disabledTranslateServices';
+            }
+            if (id == 'config_originalBgColor' || id == 'config_originalBgColorIndex' || id == 'config_translationBgColor' || id == 'config_translationBgColorIndex') {
+                continue;
+            }
             writes.push({
                 key: `local:${id}`,
                 value: (doc as any).value,
             });
         } else if (id.startsWith(STORAGE_PREFIX.DOMAIN)) {
             const { _id, _rev, ...rest } = doc as any;
-            writes.push({ key: `local:${id}`, value: rest });
+            writes.push({ key: `local:${id.substring(0, id.length - 1)}`, value: rest });
         } else if (id.startsWith(STORAGE_PREFIX.RULE)) {
             const rules = (doc as any).rules;
             if (Array.isArray(rules)) {
-                writes.push({ key: `local:${id}`, value: rules });
+                writes.push({ key: `local:${id.substring(0, id.length - 1)}`, value: rules });
             }
         }
         // Other doc shapes (e.g. _design/*, _local/*) are ignored.
