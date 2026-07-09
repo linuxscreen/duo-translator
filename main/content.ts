@@ -190,7 +190,7 @@ export async function content() {
 
             // Cheap structural skip — bail before queueing.
             if (isIgnoreMutationElement(target)) continue;
-            console.log('mutation target', target);
+            // console.log('mutation target', target);
             // console.log('start mutation');
             // Removal cleanup must happen now while removed nodes are still
             // identifiable; it touches only Map entries, no DOM scan.

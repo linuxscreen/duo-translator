@@ -23,6 +23,7 @@ import {
     type TranslateServiceChoice,
 } from "./translateRunner";
 import { loadTailwindIntoShadow } from "./shadowStyle";
+import { keepHostMounted } from "@/main/dom/keepHostMounted";
 import { NoProviderNotice } from "./NoProviderNotice";
 import { t, useLang } from "./i18n";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -34,6 +35,7 @@ import { useCopyFeedback } from "./useCopyFeedback";
 const HOST_ID = "duo-ai-workbench-host";
 let workbenchRoot: Root | null = null;
 let openSignal: ((seed: WorkbenchSeed) => void) | null = null;
+let stopKeepAlive: (() => void) | null = null;
 
 export interface WorkbenchSeed {
     text: string;
@@ -50,6 +52,8 @@ export function ensureWorkbenchMounted(): void {
         host.setAttribute("data-duo-ai-ui", "");
         document.documentElement.appendChild(host);
     }
+    stopKeepAlive?.();
+    stopKeepAlive = keepHostMounted(host);
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
     loadTailwindIntoShadow(shadow);
     const mount = document.createElement("div");
@@ -71,6 +75,8 @@ export function ensureWorkbenchMounted(): void {
  * cleanly. Called from content.ts `unload()` on global-switch off.
  */
 export function destroyWorkbench(): void {
+    stopKeepAlive?.();
+    stopKeepAlive = null;
     try { workbenchRoot?.unmount(); } catch { }
     workbenchRoot = null;
     openSignal = null;

@@ -32,6 +32,7 @@ import {
     startFocusTracker,
 } from "./inputDetector";
 import { loadTailwindIntoShadow } from "./shadowStyle";
+import { keepHostMounted } from "@/main/dom/keepHostMounted";
 import { applyTextToTarget } from "./applyText";
 import { DiffView } from "./DiffView";
 import { ensureWorkbenchMounted, openWorkbench } from "./workbench";
@@ -89,6 +90,7 @@ export async function mountAiWritingDot(opts: MountOptions): Promise<() => void>
     host.id = HOST_ID;
     host.setAttribute("data-duo-ai-ui", "");
     document.documentElement.appendChild(host);
+    const stopKeepAlive = keepHostMounted(host);
     const shadow = host.attachShadow({ mode: "open" });
     loadTailwindIntoShadow(shadow);
     const mount = document.createElement("div");
@@ -100,6 +102,7 @@ export async function mountAiWritingDot(opts: MountOptions): Promise<() => void>
     ensureWorkbenchMounted();
 
     return () => {
+        stopKeepAlive();
         try { root.unmount(); } catch { }
         host.remove();
     };

@@ -6,6 +6,7 @@ import { ACTION, CONFIG_KEY, DB_ACTION } from "@/main/constants";
 import { setConfig } from "@/utils/db";
 import { sendMessageToBackground } from "@/utils/message";
 import { loadTailwindIntoShadow } from "@/main/aiWriting/shadowStyle";
+import { keepHostMounted } from "@/main/dom/keepHostMounted";
 import { t, useLang } from "@/main/aiWriting/i18n";
 import { useDraggable } from "./useDraggable";
 import { useFullscreen } from "./useFullscreen";
@@ -58,8 +59,10 @@ export async function mountFloatBall(deps: FloatBallDeps): Promise<FloatBallCont
     host.id = HOST_ID;
     host.setAttribute("data-duo-float-ball", "");
     // Attach to <html> rather than <body> so SPA frameworks that wipe/replace
-    // the body element don't take the ball down with them.
+    // the body element don't take the ball down with them. Frameworks that
+    // rebuild <html>'s children still remove it — keepHostMounted re-attaches.
     document.documentElement.appendChild(host);
+    const stopKeepAlive = keepHostMounted(host);
     const shadow = host.attachShadow({ mode: "open" });
     loadTailwindIntoShadow(shadow);
     const mount = document.createElement("div");
@@ -99,6 +102,7 @@ export async function mountFloatBall(deps: FloatBallDeps): Promise<FloatBallCont
             else pendingActive = active;
         },
         destroy: () => {
+            stopKeepAlive();
             try { root.unmount(); } catch { }
             host.remove();
         },
