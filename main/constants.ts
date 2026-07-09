@@ -296,6 +296,9 @@ export enum CONFIG_KEY {
     // UI language override for popup/options/context menu. Empty/undefined
     // means "auto-detect from browser UI language".
     INTERFACE_LANGUAGE = 'interfaceLanguage',
+    // UI color theme: 'system' | 'light' | 'dark'. Applies to popup/options
+    // and every extension-owned Shadow DOM surface. Default 'dark'.
+    THEME = 'theme',
     // When enabled, configured AI providers also surface as page-translation
     // services (in the popup/options Translation Service picker). Off ⇒ AI
     // providers are only usable inside the AI Writing flows.
@@ -345,6 +348,7 @@ export const DEFAULT_VALUE = {
     HIGHLIGHT_BORDER_COLOR_INDEX: 1,
     DISABLED_TRANSLATE_SERVICES: ['deepl'],
     AI_TARGET_LANGUAGE: 'en',
+    THEME: 'dark',
     DOUBLE_TAP_MODIFIER: 'ctrl',
     DOUBLE_TAP_TRANSLATE_SELECTION: true,
     DOUBLE_TAP_TOGGLE_PARAGRAPH: true,

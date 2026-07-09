@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AirplayIcon, Ban, Globe, HelpCircle, PenLine, Settings as SettingsIcon, Sparkles } from 'lucide-react';
+import { AirplayIcon, Ban, Check, Globe, HelpCircle, Monitor, Moon, PenLine, Settings as SettingsIcon, Sparkles, Sun } from 'lucide-react';
 
 import {
   ACTION,
@@ -33,6 +33,7 @@ import { Browser, browser } from 'wxt/browser';
 import { Button } from '@/components/ui/button';
 import { use } from 'i18next';
 import { buildServiceOptions, getTranslateService } from '@/utils/service';
+import { THEME_OPTIONS, useResolvedTheme, useThemeSetting, type ThemeSetting } from '@/utils/theme';
 
 const getConfig = (name: string) =>
   sendMessageToBackground({ action: DB_ACTION.CONFIG_GET, data: { name } });
@@ -66,6 +67,12 @@ export default function App() {
   const [translateServices, setTranslateServices] = useState<TranslateServiceMeta[]>([]);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const themeMenuRef = useRef<HTMLDivElement>(null);
+  // Reactive theme views — the setting drives the menu check mark, the
+  // resolved value picks the sun/moon button icon (system follows the OS).
+  const themeSetting = useThemeSetting();
+  const resolvedTheme = useResolvedTheme();
   let tabId: number | undefined
 
   // Close the "More" menu when clicking outside of it.
@@ -79,6 +86,26 @@ export default function App() {
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [moreOpen]);
+
+  // Close the theme menu when clicking outside of it.
+  useEffect(() => {
+    if (!themeMenuOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (themeMenuRef.current && !themeMenuRef.current.contains(e.target as Node)) {
+        setThemeMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [themeMenuOpen]);
+
+  const onThemeChange = (v: ThemeSetting) => {
+    setThemeMenuOpen(false);
+    // The storage change event feeds back through the reactive store and the
+    // page-level watcher (initExtensionPageTheme), which restyles this popup
+    // and every other open surface — no manual DOM work here.
+    void setConfig(CONFIG_KEY.THEME, v);
+  };
 
   // Hydrate from background storage on mount
   useEffect(() => {
@@ -267,7 +294,10 @@ export default function App() {
   return (
     <div className="relative w-[380px] overflow-hidden bg-bg text-ink before:pointer-events-none before:absolute before:inset-0 before:opacity-50 before:bg-[radial-gradient(ellipse_80%_30%_at_50%_0%,var(--color-accent-soft),transparent_70%)]">
       {/* Header */}
-      <div className="relative z-10 flex items-center justify-between border-b border-line bg-surface px-3 py-2">
+      {/* z-20 (above the z-10 body): the theme menu drops down over the body,
+          and the header's own stacking context caps its children's z-index —
+          a later sibling at the same z-10 would otherwise paint over it. */}
+      <div className="relative z-20 flex items-center justify-between border-b border-line bg-surface px-3 py-2">
         <button type="button" className="flex items-center gap-2 text-left">
           <img className='w-5 h-5' src={`${APP_NAME_PASCAL_CASE}.svg`}></img>
           <span className='font-bold'>{APP_NAME}</span>
@@ -282,6 +312,45 @@ export default function App() {
           >
             <Sparkles className="h-4 w-4" strokeWidth={1.6} />
           </button> */}
+          {/* Theme switcher — sun/moon reflects the resolved theme; the menu
+              picks the setting (System / Light / Dark). */}
+          <div ref={themeMenuRef} className="relative">
+            <button
+              type="button"
+              className={iconBtnCls}
+              onClick={() => setThemeMenuOpen((v) => !v)}
+              title={t('theme', 'Theme')}
+            >
+              {resolvedTheme === 'light' ? (
+                <Sun className="h-4 w-4" strokeWidth={1.6} />
+              ) : (
+                <Moon className="h-4 w-4" strokeWidth={1.6} />
+              )}
+            </button>
+            {themeMenuOpen && (
+              <div className="absolute right-0 top-full z-30 mt-1.5 min-w-[150px] overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-lg">
+                {THEME_OPTIONS.map((opt) => {
+                  const Icon = opt.value === 'system' ? Monitor : opt.value === 'light' ? Sun : Moon;
+                  const active = themeSetting === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className={cn(
+                        'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] transition-colors hover:bg-hover',
+                        active ? 'text-accent' : 'text-ink-soft hover:text-ink',
+                      )}
+                      onClick={() => onThemeChange(opt.value)}
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
+                      <span className="flex-1">{t(opt.i18nKey, opt.fallback)}</span>
+                      {active && <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
           <button type="button" className={iconBtnCls} onClick={openHelpPage} title={t('helpDocument', 'Help')}>
             <HelpCircle className="h-4 w-4" strokeWidth={1.6} />
           </button>
@@ -374,7 +443,7 @@ export default function App() {
             type="button"
             className={cn(
               'relative z-10 cursor-pointer rounded-md text-[12.5px] font-medium transition-colors duration-200',
-              translateActive ? 'text-ink-soft' : 'text-[#04060a]',
+              translateActive ? 'text-ink-soft' : 'text-accent-ink',
             )}
             onClick={() => onTranslateToggle(false)}
           >
@@ -384,7 +453,7 @@ export default function App() {
             type="button"
             className={cn(
               'relative z-10 cursor-pointer rounded-md text-[12.5px] font-medium transition-colors duration-200',
-              translateActive ? 'text-[#04060a]' : 'text-ink-soft',
+              translateActive ? 'text-accent-ink' : 'text-ink-soft',
             )}
             onClick={() => onTranslateToggle(true)}
           >
@@ -454,7 +523,7 @@ export default function App() {
           type="button"
           className={cn(
             'group relative flex w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-[10px] border border-line-strong px-3 py-2.5 text-left',
-            'bg-gradient-to-br from-[oklch(0.22_0.04_230)] to-[oklch(0.16_0.03_245)]',
+            'bg-gradient-to-br from-banner-1 to-banner-2',
             'transition-[transform,box-shadow,border-color] duration-200',
             'hover:-translate-y-px hover:border-accent hover:shadow-[0_0_0_1px_var(--color-accent-soft),0_8px_24px_-8px_var(--color-accent-glow)]',
           )}
@@ -464,7 +533,7 @@ export default function App() {
             className="pointer-events-none absolute inset-0 opacity-60"
             style={{
               background:
-                'radial-gradient(circle at 90% 50%, var(--color-accent-glow), transparent 50%), radial-gradient(circle at 10% 100%, oklch(0.6 0.2 290 / 0.3), transparent 55%)',
+                'radial-gradient(circle at 90% 50%, var(--color-accent-glow), transparent 50%), radial-gradient(circle at 10% 100%, var(--color-banner-glow-2), transparent 55%)',
             }}
           />
           <span
@@ -472,13 +541,13 @@ export default function App() {
             className="pointer-events-none absolute inset-0 opacity-60"
             style={{
               backgroundImage:
-                'linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)',
+                'linear-gradient(var(--color-banner-grid) 1px, transparent 1px), linear-gradient(90deg, var(--color-banner-grid) 1px, transparent 1px)',
               backgroundSize: '14px 14px',
               maskImage: 'linear-gradient(135deg, transparent 50%, #000 100%)',
               WebkitMaskImage: 'linear-gradient(135deg, transparent 50%, #000 100%)',
             }}
           />
-          <span className="relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line-strong bg-white/5 text-accent">
+          <span className="relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line-strong bg-banner-chip text-accent">
             <PenLine className="h-3.5 w-3.5" strokeWidth={1.6} />
           </span>
           <span className="relative z-10 flex flex-1 flex-col gap-px">

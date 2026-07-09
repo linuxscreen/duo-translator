@@ -17,9 +17,44 @@
   --color-accent-soft: oklch(0.5 0.12 195 / 0.22);
   --color-accent-glow: oklch(0.85 0.2 195 / 0.55);
   --color-toggle-off: rgba(255, 255, 255, 0.1);
+  /* Text on accent-filled surfaces (segmented thumb, primary buttons). */
+  --color-accent-ink: #04060a;
+  /* AI Writing banner card (gradient + icon chip + grid/glow overlays). */
+  --color-banner-1: oklch(0.22 0.04 230);
+  --color-banner-2: oklch(0.16 0.03 245);
+  --color-banner-chip: rgba(255, 255, 255, 0.05);
+  --color-banner-grid: rgba(255, 255, 255, 0.04);
+  --color-banner-glow-2: oklch(0.6 0.2 290 / 0.3);
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Light theme — token overrides only; the dark values above stay the base.
+   `data-theme` is stamped on <html> by initExtensionPageTheme(). */
+html[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f3f5fa;
+  --color-surface: #ffffff;
+  --color-surface-2: #eef1f7;
+  --color-surface-hi: #e5eaf3;
+  --color-ink: #1a2233;
+  --color-ink-soft: #5a6478;
+  --color-ink-mute: #8b93a7;
+  --color-line: rgba(30, 60, 110, 0.1);
+  --color-line-strong: rgba(30, 60, 110, 0.2);
+  --color-hover: rgba(30, 130, 170, 0.07);
+  --color-accent: oklch(0.58 0.12 210);
+  --color-accent-strong: oklch(0.66 0.13 205);
+  --color-accent-soft: oklch(0.62 0.1 205 / 0.16);
+  --color-accent-glow: oklch(0.65 0.13 205 / 0.35);
+  --color-toggle-off: rgba(20, 35, 70, 0.18);
+  --color-accent-ink: #ffffff;
+  --color-banner-1: oklch(0.94 0.02 220);
+  --color-banner-2: oklch(0.88 0.04 240);
+  --color-banner-chip: rgba(255, 255, 255, 0.65);
+  --color-banner-grid: rgba(20, 40, 80, 0.06);
+  --color-banner-glow-2: oklch(0.78 0.1 290 / 0.3);
 }
 
 html,

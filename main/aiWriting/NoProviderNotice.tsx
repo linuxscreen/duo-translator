@@ -25,11 +25,11 @@ export function NoProviderNotice({
         <div
             className={
                 boxed
-                    ? "flex items-center justify-between gap-2 rounded bg-[#070b14] border border-[rgba(140,180,230,0.18)] px-2 py-1.5"
+                    ? "flex items-center justify-between gap-2 rounded bg-bg border border-line-strong px-2 py-1.5"
                     : "flex items-center justify-between gap-2 py-1"
             }
         >
-            <span className="text-[11.5px] text-[#8a93a8]">
+            <span className="text-[11.5px] text-ink-soft">
                 {hasConfigured
                     ? t("aiNoProviderEnabled", "No AI provider enabled")
                     : t("aiNoProviderConfigured", "No AI provider configured")}
@@ -38,7 +38,7 @@ export function NoProviderNotice({
                 type="button"
                 onClick={onConfigure}
                 onMouseDown={(e) => e.preventDefault()}
-                className="shrink-0 text-[11.5px] text-[oklch(0.86_0.16_195)] hover:underline"
+                className="shrink-0 text-[11.5px] text-accent hover:underline"
             >
                 {t("aiConfigure", "Configure")}
             </button>

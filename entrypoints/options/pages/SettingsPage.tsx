@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { THEME_OPTIONS, useThemeSetting, type ThemeSetting } from '@/utils/theme';
 
 export function SettingsPage() {
   const { t, i18n } = useTranslation();
@@ -30,6 +31,9 @@ export function SettingsPage() {
   const [globalSwitch, setGlobalSwitch] = useState(true);
   const [contextMenu, setContextMenu] = useState(true);
   const [ready, setReady] = useState(false);
+  // Reactive view — stays in sync if the theme is flipped from the popup
+  // while this page is open.
+  const theme = useThemeSetting();
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +61,13 @@ export function SettingsPage() {
     void i18n.changeLanguage(v);
     void sendMessageToBackground({ action: ACTION.INTERFACE_LANGUAGE_CHANGED, data: v });
     void sendMessageToAllTabs({ action: ACTION.INTERFACE_LANGUAGE_CHANGED, data: v }, false);
+  };
+
+  const onTheme = (v: string) => {
+    if (v !== 'system' && v !== 'light' && v !== 'dark') return;
+    // The storage change event re-themes this page (and every other open
+    // surface) via the watcher installed in initExtensionPageTheme().
+    void setConfig(CONFIG_KEY.THEME, v as ThemeSetting);
   };
 
   const onGlobalSwitch = (v: boolean) => {
@@ -93,6 +104,23 @@ export function SettingsPage() {
                 {INTERFACE_LANGUAGES.map((l) => (
                   <SelectItem key={l.value} value={l.value}>
                     {l.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
+        <SettingRow
+          label={t('theme', 'Theme')}
+          control={
+            <Select value={theme} onValueChange={onTheme}>
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {THEME_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {t(o.i18nKey, o.fallback)}
                   </SelectItem>
                 ))}
               </SelectContent>

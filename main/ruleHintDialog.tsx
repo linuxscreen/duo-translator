@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { CONFIG_KEY } from "./constants";
 import { getConfig, setConfig } from "@/utils/db";
 import { loadTailwindIntoShadow } from "./aiWriting/shadowStyle";
+import { bindThemeToElement } from "@/utils/theme";
 import { t, useLang } from "./aiWriting/i18n";
 
 const HOST_ID = "duo-rule-hint-host";
@@ -32,10 +33,12 @@ export async function confirmRuleModeHint(): Promise<void> {
         const mount = document.createElement("div");
         mount.className = "duo-ai-root";
         shadow.appendChild(mount);
+        const stopThemeWatch = bindThemeToElement(mount);
         const root = createRoot(mount);
 
         const finish = async (dontRemind: boolean) => {
             if (dontRemind) await setConfig(CONFIG_KEY.RULE_MODE_HINT_HIDDEN, true);
+            stopThemeWatch();
             try { root.unmount(); } catch { }
             host.remove();
             resolve();
@@ -56,24 +59,24 @@ function RuleHintDialog({ onConfirm }: { onConfirm: (dontRemind: boolean) => voi
             className="fixed inset-0 flex items-center justify-center"
             style={{
                 zIndex: 2147483647,
-                background: "rgba(7,11,20,0.45)",
+                background: "var(--color-backdrop)",
                 backdropFilter: "blur(4px)",
                 WebkitBackdropFilter: "blur(4px)",
             }}
         >
-            <div className="w-[340px] max-w-[90vw] rounded-xl border border-[rgba(140,180,230,0.18)] bg-[#0f1623] p-5 text-[#eef1f8] shadow-[0_20px_50px_rgba(0,0,0,0.6)]">
+            <div className="w-[340px] max-w-[90vw] rounded-xl border border-line-strong bg-surface p-5 text-ink shadow-[0_20px_50px_rgba(0,0,0,0.6)]">
                 <div className="text-[15px] font-semibold">
                     {t("setNoTranslateArea", "Set no-translate area")}
                 </div>
-                <p className="mt-2 text-[13px] leading-relaxed text-[#a8b0c4]">
+                <p className="mt-2 text-[13px] leading-relaxed text-ink-3">
                     {t("ruleModeHintBody", "Right-click to exit. Left-click to add or remove an area.")}
                 </p>
-                <label className="mt-4 flex cursor-pointer items-center gap-2 text-[13px] text-[#a8b0c4] select-none">
+                <label className="mt-4 flex cursor-pointer items-center gap-2 text-[13px] text-ink-3 select-none">
                     <input
                         type="checkbox"
                         checked={dontRemind}
                         onChange={(e) => setDontRemind(e.target.checked)}
-                        className="h-4 w-4 accent-[oklch(0.86_0.16_195)]"
+                        className="h-4 w-4 accent-accent"
                     />
                     {t("ruleModeHintDontRemind", "Don't remind me again")}
                 </label>

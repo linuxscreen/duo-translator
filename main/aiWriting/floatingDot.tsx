@@ -33,6 +33,7 @@ import {
 } from "./inputDetector";
 import { loadTailwindIntoShadow } from "./shadowStyle";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
+import { bindThemeToElement } from "@/utils/theme";
 import { applyTextToTarget } from "./applyText";
 import { DiffView } from "./DiffView";
 import { ensureWorkbenchMounted, openWorkbench } from "./workbench";
@@ -96,6 +97,7 @@ export async function mountAiWritingDot(opts: MountOptions): Promise<() => void>
     const mount = document.createElement("div");
     mount.className = "duo-ai-root";
     shadow.appendChild(mount);
+    const stopThemeWatch = bindThemeToElement(mount);
     const root = createRoot(mount);
     root.render(<FloatingDotApp domain={opts.domain} taskMode={mode} />);
 
@@ -103,6 +105,7 @@ export async function mountAiWritingDot(opts: MountOptions): Promise<() => void>
 
     return () => {
         stopKeepAlive();
+        stopThemeWatch();
         try { root.unmount(); } catch { }
         host.remove();
     };
@@ -607,7 +610,7 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
                         // The collapsed dot below carries an `mr-1` margin so
                         // its center sits exactly on Translate's center —
                         // hovering the dot lands the cursor on Translate.
-                        <div className="flex items-center gap-1 rounded-full bg-[#0f1623]/95 border border-[rgba(140,180,230,0.18)] shadow-[0_4px_18px_rgba(0,0,0,0.35)] backdrop-blur-md p-1">
+                        <div className="flex items-center gap-1 rounded-full bg-surface/95 border border-line-strong shadow-[0_4px_18px_rgba(0,0,0,0.35)] backdrop-blur-md p-1">
                             <div className="relative">
                                 <ToolBtn
                                     label={t("aiClose", "Close")}
@@ -681,7 +684,7 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
                             // the toolbar expands.
                             className="h-7 w-7 mr-1 inline-flex items-center justify-center group"
                         >
-                            <span className="h-3.5 w-3.5 rounded-full bg-[oklch(0.86_0.16_195)]/70 group-hover:bg-[oklch(0.86_0.16_195)] shadow-[0_0_10px_rgba(70,210,230,0.55)] transition-all" />
+                            <span className="h-3.5 w-3.5 rounded-full bg-accent/70 group-hover:bg-accent shadow-[0_0_10px_rgba(70,210,230,0.55)] transition-all" />
                         </button>
                     )}
                 </div>
@@ -705,7 +708,7 @@ function ToolBtn({ label, onClick, icon }: { label: string; onClick: () => void;
             onMouseDown={(e) => e.preventDefault()}
             title={label}
             aria-label={label}
-            className="h-7 w-7 inline-flex items-center justify-center rounded-full text-[#eef1f8] hover:bg-[rgba(120,200,230,0.12)] hover:text-[oklch(0.86_0.16_195)]"
+            className="h-7 w-7 inline-flex items-center justify-center rounded-full text-ink hover:bg-hover-4 hover:text-accent"
         >
             {icon}
         </button>
@@ -745,10 +748,10 @@ function CloseMenu({ onPick, onClose }: { onPick: (c: "session" | "site" | "fore
     return (
         <div
             ref={ref}
-            className={`absolute right-0 min-w-[230px] rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] shadow-[0_8px_24px_rgba(0,0,0,0.5)] py-1 z-10 ${placeAbove ? "bottom-full mb-1" : "top-full mt-1"}`}
+            className={`absolute right-0 min-w-[230px] rounded-md bg-surface border border-line-strong shadow-[0_8px_24px_rgba(0,0,0,0.5)] py-1 z-10 ${placeAbove ? "bottom-full mb-1" : "top-full mt-1"}`}
         >
             <div className="flex items-center justify-between px-3 pb-0.5">
-                <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#8a93a8]">
+                <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-soft">
                     {t("disableAIWriting", "Disable AI writing")}
                 </span>
                 <button
@@ -756,7 +759,7 @@ function CloseMenu({ onPick, onClose }: { onPick: (c: "session" | "site" | "fore
                     onClick={onClose}
                     onMouseDown={(e) => e.preventDefault()}
                     aria-label={t("aiCloseResult", "Close")}
-                    className="h-5 w-5 inline-flex items-center justify-center rounded text-[#8a93a8] hover:bg-[rgba(120,200,230,0.08)]"
+                    className="h-5 w-5 inline-flex items-center justify-center rounded text-ink-soft hover:bg-hover-2"
                 >
                     <X className="h-3 w-3" />
                 </button>
@@ -773,7 +776,7 @@ function MenuItem({ onClick, label, danger }: { onClick: () => void; label: stri
             type="button"
             onClick={onClick}
             onMouseDown={(e) => e.preventDefault()}
-            className={`block w-full px-3 py-1.5 text-left text-[12px] hover:bg-[rgba(120,200,230,0.08)] ${danger ? "text-red-300 hover:text-red-200" : "text-[#eef1f8]"}`}
+            className={`block w-full px-3 py-1.5 text-left text-[12px] hover:bg-hover-2 ${danger ? "text-danger-ink hover:text-danger-ink-2" : "text-ink"}`}
         >
             {label}
         </button>
@@ -847,10 +850,10 @@ function SettingsPopover({
     return (
         <div
             ref={ref}
-            className={`absolute right-0 w-[280px] rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] shadow-[0_8px_24px_rgba(0,0,0,0.5)] p-3 z-10 flex flex-col gap-2.5 ${placeAbove ? "bottom-full mb-1" : "top-full mt-1"}`}
+            className={`absolute right-0 w-[280px] rounded-md bg-surface border border-line-strong shadow-[0_8px_24px_rgba(0,0,0,0.5)] p-3 z-10 flex flex-col gap-2.5 ${placeAbove ? "bottom-full mb-1" : "top-full mt-1"}`}
         >
             <div className="flex items-center justify-between -mb-1">
-                <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#8a93a8]">
+                <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-soft">
                     {t("aiSettings", "Settings")}
                 </span>
                 <button
@@ -858,7 +861,7 @@ function SettingsPopover({
                     onClick={onClose}
                     onMouseDown={(e) => e.preventDefault()}
                     aria-label={t("aiCloseResult", "Close")}
-                    className="h-5 w-5 inline-flex items-center justify-center rounded text-[#8a93a8] hover:bg-[rgba(120,200,230,0.08)]"
+                    className="h-5 w-5 inline-flex items-center justify-center rounded text-ink-soft hover:bg-hover-2"
                 >
                     <X className="h-3 w-3" />
                 </button>
@@ -875,7 +878,7 @@ function SettingsPopover({
                     <select
                         value={enhanceProviderId}
                         onChange={(e) => onPickEnhance(e.target.value)}
-                        className="h-7 w-full rounded bg-[#070b14] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-1.5"
+                        className="h-7 w-full rounded bg-bg border border-line-strong text-[12px] text-ink px-1.5"
                     >
                         {providers.map((p) => (
                             <option key={p.id} value={p.id}>{p.getTitle()}</option>
@@ -888,7 +891,7 @@ function SettingsPopover({
                 <select
                     value={targetLang}
                     onChange={(e) => onPickLang(e.target.value)}
-                    className="h-7 w-full rounded bg-[#070b14] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-1.5"
+                    className="h-7 w-full rounded bg-bg border border-line-strong text-[12px] text-ink px-1.5"
                 >
                     {LANGUAGES.map((l) => (
                         <option key={l.value} value={l.value}>{t(l.title, l.title)}</option>
@@ -900,7 +903,7 @@ function SettingsPopover({
                 <select
                     value={translateKey}
                     onChange={(e) => onPickTranslate(e.target.value)}
-                    className="h-7 w-full rounded bg-[#070b14] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-1.5"
+                    className="h-7 w-full rounded bg-bg border border-line-strong text-[12px] text-ink px-1.5"
                 >
                     {serviceOptions.map((s) => (
                         <option key={s.value} value={s.value}>
@@ -913,7 +916,7 @@ function SettingsPopover({
             <button
                 type="button"
                 onClick={() => onOpenOptions(AI_WRITING_TAB_ID)}
-                className="self-end text-[11px] text-[#8a93a8] hover:text-[oklch(0.86_0.16_195)]"
+                className="self-end text-[11px] text-ink-soft hover:text-accent"
             >
                 {t("aiOpenAiSettings", "Open AI settings →")}
             </button>
@@ -924,7 +927,7 @@ function SettingsPopover({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
     return (
         <div className="flex flex-col gap-1">
-            <label className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#545d75]">{label}</label>
+            <label className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">{label}</label>
             {children}
         </div>
     );
@@ -973,12 +976,12 @@ function ResultBubble({
 
     // Compact dark select — explicit `<option>` bg so platforms (notably
     // Windows/Linux) don't render a white dropdown that hides the text.
-    const selectCls = "h-5 min-w-0 max-w-[150px] rounded bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[10.5px] text-[#eef1f8] px-1 truncate";
-    const optionCls = "bg-[#0f1623] text-[#eef1f8]";
+    const selectCls = "h-5 min-w-0 max-w-[150px] rounded bg-surface border border-line-strong text-[10.5px] text-ink px-1 truncate";
+    const optionCls = "bg-surface text-ink";
 
     return (
-        <div className="w-[360px] max-w-[80vw] max-h-[320px] flex flex-col rounded-lg bg-[#0f1623]/95 border border-[rgba(140,180,230,0.18)] shadow-[0_8px_28px_rgba(0,0,0,0.5)] backdrop-blur-md overflow-hidden">
-            <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-[rgba(140,180,230,0.08)] gap-2">
+        <div className="w-[360px] max-w-[80vw] max-h-[320px] flex flex-col rounded-lg bg-surface/95 border border-line-strong shadow-[0_8px_28px_rgba(0,0,0,0.5)] backdrop-blur-md overflow-hidden">
+            <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-line gap-2">
                 <div className="flex items-center gap-1.5 min-w-0">
                     {isTranslate ? (
                         <>
@@ -1036,7 +1039,7 @@ function ResultBubble({
                             )}
                         </>
                     )}
-                    {result.running && <Loader2 className="h-3 w-3 animate-spin text-[#8a93a8] shrink-0" />}
+                    {result.running && <Loader2 className="h-3 w-3 animate-spin text-ink-soft shrink-0" />}
                 </div>
                 <div className="flex items-center gap-1">
                     {result.running && (
@@ -1044,14 +1047,14 @@ function ResultBubble({
                             type="button"
                             onClick={onStop}
                             onMouseDown={(e) => e.preventDefault()}
-                            className="h-5 px-1.5 text-[10px] rounded text-[#8a93a8] hover:text-red-300 hover:bg-[rgba(255,80,80,0.08)]"
+                            className="h-5 px-1.5 text-[10px] rounded text-ink-soft hover:text-danger-ink hover:bg-danger-soft"
                         >{t("aiStop", "Stop")}</button>
                     )}
                     <button
                         type="button"
                         onClick={onClose}
                         onMouseDown={(e) => e.preventDefault()}
-                        className="h-5 w-5 inline-flex items-center justify-center rounded text-[#8a93a8] hover:bg-[rgba(120,200,230,0.08)]"
+                        className="h-5 w-5 inline-flex items-center justify-center rounded text-ink-soft hover:bg-hover-2"
                         aria-label={t("aiCloseResult", "Close result")}
                     >
                         <X className="h-3 w-3" />
@@ -1059,14 +1062,14 @@ function ResultBubble({
                 </div>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-auto px-2.5 py-2 text-[13px] leading-[1.45] text-[#eef1f8] whitespace-pre-wrap break-words">
+            <div className="flex-1 min-h-0 overflow-auto px-2.5 py-2 text-[13px] leading-[1.45] text-ink whitespace-pre-wrap break-words">
                 {isNoProvider ? (
                     <NoProviderNotice
                         hasConfigured={hasConfiguredProviders}
                         onConfigure={() => onOpenOptions(SERVICES_TAB_ID)}
                     />
                 ) : result.error ? (
-                    <span className="inline-flex items-center gap-1 text-red-300">
+                    <span className="inline-flex items-center gap-1 text-danger-ink">
                         <AlertCircle className="h-3.5 w-3.5" /> {result.error}
                     </span>
                 ) : showDiff ? (
@@ -1077,13 +1080,13 @@ function ResultBubble({
             </div>
 
             {!isNoProvider && (
-                <div className="flex items-center justify-end gap-1.5 px-2.5 py-1.5 border-t border-[rgba(140,180,230,0.08)] bg-[#0a111c]">
+                <div className="flex items-center justify-end gap-1.5 px-2.5 py-1.5 border-t border-line bg-bg-deep">
                     <button
                         type="button"
                         onClick={() => copy(result.output)}
                         onMouseDown={(e) => e.preventDefault()}
                         disabled={!result.output}
-                        className="h-6 px-2 rounded-md border border-[rgba(140,180,230,0.18)] text-[11px] text-[#eef1f8] hover:border-[oklch(0.86_0.16_195)] disabled:opacity-40"
+                        className="h-6 px-2 rounded-md border border-line-strong text-[11px] text-ink hover:border-accent disabled:opacity-40"
                     >{copied ? t("aiCopied", "Copied") : t("aiCopy", "Copy")}</button>
                     <button
                         type="button"

@@ -3,6 +3,11 @@ import { createRoot } from 'react-dom/client';
 import './i18n';
 import './popup.css';
 import App from './App';
+import { initExtensionPageTheme } from '@/utils/theme';
+
+// Stamp data-theme on <html> before first render (light theme is a CSS token
+// override; dark is the attribute-less default).
+initExtensionPageTheme();
 
 // Firefox extension popups recalc their window size on every DOM mutation and
 // fire `resize` (and an occasional `blur`) up to 10x/sec — Bugzilla #1700193.

@@ -11,7 +11,7 @@ type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
 
 const variantCls: Record<Variant, string> = {
   default:
-    'bg-gradient-to-br from-accent-strong to-accent text-[#04060a] hover:brightness-110 shadow-[0_0_14px_var(--color-accent-glow)]',
+    'bg-gradient-to-br from-accent-strong to-accent text-accent-ink hover:brightness-110 shadow-[0_0_14px_var(--color-accent-glow)]',
   outline:
     'border border-line-strong bg-surface text-ink hover:border-accent hover:text-accent',
   ghost: 'text-ink-soft hover:bg-hover hover:text-accent',

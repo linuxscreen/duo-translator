@@ -16,6 +16,36 @@
   --radius-2xl: 16px;
   --radius-3xl: 24px;
   --radius-4xl: 32px;
+
+  /* Design tokens for every extension Shadow DOM surface (AI dot, workbench,
+   * selection popup, float ball, rule-mode hint). Dark values are the base —
+   * they match the historical hardcoded colors exactly; the light theme is
+   * the override block on `.duo-ai-root[data-theme="light"]` below. */
+  --color-bg: #070b14;                          /* input/select wells */
+  --color-bg-deep: #0a111c;                     /* footer strips */
+  --color-surface: #0f1623;                     /* panel background */
+  --color-surface-2: #141d2e;                   /* header strips */
+  --color-ink: #eef1f8;
+  --color-ink-2: #cfd6e4;                       /* secondary body text */
+  --color-ink-3: #a8b0c4;                       /* dialog body text */
+  --color-ink-soft: #8a93a8;
+  --color-ink-mute: #545d75;
+  --color-line: rgba(140, 180, 230, 0.08);
+  --color-line-2: rgba(140, 180, 230, 0.1);
+  --color-line-mid: rgba(140, 180, 230, 0.12);
+  --color-line-strong: rgba(140, 180, 230, 0.18);
+  --color-hover: rgba(120, 200, 230, 0.05);     /* hover tints, weakest→strongest */
+  --color-hover-2: rgba(120, 200, 230, 0.08);
+  --color-hover-3: rgba(120, 200, 230, 0.1);
+  --color-hover-4: rgba(120, 200, 230, 0.12);
+  --color-accent: oklch(0.86 0.16 195);
+  --color-accent-ink: #04060a;                  /* text on accent fills */
+  --color-backdrop: rgba(7, 11, 20, 0.45);      /* modal click-shields */
+  --color-danger-soft: rgba(255, 80, 80, 0.08);
+  --color-danger-ink: #fca5a5;                  /* red-300 */
+  --color-danger-ink-2: #fecaca;                /* red-200 (danger hover) */
+  --color-error: #f87171;                       /* red-400 (error text) */
+  --color-success: #34d399;                     /* emerald-400 (copied check) */
 }
 
 /* Reset host bleed-through. Shadow DOM already isolates most things but
@@ -31,7 +61,39 @@
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
   line-height: 1.45;
-  color: #eef1f8;
+  color: var(--color-ink);
+}
+
+/* Light theme — token overrides scoped to the mount root. `data-theme` is
+ * kept in sync by bindThemeToElement() (utils/theme.ts) at every mount site;
+ * custom properties inherit to the whole shadow tree. */
+.duo-ai-root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f3f5fa;
+  --color-bg-deep: #eef1f7;
+  --color-surface: #ffffff;
+  --color-surface-2: #f2f4f9;
+  --color-ink: #1a2233;
+  --color-ink-2: #333d52;
+  --color-ink-3: #4d576e;
+  --color-ink-soft: #5a6478;
+  --color-ink-mute: #8b93a7;
+  --color-line: rgba(30, 60, 110, 0.1);
+  --color-line-2: rgba(30, 60, 110, 0.12);
+  --color-line-mid: rgba(30, 60, 110, 0.14);
+  --color-line-strong: rgba(30, 60, 110, 0.22);
+  --color-hover: rgba(30, 130, 170, 0.06);
+  --color-hover-2: rgba(30, 130, 170, 0.09);
+  --color-hover-3: rgba(30, 130, 170, 0.11);
+  --color-hover-4: rgba(30, 130, 170, 0.13);
+  --color-accent: oklch(0.55 0.12 210);
+  --color-accent-ink: #ffffff;
+  --color-backdrop: rgba(30, 41, 59, 0.35);
+  --color-danger-soft: rgba(220, 40, 40, 0.08);
+  --color-danger-ink: #dc2626;
+  --color-danger-ink-2: #b91c1c;
+  --color-error: #dc2626;
+  --color-success: #059669;
 }
 
 /* Defensive baseline: Tailwind v4 ships a Preflight rule that sets
@@ -59,6 +121,13 @@
 .duo-ai-primary:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Light-theme primary button: deeper cyan gradient with white text (the dark
+ * variant's bright gradient + near-black text would wash out on white). */
+.duo-ai-root[data-theme="light"] .duo-ai-primary {
+  background: linear-gradient(to bottom right, oklch(0.62 0.12 205), oklch(0.53 0.12 212));
+  color: #ffffff;
 }
 
 /* Diff visualization — kept here so both DiffView and any future renderer

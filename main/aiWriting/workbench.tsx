@@ -24,6 +24,7 @@ import {
 } from "./translateRunner";
 import { loadTailwindIntoShadow } from "./shadowStyle";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
+import { bindThemeToElement } from "@/utils/theme";
 import { NoProviderNotice } from "./NoProviderNotice";
 import { t, useLang } from "./i18n";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -36,6 +37,7 @@ const HOST_ID = "duo-ai-workbench-host";
 let workbenchRoot: Root | null = null;
 let openSignal: ((seed: WorkbenchSeed) => void) | null = null;
 let stopKeepAlive: (() => void) | null = null;
+let stopThemeWatch: (() => void) | null = null;
 
 export interface WorkbenchSeed {
     text: string;
@@ -59,6 +61,8 @@ export function ensureWorkbenchMounted(): void {
     const mount = document.createElement("div");
     mount.className = "duo-ai-root";
     shadow.appendChild(mount);
+    stopThemeWatch?.();
+    stopThemeWatch = bindThemeToElement(mount);
     workbenchRoot = createRoot(mount);
     workbenchRoot.render(
         <WorkbenchApp
@@ -77,6 +81,8 @@ export function ensureWorkbenchMounted(): void {
 export function destroyWorkbench(): void {
     stopKeepAlive?.();
     stopKeepAlive = null;
+    stopThemeWatch?.();
+    stopThemeWatch = null;
     try { workbenchRoot?.unmount(); } catch { }
     workbenchRoot = null;
     openSignal = null;
@@ -307,13 +313,13 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
             <div
                 style={{
                     position: "fixed", inset: 0,
-                    background: "rgba(2,6,16,0.45)", zIndex: 2147483646,
+                    background: "var(--color-backdrop)", zIndex: 2147483646,
                 }}
                 onMouseDown={close}
             />
             <div
                 ref={dialogRef}
-                className="bg-[#0f1623] border border-[rgba(140,180,230,0.18)] rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden"
+                className="bg-surface border border-line-strong rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden"
                 style={{
                     position: "fixed",
                     left: pos.x, top: pos.y,
@@ -325,17 +331,17 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
             >
                 {/* Header */}
                 <div
-                    className="flex items-center justify-between px-3 py-2 border-b border-[rgba(140,180,230,0.12)] cursor-move select-none bg-[#141d2e]"
+                    className="flex items-center justify-between px-3 py-2 border-b border-line-mid cursor-move select-none bg-surface-2"
                     onMouseDown={onHeaderMouseDown}
                 >
-                    <div className="flex items-center gap-2 text-[12px] font-mono uppercase tracking-[0.1em] text-[#8a93a8]">
-                        <Sparkles className="h-3.5 w-3.5 text-[oklch(0.86_0.16_195)]" strokeWidth={1.8} />
+                    <div className="flex items-center gap-2 text-[12px] font-mono uppercase tracking-[0.1em] text-ink-soft">
+                        <Sparkles className="h-3.5 w-3.5 text-accent" strokeWidth={1.8} />
                         {t("aiWorkbenchTitle", "AI Writing Workbench")}
                     </div>
                     <button
                         type="button"
                         onClick={close}
-                        className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-[rgba(120,200,230,0.08)] text-[#8a93a8]"
+                        className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-hover-2 text-ink-soft"
                         aria-label={t("aiClose", "Close")}
                     >
                         <X className="h-3.5 w-3.5" />
@@ -343,11 +349,11 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                 </div>
 
                 {/* Toolbar */}
-                <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-[rgba(140,180,230,0.08)]">
+                <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-line">
                     <select
                         value={task}
                         onChange={(e) => onChangeTask(e.target.value as AI_TASK)}
-                        className="h-7 rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-2"
+                        className="h-7 rounded-md bg-surface border border-line-strong text-[12px] text-ink px-2"
                     >
                         {TASK_OPTIONS.map((o) => (
                             <option key={o.value} value={o.value}>{t(o.labelKey, o.fallback)}</option>
@@ -359,7 +365,7 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                                 title={t("aiTargetLang", "Translate to")}
                                 value={targetLang}
                                 onChange={(e) => setTargetLang(e.target.value)}
-                                className="h-7 rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-2"
+                                className="h-7 rounded-md bg-surface border border-line-strong text-[12px] text-ink px-2"
                             >
                                 {LANGUAGES.map((l) => (
                                     <option key={l.value} value={l.value}>{t(l.title, l.title)}</option>
@@ -370,7 +376,7 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                                 value={buildTranslateServiceKey(translateChoice)}
                                 onChange={(e) => onPickTranslateService(e.target.value)}
                                 title={t("aiTranslateWith", "Translate with")}
-                                className="h-7 rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-2"
+                                className="h-7 rounded-md bg-surface border border-line-strong text-[12px] text-ink px-2"
                             >
                                 {buildServiceOptions(translateServices, providers).map((s) => (
                                     <option key={s.value} value={s.value}>
@@ -386,7 +392,7 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                                 value={enhanceProviderId}
                                 onChange={(e) => onPickEnhanceProvider(e.target.value)}
                                 title={t("aiSwitchProvider", "Switch AI provider")}
-                                className="h-7 rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] px-2"
+                                className="h-7 rounded-md bg-surface border border-line-strong text-[12px] text-ink px-2"
                             >
                                 {providers.map((p) => (
                                     <option key={p.id} value={p.id}>{p.getTitle()}</option>
@@ -408,7 +414,7 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                         <button
                             type="button"
                             onClick={stop}
-                            className="h-7 px-2 inline-flex items-center gap-1 rounded-md border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] hover:border-red-400"
+                            className="h-7 px-2 inline-flex items-center gap-1 rounded-md border border-line-strong text-[12px] text-ink hover:border-red-400"
                         >
                             <StopCircle className="h-3 w-3" /> {t("aiStop", "Stop")}
                         </button>
@@ -426,40 +432,40 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
 
                 {/* Body: input / output two-column */}
                 <div className="flex-1 grid grid-cols-2 gap-0 min-h-0">
-                    <div className="flex flex-col min-h-0 border-r border-[rgba(140,180,230,0.08)]">
-                        <div className="px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.12em] text-[#545d75]">
+                    <div className="flex flex-col min-h-0 border-r border-line">
+                        <div className="px-3 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">
                             {t("aiOriginal", "Original")}
                         </div>
                         <textarea
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             placeholder={t("aiTypeOrPaste", "Type or paste text...")}
-                            className="flex-1 resize-none bg-[#070b14] border-0 outline-none px-3 py-2 text-[13px] leading-[1.5] text-[#eef1f8] placeholder:text-[#545d75]"
+                            className="flex-1 resize-none bg-bg border-0 outline-none px-3 py-2 text-[13px] leading-[1.5] text-ink placeholder:text-ink-mute"
                         />
                     </div>
                     <div className="flex flex-col min-h-0">
-                        <div className="px-3 py-1.5 flex items-center justify-between font-mono text-[10.5px] uppercase tracking-[0.12em] text-[#545d75]">
+                        <div className="px-3 py-1.5 flex items-center justify-between font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">
                             <span>{t("aiResult", "Result")}</span>
                             {showDiffToggle && (
                                 <div className="flex items-center gap-1">
                                     <button
                                         type="button"
                                         onClick={() => setView("diff")}
-                                        className={`px-1.5 py-0.5 rounded ${view === "diff" ? "bg-[rgba(120,200,230,0.12)] text-[oklch(0.86_0.16_195)]" : "text-[#8a93a8] hover:bg-[rgba(120,200,230,0.05)]"}`}
+                                        className={`px-1.5 py-0.5 rounded ${view === "diff" ? "bg-hover-4 text-accent" : "text-ink-soft hover:bg-hover"}`}
                                     >{t("aiViewDiff", "Diff")}</button>
                                     <button
                                         type="button"
                                         onClick={() => setView("text")}
-                                        className={`px-1.5 py-0.5 rounded ${view === "text" ? "bg-[rgba(120,200,230,0.12)] text-[oklch(0.86_0.16_195)]" : "text-[#8a93a8] hover:bg-[rgba(120,200,230,0.05)]"}`}
+                                        className={`px-1.5 py-0.5 rounded ${view === "text" ? "bg-hover-4 text-accent" : "text-ink-soft hover:bg-hover"}`}
                                     >{t("aiViewText", "Text")}</button>
                                 </div>
                             )}
                         </div>
-                        <div className="flex-1 overflow-auto px-3 py-2 text-[13px] leading-[1.5] text-[#eef1f8] whitespace-pre-wrap break-words">
+                        <div className="flex-1 overflow-auto px-3 py-2 text-[13px] leading-[1.5] text-ink whitespace-pre-wrap break-words">
                             {error ? (
-                                <span className="text-red-400">{error}</span>
+                                <span className="text-error">{error}</span>
                             ) : running && !output ? (
-                                <span className="inline-flex items-center gap-1.5 text-[#8a93a8]">
+                                <span className="inline-flex items-center gap-1.5 text-ink-soft">
                                     <Loader2 className="h-3 w-3 animate-spin" /> {t("aiStreaming", "Streaming...")}
                                 </span>
                             ) : output && view === "diff" && task !== AI_TASK.TRANSLATE ? (
@@ -472,12 +478,12 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                 </div>
 
                 {/* Footer */}
-                <div className="flex items-center justify-end gap-2 px-3 py-2 border-t border-[rgba(140,180,230,0.08)] bg-[#0a111c]">
+                <div className="flex items-center justify-end gap-2 px-3 py-2 border-t border-line bg-bg-deep">
                     <button
                         type="button"
                         onClick={() => copy(output)}
                         disabled={!output}
-                        className="h-7 px-2 inline-flex items-center gap-1 rounded-md border border-[rgba(140,180,230,0.18)] text-[12px] text-[#eef1f8] hover:border-[oklch(0.86_0.16_195)] disabled:opacity-40"
+                        className="h-7 px-2 inline-flex items-center gap-1 rounded-md border border-line-strong text-[12px] text-ink hover:border-accent disabled:opacity-40"
                     >
                         <Copy className="h-3 w-3" /> {copied ? t("aiCopied", "Copied") : t("aiCopy", "Copy")}
                     </button>

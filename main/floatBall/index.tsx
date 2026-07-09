@@ -7,6 +7,7 @@ import { setConfig } from "@/utils/db";
 import { sendMessageToBackground } from "@/utils/message";
 import { loadTailwindIntoShadow } from "@/main/aiWriting/shadowStyle";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
+import { bindThemeToElement } from "@/utils/theme";
 import { t, useLang } from "@/main/aiWriting/i18n";
 import { useDraggable } from "./useDraggable";
 import { useFullscreen } from "./useFullscreen";
@@ -68,6 +69,7 @@ export async function mountFloatBall(deps: FloatBallDeps): Promise<FloatBallCont
     const mount = document.createElement("div");
     mount.className = "duo-ai-root";
     shadow.appendChild(mount);
+    const stopThemeWatch = bindThemeToElement(mount);
     const root = createRoot(mount);
 
     // Bridge imperative controller calls to React state. The component
@@ -103,6 +105,7 @@ export async function mountFloatBall(deps: FloatBallDeps): Promise<FloatBallCont
         },
         destroy: () => {
             stopKeepAlive();
+            stopThemeWatch();
             try { root.unmount(); } catch { }
             host.remove();
         },
@@ -353,7 +356,7 @@ function FloatBallApp({
                             pointerEvents: "none",
                             ...tooltipHoriz,
                         }}
-                        className="px-2 py-1 rounded-md bg-[#0f1623] text-[#eef1f8] text-[12px] leading-none shadow-[0_4px_12px_rgba(0,0,0,0.4)]"
+                        className="px-2 py-1 rounded-md bg-surface text-ink text-[12px] leading-none shadow-[0_4px_12px_rgba(0,0,0,0.4)]"
                     >
                         {switchLabel}
                     </div>
@@ -526,10 +529,10 @@ function CloseMenu({
                 zIndex: 2147483001,
                 visibility: pos ? "visible" : "hidden",
             }}
-            className="min-w-[230px] rounded-md bg-[#0f1623] border border-[rgba(140,180,230,0.18)] shadow-[0_8px_24px_rgba(0,0,0,0.5)] py-1"
+            className="min-w-[230px] rounded-md bg-surface border border-line-strong shadow-[0_8px_24px_rgba(0,0,0,0.5)] py-1"
         >
             <div className="flex items-center justify-between px-3 pb-0.5">
-                <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#8a93a8]">
+                <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-soft">
                     {t("floatBallCloseTitle", "Disable floating ball")}
                 </span>
                 <button
@@ -537,7 +540,7 @@ function CloseMenu({
                     onClick={onClose}
                     onMouseDown={(e) => e.stopPropagation()}
                     aria-label={t("aiClose", "Close")}
-                    className="h-5 w-5 inline-flex items-center justify-center rounded text-[#8a93a8] hover:bg-[rgba(120,200,230,0.08)]"
+                    className="h-5 w-5 inline-flex items-center justify-center rounded text-ink-soft hover:bg-hover-2"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                         <path d="M18 6 6 18M6 6l12 12" />
@@ -557,7 +560,7 @@ function MenuItem({ onClick, label, danger }: { onClick: () => void; label: stri
             type="button"
             onClick={onClick}
             onMouseDown={(e) => e.stopPropagation()}
-            className={`block w-full px-3 py-1.5 text-left text-[12px] hover:bg-[rgba(120,200,230,0.08)] ${danger ? "text-red-300 hover:text-red-200" : "text-[#eef1f8]"}`}
+            className={`block w-full px-3 py-1.5 text-left text-[12px] hover:bg-hover-2 ${danger ? "text-danger-ink hover:text-danger-ink-2" : "text-ink"}`}
         >
             {label}
         </button>

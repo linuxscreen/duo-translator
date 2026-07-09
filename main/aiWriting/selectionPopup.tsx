@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createRoot, type Root } from "react-dom/client";
 import { Check, ChevronRight, Copy, Loader2, Pin, Volume2, X } from "lucide-react";
 import { loadTailwindIntoShadow } from "./shadowStyle";
+import { bindThemeToElement } from "@/utils/theme";
 import { t, useLang } from "./i18n";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { useTts } from "./useTts";
@@ -50,6 +51,8 @@ function ensureMounted(): void {
     const mount = document.createElement("div");
     mount.className = "duo-ai-root";
     shadow.appendChild(mount);
+    // Page-lifetime singleton — the watcher lives as long as the popup host.
+    bindThemeToElement(mount);
     popupRoot = createRoot(mount);
     popupRoot.render(
         <SelectionPopupApp
@@ -141,7 +144,7 @@ function AudioActions({
     const playing = tts.playingKey === ttsKey;
     const disabled = !text.trim();
     const iconBtn =
-        "h-6 w-6 inline-flex items-center justify-center rounded hover:bg-[rgba(120,200,230,0.1)] disabled:opacity-40 disabled:hover:bg-transparent";
+        "h-6 w-6 inline-flex items-center justify-center rounded hover:bg-hover-3 disabled:opacity-40 disabled:hover:bg-transparent";
     return (
         <div className="flex items-center gap-0.5 shrink-0">
             <button
@@ -150,7 +153,7 @@ function AudioActions({
                 onClick={() => tts.toggle(ttsKey, text, lang)}
                 title={playing ? t("selectionStopSpeech", "Stop") : t("selectionPlaySpeech", "Play")}
                 aria-label={playing ? t("selectionStopSpeech", "Stop") : t("selectionPlaySpeech", "Play")}
-                className={`${iconBtn} ${playing ? "text-[oklch(0.86_0.16_195)]" : "text-[#8a93a8]"}`}
+                className={`${iconBtn} ${playing ? "text-accent" : "text-ink-soft"}`}
             >
                 <Volume2 className="h-3.5 w-3.5" />
             </button>
@@ -160,7 +163,7 @@ function AudioActions({
                 onClick={() => copy(text)}
                 title={copied ? t("aiCopied", "Copied") : t("aiCopy", "Copy")}
                 aria-label={copied ? t("aiCopied", "Copied") : t("aiCopy", "Copy")}
-                className={`${iconBtn} ${copied ? "text-emerald-400" : "text-[#8a93a8]"}`}
+                className={`${iconBtn} ${copied ? "text-success" : "text-ink-soft"}`}
             >
                 {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
             </button>
@@ -375,17 +378,17 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
 
     const effectiveTargetLang = langOverride ?? seed?.targetLang ?? "";
     const selectCls =
-        "h-6 min-w-0 flex-1 max-w-[160px] rounded border border-[rgba(140,180,230,0.18)] bg-[#0f1623] px-1.5 text-[11px] text-[#cfd6e4] outline-none focus:border-[oklch(0.86_0.16_195)]";
+        "h-6 min-w-0 flex-1 max-w-[160px] rounded border border-line-strong bg-surface px-1.5 text-[11px] text-ink-2 outline-none focus:border-accent";
 
     return (
         <div
             ref={cardRef}
-            className="flex flex-col rounded-xl bg-[#0f1623]/97 border border-[rgba(140,180,230,0.18)] shadow-[0_16px_44px_rgba(0,0,0,0.55)] backdrop-blur-md overflow-hidden"
+            className="flex flex-col rounded-xl bg-surface/97 border border-line-strong shadow-[0_16px_44px_rgba(0,0,0,0.55)] backdrop-blur-md overflow-hidden"
             style={style}
             onMouseDown={(e) => e.stopPropagation()}
         >
             {/* Header — a single row: service + language pickers, then pin/close. */}
-            <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[rgba(140,180,230,0.1)] bg-[#141d2e]">
+            <div className="flex items-center gap-1.5 px-3 py-2 border-b border-line-2 bg-surface-2">
                 <select
                     value={serviceOverride ?? ""}
                     onChange={(e) => onServiceChange(e.target.value)}
@@ -418,7 +421,7 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
                         onClick={() => setPinned((v) => !v)}
                         title={pinned ? t("selectionUnpin", "Unpin") : t("selectionPin", "Pin")}
                         aria-label={pinned ? t("selectionUnpin", "Unpin") : t("selectionPin", "Pin")}
-                        className={`h-6 w-6 inline-flex items-center justify-center rounded hover:bg-[rgba(120,200,230,0.1)] ${pinned ? "text-[oklch(0.86_0.16_195)]" : "text-[#8a93a8]"}`}
+                        className={`h-6 w-6 inline-flex items-center justify-center rounded hover:bg-hover-3 ${pinned ? "text-accent" : "text-ink-soft"}`}
                     >
                         <Pin className="h-3.5 w-3.5" fill={pinned ? "currentColor" : "none"} />
                     </button>
@@ -427,7 +430,7 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
                         onClick={close}
                         title={t("aiClose", "Close")}
                         aria-label={t("aiClose", "Close")}
-                        className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-[rgba(120,200,230,0.1)] text-[#8a93a8]"
+                        className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-hover-3 text-ink-soft"
                     >
                         <X className="h-3.5 w-3.5" />
                     </button>
@@ -437,12 +440,12 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             {/* Body */}
             <div className="flex-1 min-h-0 overflow-auto">
                 {/* Original text (collapsible) */}
-                <div className="px-3 py-2 border-b border-[rgba(140,180,230,0.08)]">
+                <div className="px-3 py-2 border-b border-line">
                     <div className="flex items-center justify-between gap-2">
                         <button
                             type="button"
                             onClick={() => setOrigExpanded((v) => !v)}
-                            className="flex items-center gap-1 text-[12px] text-[#8a93a8] hover:text-[#cfd6e4]"
+                            className="flex items-center gap-1 text-[12px] text-ink-soft hover:text-ink-2"
                         >
                             <ChevronRight
                                 className={`h-3.5 w-3.5 transition-transform ${origExpanded ? "rotate-90" : ""}`}
@@ -452,7 +455,7 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
                         <AudioActions ttsKey="orig" text={seed?.text ?? ""} lang={origLang} tts={tts} />
                     </div>
                     {origExpanded && (
-                        <div className="mt-1.5 text-[13px] leading-normal text-[#cfd6e4] whitespace-pre-wrap wrap-break-word">
+                        <div className="mt-1.5 text-[13px] leading-normal text-ink-2 whitespace-pre-wrap wrap-break-word">
                             {seed?.text}
                         </div>
                     )}
@@ -460,11 +463,11 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
 
                 {/* Translation */}
                 <div className="flex items-start gap-2 px-3 py-2.5">
-                    <div className="flex-1 min-w-0 text-[13px] leading-normal text-[#eef1f8] whitespace-pre-wrap wrap-break-word">
+                    <div className="flex-1 min-w-0 text-[13px] leading-normal text-ink whitespace-pre-wrap wrap-break-word">
                         {error ? (
-                            <span className="text-red-400">{error}</span>
+                            <span className="text-error">{error}</span>
                         ) : running && !output ? (
-                            <span className="inline-flex items-center gap-1.5 text-[#8a93a8]">
+                            <span className="inline-flex items-center gap-1.5 text-ink-soft">
                                 <Loader2 className="h-3 w-3 animate-spin" /> {t("aiStreaming", "Streaming...")}
                             </span>
                         ) : (

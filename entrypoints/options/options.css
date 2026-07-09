@@ -18,9 +18,34 @@
   --color-accent-glow: oklch(0.78 0.18 200 / 0.5);
   --color-toggle-off: rgba(255, 255, 255, 0.12);
   --color-danger: oklch(0.7 0.16 25);
+  /* Text on accent-filled surfaces (primary buttons). */
+  --color-accent-ink: #04060a;
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Light theme — token overrides only; the dark values above stay the base.
+   `data-theme` is stamped on <html> by initExtensionPageTheme(). */
+html[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f4f5f9;
+  --color-surface: #ffffff;
+  --color-surface-2: #f0f2f7;
+  --color-surface-hi: #e7eaf1;
+  --color-ink: #1b212e;
+  --color-ink-soft: #5b6374;
+  --color-ink-mute: #8d94a5;
+  --color-line: rgba(25, 40, 80, 0.1);
+  --color-line-strong: rgba(25, 40, 80, 0.2);
+  --color-hover: rgba(25, 40, 80, 0.05);
+  --color-accent: oklch(0.55 0.11 210);
+  --color-accent-strong: oklch(0.62 0.12 205);
+  --color-accent-soft: oklch(0.6 0.1 205 / 0.15);
+  --color-accent-glow: oklch(0.62 0.12 205 / 0.3);
+  --color-toggle-off: rgba(20, 35, 70, 0.18);
+  --color-danger: oklch(0.55 0.19 25);
+  --color-accent-ink: #ffffff;
 }
 
 html,
@@ -49,6 +74,21 @@ body::before {
   pointer-events: none;
   mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, #000 30%, transparent 80%);
   z-index: 0;
+}
+
+/* Light theme: swap the page backdrop (deep-space gradients → airy paper)
+   and soften the grid overlay to dark hairlines. */
+html[data-theme="light"] body {
+  background:
+    radial-gradient(ellipse 60% 40% at 50% 0%, oklch(0.93 0.04 230 / 0.6), transparent 70%),
+    radial-gradient(ellipse 80% 50% at 80% 100%, oklch(0.94 0.03 280 / 0.5), transparent 60%),
+    #eef0f5;
+}
+
+html[data-theme="light"] body::before {
+  background-image:
+    linear-gradient(rgba(20, 40, 80, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(20, 40, 80, 0.035) 1px, transparent 1px);
 }
 
 #root {
