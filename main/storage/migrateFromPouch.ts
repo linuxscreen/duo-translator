@@ -88,9 +88,11 @@ async function runMigration(trigger: Trigger): Promise<void> {
             });
         } else if (id.startsWith(STORAGE_PREFIX.DOMAIN)) {
             const { _id, _rev, ...rest } = doc as any;
-            writes.push({ key: `local:${id.substring(0, id.length - 1)}`, value: rest });
+            if (id.endsWith(":")) id = id.substring(0, id.length - 1);
+            writes.push({ key: `local:${id}`, value: rest });
         } else if (id.startsWith(STORAGE_PREFIX.RULE)) {
             const rules = (doc as any).rules;
+            if (id.endsWith(":")) id = id.substring(0, id.length - 1);
             if (Array.isArray(rules)) {
                 writes.push({ key: `local:${id.substring(0, id.length - 1)}`, value: rules });
             }

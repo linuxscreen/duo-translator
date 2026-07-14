@@ -1,9 +1,9 @@
 {
   "extName": {
-    "message": "双语翻译"
+    "message": "Duo Translator - AI翻译和写作助手"
   },
   "extDescription": {
-    "message": "开源免费并且开箱即用的翻译插件，具有双语、对比高亮和规则模式等功能"
+    "message": "支持网页翻译、划词翻译、写作增强等。"
   },
   "shortcutTranslateRestorePage": {
     "message": "翻译/恢复 页面"

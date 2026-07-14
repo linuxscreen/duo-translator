@@ -1,9 +1,8 @@
 import { useSyncExternalStore } from "react";
 import { browser } from "wxt/browser";
-import { ACTION, CONFIG_KEY } from "@/main/constants";
+import { ACTION, CONFIG_KEY, type InterfaceLang } from "@/main/constants";
 import { getConfig } from "@/utils/db";
-import enJson from "@/assets/locales/en.json";
-import zhCNJson from "@/assets/locales/zh-CN.json";
+import { INTERFACE_LOCALES, detectInterfaceLang, normalizeInterfaceLang } from "@/utils/interfaceLang";
 
 /**
  * Reactive i18n for the AI Writing content-script UI.
@@ -17,30 +16,22 @@ import zhCNJson from "@/assets/locales/zh-CN.json";
  * Chinese.
  *
  * Why not full react-i18next: each content-script Shadow DOM mount would
- * need its own provider, and we only need 2 languages with flat keys. A
- * 60-line subscription is enough.
+ * need its own provider, and we only need flat key lookups. A 60-line
+ * subscription is enough.
  */
 
-type Lang = "en" | "zh-CN";
-type Dict = Record<string, string>;
+type Lang = InterfaceLang;
 
-const DICTS: Record<Lang, Dict> = {
-    "en": enJson as Dict,
-    "zh-CN": zhCNJson as Dict,
-};
+const DICTS = INTERFACE_LOCALES;
 
-function detectInitial(): Lang {
-    const ui = (browser.i18n?.getUILanguage?.() || navigator.language || "en").toLowerCase();
-    return ui.startsWith("zh") ? "zh-CN" : "en";
-}
-
-let currentLang: Lang = detectInitial();
+let currentLang: Lang = detectInterfaceLang();
 const subscribers = new Set<() => void>();
 const notify = () => subscribers.forEach((cb) => cb());
 
 const setLang = (next: unknown) => {
-    if ((next === "en" || next === "zh-CN") && next !== currentLang) {
-        currentLang = next;
+    const lang = normalizeInterfaceLang(next);
+    if (lang && lang !== currentLang) {
+        currentLang = lang;
         notify();
     }
 };

@@ -1,8 +1,26 @@
 {
   "extName": {
-    "message": "이중 언어 번역"
+    "message": "Duo Translator - AI 번역 및 글쓰기 도우미"
   },
   "extDescription": {
-    "message": "이중 언어 및 대비 강조 기능을 갖춘 사용하기 쉬운 번역 플러그인입니다"
+    "message": "웹페이지 번역, 선택한 텍스트 번역, 글쓰기 향상 기능 등을 지원합니다."
+  },
+  "shortcutTranslateRestorePage": {
+    "message": "페이지 번역/복원"
+  },
+  "shortcutTranslate": {
+    "message": "페이지 번역"
+  },
+  "shortcutRestore": {
+    "message": "페이지 복원"
+  },
+  "shortcutAiWorkbench": {
+    "message": "오픈 AI 글쓰기 작업대"
+  },
+  "shortcutTranslateRestoreParagraph": {
+    "message": "마우스오버 단락 번역/복원"
+  },
+  "shortcutTranslateSelectionInput": {
+    "message": "선택/입력 상자 번역"
   }
 }

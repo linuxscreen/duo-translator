@@ -1,6 +1,6 @@
 import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
 import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX } from "./constants";
-import { restore, translateParams, getTranslateResult, translate, TranslateResult, resetTranslationCacheEnabled } from "./translateService";
+import { restore, translateParams, getTranslateResult, translate, TranslateResult, resetTranslationCacheEnabled, translationServices, TranslateService } from "./translateService";
 import { sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
 import { mountFloatBall, type FloatBallController } from "./floatBall";
@@ -33,6 +33,16 @@ import {
     needsTranslateParagraphs,
     resetNoTranslateMarks,
 } from "@/main/dom/paragraphMarks";
+
+declare global {
+    var __debugTranslationServices:
+        | typeof translationServices
+        | undefined
+}
+
+if (import.meta.env.DEV) {
+    globalThis.__debugTranslationServices ??= translationServices
+}
 
 export async function content() {
     //#region main
@@ -100,6 +110,9 @@ export async function content() {
     const paragraphElementMap = new Map<HTMLElement, ELEMENT_STATUS>();
     // translated elements of DOUBLE view strategy
     let duoTranslatedElementMap = new Map<HTMLElement, { text: Text, content: string }[]>()
+    // per-paragraph disposers for the delegated bilingual-highlight listeners;
+    // WeakMap so paragraphs removed by the page don't pin the closures
+    const highlightDisposers = new WeakMap<HTMLElement, () => void>()
     // translated elements of SINGLE view strategy
     let translatedElementMap = new Map<HTMLElement, TranslateResult>()
     // get all config from storage
@@ -1153,6 +1166,8 @@ export async function content() {
         let duoTexts = duoTranslatedElementMap.get(element)
         if (duoTexts) {
             ignoreMutationElements.add(element)
+            highlightDisposers.get(element)?.()
+            highlightDisposers.delete(element)
             try {
                 let translation = element.querySelector(".duo-translation")
                 translation?.remove();
@@ -1211,6 +1226,8 @@ export async function content() {
                     continue
                 }
                 ignoreMutationElements.add(element)
+                highlightDisposers.get(element)?.()
+                highlightDisposers.delete(element)
                 try {
                     let translation = element.querySelector(".duo-translation")
                     translation?.remove();
@@ -1475,35 +1492,63 @@ export async function content() {
         return collectElements;
     }
 
-    function highlightHandler(span: HTMLElement, originalElement: HTMLElement, translatedElement: HTMLElement) {
-        span.onmouseover = function () {
-            let sequence = parseInt(span.getAttribute("duo-sequence")!)
-            let sequenceElements = originalElement.querySelectorAll('duo-span[duo-sequence="' + sequence + '"]');
-            if (sequenceElements) {
-                for (let sequenceElement of sequenceElements) {
-                    if (!translatedElement.contains(sequenceElement)) {
-                        sequenceElement.classList.add("duo-highlight-original")
-                    }
+    // Delegated bilingual highlighting: one listener pair per paragraph instead
+    // of per duo-span. The highlight is "sticky" — hovering blank areas inside
+    // the paragraph (line gaps of a multi-line sentence, the divide, padding)
+    // keeps the current sentence highlighted; it only switches when the pointer
+    // enters another sentence's span, and only clears on leaving the paragraph.
+    // Returns a disposer that clears the highlight and detaches the listeners.
+    function bindHighlightHandler(originalElement: HTMLElement, translatedElement: HTMLElement): () => void {
+        let currentSequence: number | null = null
+
+        function applyHighlight(sequence: number, add: boolean) {
+            let sequenceElements = originalElement.querySelectorAll('duo-span[duo-sequence="' + sequence + '"]')
+            for (let sequenceElement of sequenceElements) {
+                if (!translatedElement.contains(sequenceElement)) {
+                    sequenceElement.classList.toggle("duo-highlight-original", add)
                 }
             }
             let translationElements = translatedElement.querySelectorAll('duo-span[duo-sequence="' + sequence + '"]')
             translationElements.forEach(element => {
-                element.classList.add("duo-highlight-translation")
+                element.classList.toggle("duo-highlight-translation", add)
             })
         }
 
-        span.onmouseleave = function () {
-            let sequence = parseInt(span.getAttribute("duo-sequence")!)
-            let sequenceElements = originalElement.querySelectorAll('duo-span[duo-sequence="' + sequence + '"]');
-            if (sequenceElements) {
-                for (let sequenceElement of sequenceElements) {
-                    sequenceElement.classList.remove("duo-highlight-original")
-                }
+        const onMouseOver = (event: Event) => {
+            const target = event.target as Element | null
+            const span = target?.closest?.('duo-span[duo-sequence]')
+            // No span under the pointer (blank area) → keep the current highlight.
+            // The contains guard protects against a span of an enclosing paragraph.
+            if (!span || !originalElement.contains(span)) {
+                return
             }
-            let translationElements = translatedElement.querySelectorAll('duo-span[duo-sequence="' + sequence + '"]')
-            translationElements.forEach(element => {
-                element.classList.remove("duo-highlight-translation")
-            })
+            const sequence = parseInt(span.getAttribute("duo-sequence")!)
+            if (isNaN(sequence) || sequence === currentSequence) {
+                return
+            }
+            if (currentSequence !== null) {
+                applyHighlight(currentSequence, false)
+            }
+            currentSequence = sequence
+            applyHighlight(sequence, true)
+        }
+
+        // mouseleave does not bubble, so this only fires when the pointer
+        // actually exits the whole paragraph (original + translation).
+        const onMouseLeave = () => {
+            if (currentSequence === null) {
+                return
+            }
+            applyHighlight(currentSequence, false)
+            currentSequence = null
+        }
+
+        originalElement.addEventListener("mouseover", onMouseOver)
+        originalElement.addEventListener("mouseleave", onMouseLeave)
+        return () => {
+            onMouseLeave()
+            originalElement.removeEventListener("mouseover", onMouseOver)
+            originalElement.removeEventListener("mouseleave", onMouseLeave)
         }
     }
 
@@ -1639,8 +1684,9 @@ export async function content() {
                         let spans = wrapTextNode2Span(originalTextResult.textNodes, originalSentences, ignoreMutationElements)
 
                         spans.push(...wrapTextNode2Span(translatedTextResult.textNodes, translatedSentences, ignoreMutationElements))
-                        for (let span of spans) {
-                            highlightHandler(span, element, translatedElement)
+                        if (spans.length > 0) {
+                            highlightDisposers.get(element)?.()
+                            highlightDisposers.set(element, bindHighlightHandler(element, translatedElement))
                         }
                     }
 

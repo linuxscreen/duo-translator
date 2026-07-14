@@ -11,7 +11,7 @@ export default defineConfig({
         name: '__MSG_extName__',
         description: '__MSG_extDescription__',
         default_locale: 'en',
-        permissions: ['storage', 'tabs', 'activeTab', 'contextMenus', 'identity', 'alarms', 'webNavigation'],
+        permissions: ['storage', 'tabs', 'activeTab', 'contextMenus', 'alarms', 'webNavigation'], // 'identity'
         host_permissions: [
             // firefox mv2 needs these
             // 'https://translate-pa.googleapis.com/*',

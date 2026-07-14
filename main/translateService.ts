@@ -17,6 +17,11 @@ export class Token {
     isValid(): boolean {
         return !!this.token && this.expireTime > Date.now();
     }
+
+    static fromData(data: any): Token | null {
+        if (!data || typeof data.token !== "string" || typeof data.expireTime !== "number") return null
+        return new Token(data.token, data.expireTime);
+    }
 }
 
 export class TranslateResult {
@@ -114,6 +119,7 @@ export interface TranslateRequestOptions {
 /**
  * Runtime translation provider. Each provider (Google, Microsoft, DeepL …)
  * subclasses this and implements the methods relevant to its API.
+ * todo migrate to background
  */
 export abstract class TranslateService {
     abstract readonly name: string;
@@ -127,7 +133,10 @@ export abstract class TranslateService {
         options?: TranslateRequestOptions,
     ): Promise<TranslateResult[]>;
 
-    /** Translate a list of HTML elements while preserving inline tags. */
+    /** 
+     * @deprecated
+     * Translate a list of HTML elements while preserving inline tags.
+    */
     abstract translateHtml(
         html: HTMLElement[],
         targetLang: string,
@@ -353,7 +362,12 @@ export class MicrosoftTranslateService extends TranslateService {
     }
 
     private async refreshTokenForce(): Promise<void> {
-        this.authToken = await this.fetchToken();
+        const raw = await sendMessageToBackground({
+            action: ACTION.ACCESS_TOKEN_REFRESH,
+            data: { service: this.name },
+        })
+        if (!raw || typeof raw.token !== "string") return;
+        this.authToken = new Token(raw.token, raw.expireTime ?? 0);
     }
 
     async translateText(
@@ -1066,7 +1080,7 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
         }
     }
 
-    function getNextTextNode(element: HTMLElement) : Text {
+    function getNextTextNode(element: HTMLElement): Text {
         let textNodes = element2TextNodes.get(element);
         if (textNodes === undefined) {
             textNodes = Array.from(element.childNodes).filter(node => node.nodeType === Node.TEXT_NODE) as Text[];

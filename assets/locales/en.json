@@ -395,7 +395,6 @@
   "syncStatusFailed": "Sync failed",
   "syncStatusNoProvider": "Pick a sync provider first",
   "webdavServerUrl": "Server URL",
-  "webdavServerUrlHint": "e.g. https://dav.jianguoyun.com/dav/ or https://nextcloud.example.com/remote.php/dav/files/<user>/",
   "webdavUsername": "Username",
   "webdavPassword": "Password",
   "webdavPath": "Path (optional)",

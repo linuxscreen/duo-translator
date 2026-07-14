@@ -1,24 +1,55 @@
+[README](README.md) | [中文文档](README_zh.md)
 <h1 align="center">
-  <img align="top" width="44" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/public/icon/48.png" alt="DUO Logo">
-  <span>双语翻译</span>
+  <img align="top" width="44" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/public/DuoTranslator.svg" alt="DUO Logo">
+  <span>Duo Translator</span>
 </h1>
 
+AI驱动的翻译和写作助手。支持网页翻译、划词翻译、写作增强等。
+
+## 特性
+- 翻译
+  - 网页翻译
+  - 段落翻译和划词翻译
+  - 输入框翻译
+  - 原文和译文逐句对照高亮
+  - 文本转语音 (TTS)
+- AI写作
+  - 输入框中快速完成语法纠错、润色、翻译等操作
+  - AI工作台编辑长文本
+- 接入多种翻译和AI服务
+- 同步和备份配置
+
+## 安装
+添加到您的浏览器：
+
+<p>
+  <a href="https://chromewebstore.google.com/detail/duotranslator/pjniaipnjcdiiglednmhgmjmpmllelke"><img src="./docs/assets/badge-chrome.svg" alt="Chrome Web Store"></a>
+  <!-- TODO: fill in the Edge Add-ons listing URL once published -->
+  <a href=""><img src="./docs/assets/badge-edge.svg" alt="Edge Add-ons"></a>
+  <a href=""><img src="./docs/assets/badge-firefox.svg" alt="Firefox Add-ons"></a>
+</p>
+
+或者您可以通过zip文件手动安装。
+
+## 截图
 <div align="center">
-<img style="width: 384px" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/pop-cn.png" alt="">
-<img src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/option-cn.png" alt="">
-<img src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/translate-page.png" alt="">
+<img style="width: 384px" src="./docs/assets/popup.png" alt="">
+<img style="width: 768px" src="./docs/assets/options.png" alt="">
+<img style="width: 768px" src="./docs/assets/webpage-translation.png" alt="">
+<img style="width: 768px" src="./docs/assets/ai-workbench.png" alt="">
 </div>
-
-简单易用的翻译插件,支持双语和对比高亮等功能。
-
-## 用法
-
-在规则模式下，你需要在原始状态页面上点击“Enter”按钮以激活规则模式。选择你不想翻译的区域，光标会变成加号（+），并且边框会变为绿色。左键点击后，选中的区域会被黄色边框高亮显示。当你将光标悬停在该区域时，边框会变为红色，光标会变为垃圾桶图标。再次左键点击该区域以将其从规则中移除。要退出规则模式，可以右键点击、刷新页面或再次点击插件图标。
 
 # 开发
 
-首先，运行`pnpm i`来安装依赖项。
+基于 [WXT](https://wxt.dev/) + React 构建，包管理器使用 [pnpm](https://pnpm.io/)。
 
-然后，运行`pnpm dev`来启动开发服务器。
+1. 安装依赖：`pnpm i`
+2. 启动开发构建（支持热重载）：`pnpm dev`（Firefox：`pnpm dev:firefox`）
+3. 打开 `chrome://extensions/`，开启开发者模式，从 `.output/chrome-mv3-dev` 文件夹加载已解压的扩展程序
 
-最后，打开浏览器，从`.output/chrome-mv3`文件夹中添加加载解压的扩展程序。
+其他命令：
+
+- `pnpm build` — 生产构建，输出到 `.output/chrome-mv3`（Firefox：`pnpm build:firefox`，Edge：`pnpm build:edge`）
+- `pnpm zip` — 打包扩展用于商店上传
+- `pnpm test` — 单元测试（Vitest）
+- `pnpm e2e:build && pnpm e2e` — 端到端测试（Playwright）

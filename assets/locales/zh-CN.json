@@ -395,7 +395,6 @@
   "syncStatusFailed": "同步失败",
   "syncStatusNoProvider": "请先选择同步源",
   "webdavServerUrl": "服务器地址",
-  "webdavServerUrlHint": "如 https://dav.jianguoyun.com/dav/ 或 https://nextcloud.example.com/remote.php/dav/files/<user>/",
   "webdavUsername": "用户名",
   "webdavPassword": "密码",
   "webdavPath": "路径(可选)",

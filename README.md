@@ -1,25 +1,56 @@
 [README](README.md) | [中文文档](README_zh.md)
 <h1 align="center">
-  <img align="top" width="44" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/public/icon/48.png" alt="DUO Logo">
-  <span>duo-translator</span>
+  <img align="top" width="44" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/public/DuoTranslator.svg" alt="DUO Logo">
+  <span>Duo Translator</span>
 </h1>
 
+An AI-powered translation and writing assistant. Supports webpage translation, selected text translation, writing enhancement, and more.
+
+## Features
+- Translation
+  - Webpage Translation
+  - Paragraph and Selection Translation
+  - Input box Translation
+  - Highlights the original and translation sentence by sentence
+  - Text-to-speech (TTS)
+- AI Writing
+  - Correct grammar, polish, translate, and more directly in input box
+  - AI workbench to edit long-form text
+- Multiple Translation and AI Service Integrations
+- Sync & Backup Config
+
+## Installation
+Add to your browser:
+
+<p>
+  <a href="https://chromewebstore.google.com/detail/duotranslator/pjniaipnjcdiiglednmhgmjmpmllelke"><img src="./docs/assets/badge-chrome.svg" alt="Chrome Web Store"></a>
+  <!-- TODO: fill in the Edge Add-ons listing URL once published -->
+  <a href=""><img src="./docs/assets/badge-edge.svg" alt="Edge Add-ons"></a>
+  <a href=""><img src="./docs/assets/badge-firefox.svg" alt="Firefox Add-ons"></a>
+</p>
+
+Alternatively, you can install it manually using the ZIP file.
+
+## Screenshots
 <div align="center">
-<img style="width: 384px" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/pop-en.png" alt="">
-<img src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/option-en.png" alt="">
-<img src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/translate-page.png" alt="">
+<img style="width: 384px" src="./docs/assets/popup.png" alt="">
+<img style="width: 768px" src="./docs/assets/options.png" alt="">
+<img style="width: 768px" src="./docs/assets/webpage-translation.png" alt="">
+<img style="width: 768px" src="./docs/assets/ai-workbench.png" alt="">
 </div>
 
-Easy to use translation plug-in with bilingual and contrast highlighting functions.
-
-## Usage
-
-For rule mode, you need on the original status page, click the Enter button to activate rule mode. Select the area you don't want to translate; the cursor will change to a plus sign (+) and the border will turn green. Left-click, and the selected area will be highlighted with a yellow border. When you hover over the area, the border will turn red, and the cursor will change to a trash icon. Left-click the area to remove it from the rule. To exit rule mode, right-click, refresh the page, or click the plugin icon again.
 
 # Development
 
-First, run `pnpm i` to install the dependencies.
+Built with [WXT](https://wxt.dev/) + React. Package manager is [pnpm](https://pnpm.io/).
 
-Then, run `pnpm dev` to start the development server and visit localhost:3000.
+1. Install dependencies: `pnpm i`
+2. Start the dev build (with HMR): `pnpm dev` (Firefox: `pnpm dev:firefox`)
+3. Open `chrome://extensions/`, enable Developer mode, and load the unpacked extension from `.output/chrome-mv3-dev`
 
-Finally, open browser add load unpacked extension from `.output/chrome-mv3` folder.
+Other commands:
+
+- `pnpm build` — production build to `.output/chrome-mv3` (Firefox: `pnpm build:firefox`, Edge: `pnpm build:edge`)
+- `pnpm zip` — package the extension for store upload
+- `pnpm test` — unit tests (Vitest)
+- `pnpm e2e:build && pnpm e2e` — end-to-end tests (Playwright)

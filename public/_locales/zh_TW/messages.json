@@ -1,8 +1,26 @@
 {
   "extName": {
-    "message": "雙語翻譯"
+    "message": "Duo Translator - AI翻譯和寫作助手"
   },
   "extDescription": {
-    "message": "開源免費且開箱即用的翻譯擴充功能，具有雙語顯示、對比高亮和規則模式等功能"
+    "message": "支援網頁翻譯、劃詞翻譯、寫作增強等。"
+  },
+  "shortcutTranslateRestorePage": {
+    "message": "翻譯/恢復 頁面"
+  },
+  "shortcutTranslate": {
+    "message": "翻譯頁面"
+  },
+  "shortcutRestore": {
+    "message": "恢復頁面"
+  },
+  "shortcutAiWorkbench": {
+    "message": "開啟 AI 寫作工作臺"
+  },
+  "shortcutTranslateRestoreParagraph": {
+    "message": "翻譯/恢復 滑鼠懸停段落"
+  },
+  "shortcutTranslateSelectionInput": {
+    "message": "翻譯 選中文字/輸入框"
   }
 }

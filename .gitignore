@@ -43,5 +43,3 @@ playwright-report
 # others
 .dev
 demo
-utils/generateI18nJsonFile.ts
-utils/messages.json

@@ -1,8 +1,26 @@
 {
   "extName": {
-    "message": "traducción bilingüe"
+    "message": "Duo Translator: asistente de traducción y redacción con IA."
   },
   "extDescription": {
-    "message": "Extensión de traducción de código abierto con funciones de visualización bilingüe, resaltado de contraste y modo de reglas"
+    "message": "Admite la traducción de páginas web, la traducción de texto seleccionado, la mejora de la escritura y mucho más."
+  },
+  "shortcutTranslateRestorePage": {
+    "message": "Traducir / Restaurar página"
+  },
+  "shortcutTranslate": {
+    "message": "Traducir página"
+  },
+  "shortcutRestore": {
+    "message": "Restaurar página"
+  },
+  "shortcutAiWorkbench": {
+    "message": "Plataforma de escritura de IA abierta"
+  },
+  "shortcutTranslateRestoreParagraph": {
+    "message": "Traducir / Restaurar párrafo al pasar el ratón por encima"
+  },
+  "shortcutTranslateSelectionInput": {
+    "message": "Traducir cuadro de selección/entrada"
   }
 }

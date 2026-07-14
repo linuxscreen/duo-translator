@@ -19,11 +19,10 @@ import {
     IS_FIREFOX,
 } from "@/main/constants";
 import { Browser, browser } from "wxt/browser";
-import { Token, TRANSLATE_PROXY_ALLOWED_URLS } from "@/main/translateService";
+import { Token, TRANSLATE_PROXY_ALLOWED_URLS, translationServices } from "@/main/translateService";
 import { Mutex } from "async-mutex";
-import enLocale from "@/assets/locales/en.json";
-import zhCNLocale from "@/assets/locales/zh-CN.json";
 import type { InterfaceLang } from "@/main/constants";
+import { INTERFACE_LOCALES, detectInterfaceLang, normalizeInterfaceLang } from "@/utils/interfaceLang";
 import {
     AiStreamRequest,
     AiStreamMessage,
@@ -50,6 +49,10 @@ import { registerAutoSyncListeners, startAutoSync, applyAutoSyncConfig } from "@
 import { getWebdavConfig, type WebDavCredentials } from "@/main/storage/sync/webdavProvider";
 import { sendMessageToTab } from "@/utils/message";
 
+declare global {
+    var __debugServiceTokenMap: Map<string, Token>
+}
+
 export async function background() {
     //#region main
     console.log("background loaded")
@@ -57,6 +60,7 @@ export async function background() {
     let translateStatus = false
     let paraTranslateStatus = false
     let paraContextMenuShowStatus = false
+    let freshTokenTask: Promise<Token | undefined> | null = null
 
     // `contextMenuSwitch` / `currentInterfaceLang` are hydrated from storage by
     // the async bootstrap below, but must EXIST synchronously because the
@@ -64,8 +68,16 @@ export async function background() {
     // interface language from the browser UI language so getMsg() is usable even
     // before the stored value loads.
     let contextMenuSwitch = false
-    let currentInterfaceLang: InterfaceLang = detectDefaultInterfaceLang()
-    const getMsg = (key: string) => LOCALES[currentInterfaceLang][key] ?? key
+    let currentInterfaceLang: InterfaceLang = detectInterfaceLang()
+    const getMsg = (key: string) => INTERFACE_LOCALES[currentInterfaceLang][key] ?? INTERFACE_LOCALES.en[key] ?? key
+
+
+    const serviceTokenMap = new Map<string, Token>()
+    let tokenUrl = "https://edge.microsoft.com/translate/auth"
+
+    if (import.meta.env.DEV) {
+        globalThis.__debugServiceTokenMap = serviceTokenMap
+    }
 
     // Register auto-sync alarm/storage listeners synchronously at SW startup so
     // an alarm that wakes the worker is always caught.
@@ -99,7 +111,7 @@ export async function background() {
         // SW shutdown, retry on every boot. The migration module itself is
         // idempotent (flag-checked) so this is a near-free no-op once done.
         !IS_FIREFOX && await migrateFromPouchIfNeeded({ trigger: 'startup' });
-        
+
         // Schedule periodic auto-sync + run the startup sync (if enabled) once
         // migration settled.
         void startAutoSync();
@@ -119,11 +131,11 @@ export async function background() {
         }
         console.log('background onMessage', message)
         switch (message.action) {
-            case ACTION.ACCESS_TOKEN_GET:
+            case ACTION.ACCESS_TOKEN_GET: {
                 // console.log("getAccessToken", serviceTokenMap.get("microsoft"))
                 let service: string = message.data.service
-                if (serviceTokenMap && serviceTokenMap.get(service) && (serviceTokenMap.get(service)?.expireTime || 0) > Date.now()) {
-                    sendResponse({ status: STATUS_SUCCESS, data: serviceTokenMap.get(service) })
+                if (service != TRANSLATE_SERVICE.MICROSOFT) {
+                    sendResponse({ status: STATUS_FAIL, data: new Token("", 0) })
                     return
                 }
                 // todo support other service
@@ -133,6 +145,20 @@ export async function background() {
                     sendResponse({ status: STATUS_FAIL, data: new Token("", 0) })
                 })
                 return true
+            }
+            case ACTION.ACCESS_TOKEN_REFRESH: {
+                let service = message.data.service
+                if (service == TRANSLATE_SERVICE.MICROSOFT) {
+                    refreshMicrosoftToken().then((token) => {
+                        if (token) {
+                            sendResponse({ status: STATUS_SUCCESS, data: token })
+                            return
+                        }
+                        sendResponse({ status: STATUS_FAIL, data: new Token("", 0) })
+                    })
+                }
+                return true
+            }
             case ACTION.TRANSLATE_HTML:
                 // todo
                 break
@@ -504,10 +530,18 @@ export async function background() {
                         const sample = 'Hello, world.';
                         let reply = '';
                         if (svc === TRANSLATE_SERVICE.GOOGLE) {
-                            const r = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(sample)}`);
+                            const r = await fetch('https://translate-pa.googleapis.com/v1/translateHtml', {
+                                method: 'POST',
+                                headers: {
+                                    "Content-Type": "application/json+protobuf",
+                                    "x-goog-api-key": import.meta.env.VITE_GOOGLE_API_KEY,
+                                },
+                                body: JSON.stringify([[[sample], "auto", targetLang], "te_lib"]),
+                            });
                             if (!r.ok) throw new Error(`HTTP ${r.status}`);
-                            const j = await r.json();
-                            reply = j?.[0]?.[0]?.[0] || 'OK';
+                            const data = await r.json()
+                            if (!data || data.length < 2) throw new Error('invalid response');
+                            reply = data?.[0][0] || 'OK';
                         } else if (svc === TRANSLATE_SERVICE.MICROSOFT) {
                             const token = await getMicrosoftToken();
                             if (!token?.token) throw new Error('Failed to obtain Microsoft token');
@@ -815,7 +849,9 @@ export async function background() {
 
     //#region other listeners
     browser.webNavigation.onCommitted.addListener((details) => {
-        if (details.transitionType === 'reload' || details.transitionType === 'typed' && details.url.startsWith('http')) {
+        if (!details.url.startsWith('http')) return
+        if ((details.transitionType === 'reload' && !details.transitionQualifiers.includes('forward_back')) ||
+            details.transitionType === 'typed') {
             browser.storage.session.remove(TRANSLATE_STATUS_KEY + details.tabId)
         }
     })
@@ -1100,17 +1136,15 @@ export async function background() {
     async function getMicrosoftToken(): Promise<Token> {
         const release = await mutex.acquire(); // Acquire the lock
         try {
-            let tokenFromDB = (await configRepo.get(CONFIG_KEY.MICROSOFT_TOKEN)) as Token | null
-            // if token is null or "" and token is expired, get token from server
-            console.debug("getMicrosoftToken tokenFromDB", tokenFromDB)
-            if (tokenFromDB == null || tokenFromDB.token == "" || (tokenFromDB.expireTime || 0) < Date.now()) {
-                let token = await fetch(tokenUrl).then(response => response.text());
-                // save token to db
-                let freshToken = new Token(token, Date.now() + 10 * 60 * 1000)
-                await configRepo.set(CONFIG_KEY.MICROSOFT_TOKEN, freshToken)
-                return freshToken
-            }
-            return tokenFromDB
+            let tokenCache = serviceTokenMap.get(TRANSLATE_SERVICE.MICROSOFT)
+            let token = (tokenCache?.isValid() ? tokenCache : null) || Token.fromData(await configRepo.get(CONFIG_KEY.MICROSOFT_TOKEN))
+            if (token?.isValid()) return token
+            let fetchToken = await fetch(tokenUrl).then(response => response.text());
+            // save token to db
+            let freshToken = new Token(fetchToken, Date.now() + 10 * 60 * 1000)
+            serviceTokenMap.set(TRANSLATE_SERVICE.MICROSOFT, freshToken)
+            await configRepo.set(CONFIG_KEY.MICROSOFT_TOKEN, freshToken)
+            return freshToken
         } catch (e) {
             console.error(APP_NAME_WITH_SUFFIX, "getMicrosoftToken error", e)
             return new Token("", 0)
@@ -1120,9 +1154,26 @@ export async function background() {
 
     }
 
+    function refreshMicrosoftToken() {
+        if (freshTokenTask) return freshTokenTask
+        freshTokenTask = (async () => {
+            try {
+                let token = await fetch(tokenUrl).then(response => response.text());
+                let freshToken = new Token(token, Date.now() + 10 * 60 * 1000)
+                serviceTokenMap.set(TRANSLATE_SERVICE.MICROSOFT, freshToken)
+                await configRepo.set(CONFIG_KEY.MICROSOFT_TOKEN, freshToken)
+                return freshToken
+            } catch (e) {
+                console.error(APP_NAME_WITH_SUFFIX, "refreshMicrosoftToken error", e)
+            } finally {
+                freshTokenTask = null
+            }
+        })()
+        return freshTokenTask
+    }
+
     async function initTokenMap() {
-        let token = await getMicrosoftToken()
-        serviceTokenMap.set(TRANSLATE_SERVICE.MICROSOFT, token)
+        await getMicrosoftToken()
     }
     //#endregion
 }
@@ -1142,14 +1193,10 @@ export async function background() {
     }
 });
 
-// In-extension locale tables for strings the background needs to render itself
-// (currently the context menu title). Chrome's chrome.i18n.getMessage is locked
-// to the browser UI language at install time, so for a user-overridable UI
-// language we have to do the lookup ourselves.
-const LOCALES: Record<InterfaceLang, Record<string, string>> = {
-    en: enLocale as Record<string, string>,
-    'zh-CN': zhCNLocale as Record<string, string>,
-};
+// Background self-rendered strings (currently the context menu titles) look up
+// INTERFACE_LOCALES from utils/interfaceLang.ts. Chrome's chrome.i18n.getMessage
+// is locked to the browser UI language at install time, so for a
+// user-overridable UI language we have to do the lookup ourselves.
 
 const SEPARATOR_TAG = "<sep/>"
 const CONTEXT_MENU_TRANSLATE_TITLE = 'contextMenuTranslate'
@@ -1276,18 +1323,6 @@ export class Domain {
     // on this domain (and only on whitelisted domains when whitelist mode is on).
     // Independent of `aiWritingDisabled` — both flags can coexist on one doc.
     aiWritingEnabled?: boolean
-}
-
-const serviceTokenMap = new Map<string, Token>()
-let tokenUrl = "https://edge.microsoft.com/translate/auth"
-
-function detectDefaultInterfaceLang(): InterfaceLang {
-    const ui = browser.i18n?.getUILanguage?.() || ''
-    return ui.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
-}
-
-function normalizeInterfaceLang(v: unknown): InterfaceLang | undefined {
-    return v === 'en' || v === 'zh-CN' ? v : undefined
 }
 
 enum CONTEXT_MENU {

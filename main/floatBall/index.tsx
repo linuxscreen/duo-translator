@@ -9,6 +9,7 @@ import { loadTailwindIntoShadow } from "@/main/aiWriting/shadowStyle";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
 import { bindThemeToElement } from "@/utils/theme";
 import { t, useLang } from "@/main/aiWriting/i18n";
+import { getViewportSize } from "@/utils/dom";
 import { useDraggable } from "./useDraggable";
 import { useFullscreen } from "./useFullscreen";
 import { DUO_LOGO_SVG } from "./logo";
@@ -228,7 +229,7 @@ function FloatBallApp({
         // Flip the settings/close row above the switch when there isn't enough
         // room below (ball near the bottom edge). Row ≈ 5px gap + ~18px tall.
         const el = ballRef.current;
-        const vh = document.documentElement.clientHeight;
+        const vh = getViewportSize().height;
         setButtonsAbove(!!el && vh - el.getBoundingClientRect().bottom < 30);
         setExpanded(true);
     };
@@ -475,8 +476,7 @@ function CloseMenu({
         const compute = () => {
             const a = anchor.getBoundingClientRect();
             const m = menu.getBoundingClientRect();
-            const vw = document.documentElement.clientWidth;
-            const vh = document.documentElement.clientHeight;
+            const { width: vw, height: vh } = getViewportSize();
 
             let top = a.bottom + GAP;
             if (top + m.height > vh - MARGIN) {

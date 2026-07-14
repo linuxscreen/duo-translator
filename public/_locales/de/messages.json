@@ -1,8 +1,26 @@
 {
   "extName": {
-    "message": "zweisprachige Übersetzung"
+    "message": "Duo Translator – KI-Übersetzungs- und Schreibassistent"
   },
   "extDescription": {
-    "message": "Open-Source-Übersetzungserweiterung mit zweisprachiger Anzeige, Kontrasthervorhebung und Regelmodusfunktionen"
+    "message": "Unterstützt Webseitenübersetzung, Übersetzung ausgewählter Texte, Textverbesserung und mehr."
+  },
+  "shortcutTranslateRestorePage": {
+    "message": "Seite übersetzen / wiederherstellen"
+  },
+  "shortcutTranslate": {
+    "message": "Seite übersetzen"
+  },
+  "shortcutRestore": {
+    "message": "Seite wiederherstellen"
+  },
+  "shortcutAiWorkbench": {
+    "message": "Open AI Schreibwerkbank"
+  },
+  "shortcutTranslateRestoreParagraph": {
+    "message": "Absatz übersetzen / wiederherstellen (Mauszeiger-Absatz)"
+  },
+  "shortcutTranslateSelectionInput": {
+    "message": "Übersetzungsauswahl / Eingabefeld"
   }
 }

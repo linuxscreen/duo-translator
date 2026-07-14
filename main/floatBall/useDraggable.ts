@@ -1,6 +1,7 @@
 import { RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CONFIG_KEY } from "@/main/constants";
 import { getConfig, setConfig } from "@/utils/db";
+import { getViewportSize } from "@/utils/dom";
 
 const DRAG_THRESHOLD = 5;
 const MIN_MARGIN = 5;
@@ -65,8 +66,7 @@ export function useDraggable(ref: RefObject<HTMLElement | null>) {
         (async () => {
             const stored = await getConfig(CONFIG_KEY.FLOAT_BALL_POSITION);
             if (cancelled || !ref.current) return;
-            const screenW = document.documentElement.clientWidth;
-            const screenH = document.documentElement.clientHeight;
+            const { width: screenW, height: screenH } = getViewportSize();
             const w = el.offsetWidth;
             const h = el.offsetHeight;
             const s = stateRef.current;
@@ -174,8 +174,9 @@ export function useDraggable(ref: RefObject<HTMLElement | null>) {
             const s = stateRef.current;
             const el = ref.current;
             if (!el || s.dragging) return;
-            s.screenW = document.documentElement.clientWidth;
-            s.screenH = document.documentElement.clientHeight;
+            const vp = getViewportSize();
+            s.screenW = vp.width;
+            s.screenH = vp.height;
             const w = el.offsetWidth;
             const h = el.offsetHeight;
             // Docked balls stay flush to their edge; free ones reposition by %.
@@ -213,8 +214,9 @@ export function useDraggable(ref: RefObject<HTMLElement | null>) {
         movedRef.current = false;
         s.startX = e.clientX;
         s.startY = e.clientY;
-        s.screenW = document.documentElement.clientWidth;
-        s.screenH = document.documentElement.clientHeight;
+        const vp = getViewportSize();
+        s.screenW = vp.width;
+        s.screenH = vp.height;
         const cs = window.getComputedStyle(el);
         s.offsetX = e.clientX - (parseFloat(cs.left) || 0);
         s.offsetY = e.clientY - (parseFloat(cs.top) || 0);

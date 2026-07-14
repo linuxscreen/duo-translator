@@ -20,14 +20,14 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { THEME_OPTIONS, useThemeSetting, type ThemeSetting } from '@/utils/theme';
+import { normalizeInterfaceLang } from '@/utils/interfaceLang';
 
 export function SettingsPage() {
   const { t, i18n } = useTranslation();
 
-  const detectInterfaceLang = (): InterfaceLang =>
-    (i18n.language || '').toLowerCase().startsWith('zh') ? 'zh-CN' : 'en';
-
-  const [interfaceLang, setInterfaceLang] = useState<InterfaceLang>(detectInterfaceLang);
+  const [interfaceLang, setInterfaceLang] = useState<InterfaceLang>(
+    () => normalizeInterfaceLang(i18n.language) ?? 'en',
+  );
   const [globalSwitch, setGlobalSwitch] = useState(true);
   const [contextMenu, setContextMenu] = useState(true);
   const [ready, setReady] = useState(false);
@@ -44,7 +44,8 @@ export function SettingsPage() {
         getConfig(CONFIG_KEY.CONTEXT_MENU_SWITCH),
       ]);
       if (cancelled) return;
-      if (il === 'en' || il === 'zh-CN') setInterfaceLang(il);
+      const lang = normalizeInterfaceLang(il);
+      if (lang) setInterfaceLang(lang);
       setGlobalSwitch(gs === undefined ? true : gs);
       setContextMenu(cm === undefined ? true : cm);
       setReady(true);
@@ -54,8 +55,9 @@ export function SettingsPage() {
     };
   }, []);
 
-  const onInterfaceLang = (v: string) => {
-    if (v !== 'en' && v !== 'zh-CN') return;
+  const onInterfaceLang = (raw: string) => {
+    const v = normalizeInterfaceLang(raw);
+    if (!v) return;
     setInterfaceLang(v);
     void setConfig(CONFIG_KEY.INTERFACE_LANGUAGE, v);
     void i18n.changeLanguage(v);

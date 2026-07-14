@@ -597,7 +597,6 @@ export function SyncAndBackupSection() {
                             placeholder="https://dav.example.com/dav/"
                             className="mt-1"
                         />
-                        {/* <div className="mt-1 text-[11px] text-ink-mute">{t('webdavServerUrlHint', '')}</div> */}
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                         <div>

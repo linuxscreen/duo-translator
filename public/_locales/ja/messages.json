@@ -1,8 +1,26 @@
 {
   "extName": {
-    "message": "バイリンガル翻訳"
+    "message": "Duo Translator - AI翻訳＆ライティングアシスタント"
   },
   "extDescription": {
-    "message": "バイリンガル表示、コントラスト強調表示、ルールモード機能を備えたオープンソースの翻訳拡張機能"
+    "message": "ウェブページの翻訳、選択テキストの翻訳、文章の改善などに対応しています。"
+  },
+  "shortcutTranslateRestorePage": {
+    "message": "翻訳／ページ復元"
+  },
+  "shortcutTranslate": {
+    "message": "ページを翻訳する"
+  },
+  "shortcutRestore": {
+    "message": "ページを復元"
+  },
+  "shortcutAiWorkbench": {
+    "message": "Open AIライティングワークベンチ"
+  },
+  "shortcutTranslateRestoreParagraph": {
+    "message": "翻訳／マウスオーバー段落の復元"
+  },
+  "shortcutTranslateSelectionInput": {
+    "message": "選択範囲／入力ボックスを翻訳する"
   }
 }
