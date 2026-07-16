@@ -24,8 +24,7 @@ AI驱动的翻译和写作助手。支持网页翻译、划词翻译、写作增
 
 <p>
   <a href="https://chromewebstore.google.com/detail/duotranslator/pjniaipnjcdiiglednmhgmjmpmllelke"><img src="./docs/assets/badge-chrome.svg" alt="Chrome Web Store"></a>
-  <!-- TODO: fill in the Edge Add-ons listing URL once published -->
-  <a href=""><img src="./docs/assets/badge-edge.svg" alt="Edge Add-ons"></a>
+  <a href="https://microsoftedge.microsoft.com/addons/detail/duotranslator/aagmdliblgcoijibaiohkdfpkopekoeo"><img src="./docs/assets/badge-edge.svg" alt="Edge Add-ons"></a>
   <a href=""><img src="./docs/assets/badge-firefox.svg" alt="Firefox Add-ons"></a>
 </p>
 
@@ -33,10 +32,10 @@ AI驱动的翻译和写作助手。支持网页翻译、划词翻译、写作增
 
 ## 截图
 <div align="center">
-<img style="width: 384px" src="./docs/assets/popup.png" alt="">
-<img style="width: 768px" src="./docs/assets/options.png" alt="">
-<img style="width: 768px" src="./docs/assets/webpage-translation.png" alt="">
-<img style="width: 768px" src="./docs/assets/ai-workbench.png" alt="">
+<img style="width: 384px" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/popup.png" alt="">
+<img style="width: 768px" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/options.png" alt="">
+<img style="width: 768px" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/webpage-translation.png" alt="">
+<img style="width: 768px" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/ai-workbench.png" alt="">
 </div>
 
 # 开发

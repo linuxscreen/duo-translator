@@ -94,7 +94,7 @@ async function runMigration(trigger: Trigger): Promise<void> {
             const rules = (doc as any).rules;
             if (id.endsWith(":")) id = id.substring(0, id.length - 1);
             if (Array.isArray(rules)) {
-                writes.push({ key: `local:${id.substring(0, id.length - 1)}`, value: rules });
+                writes.push({ key: `local:${id}`, value: rules });
             }
         }
         // Other doc shapes (e.g. _design/*, _local/*) are ignored.

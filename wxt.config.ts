@@ -87,7 +87,10 @@ export default defineConfig({
         // ]
         browser_specific_settings: {
             gecko: {
-                id: 'duo-translator-dev@example.com',
+                id: 'duo-translator@duotranslator.com',
+                data_collection_permissions: {
+                    required: ['websiteContent'],
+                },
             },
         },
     },
