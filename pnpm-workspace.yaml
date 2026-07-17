@@ -1,0 +1,4 @@
+allowBuilds:
+  esbuild: true
+  leveldown: true
+  spawn-sync: true

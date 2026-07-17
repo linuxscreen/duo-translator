@@ -2,67 +2,115 @@ name: duo-translator
 
 on:
   workflow_dispatch:
-
+    inputs:
+      release_notes:
+        description: 'Override release notes (Markdown, single-line here). Normally leave empty: notes are taken from the current version section of CHANGELOG.md, falling back to auto-generated notes.'
+        required: false
+        type: string
+        default: ''
+      draft:
+        description: 'Create the release as a draft'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build-duo:
-    permissions: write-all
+    permissions:
+      contents: write
     environment: production
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout duo-translator
-      uses: actions/checkout@v4
-      with:
-        path: duo-translator
-    - name: Get version from package.json
-      id: get-version
-      run: |
-        cd duo-translator
-        VERSION=$(node -p "require('./package.json').version")
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "Package version: $VERSION"
-    - name: install & build
-      run: |
-        cd duo-translator
-        echo "Building version: $VERSION"
-        npm install
-        npm i -D wxt
-        npm run zip
-        echo "Build completed for version: $VERSION"
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: duo-translator
-        path: duo-translator/.output/duo-translator-${{ env.VERSION }}-chrome.zip
-    - name: Create Tag
-      uses: mathieudutour/github-tag-action@v5.6
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        custom_tag: ${{ env.VERSION }}
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ env.VERSION }}
-        name: Release ${{ env.VERSION }}
-        body: |
-          🚀 Duo Translator ${{ env.VERSION }} Release
+      - name: Checkout
+        uses: actions/checkout@v4
 
-          ## Changes
-          - New features, including:
-            - Shortcut keys and context menu to toggle translation on/off
-            - Float ball to toggle translation on/off
-            - Auto determine whether to translate by detecting page language
-            - Global switch to enable/disable extension
-            - "Options Page" for more settings and customization
-          - Bug fixes and optimizations
-            - Bug fixes and performance improvements
-            - User interface of translate strategy options optimization
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
 
-          ## Installation
-          Download the extension zip file and install manually in your browser.
-        files: duo-translator/.output/duo-translator-${{ env.VERSION }}-chrome.zip
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Get version from package.json
+        id: get-version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Package version: $VERSION"
+
+      - name: Generate .env from GitHub Environment
+        run: |
+          cat > .env << 'EOF'
+          VITE_APP_NAME=${{ vars.VITE_APP_NAME || 'Duo Translator' }}
+          VITE_APP_NAME_KEBAB_CASE=${{ vars.VITE_APP_NAME_KEBAB_CASE || 'duo-translator' }}
+          VITE_APP_NAME_PASCAL_CASE=${{ vars.VITE_APP_NAME_PASCAL_CASE || 'DuoTranslator' }}
+          VITE_WEBSITE=${{ vars.VITE_WEBSITE || 'https://duotranslator.com' }}
+          VITE_GITHUB_URL=${{ vars.VITE_GITHUB_URL || 'https://github.com/linuxscreen/duo-translator' }}
+          VITE_GOOGLE_API_KEY=${{ secrets.VITE_GOOGLE_API_KEY }}
+          VITE_GOOGLE_CLIENT_ID=${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+          VITE_GOOGLE_CLIENT_SECRET=${{ secrets.VITE_GOOGLE_CLIENT_SECRET }}
+          VITE_TOKEN_BROKER_URL=${{ secrets.VITE_TOKEN_BROKER_URL }}
+          EOF
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build & zip (Chrome)
+        run: pnpm zip
+
+      - name: Build & zip (Firefox)
+        run: pnpm zip:firefox
+
+      - name: Zip (Edge, reuse Chrome build)
+        run: cp .output/duo-translator-$VERSION-chrome.zip .output/duo-translator-$VERSION-edge.zip
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: duo-translator-${{ env.VERSION }}
+          path: .output/*.zip
+
+      - name: Prepare release notes
+        id: notes
+        env:
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: |
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          if [ -n "$RELEASE_NOTES" ]; then
+            printf '%s\n' "$RELEASE_NOTES" > "$NOTES_FILE"
+          elif [ -f CHANGELOG.md ]; then
+            # Extract the "## [<version>]" section (Keep a Changelog format)
+            awk -v ver="$VERSION" '
+              /^## /{ if (found) exit; if (index($0, "[" ver "]")) found=1; next }
+              found
+            ' CHANGELOG.md > "$NOTES_FILE"
+          fi
+          if [ -s "$NOTES_FILE" ]; then
+            echo "body_path=$NOTES_FILE" >> $GITHUB_OUTPUT
+            echo "generate=false" >> $GITHUB_OUTPUT
+          else
+            echo "body_path=" >> $GITHUB_OUTPUT
+            echo "generate=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: Release v${{ env.VERSION }}
+          body_path: ${{ steps.notes.outputs.body_path }}
+          generate_release_notes: ${{ steps.notes.outputs.generate == 'true' }}
+          files: |
+            .output/duo-translator-${{ env.VERSION }}-chrome.zip
+            .output/duo-translator-${{ env.VERSION }}-firefox.zip
+            .output/duo-translator-${{ env.VERSION }}-edge.zip
+            .output/duo-translator-${{ env.VERSION }}-sources.zip
+          draft: ${{ inputs.draft }}
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
