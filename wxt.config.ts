@@ -146,5 +146,8 @@ export default defineConfig({
         //     }
         // }
     }),
-    outDir: process.env.WXT_OUTDIR || '.output'
+    outDir: process.env.WXT_OUTDIR || '.output',
+    zip: {
+        excludeSources: ['CLAUDE.local.md', 'AGENTS.md']
+    }
 });

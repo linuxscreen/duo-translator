@@ -25,7 +25,7 @@ AI驱动的翻译和写作助手。支持网页翻译、划词翻译、写作增
 <p>
   <a href="https://chromewebstore.google.com/detail/duotranslator/pjniaipnjcdiiglednmhgmjmpmllelke"><img src="./docs/assets/badge-chrome.svg" alt="Chrome Web Store"></a>
   <a href="https://microsoftedge.microsoft.com/addons/detail/duotranslator/aagmdliblgcoijibaiohkdfpkopekoeo"><img src="./docs/assets/badge-edge.svg" alt="Edge Add-ons"></a>
-  <a href=""><img src="./docs/assets/badge-firefox.svg" alt="Firefox Add-ons"></a>
+  <a href="https://addons.mozilla.org/en-US/firefox/addon/duo-translator/"><img src="./docs/assets/badge-firefox.svg" alt="Firefox Add-ons"></a>
 </p>
 
 或者您可以通过zip文件手动安装。

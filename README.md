@@ -25,8 +25,7 @@ Add to your browser:
 <p>
   <a href="https://chromewebstore.google.com/detail/duotranslator/pjniaipnjcdiiglednmhgmjmpmllelke"><img src="./docs/assets/badge-chrome.svg" alt="Chrome Web Store"></a>
   <a href="https://microsoftedge.microsoft.com/addons/detail/duotranslator/aagmdliblgcoijibaiohkdfpkopekoeo"><img src="./docs/assets/badge-edge.svg" alt="Edge Add-ons"></a>
-  <!-- todo fill firefox href -->
-  <a href=""><img src="./docs/assets/badge-firefox.svg" alt="Firefox Add-ons"></a>
+  <a href="https://addons.mozilla.org/en-US/firefox/addon/duo-translator/"><img src="./docs/assets/badge-firefox.svg" alt="Firefox Add-ons"></a>
 </p>
 
 Alternatively, you can install it manually using the ZIP file.
