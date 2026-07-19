@@ -52,3 +52,7 @@ AI驱动的翻译和写作助手。支持网页翻译、划词翻译、写作增
 - `pnpm zip` — 打包扩展用于商店上传
 - `pnpm test` — 单元测试（Vitest）
 - `pnpm e2e:build && pnpm e2e` — 端到端测试（Playwright）
+
+友情链接
+
+感谢 [LINUX DO](https://linux.do/) 社区提供的帮助与支持。

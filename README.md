@@ -53,3 +53,7 @@ Other commands:
 - `pnpm zip` — package the extension for store upload
 - `pnpm test` — unit tests (Vitest)
 - `pnpm e2e:build && pnpm e2e` — end-to-end tests (Playwright)
+
+Links
+
+Thanks to the [LINUX DO](https://linux.do/) community for their help and support.
