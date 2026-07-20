@@ -54,6 +54,21 @@ test.describe('@core page translation (mocked providers)', () => {
         await expect(page.locator('#injected .duo-translation')).toContainText(ZH);
     });
 
+    test('translates new content after a full <body> swap (soft navigation)', async ({ page }) => {
+        await page.goto('/soft-nav.html');
+
+        // Initial (home) content auto-translates on load.
+        await expect(page.locator('#home .duo-translation')).toContainText(ZH);
+
+        // Replace the whole <body> node, as Turbo/Astro-style SPAs do on route
+        // change. The observer is attached to <html>, so it must see the new
+        // body and translate its content.
+        await page.evaluate(() => (window as any).__softNavigate());
+
+        await expect(page.locator('#pricing .duo-translation')).toContainText(ZH);
+        await expect(page.locator('#pricing .duo-translation')).toContainText('pricing page');
+    });
+
     test('text node dynamically update in single view', async ({ page, seedConfig, serviceWorker }) => {
         await seedConfig({ config_viewStrategy: 'single', config_translateService: 'microsoft' });
         await page.goto('/basic.html');

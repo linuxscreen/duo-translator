@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Duo Translator e2e — soft navigation (body swap)</title>
+</head>
+<body>
+    <h1>Soft navigation test</h1>
+    <p id="home">This paragraph belongs to the home page.</p>
+    <script>
+        // Simulate a Turbo/Hotwire / Astro-style soft navigation: the whole
+        // <body> node is replaced (not mutated in place) while the JS context
+        // stays alive. A body-scoped MutationObserver would be stranded on the
+        // old detached body and miss the new page entirely. Exposed on window
+        // so the e2e can trigger it after the initial content is translated.
+        window.__softNavigate = function () {
+            const newBody = document.createElement('body');
+            const p = document.createElement('p');
+            p.id = 'pricing';
+            p.textContent = 'This paragraph belongs to the pricing page after soft navigation.';
+            newBody.appendChild(p);
+            document.documentElement.replaceChild(newBody, document.body);
+        };
+    </script>
+</body>
+</html>

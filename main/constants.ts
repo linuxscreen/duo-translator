@@ -1332,7 +1332,7 @@ export const EXCLUDE_TAGS = [
 ];
 
 export const EXCLUDE_CHILD_ELEMENT_TAGS = new Set([
-    'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', "IMAGE"]);
+    'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', "IMAGE", "svg"]);
 
 export const iso6393To1Map: Map<string, string> = new Map(Object.entries(iso6393To1));
 

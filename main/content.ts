@@ -201,6 +201,21 @@ export async function content() {
             if (mutation.target.nodeType !== Node.ELEMENT_NODE) continue;
             const target = mutation.target as HTMLElement;
 
+            // We observe <html> (not <body>) so a wholesale <body> swap stays
+            // visible — some SPAs (Turbo/Astro-style soft navigation) replace
+            // the entire <body> element on route change while keeping the JS
+            // context alive. A body-scoped observer would be stranded on the
+            // old, detached body and never see the new page. Mutations at the
+            // <html>/<head> level are otherwise not page content: only re-root
+            // marking when a fresh <body> is added, and never mark <head>.
+            if (target === document.documentElement || target.nodeName === 'HEAD') {
+                mutation.removedNodes.forEach(cleanupRemovedSubtree);
+                mutation.addedNodes.forEach(node => {
+                    if (node.nodeName === 'BODY') pendingMarkRoots.add(node as HTMLElement);
+                });
+                continue;
+            }
+
             // Cheap structural skip — bail before queueing.
             if (isIgnoreMutationElement(target)) continue;
             // console.log('mutation target', target);
@@ -1012,7 +1027,13 @@ export async function content() {
         // No attribute observation: paragraph marks live in content-script
         // memory (paragraphMarks.ts), so page-side class rewrites can't touch
         // them and our own marking produces no attribute mutations to filter.
-        observer.observe(document.body, {
+        //
+        // Observe <html>, not <body>: SPAs that swap the whole <body> on soft
+        // navigation (Turbo/Astro-style) would otherwise leave this observer
+        // watching the old detached body, so post-navigation content would
+        // never get marked/translated. The callback filters out <head>-level
+        // noise and re-roots onto a freshly-added <body>.
+        observer.observe(document.documentElement, {
             childList: true,
             subtree: true,
             characterData: true,// text content change
