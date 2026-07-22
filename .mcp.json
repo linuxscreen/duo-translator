@@ -10,6 +10,21 @@
         "http://127.0.0.1:9222"
       ],
       "env": {}
+    },
+    "firefox-devtools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@mozilla/firefox-devtools-mcp-moz@latest",
+        "--enable-script",
+        "--enable-privileged-context",
+        "--start-url",
+        "about:blank"
+      ],
+      "env": {
+        "MOZ_REMOTE_ALLOW_SYSTEM_ACCESS": "1"
+      }
     }
   }
 }

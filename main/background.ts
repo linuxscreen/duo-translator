@@ -83,6 +83,16 @@ export async function background() {
     // an alarm that wakes the worker is always caught.
     registerAutoSyncListeners();
 
+    // Shortcut (commands) dispatch. MUST be registered here in the first
+    // synchronous turn — same MV3 rule as onMessage below. A suspended
+    // background is revived by the very event that needs it, and Firefox's
+    // non-persistent event page only wakes for listeners registered during
+    // initial script evaluation; registering it later (after an await, or
+    // toggled with the global switch) means Firefox never restarts the page for
+    // the shortcut, so shortcuts silently die once the extension goes idle. The
+    // listener itself reads the global switch from storage at dispatch time.
+    browser.commands.onCommand.addListener(shortcutKeyListener);
+
     // IMPORTANT (MV3): an idle SW is torn down and cold-started by the very event
     // that needs it. runtime.onMessage / onConnect listeners MUST be registered
     // during this first synchronous turn — if we `await` before reaching them,
@@ -101,7 +111,6 @@ export async function background() {
         currentInterfaceLang = normalizeInterfaceLang(interfaceLang) || currentInterfaceLang
 
         if (globalSwitch) {
-            initShortcutKey()
             if (contextMenuSwitch) {
                 initContextMenu()
             }
@@ -1004,10 +1013,8 @@ export async function background() {
                 if (typeof globalSwitch === 'boolean') {
                     if (globalSwitch) {
                         initContextMenu()
-                        initShortcutKey()
                     } else {
                         removeContextMenu()
-                        removeShortcutKey()
                     }
                 }
                 break
@@ -1084,7 +1091,16 @@ export async function background() {
         browser.tabs.onActivated.removeListener(tabsActivatedListener)
     }
 
-    function shortcutKeyListener(command: string) {
+    async function shortcutKeyListener(command: string) {
+        // Global off ⇒ shortcuts inert. Read the switch from storage on each
+        // press rather than a cached flag: this listener is registered
+        // synchronously so it can wake a stopped background (see registration
+        // site), and on such a cold start the async config bootstrap may not
+        // have run yet — a cached flag would still read its initial `false` and
+        // silently drop the first press. The read is async but shortcut presses
+        // are user-paced, so the extra storage hit is negligible.
+        const globalSwitch = await configRepo.getT<boolean>(CONFIG_KEY.GLOBAL_SWITCH)
+        if (!globalSwitch) return
         let action = ""
         if (command === 'shortcut-translate-restore-page') {
             // send message to current tab, toggle translate status
@@ -1113,15 +1129,6 @@ export async function background() {
             }
             browser.tabs.sendMessage(tab.id, { action: action });
         });
-    }
-
-    function initShortcutKey() {
-        // process shortcut key command
-        browser.commands.onCommand.addListener(shortcutKeyListener);
-    }
-
-    function removeShortcutKey() {
-        browser.commands.onCommand.removeListener(shortcutKeyListener)
     }
 
     function updateContextMenu(status: boolean) {
