@@ -20,19 +20,22 @@ import { getDomainWithPortFromUrl } from "@/utils/url";
 import { getAiTranslateService, getTranslateService } from "@/utils/service";
 import { buildTranslationCss } from "@/main/css";
 import { isEditable, isNotMarkElement, isNotTranslateElement, isParagraphElement } from "@/main/dom/predicates";
-import { getLastContainingTextChild, getTextNodesAndText, removeDuoClassAndAttribute, removeTextNodes } from "@/main/dom/textNodes";
+import { getTextNodesAndText, getTextNodesAndTextOfNodes, isContainsValidTextElement, removeDuoClassAndAttribute, removeTextNodes } from "@/main/dom/textNodes";
 import {
     allParagraphs,
     cleanupParagraphMarks,
     clearParagraphMarks,
     closestNeedsTranslate,
     closestParagraph,
+    isMixedParagraph,
     isParagraph,
     markNoTranslate,
     markParagraph,
     needsTranslateParagraphs,
     resetNoTranslateMarks,
 } from "@/main/dom/paragraphMarks";
+import { isBlockBoundary, segmentParagraph, type TranslationUnit } from "@/main/dom/segments";
+import { BLOCK_SELECTOR } from "@/main/constants";
 
 declare global {
     var __debugTranslationServices:
@@ -114,7 +117,8 @@ export async function content() {
     // WeakMap so paragraphs removed by the page don't pin the closures
     const highlightDisposers = new WeakMap<HTMLElement, () => void>()
     // translated elements of SINGLE view strategy
-    let translatedElementMap = new Map<HTMLElement, TranslateResult>()
+    // SINGLE: one TranslateResult per translated unit, grouped by container.
+    let translatedElementMap = new Map<HTMLElement, TranslateResult[]>()
     // get all config from storage
     let [rules, viewStrategy, targetLanguageConfig, translateServiceConfig, globalSwitch, defaultStrategy,
         rawDomainStrategy, floatBallSwitch, bilingualHighlightingSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey,
@@ -1190,13 +1194,14 @@ export async function content() {
             highlightDisposers.get(element)?.()
             highlightDisposers.delete(element)
             try {
-                let translation = element.querySelector(".duo-translation")
-                translation?.remove();
-                let divide = element.querySelector(".duo-divide")
-                divide?.remove();
-                let spans = element.querySelectorAll("duo-span")
-                for (let span of spans) {
-                    span.remove()
+                // Remove only nodes owned by THIS container — a mixed
+                // container may hold nested marked paragraphs (<li>) whose
+                // translations/spans are restored by their own entries.
+                for (let node of element.querySelectorAll(".duo-translation, .duo-divide")) {
+                    if (closestParagraph(node) === element) node.remove()
+                }
+                for (let span of element.querySelectorAll("duo-span")) {
+                    if (closestParagraph(span) === element) span.remove()
                 }
             } catch (e) {
                 console.error(APP_NAME_WITH_SUFFIX, "restore original paragraph error:", e)
@@ -1215,18 +1220,18 @@ export async function content() {
             })
             return
         }
-        let result = translatedElementMap.get(element)
-        if (result) {
+        let results = translatedElementMap.get(element)
+        if (results) {
             ignoreMutationElements.add(element)
-            result.replacedTextNodes?.forEach(text => {
+            results.forEach(result => result.replacedTextNodes?.forEach(text => {
                 ignoreMutationElements.add(text)
-            })
-            await restore([result])
+            }))
+            await restore(results)
             Promise.resolve().then(() => {
                 ignoreMutationElements.delete(element)
-                result.replacedTextNodes?.forEach(text => {
+                results.forEach(result => result.replacedTextNodes?.forEach(text => {
                     ignoreMutationElements.delete(text)
-                })
+                }))
                 translatedElementMap.delete(element)
             })
         }
@@ -1250,13 +1255,16 @@ export async function content() {
                 highlightDisposers.get(element)?.()
                 highlightDisposers.delete(element)
                 try {
-                    let translation = element.querySelector(".duo-translation")
-                    translation?.remove();
-                    let divide = element.querySelector(".duo-divide")
-                    divide?.remove();
-                    let spans = element.querySelectorAll("duo-span")
-                    for (let span of spans) {
-                        span.remove()
+                    // Remove only nodes owned by THIS container — a mixed
+                    // container may hold nested marked paragraphs (<li>) whose
+                    // translations/spans are restored by their own entries.
+                    // querySelectorAll: one container may carry several unit
+                    // translations.
+                    for (let node of element.querySelectorAll(".duo-translation, .duo-divide")) {
+                        if (closestParagraph(node) === element) node.remove()
+                    }
+                    for (let span of element.querySelectorAll("duo-span")) {
+                        if (closestParagraph(span) === element) span.remove()
                     }
                 } catch (e) {
                     console.error(APP_NAME_WITH_SUFFIX, "restore original page error:", e)
@@ -1286,22 +1294,22 @@ export async function content() {
         }
         if (translatedElementMap.size > 0) {
             let results: TranslateResult[] = []
-            translatedElementMap.forEach((result, element) => {
+            translatedElementMap.forEach((elementResults, element) => {
                 ignoreMutationElements.add(element)
                 // remote all text recursively node of element
                 // removeTextNodes(element)
-                results.push(result)
-                result.replacedTextNodes?.forEach(text => {
+                results.push(...elementResults)
+                elementResults.forEach(result => result.replacedTextNodes?.forEach(text => {
                     ignoreMutationElements.add(text)
-                })
+                }))
             })
             await restore(results)
             Promise.resolve().then(() => {
-                translatedElementMap.forEach((result, element) => {
+                translatedElementMap.forEach((elementResults, element) => {
                     ignoreMutationElements.delete(element)
-                    result.replacedTextNodes?.forEach(text => {
+                    elementResults.forEach(result => result.replacedTextNodes?.forEach(text => {
                         ignoreMutationElements.delete(text)
-                    })
+                    }))
                 })
                 translatedElementMap.clear()
             })
@@ -1438,6 +1446,16 @@ export async function content() {
             if (isNotMarkElement(p)) return collectElements;
             if (!notTranslate && isNotTranslateElement(p)) notTranslate = true;
             if (isParagraph(p)) {
+                if (isMixedParagraph(p)) {
+                    // Mixed container: a mutation under one of its block-ish
+                    // children belongs to a deeper unit — keep walking inward
+                    // (a nested mark or the Phase B scan handles it). Anything
+                    // else sits inside one of the container's own inline runs.
+                    const child = (i > 0 ? parentElements[i - 1] : rawElement);
+                    if (isBlockBoundary(child) || child.querySelector(BLOCK_SELECTOR)) {
+                        continue;
+                    }
+                }
                 if (!notTranslate) collectElements.push(p);
                 return collectElements;
             }
@@ -1478,14 +1496,29 @@ export async function content() {
             }
 
             if (isParagraph(el)) {
-                if (!nt) collectElements.push(el);
+                // Re-segment on every visit: structural mutations can change
+                // the element's runs/block children, so refresh the mixed
+                // flag, re-collect when an untranslated unit exists, and keep
+                // descending into block-ish children (their own marks live
+                // deeper).
+                const seg = segmentParagraph(el);
+                markParagraph(el, !nt, seg.descendChildren.length > 0);
+                if (!nt && seg.units.some(u => !u.translated)) collectElements.push(el);
+                for (let j = seg.descendChildren.length - 1; j >= 0; j--) {
+                    stack.push({ el: seg.descendChildren[j], notTranslate: nt, depth: depth + 1 });
+                }
                 continue;
             }
             if (isEditable(el)) continue;
 
             if (isParagraphElement(el)) {
-                markParagraph(el, !nt);
-                if (!nt && !el.querySelector('.duo-translation')) collectElements.push(el);
+                // >=1 valid direct text node guarantees >=1 unit.
+                const seg = segmentParagraph(el);
+                markParagraph(el, !nt, seg.descendChildren.length > 0);
+                if (!nt && seg.units.some(u => !u.translated)) collectElements.push(el);
+                for (let j = seg.descendChildren.length - 1; j >= 0; j--) {
+                    stack.push({ el: seg.descendChildren[j], notTranslate: nt, depth: depth + 1 });
+                }
                 continue;
             }
 
@@ -1519,28 +1552,34 @@ export async function content() {
     // keeps the current sentence highlighted; it only switches when the pointer
     // enters another sentence's span, and only clears on leaving the paragraph.
     // Returns a disposer that clears the highlight and detaches the listeners.
-    function bindHighlightHandler(originalElement: HTMLElement, translatedElement: HTMLElement): () => void {
+    function bindHighlightHandler(originalElement: HTMLElement): () => void {
         let currentSequence: number | null = null
 
+        // duo-sequence numbers are unique within one container (units of the
+        // same container share a running offset), so a single delegated
+        // binding per container pairs both sides. Ownership is resolved via
+        // closestParagraph so spans of nested marked paragraphs (an <li>
+        // inside a mixed container — they have their own binding and their
+        // own numbering) are never touched by this one.
         function applyHighlight(sequence: number, add: boolean) {
             let sequenceElements = originalElement.querySelectorAll('duo-span[duo-sequence="' + sequence + '"]')
             for (let sequenceElement of sequenceElements) {
-                if (!translatedElement.contains(sequenceElement)) {
+                if (closestParagraph(sequenceElement) !== originalElement) continue
+                if (sequenceElement.closest('.duo-translation')) {
+                    sequenceElement.classList.toggle("duo-highlight-translation", add)
+                } else {
                     sequenceElement.classList.toggle("duo-highlight-original", add)
                 }
             }
-            let translationElements = translatedElement.querySelectorAll('duo-span[duo-sequence="' + sequence + '"]')
-            translationElements.forEach(element => {
-                element.classList.toggle("duo-highlight-translation", add)
-            })
         }
 
         const onMouseOver = (event: Event) => {
             const target = event.target as Element | null
             const span = target?.closest?.('duo-span[duo-sequence]')
             // No span under the pointer (blank area) → keep the current highlight.
-            // The contains guard protects against a span of an enclosing paragraph.
-            if (!span || !originalElement.contains(span)) {
+            // The ownership guard protects against spans of an enclosing or
+            // nested paragraph (each has its own binding).
+            if (!span || closestParagraph(span) !== originalElement) {
                 return
             }
             const sequence = parseInt(span.getAttribute("duo-sequence")!)
@@ -1594,18 +1633,21 @@ export async function content() {
                 // remove duplicate elements
                 elements = Array.from(new Set(elements))
             }
-            for (let i = elements.length - 1; i >= 0; i--) {
-                const element = elements[i];
-                if (ignoreMutationElements.has(element)
-                    || element.querySelector(".duo-translation")) {
-                    elements.splice(i, 1);
-                    continue;
-                }
-                ignoreElements.push(element);
-                ignoreMutationElements.add(element);
+            // Expand each container into its untranslated logical-paragraph
+            // units; containers with nothing left to do (translation in
+            // flight, or every unit already translated) are skipped.
+            const units: TranslationUnit[] = []
+            for (const element of elements) {
+                if (ignoreMutationElements.has(element)) continue
+                const segUnits = segmentParagraph(element).units.filter(u => !u.translated)
+                if (segUnits.length === 0) continue
+                units.push(...segUnits)
+                ignoreElements.push(element)
+                ignoreMutationElements.add(element)
             }
-            // @debuglog
-            // console.log('translateParagraphElements:', elements)
+            if (units.length === 0) {
+                return
+            }
             let service = translateService
             if (context && typeof context.targetTranslateService === "string" && context.targetTranslateService) {
                 service = context.targetTranslateService
@@ -1615,17 +1657,16 @@ export async function content() {
                 service = TRANSLATE_SERVICE.MICROSOFT
             }
 
-            let translateResults = await getTranslateResult(service, elements, targetLanguage, viewStrategyCopy, controller?.signal)
-            if (!translateResults || translateResults.length != elements.length) {
+            let translateResults = await getTranslateResult(service, units, targetLanguage, viewStrategyCopy, controller?.signal)
+            if (!translateResults || translateResults.length === 0) {
                 return
             }
 
-            // remove the element that language is same as targetLanguage
+            // remove the unit whose language is same as targetLanguage
             for (let i = translateResults.length - 1; i >= 0; i--) {
                 let result = translateResults[i]
                 if (result.sourceLang == targetLanguage && result.score >= 0.7) {
                     translateResults.splice(i, 1)
-                    elements.splice(i, 1)
                     continue
                 }
                 result.textNodes?.forEach(text => {
@@ -1633,90 +1674,124 @@ export async function content() {
                     ignoreMutationElements.add(text)
                 })
             }
+            if (translateResults.length === 0) {
+                return
+            }
 
             // the elements will be replaced(translated) in single view strategy
             // the copy of elements will be replaced(translated) in double view strategy
             await translate(translateService, translateResults)
 
+            // Containers that actually received a translation this round.
+            const translatedContainers = new Set<HTMLElement>()
+
             if (viewStrategyCopy == VIEW_STRATEGY.SINGLE) {
-                for (let index = 0; index < elements.length; index++) {
-                    const element = elements[index];
-                    const result = translateResults[index];
-                    translatedElementMap.set(element, result)
+                for (const result of translateResults) {
+                    const element = result.unit?.container
+                    if (!element) continue
+                    const elementResults = translatedElementMap.get(element) ?? []
+                    elementResults.push(result)
+                    translatedElementMap.set(element, elementResults)
+                    translatedContainers.add(element)
                 }
             }
 
             // append translated copy element to original element in double view strategy
             if (viewStrategyCopy == VIEW_STRATEGY.DOUBLE) {
-                for (let i = 0; i < translateResults.length; i++) {
-                    let translatedResult = translateResults[i]
-                    let translatedElement = translatedResult.translatedCopyElement
-                    if (!translatedElement) {
-                        continue
+                // Group per container: one bookkeeping entry and one highlight
+                // binding per container; duo-sequence numbers run across its
+                // units so pairing under the single binding stays unambiguous.
+                const resultsByContainer = new Map<HTMLElement, TranslateResult[]>()
+                for (const result of translateResults) {
+                    const element = result.unit?.container
+                    if (!element || !result.translatedCopyElement) continue
+                    const list = resultsByContainer.get(element) ?? []
+                    list.push(result)
+                    resultsByContainer.set(element, list)
+                }
+                for (const [element, containerResults] of resultsByContainer) {
+                    const originalTexts: { text: Text, content: string }[] = duoTranslatedElementMap.get(element) ?? []
+                    // Continue sequence numbering after spans of earlier rounds.
+                    let sequenceOffset = 0
+                    for (const span of element.querySelectorAll('duo-span[duo-sequence]')) {
+                        if (closestParagraph(span) !== element) continue
+                        const seq = parseInt(span.getAttribute('duo-sequence')!)
+                        if (!isNaN(seq) && seq >= sequenceOffset) sequenceOffset = seq + 1
                     }
-                    let element = elements[i]
-                    if (!element || element.querySelector(".duo-translation")) {
-                        continue
-                    }
-                    let originalTextResult = getTextNodesAndText(element)
-                    let originalTexts: { text: Text, content: string }[] = []
-                    originalTextResult.textNodes.forEach(textNode => {
-                        ignoreElements.push(textNode)
-                        ignoreMutationElements.add(textNode)
-                    })
-                    translatedElement.classList.add("duo-translation")
-                    // find the last child that textContent is not empty
-                    let lastChild = getLastContainingTextChild(element)
-                    let divide: HTMLElement
-                    if (originalTextResult.text.length >= translationLineBreakMinChars) {
-                        divide = document.createElement('br')
-                        divide.classList.add("duo-divide")
-                    } else {
-                        divide = document.createElement('span')
-                        divide.classList.add("duo-divide")
-                        divide.innerHTML = '&nbsp;&nbsp;'
-                    }
-                    if (lastChild?.nextSibling) {
-                        element.insertBefore(translatedElement, lastChild.nextSibling)
-                        element.insertBefore(divide, lastChild.nextSibling)
-                    } else {
-                        element.appendChild(divide)
-                        element.appendChild(translatedElement)
-                    }
-                    let handler = function () {
-                        if (originalTextResult.text == "" || originalTextResult.textNodes.length == 0) {
-                            return
+                    let insertedAny = false
+                    let wrappedAny = false
+                    for (const result of containerResults) {
+                        const unit = result.unit!
+                        const translatedElement = result.translatedCopyElement!
+                        // The unit's last text-bearing node is the insertion anchor.
+                        let lastChild: ChildNode | null = null
+                        for (let j = unit.nodes.length - 1; j >= 0; j--) {
+                            if (isContainsValidTextElement(unit.nodes[j])) {
+                                lastChild = unit.nodes[j]
+                                break
+                            }
                         }
-                        let translatedTextResult = getTextNodesAndText(translatedElement)
-                        if (translatedTextResult.text == "" || translatedTextResult.textNodes.length == 0) {
-                            return
+                        // Unit nodes may have been detached while awaiting the
+                        // provider — skip; that mutation requeues a scan.
+                        if (!lastChild || lastChild.parentNode !== element) continue
+                        // Already carries a translation (concurrent round) — skip.
+                        const next = lastChild.nextSibling as HTMLElement | null
+                        if (next?.classList?.contains("duo-divide") || next?.classList?.contains("duo-translation")) continue
+
+                        const originalTextResult = getTextNodesAndTextOfNodes(unit.nodes)
+                        originalTextResult.textNodes.forEach(textNode => {
+                            ignoreElements.push(textNode)
+                            ignoreMutationElements.add(textNode)
+                        })
+                        translatedElement.classList.add("duo-translation")
+                        let divide: HTMLElement
+                        if (originalTextResult.text.length >= translationLineBreakMinChars) {
+                            divide = document.createElement('br')
+                            divide.classList.add("duo-divide")
+                        } else {
+                            divide = document.createElement('span')
+                            divide.classList.add("duo-divide")
+                            divide.innerHTML = '&nbsp;&nbsp;'
                         }
+                        if (lastChild.nextSibling) {
+                            element.insertBefore(translatedElement, lastChild.nextSibling)
+                            element.insertBefore(divide, lastChild.nextSibling)
+                        } else {
+                            element.appendChild(divide)
+                            element.appendChild(translatedElement)
+                        }
+                        insertedAny = true
+
+                        // Bilingual sentence highlighting, gated per unit — a
+                        // unit failing the gates only skips its own wrapping.
+                        if (!bilingualHighlightingSwitch) continue
+                        if (originalTextResult.text == "" || originalTextResult.textNodes.length == 0) continue
+                        const translatedTextResult = getTextNodesAndText(translatedElement)
+                        if (translatedTextResult.text == "" || translatedTextResult.textNodes.length == 0) continue
                         const originalSentences = splitSentence(originalTextResult.text)
-                        if (originalSentences.length === 0 || originalSentences.length < bilingualHighlightingMinSentences) {
-                            return
-                        }
+                        if (originalSentences.length === 0 || originalSentences.length < bilingualHighlightingMinSentences) continue
                         const translatedSentences = splitSentence(translatedTextResult.text)
-                        if (translatedSentences.length != originalSentences.length) {
-                            return
-                        }
+                        if (translatedSentences.length != originalSentences.length) continue
                         originalTextResult.textNodes.forEach(textNode => {
                             originalTexts.push({ text: textNode, content: textNode.textContent })
                         })
-                        let spans = wrapTextNode2Span(originalTextResult.textNodes, originalSentences, ignoreMutationElements)
-
-                        spans.push(...wrapTextNode2Span(translatedTextResult.textNodes, translatedSentences, ignoreMutationElements))
-                        if (spans.length > 0) {
-                            highlightDisposers.get(element)?.()
-                            highlightDisposers.set(element, bindHighlightHandler(element, translatedElement))
-                        }
+                        let spans = wrapTextNode2Span(originalTextResult.textNodes, originalSentences, ignoreMutationElements, sequenceOffset)
+                        spans.push(...wrapTextNode2Span(translatedTextResult.textNodes, translatedSentences, ignoreMutationElements, sequenceOffset))
+                        sequenceOffset += originalSentences.length
+                        if (spans.length > 0) wrappedAny = true
                     }
-
-                    if (bilingualHighlightingSwitch) handler()
-                    duoTranslatedElementMap.set(element, originalTexts)
+                    if (insertedAny) {
+                        duoTranslatedElementMap.set(element, originalTexts)
+                        translatedContainers.add(element)
+                    }
+                    if (wrappedAny) {
+                        highlightDisposers.get(element)?.()
+                        highlightDisposers.set(element, bindHighlightHandler(element))
+                    }
                 }
             }
 
-            elements.forEach((element) => {
+            translatedContainers.forEach((element) => {
                 paragraphElementMap.set(element, ELEMENT_STATUS.TRANSLATED)
                 intersectionObserver.unobserve(element)
             })

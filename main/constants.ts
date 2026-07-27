@@ -1334,6 +1334,26 @@ export const EXCLUDE_TAGS = [
 export const EXCLUDE_CHILD_ELEMENT_TAGS = new Set([
     'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', "IMAGE", "svg"]);
 
+// Block-level HTML tags — the static fallback for logical-paragraph
+// segmentation when computed style is unavailable (detached nodes, jsdom).
+// See main/dom/segments.ts `isBlockBoundary`.
+export const BLOCK_TAGS = [
+    'address', 'article', 'aside', 'blockquote', 'details', 'dialog', 'dd',
+    'div', 'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hgroup', 'hr', 'li',
+    'main', 'menu', 'nav', 'ol', 'p', 'section', 'summary', 'table',
+    'caption', 'colgroup', 'col', 'thead', 'tbody', 'tfoot', 'tr', 'td',
+    'th', 'ul',
+];
+
+export const blockTagSet: Set<string> = new Set(BLOCK_TAGS);
+
+export const BLOCK_SELECTOR = BLOCK_TAGS.join(',');
+
+// Minimum run of consecutive <br>s that splits a logical paragraph; a single
+// <br> is treated as a soft line break inside the unit.
+export const SEGMENT_BR_SPLIT_MIN = 2;
+
 export const iso6393To1Map: Map<string, string> = new Map(Object.entries(iso6393To1));
 
 export const excludedTagSet: Set<string> = new Set(EXCLUDE_TAGS)

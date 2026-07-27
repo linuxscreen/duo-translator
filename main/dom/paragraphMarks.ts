@@ -9,8 +9,15 @@
 //   - a reloaded content script starts from a clean slate (no stale classes).
 //
 // The store is a module singleton, one per frame (content scripts are
-// per-frame), shared by content.ts, ruleMode.ts and lang.ts. Invariant:
-// needs-translate ⊆ paragraph — the flag lives on the paragraph mark.
+// per-frame), shared by content.ts, ruleMode.ts and lang.ts. Invariants:
+//   - needs-translate ⊆ paragraph — the flag lives on the paragraph mark;
+//   - a mark is either *pure* (`mixed=false`, the scan never descended past
+//     it, so no marks exist beneath it) or *mixed* (`mixed=true`, the element
+//     has inline-run translation units AND block-ish children the scan kept
+//     descending into — marks may exist under those children, but never under
+//     a unit's inline nodes);
+//   - translation units never overlap: every text node belongs to at most one
+//     unit (a mixed container's units cover only its qualifying inline runs).
 //
 // Lifecycle: content.ts's MutationObserver calls `cleanupParagraphMarks` for
 // removed subtrees; enumeration helpers additionally sweep disconnected
@@ -18,17 +25,23 @@
 
 interface ParagraphMark {
     needsTranslate: boolean;
+    mixed: boolean;
 }
 
 const marks = new Map<HTMLElement, ParagraphMark>();
 
-/** Mark `el` as a paragraph (translation unit). */
-export function markParagraph(el: HTMLElement, needsTranslate: boolean): void {
-    marks.set(el, { needsTranslate });
+/** Mark `el` as a paragraph (container of translation units). */
+export function markParagraph(el: HTMLElement, needsTranslate: boolean, mixed = false): void {
+    marks.set(el, { needsTranslate, mixed });
 }
 
 export function isParagraph(el: Element): boolean {
     return marks.has(el as HTMLElement);
+}
+
+/** Whether `el` carries a mixed mark (may have marks nested under it). */
+export function isMixedParagraph(el: Element): boolean {
+    return marks.get(el as HTMLElement)?.mixed === true;
 }
 
 /** Flip the needs-translate flag of an already-marked paragraph (rule mode). */
@@ -94,9 +107,14 @@ export function anyParagraphUnder(root: Element): boolean {
  */
 export function cleanupParagraphMarks(removed: HTMLElement): void {
     if (marks.size === 0) return;
-    // Paragraph marks never nest (marking stops descending at a paragraph),
-    // so a removed paragraph is a single-entry cleanup.
-    if (marks.delete(removed)) return;
+    // A *pure* mark cannot contain other marks, so removing one is a
+    // single-entry cleanup. A mixed mark (or an unmarked ancestor) may have
+    // marks nested beneath it — sweep the subtree.
+    const mark = marks.get(removed);
+    if (mark) {
+        marks.delete(removed);
+        if (!mark.mixed) return;
+    }
     for (const el of marks.keys()) {
         if (removed.contains(el)) marks.delete(el);
     }

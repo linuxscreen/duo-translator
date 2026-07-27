@@ -66,6 +66,18 @@ export function getTextNodesAndText(element: Node): { textNodes: Text[]; text: s
     return { textNodes, text };
 }
 
+/** Like getTextNodesAndText, but over an ordered list of sibling nodes (a translation unit). */
+export function getTextNodesAndTextOfNodes(nodes: ChildNode[]): { textNodes: Text[]; text: string } {
+    let text = "";
+    const textNodes: Text[] = [];
+    for (const node of nodes) {
+        const result = getTextNodesAndText(node);
+        textNodes.push(...result.textNodes);
+        text += result.text;
+    }
+    return { textNodes, text };
+}
+
 /** Does the subtree contain at least one non-zero-width text node? */
 export function isContainsValidTextElement(element: Node): boolean | undefined {
     if (element.nodeType === Node.TEXT_NODE) {

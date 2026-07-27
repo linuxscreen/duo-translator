@@ -34,6 +34,7 @@ web-ext.config.ts
 CLAUDE.local.md
 .codex
 AGENTS.md
+.claude
 
 # Playwright e2e artifacts
 test-results
@@ -43,3 +44,4 @@ playwright-report
 # others
 .dev
 demo
+.ai

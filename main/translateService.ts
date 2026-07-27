@@ -5,11 +5,23 @@ import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
 import { browser } from "wxt/browser";
 import { isTraditionalChinese } from "@/utils/language";
 import { contentInvisible, decodeHtmlText } from "@/utils/dom";
+import type { TranslationUnit } from "@/main/dom/segments";
 
 //#region types
 // ---------------------------------------------------------------------------
 // Domain types
 // ---------------------------------------------------------------------------
+
+/**
+ * Exclusive boundary anchors of a translation unit among its container's
+ * direct children (null = container edge). Anchors sit *outside* the unit and
+ * are never moved by the unit's own rewrite, so they stay valid across
+ * translate/restore round-trips.
+ */
+export interface UnitRange {
+    start: ChildNode | null;
+    end: ChildNode | null;
+}
 
 export class Token {
     constructor(public token: string, public expireTime: number) { }
@@ -38,6 +50,11 @@ export class TranslateResult {
     textNodes?: Text[];
     textIndexMap?: Map<number, number>; // key: text node index, value: corresponding childNode of original element(ancestor of text node) index
     replacedTextNodes?: Text[]; // use for SINGLE view strategy, text nodes that have been replaced(has been translated or restored)
+    unit?: TranslationUnit; // the logical paragraph this result belongs to
+    // SINGLE only: the unit's span among the container's direct children, as
+    // exclusive boundary anchors (null = container edge). Write-back and
+    // restore stay inside this range so sibling units are never touched.
+    unitRange?: UnitRange;
 
     constructor(rawTranslatedText: string, sourceLang: string, score: number) {
         this.translatedMappedHtmlText = rawTranslatedText;
@@ -981,19 +998,22 @@ class PreProcessResult {
     }
 }
 
-export function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STRATEGY): PreProcessResult {
+export function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STRATEGY, nodes?: ChildNode[]): PreProcessResult {
     let i = 0;
     let totalTextNodesLength = 0;
     let text = "";
     const elements: HTMLElement[] = [];
     const processParent = document.createElement("div");
     const textNodes: Text[] = [];
+    // Default (whole element) keeps the legacy byte-identical serialization;
+    // a caller passing a unit's node list scopes everything to that unit.
+    const rootNodes: ChildNode[] = nodes ?? Array.from(element.childNodes);
 
     // flag all children of the element that textNode is not empty
     let textNotEmptyElementSet = new Set<HTMLElement>();
     if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
         let notEmptyNodes: Node[] = [];
-        let stack = [...element.childNodes];
+        let stack = [...rootNodes];
         while (stack.length > 0) {
             let pop = stack.pop();
             if (!pop) continue;
@@ -1054,21 +1074,46 @@ export function getElementPreProcessResult(element: HTMLElement, viewStrategy: V
             }
         }
     };
-    element.childNodes.forEach(child => process(true, child, processParent));
+    rootNodes.forEach(child => process(true, child, processParent));
     if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
         removeChildren.forEach(child => child.parentNode?.removeChild(child))
     }
     return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, totalTextNodesLength, text, textIndexMap };
 }
 
-export function updateTranslateElementContent(rawTranslatedHtml: string, originalElements: HTMLElement[]) {
+export function updateTranslateElementContent(rawTranslatedHtml: string, originalElements: HTMLElement[], range?: UnitRange) {
     if (originalElements.length === 0 || rawTranslatedHtml === "") return;
+
+    const container = originalElements[0];
+    // Anchors invalidated by page mutations degrade to whole-container writes.
+    const rangeStart = range?.start && range.start.parentNode === container ? range.start : null;
+    const rangeEnd = range?.end && range.end.parentNode === container ? range.end : null;
 
     const translatedElement = document.createElement("div");
     translatedElement.innerHTML = rawTranslatedHtml;
     const replacedTextNodes: Text[] = [];
     const element2TextNodes: Map<HTMLElement, Text[]> = new Map();
     const element2TextNodeIndex: Map<HTMLElement, number> = new Map();
+
+    /** Direct children of the container inside the unit range (whole list when unbounded). */
+    function containerChildNodes(): ChildNode[] {
+        const out: ChildNode[] = [];
+        let node = rangeStart ? rangeStart.nextSibling : container.firstChild;
+        while (node && node !== rangeEnd) {
+            out.push(node);
+            node = node.nextSibling;
+        }
+        return out;
+    }
+
+    /** Container-level insert honoring the range end (plain append when unbounded). */
+    function appendToContainer(node: Node) {
+        if (rangeEnd) {
+            container.insertBefore(node, rangeEnd);
+        } else {
+            container.appendChild(node);
+        }
+    }
 
     function getOriginalElement(tagName: string) {
         if (tagName === "DIV") {
@@ -1083,7 +1128,8 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
     function getNextTextNode(element: HTMLElement): Text {
         let textNodes = element2TextNodes.get(element);
         if (textNodes === undefined) {
-            textNodes = Array.from(element.childNodes).filter(node => node.nodeType === Node.TEXT_NODE) as Text[];
+            const candidates = element === container ? containerChildNodes() : Array.from(element.childNodes);
+            textNodes = candidates.filter(node => node.nodeType === Node.TEXT_NODE) as Text[];
             element2TextNodes.set(element, textNodes)
             element2TextNodeIndex.set(element, 0)
         }
@@ -1105,7 +1151,11 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
             let textNode = getNextTextNode(original)
             textNode.textContent = node.textContent
             replacedTextNodes.push(textNode);
-            original.appendChild(textNode);
+            if (original === container) {
+                appendToContainer(textNode);
+            } else {
+                original.appendChild(textNode);
+            }
             return;
         }
         if (node.nodeType === Node.ELEMENT_NODE) {
@@ -1117,7 +1167,11 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
                 if (!originalParent) return;
                 const original = getOriginalElement(ele.tagName)
                 if (!original) return;
-                originalParent.appendChild(original);
+                if (originalParent === container) {
+                    appendToContainer(original);
+                } else {
+                    originalParent.appendChild(original);
+                }
             }
         }
     }
@@ -1125,77 +1179,102 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
     return replacedTextNodes
 }
 
+/** Normalize a legacy element argument into a whole-element unit. */
+function toTranslationUnit(item: HTMLElement | TranslationUnit): TranslationUnit {
+    if (item instanceof HTMLElement) {
+        return {
+            container: item,
+            nodes: Array.from(item.childNodes),
+            wholeElement: true,
+            translated: false,
+        };
+    }
+    return item;
+}
+
 export async function getTranslateResult(
     service: string,
-    elements: HTMLElement[],
+    elements: (HTMLElement | TranslationUnit)[],
     targetLang: string,
     viewStrategy: VIEW_STRATEGY,
     signal?: AbortSignal
 ): Promise<TranslateResult[]> {
     if (!elements || elements.length === 0) return [];
 
-    const texts: string[] = [];
-    const preProcessResults: PreProcessResult[] = [];
+    // One pending entry per unit that survives preprocessing — kept aligned
+    // as an object instead of parallel arrays so later drops can't misalign
+    // the annotations.
+    interface PendingUnit {
+        unit: TranslationUnit;
+        pre: PreProcessResult;
+        text: string;
+        copy?: HTMLElement;
+        range?: UnitRange;
+    }
+    const pendings: PendingUnit[] = [];
 
-    const needRemoveElementIdx: number[] = []
-    const translatedCopyElements: HTMLElement[] = [];
-    const rawMappedHtmlTexts: string[] = []
-    for (let i = 0; i < elements.length; i++) {
-        let element = elements[i]
+    for (const item of elements) {
+        const unit = toTranslationUnit(item);
+        let element = unit.container;
+        let nodes: ChildNode[] | undefined = unit.wholeElement ? undefined : unit.nodes;
+        let copy: HTMLElement | undefined;
+        let range: UnitRange | undefined;
         if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-            let rawElement = document.createElement("span")
-            rawElement.innerHTML = element.innerHTML
-            element = rawElement
-        }
-        const result = getElementPreProcessResult(element, viewStrategy);
-        if (result.mappedHtmlText.trim() === "") {
-            needRemoveElementIdx.push(i)
-            continue
-        }
-        if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-            translatedCopyElements.push(element)
-        }
-        if (service === TRANSLATE_SERVICE.GOOGLE) {
-            let text = ""
-            for (let index = 0; index < result.textNodes.length; index++) {
-                text += `<a i=${index}>${result.textNodes[index].textContent}</a>`
-
-            }
-            texts.push(text);
+            // The detached copy holds only this unit's nodes, so downstream
+            // preprocessing/translation of the copy needs no node scoping.
+            copy = document.createElement("span");
+            for (const node of unit.nodes) copy.appendChild(node.cloneNode(true));
+            element = copy;
+            nodes = undefined;
         } else {
-            texts.push(result.mappedHtmlText);
+            // SINGLE writes back into the live container — capture the unit's
+            // exclusive boundary anchors before anything moves.
+            const first = unit.nodes[0];
+            const last = unit.nodes[unit.nodes.length - 1];
+            range = {
+                start: first?.previousSibling ?? null,
+                end: last?.nextSibling ?? null,
+            };
         }
-        rawMappedHtmlTexts.push(result.mappedHtmlText)
-
-        preProcessResults.push(result);
+        const pre = getElementPreProcessResult(element, viewStrategy, nodes);
+        if (pre.mappedHtmlText.trim() === "") continue;
+        let text: string;
+        if (service === TRANSLATE_SERVICE.GOOGLE) {
+            text = "";
+            for (let index = 0; index < pre.textNodes.length; index++) {
+                text += `<a i=${index}>${pre.textNodes[index].textContent}</a>`
+            }
+        } else {
+            text = pre.mappedHtmlText;
+        }
+        pendings.push({ unit, pre, text, copy, range });
     }
+    if (pendings.length === 0) return [];
 
-    for (let i = needRemoveElementIdx.length - 1; i >= 0; i--) {
-        elements.splice(needRemoveElementIdx[i], 1)
-    }
-
-    const results = await translateTextsWithCache(service, texts, targetLang, signal);
+    const results = await translateTextsWithCache(service, pendings.map(p => p.text), targetLang, signal);
     if (!results) return [];
 
-
-    for (let i = results.length - 1; i >= 0; i--) {
+    const out: TranslateResult[] = [];
+    for (let i = 0; i < results.length && i < pendings.length; i++) {
         const result = results[i];
-        if (texts[i] === result.translatedMappedHtmlText) {
-            elements.splice(i, 1);
-            results.splice(i, 1);
-        }
-        let preProcessResult = preProcessResults[i]
-        result.originalSliceElements = preProcessResult.elements
-        result.rawMappedHtmlText = rawMappedHtmlTexts[i];
-        result.rawTextLength = preProcessResult.totalTextNodesLength;
-        result.rawText = preProcessResult.text
-        service === TRANSLATE_SERVICE.GOOGLE && (result.textIndexMap = preProcessResult.textIndexMap)
+        const pending = pendings[i];
+        // Echoed translation (same as source) — nothing to change, drop it.
+        if (pending.text === result.translatedMappedHtmlText) continue;
+        result.unit = pending.unit;
+        result.originalSliceElements = pending.pre.elements
+        result.rawMappedHtmlText = pending.pre.mappedHtmlText;
+        result.rawTextLength = pending.pre.totalTextNodesLength;
+        result.rawText = pending.pre.text
+        service === TRANSLATE_SERVICE.GOOGLE && (result.textIndexMap = pending.pre.textIndexMap)
         if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-            result.translatedCopyElement = translatedCopyElements[i];
+            result.translatedCopyElement = pending.copy;
+        } else {
+            result.unitRange = pending.range;
         }
-        result.textNodes = preProcessResult.textNodes
+        result.textNodes = pending.pre.textNodes
+        out.push(result);
     }
-    return results;
+    return out;
 }
 
 export function parseIndexedText(input: string): { index: number, text: string }[] {
@@ -1236,7 +1315,31 @@ export function googleTranslate(results: TranslateResult[]) {
     for (const result of results) {
         if (!result.originalSliceElements || result.originalSliceElements.length === 0) continue;
         let targetElement = result.originalSliceElements[0]
-        let targetElementChildNodes = Array.from(result.originalSliceElements[0].childNodes)
+        // SINGLE per-unit: stay inside the unit's anchor range so sibling
+        // units of the same container are never reordered.
+        const rangeStart = result.unitRange?.start && result.unitRange.start.parentNode === targetElement
+            ? result.unitRange.start : null;
+        const rangeEnd = result.unitRange?.end && result.unitRange.end.parentNode === targetElement
+            ? result.unitRange.end : null;
+        let targetElementChildNodes: ChildNode[]
+        if (rangeStart || rangeEnd) {
+            targetElementChildNodes = []
+            let node = rangeStart ? rangeStart.nextSibling : targetElement.firstChild
+            while (node && node !== rangeEnd) {
+                targetElementChildNodes.push(node)
+                node = node.nextSibling
+            }
+        } else {
+            targetElementChildNodes = Array.from(targetElement.childNodes)
+        }
+        // Place a node at the start of the unit (container start when unbounded).
+        const placeFirst = (node: ChildNode) => {
+            if (rangeStart) {
+                rangeStart.after(node)
+            } else {
+                targetElement.prepend(node)
+            }
+        }
         let emptyNode: ChildNode | null = null
         for (let index = 0; index < targetElementChildNodes.length; index++) {
             const element = targetElementChildNodes[index];
@@ -1261,7 +1364,7 @@ export function googleTranslate(results: TranslateResult[]) {
             if (indexedText.index === -1) {
                 let textNode = document.createTextNode(decodeHtmlText(indexedText.text))
                 if (!lastMovedNode) {
-                    targetElement.prepend(textNode)
+                    placeFirst(textNode)
                 } else {
                     lastMovedNode.after(textNode)
                 }
@@ -1287,7 +1390,7 @@ export function googleTranslate(results: TranslateResult[]) {
                 if (emptyNode) {
                     emptyNode.after(targetElementChildNodes[childIndex])
                 } else {
-                    targetElement.prepend(targetElementChildNodes[childIndex])
+                    placeFirst(targetElementChildNodes[childIndex])
                 }
             } else {
                 while (lastMovedNode?.nextSibling && contentInvisible(lastMovedNode?.nextSibling)) {
@@ -1316,7 +1419,7 @@ export async function translate(service: string, results: TranslateResult[]): Pr
         result.textNodes?.forEach(text => {
             text.textContent = ""
         });
-        let textNodes = updateTranslateElementContent(result.translatedMappedHtmlText, result.originalSliceElements || []);
+        let textNodes = updateTranslateElementContent(result.translatedMappedHtmlText, result.originalSliceElements || [], result.unitRange);
         result.replacedTextNodes = textNodes
     }
 }
@@ -1328,7 +1431,7 @@ export async function restore(results: TranslateResult[]): Promise<void> {
         result.replacedTextNodes?.forEach(text => {
             text.textContent = ""
         })
-        updateTranslateElementContent(result.rawMappedHtmlText, result.originalSliceElements || []);
+        updateTranslateElementContent(result.rawMappedHtmlText, result.originalSliceElements || [], result.unitRange);
     }
 }
 //#endregion

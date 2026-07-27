@@ -108,4 +108,33 @@ describe("wrapTextNode2Span", () => {
         const p = document.body.querySelector("p")!;
         expect(wrapTextNode2Span(textNodesOf(p), [], new WeakSet())).toEqual([]);
     });
+
+    it("offsets duo-sequence by startSequence", () => {
+        document.body.innerHTML = "<p>Hi there</p>";
+        const p = document.body.querySelector("p")!;
+
+        const spans = wrapTextNode2Span(textNodesOf(p), ["Hi ", "there"], new WeakSet(), 3);
+
+        expect(spans.map((s) => s.getAttribute("duo-sequence"))).toEqual(["3", "4"]);
+    });
+
+    it("two batches with accumulated offsets keep sequences unique in one container", () => {
+        // Simulates two translation units of the same container being wrapped
+        // one after the other.
+        document.body.innerHTML = "<div><p>A. B.</p><p>C. D.</p></div>";
+        const [first, second] = Array.from(document.body.querySelectorAll("p"));
+
+        const sentences1 = ["A. ", "B."];
+        const spans1 = wrapTextNode2Span(textNodesOf(first as HTMLElement), sentences1, new WeakSet(), 0);
+        const spans2 = wrapTextNode2Span(
+            textNodesOf(second as HTMLElement),
+            ["C. ", "D."],
+            new WeakSet(),
+            sentences1.length,
+        );
+
+        const all = [...spans1, ...spans2].map((s) => s.getAttribute("duo-sequence"));
+        expect(all).toEqual(["0", "1", "2", "3"]);
+        expect(new Set(all).size).toBe(all.length);
+    });
 });

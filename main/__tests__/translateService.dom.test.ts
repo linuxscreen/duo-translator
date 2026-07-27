@@ -186,6 +186,110 @@ describe("getTranslateResult (DOUBLE)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// TranslationUnit path (logical paragraphs)
+// ---------------------------------------------------------------------------
+import { segmentParagraph } from "@/main/dom/segments";
+
+describe("getElementPreProcessResult — per-unit node lists", () => {
+    it("serializes only the given nodes, <bN> numbered from 0 per unit (SINGLE)", () => {
+        document.body.innerHTML = "<div>A <b>x</b><ul><li>ignored</li></ul>B <i>y</i></div>";
+        const div = document.body.querySelector("div")! as HTMLElement;
+        const units = segmentParagraph(div).units;
+        expect(units).toHaveLength(2);
+
+        const res1 = getElementPreProcessResult(div, VIEW_STRATEGY.SINGLE, units[0].nodes);
+        expect(res1.mappedHtmlText).toBe("A <b0>x</b0>");
+        expect(res1.elements[0]).toBe(div);
+        expect(res1.elements[1]).toBe(div.querySelector("b"));
+
+        const res2 = getElementPreProcessResult(div, VIEW_STRATEGY.SINGLE, units[1].nodes);
+        expect(res2.mappedHtmlText).toBe("B <b0>y</b0>");
+        expect(res2.mappedHtmlText).not.toContain("ignored");
+    });
+});
+
+describe("getTranslateResult — TranslationUnit input", () => {
+    it("whole-element unit produces byte-identical provider text (SINGLE and DOUBLE)", async () => {
+        for (const strategy of [VIEW_STRATEGY.SINGLE, VIEW_STRATEGY.DOUBLE]) {
+            const seen: string[][] = [];
+            registerFake((texts) => {
+                seen.push([...texts]);
+                return texts.map((t) => new TranslateResult(`译:${t}`, "en", 1));
+            });
+
+            document.body.innerHTML = "<p>Hello <b>world</b></p>";
+            const legacy = document.body.querySelector("p")! as HTMLElement;
+            await getTranslateResult("fake", [legacy], "zh-CN", strategy);
+
+            document.body.innerHTML = "<p>Hello <b>world</b></p>";
+            const fresh = document.body.querySelector("p")! as HTMLElement;
+            const units = segmentParagraph(fresh).units;
+            expect(units[0].wholeElement).toBe(true);
+            await getTranslateResult("fake", units, "zh-CN", strategy);
+
+            expect(seen[1]).toEqual(seen[0]);
+            expect(seen[0]).toEqual(["Hello <b0>world</b0>"]);
+        }
+    });
+
+    it("multi-unit container sends one text per unit, excluding block children", async () => {
+        const seen: string[][] = [];
+        registerFake((texts) => {
+            seen.push([...texts]);
+            return texts.map((t) => new TranslateResult(`译:${t}`, "en", 1));
+        });
+        document.body.innerHTML = "<div>first part<ul><li>skip me</li></ul>second part</div>";
+        const div = document.body.querySelector("div")! as HTMLElement;
+        const units = segmentParagraph(div).units;
+
+        const results = await getTranslateResult("fake", units, "zh-CN", VIEW_STRATEGY.SINGLE);
+
+        expect(seen[0]).toEqual(["first part", "second part"]);
+        expect(results).toHaveLength(2);
+        expect(results[0].unit).toBe(units[0]);
+        expect(results[1].unit).toBe(units[1]);
+    });
+});
+
+describe("SINGLE per-unit write-back and restore", () => {
+    it("keeps each unit's translation in place around the block child, and restores", async () => {
+        registerFake((texts) => texts.map((t) => new TranslateResult(`译:${t}`, "en", 1)));
+        document.body.innerHTML = "<div>first part<ul><li>keep</li></ul>second part</div>";
+        const div = document.body.querySelector("div")! as HTMLElement;
+        const ul = div.querySelector("ul")!;
+        const units = segmentParagraph(div).units;
+
+        const results = await getTranslateResult("fake", units, "zh-CN", VIEW_STRATEGY.SINGLE);
+        await translate("fake", results);
+
+        // Translated text stays in its unit's position: before / after the <ul>.
+        expect((div.firstChild as Text).textContent).toBe("译:first part");
+        expect(div.firstChild!.nextSibling).toBe(ul);
+        expect(div.lastChild!.textContent).toBe("译:second part");
+        expect(ul.textContent).toBe("keep");
+
+        await restore(results);
+        expect((div.firstChild as Text).textContent).toBe("first part");
+        expect(div.firstChild!.nextSibling).toBe(ul);
+        expect(div.lastChild!.textContent).toBe("second part");
+    });
+});
+
+describe("updateTranslateElementContent — scoped to a unit range", () => {
+    it("only touches direct text nodes inside the range", () => {
+        document.body.innerHTML = "<div>one<ul><li>k</li></ul>two</div>";
+        const div = document.body.querySelector("div")! as HTMLElement;
+        const ul = div.querySelector("ul")!;
+
+        updateTranslateElementContent("新二", [div], { start: ul, end: null });
+
+        expect(div.firstChild!.textContent).toBe("one");
+        expect(div.lastChild!.textContent).toBe("新二");
+        expect(div.lastChild!.previousSibling).toBe(ul);
+    });
+});
+
+// ---------------------------------------------------------------------------
 // translateHtml (DeepL — the provider that surfaces translatedHtmlText)
 // ---------------------------------------------------------------------------
 describe("DeepLTranslateService.translateHtml", () => {

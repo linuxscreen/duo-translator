@@ -21,15 +21,22 @@ export function splitSentence(text: string | null): string[] {
 
 /**
  * Wrap the given text nodes into <duo-span> elements, one run per sentence,
- * tagging each with `duo-sequence="<sentence index>"`. Text nodes are consumed
- * greedily; when a sentence ends mid-node the node is split. Every span created
- * is registered in `ignoreMutationElements` so the content script's mutation
- * observer ignores our own DOM writes. Returns the spans in creation order.
+ * tagging each with `duo-sequence="<startSequence + sentence index>"`. Text
+ * nodes are consumed greedily; when a sentence ends mid-node the node is
+ * split. Every span created is registered in `ignoreMutationElements` so the
+ * content script's mutation observer ignores our own DOM writes. Returns the
+ * spans in creation order.
+ *
+ * `startSequence` lets callers wrapping several translation units of the same
+ * container keep duo-sequence unique across the container (accumulate by each
+ * batch's sentence count) — the highlight handler pairs original/translation
+ * spans by that number.
  */
 export function wrapTextNode2Span(
     textNodes: Text[],
     sentences: string[],
     ignoreMutationElements: WeakSet<object>,
+    startSequence = 0,
 ): HTMLElement[] {
     let j = 0;
     const spans: HTMLElement[] = [];
@@ -44,7 +51,7 @@ export function wrapTextNode2Span(
                 if (sentence.startsWith(text)) {
                     const span = document.createElement("duo-span");
                     ignoreMutationElements.add(span);
-                    span.setAttribute("duo-sequence", i.toString());
+                    span.setAttribute("duo-sequence", (startSequence + i).toString());
                     let spanText = document.createTextNode(text);
                     span.appendChild(spanText);
                     textNodes[j]?.parentElement?.insertBefore(span, textNodes[j]);
@@ -60,7 +67,7 @@ export function wrapTextNode2Span(
                     textNodes[j].textContent = text.slice(sentence.length);
                     const span = document.createElement("duo-span");
                     ignoreMutationElements.add(span);
-                    span.setAttribute("duo-sequence", i.toString());
+                    span.setAttribute("duo-sequence", (startSequence + i).toString());
                     let spanText = document.createTextNode(sentence);
                     span.appendChild(spanText);
                     textNodes[j].parentElement?.insertBefore(span, textNodes[j]);
