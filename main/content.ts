@@ -36,6 +36,7 @@ import {
 } from "@/main/dom/paragraphMarks";
 import { isBlockBoundary, segmentParagraph, type TranslationUnit } from "@/main/dom/segments";
 import { BLOCK_SELECTOR } from "@/main/constants";
+import { initVideoSubtitle, type VideoSubtitleController } from "@/main/videoSubtitle";
 
 declare global {
     var __debugTranslationServices:
@@ -99,6 +100,8 @@ export async function content() {
     }
     const ruleMode: RuleModeController = createRuleMode(domainWithPort)
     let floatBall: FloatBallController | null = null
+    // Video bilingual subtitles (YouTube only for now) — top-frame singleton.
+    let videoSubtitle: VideoSubtitleController | null = null
     // AI Writing dot teardown. Top frame: the mount's unmount fn. Sub-frame: the
     // deferred-mount disposer (drops the focus listener + unmounts if up). Reset
     // on each init() so a global-switch off→on cycle re-mounts cleanly.
@@ -910,6 +913,12 @@ export async function content() {
         // page translation is off / restricted, the writing assistant should
         // still be available on user input fields. In sub-frames the dot mounts
         // inside the iframe and is deferred until an input there is focused.
+        // Video bilingual subtitles — top frame on supported sites only. The
+        // controller follows its own VIDEO_SUBTITLE_SWITCH internally; this
+        // only ties it to the extension-wide global switch lifecycle.
+        if (isTopFrame && window.location.hostname === "www.youtube.com" && !videoSubtitle) {
+            videoSubtitle = initVideoSubtitle()
+        }
         aiWritingDotDisposed = false
         if (isTopFrame) {
             mountAiWritingDot({ domain: domainWithPort })
@@ -943,6 +952,8 @@ export async function content() {
         observer.disconnect()
         removeFloatBall()
         removeAiWritingDot()
+        videoSubtitle?.destroy()
+        videoSubtitle = null
         restoreOriginalPage(true, true)
     }
 

@@ -1,5 +1,6 @@
-import { AI_TASK, DEFAULT_VALUE, LANGUAGES_MAP, PORT_NAME } from "@/main/constants";
+import { ACTION, AI_TASK, DEFAULT_VALUE, LANGUAGES_MAP, PORT_NAME } from "@/main/constants";
 import { browser } from "wxt/browser";
+import { sendMessageToBackground } from "@/utils/message";
 
 // ---------------------------------------------------------------------------
 // Provider model & catalog
@@ -114,9 +115,28 @@ export type AiStreamMessage =
 // Prompt building
 // ---------------------------------------------------------------------------
 
+/**
+ * Hard ceiling on the text of one AI request.
+ *
+ * A backstop against runaway PROGRAMMATIC input, not a user-facing limit: it
+ * sits well above any plausible hand-written selection, but below the point
+ * where a request costs real money and stalls for a minute. Features that feed
+ * generated text to a provider (subtitle segmentation, page translation) must
+ * chunk to their own, much tighter budget — the video subtitle segmenter once
+ * shipped whole transcripts this way. Enforced here because `buildPrompt` is
+ * the one place every AI path goes through; the throw is reported to the caller
+ * as a stream error.
+ */
+export const AI_MAX_INPUT_CHARS = 20_000;
+
 export function buildPrompt(req: AiStreamRequest): ChatMessage[] {
     const { task, payload } = req;
     const text = payload.text ?? "";
+    if (text.length > AI_MAX_INPUT_CHARS) {
+        throw new Error(
+            `Text too long for one AI request (${text.length} chars, limit ${AI_MAX_INPUT_CHARS}). Split it into smaller pieces.`,
+        );
+    }
     switch (task) {
         case AI_TASK.TRANSLATE: {
             const lang = LANGUAGES_MAP.get(payload.targetLang || DEFAULT_VALUE.AI_TARGET_LANGUAGE)?.name;
@@ -264,6 +284,7 @@ export async function* openAiChatStream(
             stream: true,
             ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
             ...(opts.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),
+            ...(opts.params !== undefined ? opts.params : {})
         }),
         signal: opts.signal,
     });
@@ -699,6 +720,62 @@ export function startAiChatStream(req: AiStreamRequest): {
         // forever and the caller's `running` flag never clears.
         abort: () => { finish(); try { port.disconnect(); } catch { } },
     };
+}
+
+// ---------------------------------------------------------------------------
+// Content-side helper: one-shot completion (no streaming)
+// ---------------------------------------------------------------------------
+
+/** Upper bound for one non-streaming AI call. Generous — providers can be slow. */
+const AI_COMPLETE_TIMEOUT = 120_000;
+
+/**
+ * Run one AI task and resolve with the complete answer.
+ *
+ * The counterpart to {@link startAiChatStream}, for callers that can do nothing
+ * with a partial answer — subtitle segmentation has to align the model's whole
+ * output against the source text before it means anything, so streaming it just
+ * pays for a port and one message per delta. Background sends the upstream
+ * request with `stream:false` and, where the provider supports it, thinking
+ * turned off.
+ *
+ * Cancellation goes out of band (`sendMessage` has no native abort): the
+ * request is tagged with a requestId and an abort fires AI_COMPLETE_ABORT with
+ * that id, so background really cancels the upstream fetch.
+ *
+ * Throws on provider/config failure — callers are expected to have a fallback.
+ */
+export async function aiComplete(req: AiStreamRequest, signal?: AbortSignal): Promise<string> {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    const requestId =
+        (globalThis.crypto?.randomUUID?.() as string | undefined) ??
+        `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+    let onAbort: (() => void) | null = null;
+    if (signal) {
+        onAbort = () => {
+            void sendMessageToBackground({ action: ACTION.AI_COMPLETE_ABORT, data: { requestId } });
+        };
+        signal.addEventListener("abort", onAbort);
+    }
+
+    try {
+        const res = (await sendMessageToBackground(
+            {
+                action: ACTION.AI_COMPLETE,
+                data: { requestId, providerId: req.providerId, task: req.task, payload: req.payload },
+            },
+            AI_COMPLETE_TIMEOUT,
+        )) as { text?: string } | undefined;
+
+        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        // `sendMessageToBackground` turns a failed request into `undefined`
+        // rather than throwing, so this is the error path too.
+        if (!res || typeof res.text !== "string") throw new Error("AI request failed");
+        return res.text;
+    } finally {
+        if (onAbort) signal?.removeEventListener("abort", onAbort);
+    }
 }
 
 // ---------------------------------------------------------------------------

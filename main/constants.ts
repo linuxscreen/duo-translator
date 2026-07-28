@@ -184,6 +184,15 @@ export enum ACTION {
     // abort, so content fires this with the same requestId on signal abort;
     // background aborts the in-flight fetch for that request.
     AI_TRANSLATE_ABORT = 'aiTranslateAbort',
+    // Generic one-shot (non-streaming) AI completion: content sends a task +
+    // payload, background builds the prompt, calls chatCompleteNonStream and
+    // returns the whole answer. For callers that have nothing to show until the
+    // answer is complete (subtitle sentence segmentation), where streaming only
+    // adds per-delta port traffic and keeps a port open for the whole request.
+    AI_COMPLETE = 'aiComplete',
+    // Out-of-band cancellation for AI_COMPLETE (same requestId mechanism as
+    // AI_TRANSLATE_ABORT).
+    AI_COMPLETE_ABORT = 'aiCompleteAbort',
     // HTTP proxy for the built-in translate providers (Google/Microsoft).
     // Content-script fetches are subject to the host page's CSP connect-src in
     // Firefox MV3 and to page-origin CORS in Chrome MV3, so the actual request
@@ -325,6 +334,30 @@ export enum CONFIG_KEY {
     DOUBLE_TAP_TRANSLATE_SELECTION = 'doubleTapTranslateSelection',
     DOUBLE_TAP_TOGGLE_PARAGRAPH = 'doubleTapToggleParagraph',
     DOUBLE_TAP_TRANSLATE_INPUT = 'doubleTapTranslateInput',
+    // Video bilingual subtitles (currently YouTube only).
+    // Global feature switch — the player quick-menu's "Disable permanently"
+    // and the Options tab's master toggle both write this. Default on.
+    VIDEO_SUBTITLE_SWITCH = 'videoSubtitleSwitch',
+    // Auto-enable bilingual subtitles when a video with captions loads.
+    VIDEO_SUBTITLE_AUTO_ENABLE = 'videoSubtitleAutoEnable',
+    // 'bilingual' (original + translation) | 'translation' (translation only).
+    VIDEO_SUBTITLE_DISPLAY_MODE = 'videoSubtitleDisplayMode',
+    // Translate service for subtitles — same key scheme as AI_TRANSLATE_SERVICE
+    // (a TRANSLATE_SERVICE value or `ai:<providerId>`), stored separately.
+    VIDEO_SUBTITLE_TRANSLATE_SERVICE = 'videoSubtitleTranslateService',
+    // Subtitle target language. Empty/undefined means "follow the page
+    // translation target language" (CONFIG_KEY.TARGET_LANGUAGE).
+    VIDEO_SUBTITLE_TARGET_LANGUAGE = 'videoSubtitleTargetLanguage',
+    // Pause playback while the user selects subtitle text. Default off.
+    VIDEO_SUBTITLE_PAUSE_ON_SELECT = 'videoSubtitlePauseOnSelect',
+    // VideoSubtitleStyle object (colors / sizes / weights / background).
+    VIDEO_SUBTITLE_STYLE = 'videoSubtitleStyle',
+    // Use the AI provider to re-segment auto-generated captions into
+    // sentences (falls back to rule-based segmentation on failure).
+    VIDEO_SUBTITLE_AI_SEGMENT = 'videoSubtitleAiSegment',
+    // Vertical position of the subtitle overlay, percent of player height
+    // measured from the bottom edge (user-draggable, persisted).
+    VIDEO_SUBTITLE_POSITION = 'videoSubtitlePosition',
 }
 
 export const DEFAULT_VALUE = {
@@ -354,7 +387,26 @@ export const DEFAULT_VALUE = {
     DOUBLE_TAP_TRANSLATE_SELECTION: true,
     DOUBLE_TAP_TOGGLE_PARAGRAPH: true,
     DOUBLE_TAP_TRANSLATE_INPUT: true,
+    VIDEO_SUBTITLE_SWITCH: true,
+    VIDEO_SUBTITLE_AUTO_ENABLE: true,
+    VIDEO_SUBTITLE_DISPLAY_MODE: 'bilingual',
+    VIDEO_SUBTITLE_TRANSLATE_SERVICE: 'microsoft',
+    VIDEO_SUBTITLE_AI_SEGMENT: false,
+    VIDEO_SUBTITLE_PAUSE_ON_SELECT: false,
+    // Percent of player height from the bottom edge. 0 means "as low as it is
+    // allowed to go": clampPct lifts it to the measured floor (the top of the
+    // progress bar), so the default sits right above the controls and keeps
+    // tracking them as the player is resized — which a fixed percentage could
+    // not do, the control bar being a different share of the height at every
+    // player size.
+    VIDEO_SUBTITLE_POSITION: 8,
 } as const;
+
+/** Display modes for video bilingual subtitles. */
+export enum VIDEO_SUBTITLE_DISPLAY_MODE {
+    BILINGUAL = 'bilingual',
+    TRANSLATION = 'translation',
+}
 
 // CONFIG_KEY value -> enum key name. Lets us look up a default for any config
 // key whose enum-key name also exists on DEFAULT_VALUE (e.g. CONFIG_KEY.GLOBAL_SWITCH

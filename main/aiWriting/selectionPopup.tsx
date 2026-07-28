@@ -37,8 +37,28 @@ export interface SelectionSeed {
     rect: DOMRect | null;
 }
 
+/**
+ * Keep the popup visible when a fullscreen element is active (e.g. selecting
+ * video subtitle text in a fullscreen player): only the fullscreen element's
+ * subtree is rendered, so the host must live inside it. Reparenting the SAME
+ * host preserves the ShadowRoot + React root (no state loss). Called on every
+ * open and on fullscreen changes.
+ */
+function reparentForFullscreen(): void {
+    const host = document.getElementById(HOST_ID);
+    if (!host) return;
+    const target = document.fullscreenElement ?? document.documentElement;
+    // A fullscreen host that can't contain children (e.g. <video>) is skipped —
+    // the popup can't be shown over it anyway.
+    if (target instanceof HTMLVideoElement) return;
+    if (host.parentElement !== target) target.appendChild(host);
+}
+
 function ensureMounted(): void {
-    if (popupRoot) return;
+    if (popupRoot) {
+        reparentForFullscreen();
+        return;
+    }
     let host = document.getElementById(HOST_ID) as HTMLElement | null;
     if (!host) {
         host = document.createElement("div");
@@ -46,6 +66,8 @@ function ensureMounted(): void {
         host.setAttribute("data-duo-ai-ui", "");
         document.documentElement.appendChild(host);
     }
+    document.addEventListener("fullscreenchange", reparentForFullscreen);
+    reparentForFullscreen();
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
     loadTailwindIntoShadow(shadow);
     const mount = document.createElement("div");

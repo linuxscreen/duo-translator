@@ -701,6 +701,47 @@ export async function background() {
                 })();
                 return true;
             }
+            case ACTION.AI_COMPLETE: {
+                // Generic one-shot AI completion (see ACTION.AI_COMPLETE).
+                // Same requestId-based cancellation as AI_TRANSLATE_TEXT.
+                (async () => {
+                    const { requestId, providerId, task, payload } = (message.data || {}) as {
+                        requestId?: string;
+                        providerId?: string;
+                        task: AI_TASK;
+                        payload: { text: string; targetLang?: string; systemPrompt?: string; lang?: string };
+                    };
+                    const controller = new AbortController();
+                    if (requestId) aiCompleteAborters.set(requestId, controller);
+                    try {
+                        const provider = await resolveAiProvider(providerId);
+                        if (!provider) throw new Error("No enabled AI provider configured.");
+                        const messages = buildPrompt({ task, providerId: provider.id, payload });
+                        const text = await chatCompleteNonStream(provider, messages, {
+                            temperature: 0,
+                            signal: controller.signal,
+                            params: providerTaskParams(provider),
+                        });
+                        sendResponse({ status: STATUS_SUCCESS, data: { text } });
+                    } catch (e: any) {
+                        console.error(APP_NAME_WITH_SUFFIX, 'AI complete failed:', e?.message || e);
+                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
+                    } finally {
+                        if (requestId) aiCompleteAborters.delete(requestId);
+                    }
+                })();
+                return true;
+            }
+            case ACTION.AI_COMPLETE_ABORT: {
+                const requestId: string | undefined = message.data?.requestId;
+                const controller = requestId ? aiCompleteAborters.get(requestId) : undefined;
+                if (controller) {
+                    controller.abort();
+                    aiCompleteAborters.delete(requestId!);
+                }
+                sendResponse({ status: STATUS_SUCCESS });
+                break;
+            }
             case ACTION.AI_TRANSLATE_ABORT: {
                 // Cancel the in-flight AI_TRANSLATE_TEXT fetch for this requestId.
                 const requestId: string | undefined = message.data?.requestId;
@@ -1221,6 +1262,35 @@ const aiTranslateAborters = new Map<string, AbortController>();
 // Same pattern for TRANSLATE_PROXY_FETCH (Google/Microsoft background proxy).
 const translateProxyAborters = new Map<string, AbortController>();
 
+// ...and for the generic one-shot ACTION.AI_COMPLETE.
+const aiCompleteAborters = new Map<string, AbortController>();
+
+/**
+ * Resolve which provider a request should use: the explicitly requested one,
+ * else the stored active one, else the first enabled one. Disabled providers
+ * are never selected.
+ */
+async function resolveAiProvider(providerId?: string): Promise<AiProvider | undefined> {
+    const raw_list: any[] = ((await configRepo.get(CONFIG_KEY.AI_PROVIDERS)) as any[] | null) || [];
+    const list: AiProvider[] = raw_list.map(normalizeProvider);
+    if (list.length === 0) return undefined;
+    const id = providerId || (await configRepo.get(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID));
+    return list.find((p) => p.id === id && p.enabled !== false)
+        || list.find((p) => p.enabled !== false);
+}
+
+/**
+ * Provider-specific body extras for our non-interactive tasks (page
+ * translation, subtitle segmentation). These want the answer, not the model's
+ * reasoning: thinking costs tokens and seconds, and buys nothing on
+ * mechanical rewrite work. DeepSeek's reasoning models take this switch in the
+ * request body; providers without one are left alone.
+ */
+function providerTaskParams(provider: AiProvider): any {
+    if (provider.type === "deepseek") return { thinking: { type: "disabled" } };
+    return undefined;
+}
+
 /**
  * Run a page-translation request against the configured AI provider and return
  * the translations array. Shared by both the port-based streaming bridge
@@ -1239,21 +1309,11 @@ async function aiPageTranslate(
     targetLang: string,
     signal?: AbortSignal,
 ): Promise<string[]> {
-    const raw_list: any[] = ((await configRepo.get(CONFIG_KEY.AI_PROVIDERS)) as any[] | null) || [];
-    const list: AiProvider[] = raw_list.map(normalizeProvider);
-    let provider: AiProvider | undefined;
-    if (list.length > 0) {
-        const id = providerId || (await configRepo.get(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID));
-        provider = list.find((p) => p.id === id && p.enabled !== false)
-            || list.find((p) => p.enabled !== false);
-    }
+    const provider = await resolveAiProvider(providerId);
     if (!provider) throw new Error("No enabled AI provider configured.");
 
     let temperature = 0; // todo support use defined temperature
-    let params: any; // todo support use defined params
-    if (provider.type === "deepseek") {
-        params = { thinking: { type: "disabled" } }
-    }
+    const params = providerTaskParams(provider); // todo support use defined params
 
     const all = texts ?? [];
     if (all.length === 0) return [];

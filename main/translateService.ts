@@ -920,7 +920,7 @@ function cachePutMany(
  * cache. Returns undefined to mirror the original "no results" signal (unknown
  * service / provider failure) so callers bail out exactly as before.
  */
-async function translateTextsWithCache(
+export async function translateTextsWithCache(
     service: string,
     texts: string[],
     targetLang: string,

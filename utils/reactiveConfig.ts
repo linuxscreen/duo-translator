@@ -83,6 +83,52 @@ export function readConfig<T>(key: CONFIG_KEY, defaultValue: T): T {
 }
 
 /**
+ * Whether this key has been read from storage yet.
+ *
+ * `readConfig` cannot distinguish "not hydrated" from "stored as the default",
+ * and hydration is async — so a caller that acts on the first read of a
+ * disabled switch will briefly behave as if it were enabled (mounting UI that
+ * it then has to tear down, which the user sees flash). Callers whose first
+ * action is irreversible or visible should wait for this to turn true.
+ *
+ * The cache entry exists after hydration even when the stored value is absent,
+ * so presence — not the value — is the signal.
+ */
+export function isConfigHydrated(key: CONFIG_KEY): boolean {
+    ensureWatching(key);
+    return cache.has(key);
+}
+
+/**
+ * Resolves once every listed key has been read from storage, so the
+ * `readConfig` calls that follow return stored values rather than the caller's
+ * defaults.
+ *
+ * The awaitable form of {@link isConfigHydrated}, for call sites that would
+ * otherwise have to re-check on a timer: hydration is one-way (a key only ever
+ * goes from absent to present in the cache, never back), so waiting once is
+ * equivalent to polling — and says what it means.
+ */
+export function whenConfigHydrated(keys: readonly CONFIG_KEY[]): Promise<void> {
+    return Promise.all(keys.map(hydratedOne)).then(() => undefined);
+}
+
+function hydratedOne(key: CONFIG_KEY): Promise<void> {
+    // Also starts the watch, which is what kicks hydration off in the first place.
+    if (isConfigHydrated(key)) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+        // Safe to reference before assignment: `subscribe` never invokes the
+        // callback synchronously — hydration lands in a later microtask.
+        let unsubscribe: (() => void) | undefined;
+        unsubscribe = subscribe(key, () => {
+            if (!cache.has(key)) return;
+            unsubscribe?.();
+            resolve();
+        });
+    });
+}
+
+/**
  * Reactive config value. Re-renders the calling component whenever the key is
  * written from ANY context (Options, popup, background, this frame).
  *

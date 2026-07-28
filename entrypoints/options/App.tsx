@@ -1,4 +1,4 @@
-import { ExternalLink, Globe, KeyRound, Languages, SlidersHorizontal, Sparkles, Component } from 'lucide-react';
+import { ExternalLink, Globe, KeyRound, Languages, SlidersHorizontal, Sparkles, Component, Captions } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Translation, useTranslation } from 'react-i18next';
 import { cn } from '@/lib/cn';
@@ -8,11 +8,12 @@ import { SettingsPage } from './pages/SettingsPage';
 import { ShortcutsPage } from './pages/ShortcutsPage';
 import { TranslationPage } from './pages/TranslationPage';
 import { AiWritingPage } from './pages/AiWritingPage';
+import { VideoSubtitlePage } from './pages/VideoSubtitlePage';
 import { browser } from 'wxt/browser';
 import { ServicesPage } from './pages/ServicesPage';
 import { APP_NAME, APP_NAME_PASCAL_CASE } from '@/main/constants';
 
-type TabId = 'settings' | 'services' | 'translation' | 'aiWriting' | 'shortcuts';
+type TabId = 'settings' | 'services' | 'translation' | 'aiWriting' | 'videoSubtitle' | 'shortcuts';
 
 type Tab = {
   id: TabId;
@@ -20,7 +21,7 @@ type Tab = {
   icon: ReactNode;
 };
 
-const VALID_TABS: TabId[] = ['settings', 'services', 'translation', 'aiWriting', 'shortcuts'];
+const VALID_TABS: TabId[] = ['settings', 'services', 'translation', 'aiWriting', 'videoSubtitle', 'shortcuts'];
 
 function getInitialTab(): TabId {
   const hash = window.location.hash.replace(/^#/, '') as TabId;
@@ -62,6 +63,11 @@ export default function App() {
       id: 'aiWriting',
       label: t('aiWriting', 'AI Writing'),
       icon: <Sparkles className="h-4 w-4" strokeWidth={1.6} />,
+    },
+    {
+      id: 'videoSubtitle',
+      label: t('videoSubtitle', 'Video Subtitles'),
+      icon: <Captions className="h-4 w-4" strokeWidth={1.6} />,
     },
     {
       id: 'shortcuts',
@@ -153,6 +159,7 @@ export default function App() {
           {tab === 'services' && <ServicesPage />}
           {tab === 'translation' && <TranslationPage />}
           {tab === 'aiWriting' && <AiWritingPage />}
+          {tab === 'videoSubtitle' && <VideoSubtitlePage />}
           {tab === 'shortcuts' && <ShortcutsPage />}
         </main>
       </div>
