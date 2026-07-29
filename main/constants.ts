@@ -416,6 +416,23 @@ export const CONFIG_VALUE_TO_KEY: Record<string, string> = Object.fromEntries(
 );
 
 /**
+ * The shipped default for a config key, or `undefined` for keys that have no
+ * entry in DEFAULT_VALUE (their "unset" state is meaningful — e.g. a target
+ * language the user has never chosen).
+ *
+ * The single source of defaults: every reader (`configRepo`, `readConfig`)
+ * resolves through here, so an unset key reads the same everywhere and a
+ * default is changed in exactly one place.
+ */
+export function configDefault(name: string): unknown {
+    const enumKey = CONFIG_VALUE_TO_KEY[name];
+    if (enumKey && enumKey in DEFAULT_VALUE) {
+        return (DEFAULT_VALUE as Record<string, unknown>)[enumKey];
+    }
+    return undefined;
+}
+
+/**
  * Long-lived port names used for streaming background <-> content traffic.
  * For OpenAI-compatible SSE we tunnel deltas over a runtime port instead of
  * one-shot sendMessage so the content side can consume with `for await`.

@@ -5,7 +5,6 @@ import { browser } from "wxt/browser";
 import {
     ACTION,
     CONFIG_KEY,
-    DEFAULT_VALUE,
     LANGUAGES,
     VIDEO_SUBTITLE_DISPLAY_MODE,
 } from "@/main/constants";
@@ -167,9 +166,6 @@ export function mountSubtitleControls(deps: SubtitleControlsDeps): SubtitleContr
     };
 }
 
-const STABLE_PROVIDERS_DEFAULT: unknown[] = [];
-const STABLE_DISABLED_DEFAULT: string[] = [];
-
 function SubtitleMenuApp({
     deps,
     anchorButton,
@@ -192,27 +188,18 @@ function SubtitleMenuApp({
     const [confirmOpen, setConfirmOpen] = useState(false);
     const cardRef = useRef<HTMLDivElement>(null);
 
-    const mode = useConfig<string>(
-        CONFIG_KEY.VIDEO_SUBTITLE_DISPLAY_MODE,
-        DEFAULT_VALUE.VIDEO_SUBTITLE_DISPLAY_MODE,
-    );
-    const serviceKey = useConfig<string | undefined>(CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE, undefined);
+    const mode = useConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_DISPLAY_MODE);
+    const serviceKey = useConfig<string | undefined>(CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE);
     // Subtitle target language: its own key, falling back to the page
     // translation target so a fresh install already has a sensible value.
-    const subtitleTargetLang = useConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_TARGET_LANGUAGE, "");
-    const pageTargetLang = useConfig<string>(CONFIG_KEY.TARGET_LANGUAGE, "");
+    // Neither key has a DEFAULT_VALUE — "never chosen" is the meaningful state.
+    const subtitleTargetLang = useConfig<string | undefined>(CONFIG_KEY.VIDEO_SUBTITLE_TARGET_LANGUAGE);
+    const pageTargetLang = useConfig<string | undefined>(CONFIG_KEY.TARGET_LANGUAGE);
     const targetLang = subtitleTargetLang || pageTargetLang || navigator.language.split("-")[0];
-    const aiProviders = useConfig<unknown[]>(CONFIG_KEY.AI_PROVIDERS, STABLE_PROVIDERS_DEFAULT);
-    const disabledServices = useConfig<string[]>(
-        CONFIG_KEY.DISABLED_TRANSLATE_SERVICES,
-        STABLE_DISABLED_DEFAULT,
-    );
+    const aiProviders = useConfig<unknown>(CONFIG_KEY.AI_PROVIDERS);
+    const disabledServices = useConfig<string[] | undefined>(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES);
     const { activeService, serviceOptions } = useMemo(() => {
-        const ctx = buildAiTranslateService(
-            serviceKey ?? DEFAULT_VALUE.VIDEO_SUBTITLE_TRANSLATE_SERVICE,
-            aiProviders,
-            disabledServices,
-        );
+        const ctx = buildAiTranslateService(serviceKey, aiProviders, disabledServices);
         return {
             activeService: ctx.activeService,
             serviceOptions: buildServiceOptions(ctx.enabledTranslateServices, ctx.enabledAiProviders),

@@ -397,10 +397,12 @@ export async function content() {
     // toggles are read live on trigger so the latest settings apply.
     const DOUBLE_TAP_INTERVAL_MS = 400;
     let lastModifierTapTime = 0;
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', async (e) => {
         // Ignore auto-repeat while the key is held.
         if (e.repeat) return;
-        const modifier = readConfig<string>(CONFIG_KEY.DOUBLE_TAP_MODIFIER, DEFAULT_VALUE.DOUBLE_TAP_MODIFIER);
+        // Nothing before this point touches the event synchronously (no
+        // preventDefault/stopPropagation), so awaiting here is safe.
+        const modifier = await readConfig<string>(CONFIG_KEY.DOUBLE_TAP_MODIFIER);
         const expectedKey = modifier === 'alt' ? 'Alt' : 'Control';
         if (e.key !== expectedKey) {
             // Any non-modifier key (or the wrong modifier) breaks the tap sequence,
@@ -411,7 +413,7 @@ export async function content() {
         const now = Date.now();
         if (now - lastModifierTapTime <= DOUBLE_TAP_INTERVAL_MS) {
             lastModifierTapTime = 0;
-            handleDoubleTapModifier();
+            void handleDoubleTapModifier();
         } else {
             lastModifierTapTime = now;
         }
@@ -675,10 +677,12 @@ export async function content() {
     // Double-tap modifier handler. Only one action fires per gesture, checked in
     // priority order: an active text selection wins, then a focused editable
     // input, then the paragraph under the mouse. Each is gated by its own toggle.
-    function handleDoubleTapModifier() {
-        const doSelection = readConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TRANSLATE_SELECTION, DEFAULT_VALUE.DOUBLE_TAP_TRANSLATE_SELECTION);
-        const doInput = readConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TRANSLATE_INPUT, DEFAULT_VALUE.DOUBLE_TAP_TRANSLATE_INPUT);
-        const doParagraph = readConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TOGGLE_PARAGRAPH, DEFAULT_VALUE.DOUBLE_TAP_TOGGLE_PARAGRAPH);
+    async function handleDoubleTapModifier() {
+        const [doSelection, doInput, doParagraph] = await Promise.all([
+            readConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TRANSLATE_SELECTION),
+            readConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TRANSLATE_INPUT),
+            readConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TOGGLE_PARAGRAPH),
+        ]);
 
         if (doSelection) {
             const selection = window.getSelection();

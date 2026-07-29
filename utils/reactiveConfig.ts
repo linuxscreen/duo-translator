@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { storage, type StorageItemKey } from "wxt/utils/storage";
-import type { CONFIG_KEY } from "@/main/constants";
+import { configDefault, type CONFIG_KEY } from "@/main/constants";
 
 /**
  * Generic reactive view over `chrome.storage.local` config keys.
@@ -32,6 +32,9 @@ const storageKey = (key: CONFIG_KEY): StorageItemKey =>
 // snapshot is `undefined`; once hydrated/changed the stored reference is
 // authoritative and stable (so `useSyncExternalStore` won't loop).
 const cache = new Map<string, unknown>();
+// First read from storage, per key. Kept so `readConfig` can await it instead
+// of handing back the caller's default before the value has landed.
+const hydration = new Map<string, Promise<void>>();
 const subscribers = new Map<string, Set<() => void>>();
 // One live `storage.watch` unwatcher per key. Kept for the page lifetime even
 // when subscriber count hits zero — config keys are few and long-lived, and
@@ -47,10 +50,10 @@ function ensureWatching(key: CONFIG_KEY) {
     watching.add(key);
     const sk = storageKey(key);
     // One-shot hydration.
-    void storage.getItem(sk).then((v) => {
+    hydration.set(key, storage.getItem(sk).then((v) => {
         cache.set(key, v ?? undefined);
         notify(key);
-    });
+    }));
     // React to every future write from any context.
     storage.watch(sk, (newValue) => {
         cache.set(key, newValue ?? undefined);
@@ -72,73 +75,50 @@ function subscribe(key: CONFIG_KEY, cb: () => void): () => void {
 }
 
 /**
- * Imperative cached read for non-React call sites (event handlers, plain
- * helpers). Returns `defaultValue` until the key has hydrated; starts watching
- * the key so subsequent reads are fresh.
+ * Imperative read for non-React call sites (event handlers, plain helpers).
+ * Always resolves to the STORED value, falling back to the key's shipped
+ * default from `DEFAULT_VALUE` (via {@link configDefault}) when it has never
+ * been written — the same resolution `configRepo` uses, so a given key reads
+ * identically through either path. Keys with no DEFAULT_VALUE entry read as
+ * `undefined`, which for them is a meaningful "user has not chosen".
+ *
+ * Async on purpose. The first read of a key has to go to `chrome.storage`,
+ * which is async, and a synchronous version could only paper over that by
+ * returning the default — indistinguishable, to the caller, from a stored value
+ * that happens to equal it. That silent wrong answer cost this codebase five
+ * separate bugs (a saved subtitle position lost on reload, a menu check-mark
+ * inverted, a disabled feature's button flashing on screen, a whole video
+ * segmented with the wrong setting). Awaiting is cheap: only the first read per
+ * key actually waits on storage, later ones resolve from the cache on a
+ * microtask, and every write from any context refreshes it through `watch`.
  */
-export function readConfig<T>(key: CONFIG_KEY, defaultValue: T): T {
+export async function readConfig<T>(key: CONFIG_KEY): Promise<T> {
     ensureWatching(key);
+    if (!cache.has(key)) await hydration.get(key);
     const v = cache.get(key);
-    return v === undefined ? defaultValue : (v as T);
-}
-
-/**
- * Whether this key has been read from storage yet.
- *
- * `readConfig` cannot distinguish "not hydrated" from "stored as the default",
- * and hydration is async — so a caller that acts on the first read of a
- * disabled switch will briefly behave as if it were enabled (mounting UI that
- * it then has to tear down, which the user sees flash). Callers whose first
- * action is irreversible or visible should wait for this to turn true.
- *
- * The cache entry exists after hydration even when the stored value is absent,
- * so presence — not the value — is the signal.
- */
-export function isConfigHydrated(key: CONFIG_KEY): boolean {
-    ensureWatching(key);
-    return cache.has(key);
-}
-
-/**
- * Resolves once every listed key has been read from storage, so the
- * `readConfig` calls that follow return stored values rather than the caller's
- * defaults.
- *
- * The awaitable form of {@link isConfigHydrated}, for call sites that would
- * otherwise have to re-check on a timer: hydration is one-way (a key only ever
- * goes from absent to present in the cache, never back), so waiting once is
- * equivalent to polling — and says what it means.
- */
-export function whenConfigHydrated(keys: readonly CONFIG_KEY[]): Promise<void> {
-    return Promise.all(keys.map(hydratedOne)).then(() => undefined);
-}
-
-function hydratedOne(key: CONFIG_KEY): Promise<void> {
-    // Also starts the watch, which is what kicks hydration off in the first place.
-    if (isConfigHydrated(key)) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-        // Safe to reference before assignment: `subscribe` never invokes the
-        // callback synchronously — hydration lands in a later microtask.
-        let unsubscribe: (() => void) | undefined;
-        unsubscribe = subscribe(key, () => {
-            if (!cache.has(key)) return;
-            unsubscribe?.();
-            resolve();
-        });
-    });
+    return (v === undefined ? configDefault(key) : v) as T;
 }
 
 /**
  * Reactive config value. Re-renders the calling component whenever the key is
  * written from ANY context (Options, popup, background, this frame).
  *
- * For object/array values pass a stable `defaultValue` (a module-level
- * constant) so the pre-hydration snapshot stays referentially stable.
+ * Defaults resolve exactly as in {@link readConfig} — from `DEFAULT_VALUE`, not
+ * from the call site. Besides keeping the two readers in agreement, this fixes
+ * the referential-stability trap the old `defaultValue` parameter had: an
+ * inline `[]` was a fresh array every render, so the pre-hydration snapshot
+ * churned and `useSyncExternalStore` could loop. `DEFAULT_VALUE`'s entries are
+ * module-level constants, so the snapshot is stable by construction.
+ *
+ * Unlike `readConfig` this cannot await, so it DOES return the default until
+ * hydration lands (inherent to a synchronous React store) and re-renders with
+ * the stored value when it arrives. Anything that must not act on a provisional
+ * value belongs in `readConfig`, not here.
  */
-export function useConfig<T>(key: CONFIG_KEY, defaultValue: T): T {
+export function useConfig<T>(key: CONFIG_KEY): T {
     const value = useSyncExternalStore(
         (cb) => subscribe(key, cb),
         () => cache.get(key) as T | undefined,
     );
-    return value === undefined ? defaultValue : value;
+    return (value === undefined ? configDefault(key) : value) as T;
 }

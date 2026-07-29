@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { browser } from 'wxt/browser';
-import { CONFIG_KEY, DEFAULT_VALUE, IS_FIREFOX } from '@/main/constants';
+import { CONFIG_KEY, IS_FIREFOX } from '@/main/constants';
 import { useConfig } from '@/utils/reactiveConfig';
 import { setConfig } from '@/utils/db';
 
@@ -95,19 +95,10 @@ function eventToShortcut(e: ReactKeyboardEvent): string | null {
 // keys read live via useConfig; content.ts reads the same keys on trigger.
 function DoubleTapShortcutsCard() {
   const { t } = useTranslation();
-  const modifier = useConfig<string>(CONFIG_KEY.DOUBLE_TAP_MODIFIER, DEFAULT_VALUE.DOUBLE_TAP_MODIFIER);
-  const translateSelection = useConfig<boolean>(
-    CONFIG_KEY.DOUBLE_TAP_TRANSLATE_SELECTION,
-    DEFAULT_VALUE.DOUBLE_TAP_TRANSLATE_SELECTION,
-  );
-  const toggleParagraph = useConfig<boolean>(
-    CONFIG_KEY.DOUBLE_TAP_TOGGLE_PARAGRAPH,
-    DEFAULT_VALUE.DOUBLE_TAP_TOGGLE_PARAGRAPH,
-  );
-  const translateInput = useConfig<boolean>(
-    CONFIG_KEY.DOUBLE_TAP_TRANSLATE_INPUT,
-    DEFAULT_VALUE.DOUBLE_TAP_TRANSLATE_INPUT,
-  );
+  const modifier = useConfig<string>(CONFIG_KEY.DOUBLE_TAP_MODIFIER);
+  const translateSelection = useConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TRANSLATE_SELECTION);
+  const toggleParagraph = useConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TOGGLE_PARAGRAPH);
+  const translateInput = useConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TRANSLATE_INPUT);
 
   const toggles: { key: CONFIG_KEY; label: string; checked: boolean }[] = [
     {

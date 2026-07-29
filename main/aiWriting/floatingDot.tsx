@@ -51,11 +51,6 @@ import { shareConfig } from "../content";
 
 const HOST_ID = "duo-ai-dot-host";
 
-// Stable empty defaults for `useConfig` array keys — a fresh `[]` literal each
-// render would break the hook's pre-hydration snapshot stability.
-const EMPTY_PROVIDERS: AiProvider[] = [];
-const EMPTY_STRINGS: string[] = [];
-
 // ---------------------------------------------------------------------------
 // Mount entry point — called once from main/content.ts
 // ---------------------------------------------------------------------------
@@ -155,11 +150,13 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
     // Preferences — reactive views over config. Editing any of these in Options
     // (or the popup, or this same panel) now updates the dot live via
     // chrome.storage's change event; no reload needed. See utils/reactiveConfig.
-    const aiTargetLanguage = useConfig<string>(CONFIG_KEY.AI_TARGET_LANGUAGE, DEFAULT_VALUE.AI_TARGET_LANGUAGE);
-    const aiTranslateKey = useConfig<string | undefined>(CONFIG_KEY.AI_TRANSLATE_SERVICE, undefined);
-    const aiActiveProviderId = useConfig<string>(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID, "");
-    const aiProvidersRaw = useConfig<AiProvider[]>(CONFIG_KEY.AI_PROVIDERS, EMPTY_PROVIDERS);
-    const disabledTranslateServices = useConfig<string[]>(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES, EMPTY_STRINGS);
+    const aiTargetLanguage = useConfig<string>(CONFIG_KEY.AI_TARGET_LANGUAGE);
+    const aiTranslateKey = useConfig<string | undefined>(CONFIG_KEY.AI_TRANSLATE_SERVICE);
+    // No DEFAULT_VALUE entry: unset means "no provider picked yet", and the
+    // resolver below falls back to the first enabled one.
+    const aiActiveProviderId = useConfig<string | undefined>(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID);
+    const aiProvidersRaw = useConfig<AiProvider[] | undefined>(CONFIG_KEY.AI_PROVIDERS);
+    const disabledTranslateServices = useConfig<string[] | undefined>(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES);
 
     // Derive the translate context synchronously from the raw config above.
     const { enabledTranslateServices, enabledAiProviders, totalAiProviders, activeService } = useMemo(

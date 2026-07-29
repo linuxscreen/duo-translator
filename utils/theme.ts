@@ -109,7 +109,7 @@ export function initExtensionPageTheme(): void {
 
 /** Reactive view of the raw setting ('system' | 'light' | 'dark'). */
 export function useThemeSetting(): ThemeSetting {
-    return normalize(useConfig<ThemeSetting>(CONFIG_KEY.THEME, DEFAULT_THEME));
+    return normalize(useConfig<ThemeSetting>(CONFIG_KEY.THEME));
 }
 
 const subscribeSystem = (cb: () => void) => {

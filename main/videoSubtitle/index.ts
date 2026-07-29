@@ -1,9 +1,8 @@
 import {
     AI_PREFIX,
     CONFIG_KEY,
-    DEFAULT_VALUE,
 } from "@/main/constants";
-import { readConfig, whenConfigHydrated } from "@/utils/reactiveConfig";
+import { readConfig } from "@/utils/reactiveConfig";
 import { setConfig } from "@/utils/db";
 import { buildAiTranslateService } from "@/utils/service";
 import { translateTextsWithCache } from "@/main/translateService";
@@ -20,10 +19,13 @@ import { normalizeVideoSubtitleStyle, type SubtitleCue, type SubtitleWord } from
  * parse side is behind {@link YoutubeAdapter} so other sites can slot in.
  *
  * Lifecycle: created once per top-frame page load on a supported site. It
- * follows CONFIG_KEY.VIDEO_SUBTITLE_SWITCH live (config values are polled
- * through the cached `readConfig` inside the tick loop — cheap, and covers
- * every setting without per-key wiring). Video changes are detected from the
- * URL each tick (YouTube is an SPA).
+ * follows CONFIG_KEY.VIDEO_SUBTITLE_SWITCH live (config values are re-read
+ * through `readConfig` inside the tick loop — cached after the first read, and
+ * covers every setting without per-key wiring). Video changes are detected from
+ * the URL each tick (YouTube is an SPA).
+ *
+ * Nearly everything here is async only because `readConfig` is: a config read
+ * that cannot be trusted on its first call is worse than one that awaits.
  */
 
 export interface VideoSubtitleController {
@@ -129,47 +131,13 @@ const SEEK_SLACK_MS = 2000;
 /** Consecutive AI failures after which the rest of the track goes rule-based. */
 const MAX_SEGMENT_FAILURES = 2;
 
-/**
- * Every config key this controller reads. The tick loop does not start until
- * all of them have hydrated — keep this list in step with the `readConfig`
- * calls below.
- *
- * `readConfig` is a cached read whose hydration is async AND per key: before a
- * key lands it silently returns the caller's DEFAULT, indistinguishable from a
- * stored value that happens to equal it. The tick loop mostly tolerates that
- * because it re-reads every 150ms and reacts to changes — but the reads that
- * happen ONCE per session do not get a second chance: AI segmentation, the
- * target language and the service key are baked into the caption load and the
- * translation batches it kicks off, so a pre-hydration read there means the
- * whole video is segmented/translated with the wrong settings.
- *
- * Waiting on the full set (rather than sprinkling hydration checks over the
- * individual call sites) is what makes every `readConfig` below safe by
- * construction, including ones added later.
- */
-const REQUIRED_CONFIG_KEYS = [
-    CONFIG_KEY.VIDEO_SUBTITLE_SWITCH,
-    CONFIG_KEY.VIDEO_SUBTITLE_AUTO_ENABLE,
-    CONFIG_KEY.VIDEO_SUBTITLE_DISPLAY_MODE,
-    CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE,
-    CONFIG_KEY.VIDEO_SUBTITLE_TARGET_LANGUAGE,
-    CONFIG_KEY.VIDEO_SUBTITLE_PAUSE_ON_SELECT,
-    CONFIG_KEY.VIDEO_SUBTITLE_STYLE,
-    CONFIG_KEY.VIDEO_SUBTITLE_AI_SEGMENT,
-    CONFIG_KEY.VIDEO_SUBTITLE_POSITION,
-    CONFIG_KEY.TARGET_LANGUAGE,
-    CONFIG_KEY.AI_PROVIDERS,
-    CONFIG_KEY.DISABLED_TRANSLATE_SERVICES,
-] as const;
-
 export function initVideoSubtitle(): VideoSubtitleController {
     const adapter = new YoutubeAdapter();
 
     let destroyed = false;
     /**
      * Feature switch as of the last tick (teardown/re-setup edge detection).
-     * Null until the first tick that runs — reading it here would be a
-     * pre-hydration read, which is exactly what the tick gate exists to avoid.
+     * Null until the first tick has read it.
      */
     let featureOn: boolean | null = null;
     /** Per-tab user override from the player menu; null = follow auto-enable. */
@@ -187,36 +155,32 @@ export function initVideoSubtitle(): VideoSubtitleController {
     /** Last enabled-state pushed into the player menu's checkmark. */
     let lastEnabled: boolean | null = null;
 
-    const isEnabled = () =>
+    const isEnabled = async () =>
         sessionEnabled ??
-        readConfig<boolean>(CONFIG_KEY.VIDEO_SUBTITLE_AUTO_ENABLE, DEFAULT_VALUE.VIDEO_SUBTITLE_AUTO_ENABLE);
+        (await readConfig<boolean>(CONFIG_KEY.VIDEO_SUBTITLE_AUTO_ENABLE));
 
     /**
      * Subtitle target language: the feature's own setting, falling back to the
      * page-translation target (and finally the browser UI language) when the
      * user has never picked one.
      */
-    const targetLanguage = () =>
-        readConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_TARGET_LANGUAGE, "") ||
-        readConfig<string>(CONFIG_KEY.TARGET_LANGUAGE, "") ||
+    const targetLanguage = async () =>
+        (await readConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_TARGET_LANGUAGE)) ||
+        (await readConfig<string>(CONFIG_KEY.TARGET_LANGUAGE)) ||
         navigator.language.split("-")[0];
 
     /** Resolve the subtitle service key with the shared fallback rules. */
-    const resolveServiceKey = () => {
-        const raw = readConfig<string>(
-            CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE,
-            DEFAULT_VALUE.VIDEO_SUBTITLE_TRANSLATE_SERVICE,
-        );
-        const ctx = buildAiTranslateService(
-            raw,
-            readConfig<unknown[]>(CONFIG_KEY.AI_PROVIDERS, []),
-            readConfig<string[]>(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES, []),
-        );
-        return ctx.activeService;
+    const resolveServiceKey = async () => {
+        const [raw, providers, disabled] = await Promise.all([
+            readConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE),
+            readConfig<unknown[]>(CONFIG_KEY.AI_PROVIDERS),
+            readConfig<string[]>(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES),
+        ]);
+        return buildAiTranslateService(raw, providers, disabled).activeService;
     };
 
-    const currentStyle = () =>
-        normalizeVideoSubtitleStyle(readConfig<unknown>(CONFIG_KEY.VIDEO_SUBTITLE_STYLE, undefined));
+    const currentStyle = async () =>
+        normalizeVideoSubtitleStyle(await readConfig<unknown>(CONFIG_KEY.VIDEO_SUBTITLE_STYLE));
 
     // ------------------------------------------------------------------
     // Native caption hiding (only while our subtitles are shown)
@@ -239,14 +203,26 @@ export function initVideoSubtitle(): VideoSubtitleController {
     // Surfaces
     // ------------------------------------------------------------------
 
-    const ensureSurfaces = () => {
+    const ensureSurfaces = async () => {
         const p = document.getElementById("movie_player");
         if (!(p instanceof HTMLElement)) return;
         if (player !== p || !overlay || !document.getElementById("duo-video-subtitle-box")) {
+            // Read everything the surfaces need BEFORE creating them: an await
+            // between `player = p` and the mount would let the next tick see a
+            // half-built state and mount a second copy.
+            const [style, positionPct, mode, pauseOnSelect, enabled] = await Promise.all([
+                currentStyle(),
+                readPositionPct(),
+                readMode(),
+                readConfig<boolean>(CONFIG_KEY.VIDEO_SUBTITLE_PAUSE_ON_SELECT),
+                isEnabled(),
+            ]);
+            if (destroyed) return;
+
             player = p;
             video = p.querySelector("video");
             overlay?.destroy();
-            overlay = new SubtitleOverlay(p, currentStyle(), readPositionPct(), {
+            overlay = new SubtitleOverlay(p, style, positionPct, {
                 onPositionChange: (pct) => {
                     // Record it as "already applied" so the sync below treats
                     // the resulting storage change as a no-op.
@@ -254,29 +230,32 @@ export function initVideoSubtitle(): VideoSubtitleController {
                     void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_POSITION, pct);
                 },
                 onTranslateSelection: (text, rect) => {
-                    openSelectionTranslate({
-                        text,
-                        targetLang: targetLanguage(),
-                        choice: parseTranslateServiceKey(resolveServiceKey()),
-                        rect,
-                    });
+                    void (async () => {
+                        const [targetLang, serviceKey] = await Promise.all([
+                            targetLanguage(),
+                            resolveServiceKey(),
+                        ]);
+                        openSelectionTranslate({
+                            text,
+                            targetLang,
+                            choice: parseTranslateServiceKey(serviceKey),
+                            rect,
+                        });
+                    })();
                 },
                 reservedBottomPx: () => bottomControlsInsetPx(p),
             });
-            lastStyleJson = JSON.stringify(currentStyle());
-            lastMode = readMode();
-            overlay.setMode(lastMode);
-            lastPauseOnSelect = readConfig<boolean>(
-                CONFIG_KEY.VIDEO_SUBTITLE_PAUSE_ON_SELECT,
-                DEFAULT_VALUE.VIDEO_SUBTITLE_PAUSE_ON_SELECT,
-            );
-            overlay.setPauseOnSelect(lastPauseOnSelect);
-            lastPositionPct = readPositionPct();
+            lastStyleJson = JSON.stringify(style);
+            lastMode = mode;
+            overlay.setMode(mode);
+            lastPauseOnSelect = pauseOnSelect;
+            overlay.setPauseOnSelect(pauseOnSelect);
+            lastPositionPct = positionPct;
 
             controls?.destroy();
             controls = mountSubtitleControls({
                 player: p,
-                initialEnabled: isEnabled(),
+                initialEnabled: enabled,
                 onToggleEnabled: (next) => {
                     sessionEnabled = next;
                     // The menu already flipped its own mark — record it as
@@ -293,23 +272,22 @@ export function initVideoSubtitle(): VideoSubtitleController {
                     teardownFeature();
                 },
             });
-            lastEnabled = isEnabled();
-            if (session) {
-                controls.setAvailability(
-                    session.loadState === "ready" ? "available"
-                        : session.loadState === "gaveup" ? "unavailable"
-                            : "loading",
-                );
-            }
+            lastEnabled = enabled;
+            if (session) controls.setAvailability(availabilityOf(session));
         }
         if (!video || !video.isConnected) video = p.querySelector("video");
     };
 
     const readPositionPct = () =>
-        readConfig<number>(CONFIG_KEY.VIDEO_SUBTITLE_POSITION, DEFAULT_VALUE.VIDEO_SUBTITLE_POSITION);
+        readConfig<number>(CONFIG_KEY.VIDEO_SUBTITLE_POSITION);
 
     const readMode = () =>
-        readConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_DISPLAY_MODE, DEFAULT_VALUE.VIDEO_SUBTITLE_DISPLAY_MODE);
+        readConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_DISPLAY_MODE);
+
+    const availabilityOf = (s: VideoSession) =>
+        s.loadState === "ready" ? "available" as const
+            : s.loadState === "gaveup" ? "unavailable" as const
+                : "loading" as const;
 
     // ------------------------------------------------------------------
     // Per-video session
@@ -390,10 +368,8 @@ export function initVideoSubtitle(): VideoSubtitleController {
                     return;
                 }
                 s.words = usable;
-                s.aiSegment = readConfig<boolean>(
-                    CONFIG_KEY.VIDEO_SUBTITLE_AI_SEGMENT,
-                    DEFAULT_VALUE.VIDEO_SUBTITLE_AI_SEGMENT,
-                );
+                s.aiSegment = await readConfig<boolean>(CONFIG_KEY.VIDEO_SUBTITLE_AI_SEGMENT);
+                if (abort.signal.aborted || session !== s) return;
 
                 if (s.aiSegment) {
                     // Cues arrive chunk by chunk from the tick loop, starting at
@@ -412,8 +388,8 @@ export function initVideoSubtitle(): VideoSubtitleController {
                 controls?.setAvailability("available");
                 // Get the first chunk / the first translations moving now rather
                 // than on the next tick.
-                ensureSegmentedAhead(nowMs());
-                ensureTranslatedAhead(currentCueIndex(nowMs()) ?? 0);
+                void ensureSegmentedAhead(nowMs());
+                void ensureTranslatedAhead(currentCueIndex(nowMs()) ?? 0);
             } catch (e) {
                 if (!abort.signal.aborted && session === s) {
                     failLoad(s, String((e as Error)?.message ?? e));
@@ -463,9 +439,17 @@ export function initVideoSubtitle(): VideoSubtitleController {
      * a time. No-op unless AI segmentation is on — the rule-based path segments
      * the whole track at load.
      */
-    const ensureSegmentedAhead = (t: number) => {
+    const ensureSegmentedAhead = async (t: number) => {
         const s = session;
         if (!s || !s.aiSegment || s.segmenting || s.loadState !== "ready") return;
+
+        // Resolve the provider first: awaiting after the `segmenting` flag is
+        // set would be fine, but awaiting between the checks below and setting
+        // it would let a second tick start the same chunk twice.
+        const key = await resolveServiceKey();
+        const providerId = key.startsWith(AI_PREFIX) ? key.slice(AI_PREFIX.length) : undefined;
+        // Re-check: the state may have moved while that read was in flight.
+        if (session !== s || !s.aiSegment || s.segmenting || s.loadState !== "ready") return;
 
         const frontierMs = s.cues.length > 0 ? s.cues[s.cues.length - 1].endMs : -Infinity;
         const windowStartMs = s.cues.length > 0 ? s.cues[0].startMs : Infinity;
@@ -492,8 +476,6 @@ export function initVideoSubtitle(): VideoSubtitleController {
         if (end <= from) return;
         const chunk = s.words.slice(from, end);
         const abort = s.abort;
-        const key = resolveServiceKey();
-        const providerId = key.startsWith(AI_PREFIX) ? key.slice(AI_PREFIX.length) : undefined;
 
         s.segmenting = true;
         void (async () => {
@@ -524,7 +506,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
                 appendCues(s, segmentWords(s.words.slice(end)));
                 s.segCursor = s.words.length;
             }
-            ensureTranslatedAhead(currentCueIndex(nowMs()) ?? Math.max(0, s.cues.length - cues.length));
+            void ensureTranslatedAhead(currentCueIndex(nowMs()) ?? Math.max(0, s.cues.length - cues.length));
         })();
     };
 
@@ -532,11 +514,19 @@ export function initVideoSubtitle(): VideoSubtitleController {
     // Pre-translation scheduler
     // ------------------------------------------------------------------
 
-    const ensureTranslatedAhead = (fromIdx: number) => {
+    const ensureTranslatedAhead = async (fromIdx: number) => {
         const s = session;
-        if (!s || s.translating || s.cues.length === 0 || !isEnabled()) return;
-        const service = resolveServiceKey();
-        const lang = targetLanguage();
+        if (!s || s.translating || s.cues.length === 0) return;
+
+        const [enabled, service, lang] = await Promise.all([
+            isEnabled(),
+            resolveServiceKey(),
+            targetLanguage(),
+        ]);
+        // Everything from here to `s.translating = true` runs without another
+        // await, so two overlapping calls cannot both get past the flag.
+        if (!enabled || session !== s || s.translating || s.cues.length === 0) return;
+
         const key = `${service}|${lang}`;
         if (s.translationKey && s.translationKey !== key) {
             // Service / target language changed — existing translations are stale.
@@ -582,10 +572,11 @@ export function initVideoSubtitle(): VideoSubtitleController {
         video = null;
     };
 
-    const tick = () => {
+    const tick = async () => {
         if (destroyed) return;
 
-        const on = readConfig<boolean>(CONFIG_KEY.VIDEO_SUBTITLE_SWITCH, DEFAULT_VALUE.VIDEO_SUBTITLE_SWITCH);
+        const on = await readConfig<boolean>(CONFIG_KEY.VIDEO_SUBTITLE_SWITCH);
+        if (destroyed) return;
         if (on !== featureOn) {
             featureOn = on;
             if (!on) teardownFeature();
@@ -599,11 +590,12 @@ export function initVideoSubtitle(): VideoSubtitleController {
             return;
         }
 
-        ensureSurfaces();
-        if (!player || !overlay) return;
+        await ensureSurfaces();
+        if (destroyed || !player || !overlay) return;
         controls?.ensureButton();
 
         if (!session || session.videoId !== videoId) startSession(videoId);
+        const sessionAtStart = session;
 
         // Kick off the caption load — and retry a failed one — but never while
         // an ad is playing: the player then reports the ad's video, so every
@@ -619,21 +611,28 @@ export function initVideoSubtitle(): VideoSubtitleController {
             loadCaptions(session!);
         }
 
-        // Live style / mode / position updates from Options.
-        const styleJson = JSON.stringify(currentStyle());
+        // Live style / mode / position / enabled updates from Options. One
+        // batch, so the whole group is applied against a single overlay
+        // instance — reading them one await at a time could straddle a
+        // teardown.
+        const [style, mode, pauseOnSelect, positionPct, enabledNow] = await Promise.all([
+            currentStyle(),
+            readMode(),
+            readConfig<boolean>(CONFIG_KEY.VIDEO_SUBTITLE_PAUSE_ON_SELECT),
+            readPositionPct(),
+            isEnabled(),
+        ]);
+        if (destroyed || !overlay || session !== sessionAtStart) return;
+
+        const styleJson = JSON.stringify(style);
         if (styleJson !== lastStyleJson) {
             lastStyleJson = styleJson;
-            overlay.setStyle(currentStyle());
+            overlay.setStyle(style);
         }
-        const mode = readMode();
         if (mode !== lastMode) {
             lastMode = mode;
             overlay.setMode(mode);
         }
-        const pauseOnSelect = readConfig<boolean>(
-            CONFIG_KEY.VIDEO_SUBTITLE_PAUSE_ON_SELECT,
-            DEFAULT_VALUE.VIDEO_SUBTITLE_PAUSE_ON_SELECT,
-        );
         if (pauseOnSelect !== lastPauseOnSelect) {
             lastPauseOnSelect = pauseOnSelect;
             overlay.setPauseOnSelect(pauseOnSelect);
@@ -641,14 +640,12 @@ export function initVideoSubtitle(): VideoSubtitleController {
         // Position edited elsewhere (Options, another tab). Comparing against
         // the last CONFIG value — not the overlay's own — means an in-flight
         // drag is never fought.
-        const positionPct = readPositionPct();
         if (positionPct !== lastPositionPct) {
             lastPositionPct = positionPct;
             overlay.setPosition(positionPct);
         }
         // Menu checkmark — keeps the mark honest when auto-enable is changed
         // from Options while the page is open.
-        const enabledNow = isEnabled();
         if (enabledNow !== lastEnabled) {
             lastEnabled = enabledNow;
             controls?.setEnabled(enabledNow);
@@ -669,33 +666,35 @@ export function initVideoSubtitle(): VideoSubtitleController {
         setNativeCaptionsHidden(true);
         const t = nowMs();
         // AI mode: pull in the next chunk before the playhead reaches the end of
-        // the segmented region.
-        ensureSegmentedAhead(t);
+        // the segmented region. Both schedulers are fire-and-forget — they hold
+        // their own in-flight flags, and the display below must not wait on a
+        // network round-trip.
+        void ensureSegmentedAhead(t);
         const idx = currentCueIndex(t);
         if (idx === null) {
             overlay.hide();
         } else {
             overlay.show(session!.cues[idx]);
         }
-        ensureTranslatedAhead(idx ?? (currentCueIndex(t + 3000) ?? 0));
+        void ensureTranslatedAhead(idx ?? (currentCueIndex(t + 3000) ?? 0));
     };
 
-    // Nothing runs until config is on hand. Two symptoms this prevents: the
-    // player button flashing on screen on a page where the feature is disabled
-    // (the switch reads as its `true` default pre-hydration, so the button
-    // mounts and is torn straight back off), and a caption load committing to
-    // the default segmentation / service / language for the whole video.
-    let timer = 0;
-    void whenConfigHydrated(REQUIRED_CONFIG_KEYS).then(() => {
-        if (destroyed) return;
-        timer = window.setInterval(tick, TICK_MS);
-        tick();
-    });
+    // `tick` awaits config reads, so a slow first read could otherwise let the
+    // next interval start a second pass over the same half-built state.
+    let ticking = false;
+    const runTick = () => {
+        if (ticking) return;
+        ticking = true;
+        void tick().finally(() => { ticking = false; });
+    };
+
+    const timer = window.setInterval(runTick, TICK_MS);
+    runTick();
 
     return {
         destroy() {
             destroyed = true;
-            if (timer) window.clearInterval(timer);
+            window.clearInterval(timer);
             teardownFeature();
         },
     };

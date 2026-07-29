@@ -22,8 +22,7 @@
 import { storage, type StorageItemKey } from 'wxt/utils/storage';
 import {
     CONFIG_KEY,
-    CONFIG_VALUE_TO_KEY,
-    DEFAULT_VALUE,
+    configDefault,
     DOMAIN_STRATEGY,
     VIEW_STRATEGY,
 } from '@/main/constants';
@@ -122,13 +121,7 @@ export async function touchKeys(dataKeys: string[]): Promise<void> {
     await saveSyncMeta(m);
 }
 
-function defaultForConfig(name: string): unknown {
-    const enumKey = CONFIG_VALUE_TO_KEY[name];
-    if (enumKey && enumKey in DEFAULT_VALUE) {
-        return (DEFAULT_VALUE as Record<string, unknown>)[enumKey];
-    }
-    return undefined;
-}
+const defaultForConfig = configDefault;
 
 // ------------------------------ Config -------------------------------------
 
