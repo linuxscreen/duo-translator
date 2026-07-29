@@ -9,7 +9,6 @@ import { useTts } from "./useTts";
 import {
     startTranslate,
     parseTranslateServiceKey,
-    buildTranslateServiceKey,
     type TranslateServiceChoice,
 } from "./translateRunner";
 import { CONFIG_KEY, LANGUAGES, LANGUAGES_MAP } from "@/main/constants";
@@ -29,12 +28,40 @@ let openSignal: ((seed: SelectionSeed) => void) | null = null;
 export interface SelectionSeed {
     /** The text to translate (the user's selection). */
     text: string;
-    /** Page-translation target language. */
-    targetLang: string;
-    /** Page-translation service (same one the page uses). */
-    choice: TranslateServiceChoice;
     /** Viewport rect of the selection, used to anchor the popup. */
     rect: DOMRect | null;
+}
+
+/** What the header's "Follow page (X)" options resolve to. */
+interface PageDefaults {
+    service: string;
+    lang: string;
+    options: ServiceOption[];
+}
+
+/**
+ * Page-translation service + target language, used whenever the user has not
+ * overridden them in the header.
+ *
+ * Read here rather than handed in by the opener: every caller was resolving the
+ * same two config keys, and one that passed its OWN service (the video-subtitle
+ * overlay) made "Follow page" mean something different depending on where the
+ * selected text happened to come from. Re-read on every open so a language
+ * changed in Options applies without a reload.
+ */
+async function loadPageDefaults(): Promise<PageDefaults> {
+    const [serviceConfig, langConfig] = await Promise.all([
+        getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
+        getConfig(CONFIG_KEY.TARGET_LANGUAGE),
+    ]);
+    const { activeService, enabledTranslateServices, enabledAiProviders } = await getTranslateService(
+        typeof serviceConfig === "string" ? serviceConfig : undefined,
+    );
+    return {
+        service: activeService,
+        lang: (typeof langConfig === "string" && langConfig) || navigator.language.split("-")[0],
+        options: buildServiceOptions(enabledTranslateServices, enabledAiProviders),
+    };
 }
 
 /**
@@ -202,8 +229,10 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
     const [pinned, setPinned] = useState(false);
     const [placement, setPlacement] = useState<Placement>({ left: -9999, top: -9999, maxHeight: MAX_HEIGHT });
 
-    // The current selection (source text + the page's default service/lang).
+    // The current selection (source text + anchor rect).
     const [seed, setSeed] = useState<SelectionSeed | null>(null);
+    // Page-translation defaults behind the "Follow page" options.
+    const [pageDefaults, setPageDefaults] = useState<PageDefaults>({ service: "", lang: "", options: [] });
     // Detected language of the original text, used for its TTS playback.
     const [origLang, setOrigLang] = useState("und");
     // "Show original text" is collapsed by default.
@@ -214,7 +243,6 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
     // `registerOpen` closure can read them without a stale capture.
     const [serviceOverride, setServiceOverride] = useState<string | null>(null);
     const [langOverride, setLangOverride] = useState<string | null>(null);
-    const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
     const serviceOverrideRef = useRef<string | null>(null);
     const langOverrideRef = useRef<string | null>(null);
     serviceOverrideRef.current = serviceOverride;
@@ -236,17 +264,26 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         setOpen(false);
     };
 
-    // Load the shared service picker list once (built-in translators + AI
-    // providers, gated the same way as page translation), plus the persisted
+    /**
+     * Refresh the "Follow page" defaults (and the service picker list).
+     * Returns them so callers can act on the fresh values without waiting for
+     * the re-render.
+     */
+    const refreshPageDefaults = useCallback(async () => {
+        const next = await loadPageDefaults();
+        setPageDefaults(next);
+        return next;
+    }, []);
+
+    // Load the page defaults / service picker list once, plus the persisted
     // header overrides so a previously chosen service / language is restored.
     useEffect(() => {
         (async () => {
-            const [{ enabledTranslateServices, enabledAiProviders }, svc, lng] = await Promise.all([
-                getTranslateService(undefined),
+            const [, svc, lng] = await Promise.all([
+                refreshPageDefaults(),
                 getConfig(CONFIG_KEY.SELECTION_TRANSLATE_SERVICE),
                 getConfig(CONFIG_KEY.SELECTION_TARGET_LANGUAGE),
             ]);
-            setServiceOptions(buildServiceOptions(enabledTranslateServices, enabledAiProviders));
             const svcVal = typeof svc === "string" && svc ? svc : null;
             const lngVal = typeof lng === "string" && lng ? lng : null;
             serviceOverrideRef.current = svcVal;
@@ -254,7 +291,7 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             setServiceOverride(svcVal);
             setLangOverride(lngVal);
         })();
-    }, []);
+    }, [refreshPageDefaults]);
 
     // Run (or re-run) the translation for the given text/lang/service.
     const runTranslate = useCallback((text: string, targetLang: string, choice: TranslateServiceChoice) => {
@@ -298,21 +335,29 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             setOrigExpanded(false);
             setOrigLang(getTextLanguage(s.text) || "und");
             setPlacement(computePlacement(s.rect));
-            // Honor the persisted header overrides (null ⇒ follow the page).
-            const svc = serviceOverrideRef.current;
-            const lng = langOverrideRef.current;
-            const choice = svc ? parseTranslateServiceKey(svc) : s.choice;
-            runTranslate(s.text, lng ?? s.targetLang, choice);
+            void (async () => {
+                // Re-read the page defaults so a service / language changed in
+                // Options since the last open is picked up. Only awaited to
+                // start the run — the card is already on screen with a spinner.
+                const page = await refreshPageDefaults();
+                // Honor the persisted header overrides (null ⇒ follow the page).
+                const svc = serviceOverrideRef.current;
+                const lng = langOverrideRef.current;
+                runTranslate(s.text, lng ?? page.lang, parseTranslateServiceKey(svc ?? page.service));
+            })();
         });
-    }, [registerOpen, runTranslate]);
+    }, [registerOpen, runTranslate, refreshPageDefaults]);
 
     const onServiceChange = (value: string) => {
         const next = value || null;
         setServiceOverride(next);
         void setConfig(CONFIG_KEY.SELECTION_TRANSLATE_SERVICE, value);
         if (!seed) return;
-        const choice = next ? parseTranslateServiceKey(next) : seed.choice;
-        runTranslate(seed.text, langOverride ?? seed.targetLang, choice);
+        runTranslate(
+            seed.text,
+            langOverride ?? pageDefaults.lang,
+            parseTranslateServiceKey(next ?? pageDefaults.service),
+        );
     };
 
     const onLangChange = (value: string) => {
@@ -320,8 +365,11 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         setLangOverride(next);
         void setConfig(CONFIG_KEY.SELECTION_TARGET_LANGUAGE, value);
         if (!seed) return;
-        const choice = serviceOverride ? parseTranslateServiceKey(serviceOverride) : seed.choice;
-        runTranslate(seed.text, next ?? seed.targetLang, choice);
+        runTranslate(
+            seed.text,
+            next ?? pageDefaults.lang,
+            parseTranslateServiceKey(serviceOverride ?? pageDefaults.service),
+        );
     };
 
     // Esc always closes (even when pinned).
@@ -388,17 +436,17 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
     };
 
     // "Follow page" labels for the first option of each header dropdown.
-    const followKey = seed ? buildTranslateServiceKey(seed.choice) : "";
-    const followServiceOpt = serviceOptions.find((o) => o.value === followKey);
+    const followKey = pageDefaults.service;
+    const followServiceOpt = pageDefaults.options.find((o) => o.value === followKey);
     const followServiceName = followServiceOpt
         ? (followServiceOpt.i18nKey ? t(followServiceOpt.i18nKey, followServiceOpt.label) : followServiceOpt.label)
         : followKey;
-    const followLangMeta = seed ? LANGUAGES_MAP.get(seed.targetLang) : undefined;
-    const followLangName = followLangMeta ? t(followLangMeta.title, followLangMeta.name) : (seed?.targetLang ?? "");
+    const followLangMeta = LANGUAGES_MAP.get(pageDefaults.lang);
+    const followLangName = followLangMeta ? t(followLangMeta.title, followLangMeta.name) : pageDefaults.lang;
     const followWith = (name: string) =>
         t("selectionFollowWeb", "Follow page ({{name}})").replace("{{name}}", name);
 
-    const effectiveTargetLang = langOverride ?? seed?.targetLang ?? "";
+    const effectiveTargetLang = langOverride ?? pageDefaults.lang;
     const selectCls =
         "h-6 min-w-0 flex-1 max-w-[160px] rounded border border-line-strong bg-surface px-1.5 text-[11px] text-ink-2 outline-none focus:border-accent";
 
@@ -418,7 +466,7 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
                     className={selectCls}
                 >
                     <option value="">{followWith(followServiceName)}</option>
-                    {serviceOptions.map((o) => (
+                    {pageDefaults.options.map((o) => (
                         <option key={o.value} value={o.value}>
                             {o.i18nKey ? t(o.i18nKey, o.label) : o.label}
                         </option>

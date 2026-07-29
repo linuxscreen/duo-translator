@@ -811,12 +811,7 @@ export async function content() {
             }
         } catch { /* detached range — fall back to centered placement */ }
 
-        openSelectionTranslate({
-            text,
-            targetLang: targetLanguage,
-            choice: parseTranslateServiceKey(translateService),
-            rect,
-        })
+        openSelectionTranslate({ text, rect })
     }
 
     function scheduleMutationProcess() {
