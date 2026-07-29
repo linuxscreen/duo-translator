@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Self-hosted Inter / JetBrains Mono (no fonts.googleapis.com request) */
+@import "../../assets/fonts.css";
 
 /* Same design tokens as the popup so themed colors stay consistent */
 @theme {

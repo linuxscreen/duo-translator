@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Self-hosted Inter / JetBrains Mono (no fonts.googleapis.com request) */
+@import "../../assets/fonts.css";
 
 /* Design tokens — deep navy theme with vivid cyan accent */
 @theme {

@@ -10,12 +10,8 @@
          about:addons (throws "may only be called from a user input handler"),
          which breaks the WebDAV host-permission prompt. A real tab fixes it. -->
     <meta name="manifest.open_in_tab" content="true" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-    />
+    <!-- Fonts are self-hosted in public/fonts and declared in assets/fonts.css
+         (imported by options.css) — no fonts.googleapis.com request. -->
   </head>
   <body>
     <div id="root"></div>
