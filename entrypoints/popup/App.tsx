@@ -7,6 +7,7 @@ import {
   APP_NAME,
   APP_NAME_PASCAL_CASE,
   CONFIG_KEY,
+  browserTargetLanguage,
   DB_ACTION,
   DEFAULT_STRATEGY,
   DEFAULT_STRATEGY_OPTIONS,
@@ -52,8 +53,7 @@ export default function App() {
 
   const [globalOn, setGlobalOn] = useState(true);
   const [mode, setMode] = useState<VIEW_STRATEGY>(VIEW_STRATEGY.DOUBLE);
-  let lang = navigator.language.split('-')[0];
-  const [targetLanguage, setTargetLanguage] = useState(lang);
+  const [targetLanguage, setTargetLanguage] = useState(browserTargetLanguage());
   const [service, setService] = useState<string>();
   const [translateActive, setTranslateActive] = useState(false);
   const [defaultStrategy, setDefaultStrategy] = useState<DEFAULT_STRATEGY>(DEFAULT_STRATEGY.AUTO);
@@ -152,7 +152,7 @@ export default function App() {
 
       setGlobalOn(gs);
       setMode(vs);
-      setTargetLanguage(tl || navigator.language.split('-')[0]);
+      setTargetLanguage(tl || browserTargetLanguage());
 
       setService(activeService)
       console.log("service: ", service)

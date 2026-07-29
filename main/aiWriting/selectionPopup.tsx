@@ -11,7 +11,7 @@ import {
     parseTranslateServiceKey,
     type TranslateServiceChoice,
 } from "./translateRunner";
-import { CONFIG_KEY, LANGUAGES, LANGUAGES_MAP } from "@/main/constants";
+import { browserTargetLanguage, CONFIG_KEY, LANGUAGES, LANGUAGES_MAP } from "@/main/constants";
 import { getTextLanguage } from "@/main/lang";
 import { getConfig, setConfig } from "@/utils/db";
 import { buildServiceOptions, getTranslateService, type ServiceOption } from "@/utils/service";
@@ -59,7 +59,7 @@ async function loadPageDefaults(): Promise<PageDefaults> {
     );
     return {
         service: activeService,
-        lang: (typeof langConfig === "string" && langConfig) || navigator.language.split("-")[0],
+        lang: (typeof langConfig === "string" && langConfig) || browserTargetLanguage(),
         options: buildServiceOptions(enabledTranslateServices, enabledAiProviders),
     };
 }

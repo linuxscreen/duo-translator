@@ -387,11 +387,6 @@ export async function background() {
                     sendResponse({ status: STATUS_SUCCESS, data: lang });
                 })
                 return true;
-            // get browser native language
-            case TAB_ACTION.NATIVE_LANGUAGE_GET:
-                // let lang = browser.i18n.getUILanguage()
-                sendResponse({ status: STATUS_SUCCESS, data: navigator.language.split('-')[0] });
-                break
             case TAB_ACTION.TAB_DOMAIN_GET:
                 browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
                     if (tabs.length === 0) {

@@ -7,6 +7,7 @@ import {
   CONFIG_KEY,
   DB_ACTION,
   DEFAULT_STRATEGY,
+  browserTargetLanguage,
   DEFAULT_VALUE,
   DOMAIN_STRATEGY,
   HIGHLIGHT_COLORS,
@@ -91,7 +92,7 @@ export function TranslationPage() {
   const [clearCacheOpen, setClearCacheOpen] = useState(false);
   const [cacheSizeBytes, setCacheSizeBytes] = useState(0);
   const [viewStrategy, setViewStrategy] = useState<string>(DEFAULT_VALUE.VIEW_STRATEGY);
-  const [targetLang, setTargetLang] = useState<string>(navigator.language.split('-')[0]);
+  const [targetLang, setTargetLang] = useState<string>(browserTargetLanguage());
   const [translateService, setTranslateService] = useState<string>();
   const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
   const [defaultStrategy, setDefaultStrategy] = useState<DEFAULT_STRATEGY>(DEFAULT_STRATEGY.AUTO);

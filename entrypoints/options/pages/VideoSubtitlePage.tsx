@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RotateCcw } from 'lucide-react';
 import {
+  browserTargetLanguage,
   CONFIG_KEY,
   DEFAULT_VALUE,
   LANGUAGES,
@@ -74,7 +75,7 @@ export function VideoSubtitlePage() {
       setTargetLang(
         (typeof lang === 'string' && lang ? lang : '') ||
           (typeof pageLang === 'string' && pageLang ? pageLang : '') ||
-          navigator.language.split('-')[0],
+          browserTargetLanguage(),
       );
       setAiSegment(!!seg);
       setPauseOnSelect(!!pause);

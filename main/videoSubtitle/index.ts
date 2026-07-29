@@ -1,5 +1,6 @@
 import {
     AI_PREFIX,
+    browserTargetLanguage,
     CONFIG_KEY,
 } from "@/main/constants";
 import { readConfig } from "@/utils/reactiveConfig";
@@ -166,7 +167,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
     const targetLanguage = async () =>
         (await readConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_TARGET_LANGUAGE)) ||
         (await readConfig<string>(CONFIG_KEY.TARGET_LANGUAGE)) ||
-        navigator.language.split("-")[0];
+        browserTargetLanguage();
 
     /** Resolve the subtitle service key with the shared fallback rules. */
     const resolveServiceKey = async () => {

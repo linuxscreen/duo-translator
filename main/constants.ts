@@ -85,7 +85,6 @@ export enum TAB_ACTION {
     LANGUAGE_GET = 'getTabLanguage',
     TAB_DOMAIN_GET = 'getTabDomain',
     ID_GET = 'getTabId',
-    NATIVE_LANGUAGE_GET = "getNativeLanguage",
 }
 
 export enum ELEMENT_STATUS {
@@ -490,6 +489,27 @@ export const INTERFACE_LANGUAGES: { value: InterfaceLang; title: string }[] = [
     { value: 'ru', title: 'Русский' },
     { value: 'hi', title: 'हिन्दी' },
 ];
+
+/**
+ * Default TRANSLATE-TARGET language for a user who has never picked one,
+ * derived from the browser UI language. Every fallback in the codebase goes
+ * through this.
+ *
+ * The bare base tag is wrong for Chinese: `LANGUAGES` has no `zh`, only
+ * `zh-CN` / `zh-TW`, so `zh-TW` browsers used to fall back to a target that
+ * matches nothing and silently degraded to whatever the picker did with an
+ * unknown value. Script is what matters, not region — Singapore is simplified,
+ * Hong Kong/Macau traditional — so the region test mirrors `detectInterfaceLang`
+ * in utils/interfaceLang.ts (`zh-Hant` and `zh-MO` included for the same
+ * reason). Everything else keeps the plain base tag.
+ */
+export function browserTargetLanguage(): string {
+    const ui = (globalThis.navigator?.language || 'en').toLowerCase();
+    if (ui.startsWith('zh')) {
+        return /^zh-(tw|hk|mo|hant)/.test(ui) ? 'zh-TW' : 'zh-CN';
+    }
+    return ui.split('-')[0];
+}
 
 export const LANGUAGES = [
     {

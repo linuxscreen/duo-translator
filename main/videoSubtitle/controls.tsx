@@ -4,6 +4,7 @@ import { Check, Settings2, XCircle } from "lucide-react";
 import { browser } from "wxt/browser";
 import {
     ACTION,
+    browserTargetLanguage,
     CONFIG_KEY,
     LANGUAGES,
     VIDEO_SUBTITLE_DISPLAY_MODE,
@@ -195,7 +196,7 @@ function SubtitleMenuApp({
     // Neither key has a DEFAULT_VALUE — "never chosen" is the meaningful state.
     const subtitleTargetLang = useConfig<string | undefined>(CONFIG_KEY.VIDEO_SUBTITLE_TARGET_LANGUAGE);
     const pageTargetLang = useConfig<string | undefined>(CONFIG_KEY.TARGET_LANGUAGE);
-    const targetLang = subtitleTargetLang || pageTargetLang || navigator.language.split("-")[0];
+    const targetLang = subtitleTargetLang || pageTargetLang || browserTargetLanguage();
     const aiProviders = useConfig<unknown>(CONFIG_KEY.AI_PROVIDERS);
     const disabledServices = useConfig<string[] | undefined>(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES);
     const { activeService, serviceOptions } = useMemo(() => {
