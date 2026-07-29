@@ -1,115 +1,32 @@
-import { ACTION, AI_TASK, DEFAULT_VALUE, LANGUAGES_MAP, PORT_NAME } from "@/main/constants";
+// ---------------------------------------------------------------------------
+// AI provider clients — BACKGROUND ONLY.
+//
+// Everything here talks to a provider over HTTP with the user's API key
+// attached. Content scripts must never import this module: they go through
+// main/aiClient.ts, which messages background instead. The shared provider
+// model and wire types live in main/aiProvider.ts.
+// ---------------------------------------------------------------------------
+
+import { ACTION, AI_TASK, CONFIG_KEY, DEFAULT_VALUE, LANGUAGES_MAP, PORT_NAME } from "@/main/constants";
 import { browser } from "wxt/browser";
-import { sendMessageToBackground } from "@/utils/message";
+import { normalizeProvider } from "@/main/aiProvider";
+import type {
+    AiProvider,
+    AiStreamMessage,
+    AiStreamRequest,
+    ChatMessage,
+    ChatOptions,
+} from "@/main/aiProvider";
+import { configRepo } from "@/main/storage/configStore";
+import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
 
-// ---------------------------------------------------------------------------
-// Provider model & catalog
-// ---------------------------------------------------------------------------
-
-export type AiProviderType =
-    | "openai"
-    | "deepseek"
-    | "gemini"
-    | "ollama"
-    | "openrouter"
-    | "claude"
-    | "custom";
-
-export class AiProvider {
-    id: string;
-    /** Provider kind — drives default URL and which request adapter is used. */
-    type: AiProviderType;
-    /** Display name (defaults to the catalog label, user-editable). */
-    name: string;
-    /** Full endpoint URL. May include `{model}` / `{key}` template placeholders. */
-    url: string;
-    /** Empty allowed for Ollama / Custom; required for hosted providers. */
-    apiKey: string;
-    model: string;
-    /** When false the provider is preserved but hidden from selection dropdowns. */
-    enabled?: boolean;
-
-    constructor(id: string, type: AiProviderType, name: string, url: string, apiKey: string, model: string, enabled?: boolean) {
-        this.id = id;
-        this.type = type;
-        this.name = name;
-        this.url = url;
-        this.apiKey = apiKey;
-        this.model = model;
-        this.enabled = enabled
-    }
-
-    getTitle(): string {
-        return `${this.name} · ${this.model}`
-    }
-}
-
-export interface ProviderCatalogEntry {
-    type: AiProviderType;
-    label: string;
-    defaultUrl: string;
-    /** When false, apiKey can be empty (Ollama local, Custom proxy). */
-    requiresApiKey: boolean;
-}
-
-export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
-    { type: "openai", label: "OpenAI", defaultUrl: "https://api.openai.com/v1/chat/completions", requiresApiKey: true },
-    { type: "deepseek", label: "DeepSeek", defaultUrl: "https://api.deepseek.com/chat/completions", requiresApiKey: true },
-    { type: "gemini", label: "Gemini", defaultUrl: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}", requiresApiKey: true },
-    { type: "ollama", label: "Ollama", defaultUrl: "http://localhost:11434/v1/chat/completions", requiresApiKey: false },
-    { type: "openrouter", label: "OpenRouter", defaultUrl: "https://openrouter.ai/api/v1/chat/completions", requiresApiKey: true },
-    { type: "claude", label: "Claude", defaultUrl: "https://api.anthropic.com/v1/messages", requiresApiKey: true },
-    { type: "custom", label: "Custom", defaultUrl: "", requiresApiKey: false },
-];
-
-export function getCatalogEntry(type: AiProviderType): ProviderCatalogEntry {
-    return PROVIDER_CATALOG.find((c) => c.type === type) ?? PROVIDER_CATALOG[0];
-}
-
-export function normalizeProvider(p: any): AiProvider {
-    const type: AiProviderType = p?.type as AiProviderType;
-    let url: string = typeof p?.url === "string" ? p.url : "";
-    if (!url) url = getCatalogEntry(type).defaultUrl;
-
-    let provider = new AiProvider(
-        String(p?.id ?? ""),
-        type,
-        String(p?.name ?? getCatalogEntry(type).label),
-        url,
-        String(p?.apiKey ?? ""),
-        String(p?.model ?? ""),
-    );
-    provider.enabled = p?.enabled === undefined ? true : !!p.enabled;
-    return provider
-}
-
-export interface ChatMessage {
-    role: "system" | "user" | "assistant";
-    content: string;
-}
-
-export interface ChatOptions {
-    params?: any;
-    temperature?: number;
-    maxTokens?: number;
-    signal?: AbortSignal;
-}
-
-export interface AiStreamRequest {
-    task: AI_TASK;
-    providerId?: string;
-    payload: {
-        text: string;
-        targetLang?: string;
-        systemPrompt?: string;
-        lang?: string;
-    };
-}
-
-export type AiStreamMessage =
-    | { type: "delta"; text: string }
-    | { type: "done" }
-    | { type: "error"; message: string };
+/**
+ * Paragraph separator in page-translation prompts. The model is told to
+ * preserve it verbatim, and the response is split on it — so the prompt text
+ * and the splitter must never drift apart. Exported because it is the protocol
+ * between {@link buildPrompt} and {@link aiPageTranslate}.
+ */
+export const SEPARATOR_TAG = "<sep/>";
 
 // ---------------------------------------------------------------------------
 // Prompt building
@@ -181,28 +98,11 @@ export function buildPrompt(req: AiStreamRequest): ChatMessage[] {
             // that MUST be preserved exactly in the output array).
             const lang = LANGUAGES_MAP.get(payload.targetLang || DEFAULT_VALUE.AI_TARGET_LANGUAGE)?.name;
             return [
-                { role: "system", content: `You are a professional ${lang} native speaker translator. Translate any text the user inputs into ${lang}. The translation should be natural and fluent, conforming to ${lang} expression conventions. Output only the translation, with no explanation, no quotes, or formatting marks. If the original text is already in ${lang}, output it as-is. If the text contains XML tags, consider where the tags should be placed in the translation while maintaining fluency. The <sep/> XML tag is the sole paragraph separator. Preserve every <sep/> tag in your translation exactly as-is. Each paragraph must map one-to-one to the source — do not merge, split, or reorder them.` },
+                { role: "system", content: `You are a professional ${lang} native speaker translator. Translate any text the user inputs into ${lang}. The translation should be natural and fluent, conforming to ${lang} expression conventions. Output only the translation, with no explanation, no quotes, or formatting marks. If the original text is already in ${lang}, output it as-is. If the text contains XML tags, consider where the tags should be placed in the translation while maintaining fluency. The ${SEPARATOR_TAG} XML tag is the sole paragraph separator. Preserve every ${SEPARATOR_TAG} tag in your translation exactly as-is. Each paragraph must map one-to-one to the source — do not merge, split, or reorder them.` },
                 { role: "user", content: text },
             ];
         }
     }
-}
-
-/**
- * Non-streaming counterpart to `chatStream` — accumulates all deltas into a
- * single string. Used by the page-translation pipeline where we want the full
- * JSON array response before parsing.
- */
-export async function chatComplete(
-    provider: AiProvider,
-    messages: ChatMessage[],
-    opts: ChatOptions = {},
-): Promise<string> {
-    let collected = "";
-    for await (const delta of chatStream(provider, messages, opts)) {
-        collected += delta;
-    }
-    return collected;
 }
 
 // ---------------------------------------------------------------------------
@@ -244,23 +144,32 @@ async function* sseFrames(body: ReadableStream<Uint8Array>): AsyncGenerator<stri
     const reader = body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buf = "";
-    while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let sep: number;
-        while ((sep = buf.indexOf("\n\n")) !== -1) {
-            const frame = buf.slice(0, sep);
-            buf = buf.slice(sep + 2);
-            // Concatenate multi-line `data:` payloads per SSE spec.
-            let data = "";
-            for (const rawLine of frame.split("\n")) {
-                const line = rawLine.trim();
-                if (!line || !line.startsWith("data:")) continue;
-                data += (data ? "\n" : "") + line.slice(5).trim();
+    try {
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let sep: number;
+            while ((sep = buf.indexOf("\n\n")) !== -1) {
+                const frame = buf.slice(0, sep);
+                buf = buf.slice(sep + 2);
+                // Concatenate multi-line `data:` payloads per SSE spec.
+                let data = "";
+                for (const rawLine of frame.split("\n")) {
+                    const line = rawLine.trim();
+                    if (!line || !line.startsWith("data:")) continue;
+                    data += (data ? "\n" : "") + line.slice(5).trim();
+                }
+                if (data) yield data;
             }
-            if (data) yield data;
         }
+    } finally {
+        // Consumers may stop early — AI_PROVIDER_TEST breaks out after ~32
+        // chars, and any aborted stream closes the generator mid-iteration.
+        // Without cancelling, the upstream response body stays open.
+        // Fire-and-forget: cancel() on an already-closed reader can reject, and
+        // this must never block the generator's teardown.
+        void reader.cancel().catch(() => { });
     }
 }
 
@@ -628,181 +537,237 @@ export async function claudeChatComplete(
 }
 
 // ---------------------------------------------------------------------------
-// Content-side helper: open a port and consume deltas as an async iterable
+// Provider resolution
 // ---------------------------------------------------------------------------
 
-export function startAiChatStream(req: AiStreamRequest): {
-    stream: AsyncIterable<string>;
-    abort: () => void;
-} {
-    const port = browser.runtime.connect({ name: PORT_NAME.AI_CHAT_STREAM });
-    port.postMessage(req);
-
-    let resolveNext: ((v: IteratorResult<string>) => void) | null = null;
-    let rejectNext: ((err: any) => void) | null = null;
-    const queue: string[] = [];
-    let ended = false;
-    let error: Error | null = null;
-
-    const onMessage = (raw: any) => {
-        const msg = raw as AiStreamMessage;
-        if (msg.type === "delta") {
-            if (resolveNext) {
-                const r = resolveNext;
-                resolveNext = null;
-                rejectNext = null;
-                r({ value: msg.text, done: false });
-            } else {
-                queue.push(msg.text);
-            }
-        } else if (msg.type === "done") {
-            ended = true;
-            if (resolveNext) {
-                const r = resolveNext;
-                resolveNext = null;
-                rejectNext = null;
-                r({ value: undefined as any, done: true });
-            }
-        } else if (msg.type === "error") {
-            error = new Error(msg.message);
-            if (rejectNext) {
-                const r = rejectNext;
-                resolveNext = null;
-                rejectNext = null;
-                r(error);
-            }
-        }
-    };
-    // Terminate the iteration as "done", resolving any pending `next()` so a
-    // parked `for await` loop unblocks and runs to completion. Safe to call
-    // multiple times.
-    const finish = () => {
-        ended = true;
-        if (resolveNext) {
-            const r = resolveNext;
-            resolveNext = null;
-            rejectNext = null;
-            r({ value: undefined as any, done: true });
-        }
-    };
-
-    port.onMessage.addListener(onMessage);
-    port.onDisconnect.addListener(finish);
-
-    const stream: AsyncIterable<string> = {
-        [Symbol.asyncIterator]() {
-            return {
-                next(): Promise<IteratorResult<string>> {
-                    if (error) return Promise.reject(error);
-                    if (queue.length > 0) {
-                        return Promise.resolve({ value: queue.shift()!, done: false });
-                    }
-                    if (ended) return Promise.resolve({ value: undefined as any, done: true });
-                    return new Promise<IteratorResult<string>>((resolve, reject) => {
-                        resolveNext = resolve;
-                        rejectNext = reject;
-                    });
-                },
-                return(): Promise<IteratorResult<string>> {
-                    try { port.disconnect(); } catch { }
-                    ended = true;
-                    return Promise.resolve({ value: undefined as any, done: true });
-                },
-            };
-        },
-    };
-
-    return {
-        stream,
-        // Calling `port.disconnect()` does NOT fire our own `onDisconnect`
-        // listener (only the other end is notified), so we must `finish()`
-        // ourselves — otherwise a `for await` loop parked on `next()` hangs
-        // forever and the caller's `running` flag never clears.
-        abort: () => { finish(); try { port.disconnect(); } catch { } },
-    };
-}
-
-// ---------------------------------------------------------------------------
-// Content-side helper: one-shot completion (no streaming)
-// ---------------------------------------------------------------------------
-
-/** Upper bound for one non-streaming AI call. Generous — providers can be slow. */
-const AI_COMPLETE_TIMEOUT = 120_000;
+export const NO_PROVIDER_ERROR =
+    "No enabled AI provider configured. Add or enable one in extension Options → Services.";
 
 /**
- * Run one AI task and resolve with the complete answer.
+ * Resolve which provider a request should use: the explicitly requested one,
+ * else the stored active one, else the first enabled one. Disabled providers
+ * are never selected.
  *
- * The counterpart to {@link startAiChatStream}, for callers that can do nothing
- * with a partial answer — subtitle segmentation has to align the model's whole
- * output against the source text before it means anything, so streaming it just
- * pays for a port and one message per delta. Background sends the upstream
- * request with `stream:false` and, where the provider supports it, thinking
- * turned off.
- *
- * Cancellation goes out of band (`sendMessage` has no native abort): the
- * request is tagged with a requestId and an abort fires AI_COMPLETE_ABORT with
- * that id, so background really cancels the upstream fetch.
- *
- * Throws on provider/config failure — callers are expected to have a fallback.
+ * Reads storage directly. Round-tripping through sendMessageToBackground here
+ * would deadlock — we ARE the background.
  */
-export async function aiComplete(req: AiStreamRequest, signal?: AbortSignal): Promise<string> {
-    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    const requestId =
-        (globalThis.crypto?.randomUUID?.() as string | undefined) ??
-        `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+export async function resolveAiProvider(providerId?: string): Promise<AiProvider | undefined> {
+    const rawList: any[] = ((await configRepo.get(CONFIG_KEY.AI_PROVIDERS)) as any[] | null) || [];
+    const list: AiProvider[] = rawList.map(normalizeProvider);
+    if (list.length === 0) return undefined;
+    const id = providerId || (await configRepo.get(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID));
+    return list.find((p) => p.id === id && p.enabled !== false)
+        || list.find((p) => p.enabled !== false);
+}
 
-    let onAbort: (() => void) | null = null;
-    if (signal) {
-        onAbort = () => {
-            void sendMessageToBackground({ action: ACTION.AI_COMPLETE_ABORT, data: { requestId } });
+/** {@link resolveAiProvider}, throwing the standard message when none is usable. */
+export async function resolveAiProviderOrThrow(providerId?: string): Promise<AiProvider> {
+    const provider = await resolveAiProvider(providerId);
+    if (!provider) throw new Error(NO_PROVIDER_ERROR);
+    return provider;
+}
+
+/**
+ * Provider-specific body extras for our non-interactive tasks (page
+ * translation, subtitle segmentation). These want the answer, not the model's
+ * reasoning: thinking costs tokens and seconds, and buys nothing on
+ * mechanical rewrite work. DeepSeek's reasoning models take this switch in the
+ * request body; providers without one are left alone.
+ */
+export function providerTaskParams(provider: AiProvider): any {
+    if (provider.type === "deepseek") return { thinking: { type: "disabled" } };
+    return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Page translation
+// ---------------------------------------------------------------------------
+
+// Batch texts up to this many characters per upstream request. The concurrency
+// cap is enforced globally inside chatCompleteNonStream (a shared semaphore), so
+// firing every batch at once here is fine — the limiter throttles the actual
+// requests across all callers, not just this one invocation.
+const AI_PAGE_TRANSLATE_BATCH_CHARS = 500;
+
+/**
+ * Run a page-translation request against the configured AI provider and return
+ * the translations array. Backs the ACTION.AI_TRANSLATE_TEXT handler.
+ * Throws on misconfiguration or a non-array model response.
+ */
+export async function aiPageTranslate(
+    providerId: string | undefined,
+    texts: string[],
+    targetLang: string,
+    signal?: AbortSignal,
+): Promise<string[]> {
+    const provider = await resolveAiProviderOrThrow(providerId);
+
+    let temperature = 0; // todo support use defined temperature
+    const params = providerTaskParams(provider); // todo support use defined params
+
+    const all = texts ?? [];
+    if (all.length === 0) return [];
+
+    // Split into batches of <= AI_PAGE_TRANSLATE_BATCH_CHARS characters. Each
+    // batch is a contiguous slice so results can be written back into their
+    // original positions regardless of completion order. Concurrency is capped
+    // downstream by chatCompleteNonStream's global semaphore.
+    const batches: { start: number; texts: string[] }[] = [];
+    let cur: string[] = [];
+    let curStart = 0;
+    let curChars = 0;
+    for (let i = 0; i < all.length; i++) {
+        const len = all[i].length;
+        // Close the current batch if appending this text would exceed the
+        // char budget — unless the batch is empty (a single oversized text
+        // still has to go out on its own).
+        if (cur.length > 0 && curChars + len > AI_PAGE_TRANSLATE_BATCH_CHARS) {
+            batches.push({ start: curStart, texts: cur });
+            cur = [];
+            curStart = i;
+            curChars = 0;
+        }
+        cur.push(all[i]);
+        curChars += len;
+    }
+    if (cur.length > 0) batches.push({ start: curStart, texts: cur });
+
+    const results: string[] = new Array(all.length);
+
+    // Translate one batch and write its results back at the right offset.
+    const runBatch = async (batch: { start: number; texts: string[] }) => {
+        const messages = buildPrompt({
+            task: AI_TASK.PAGE_TRANSLATE,
+            providerId: provider.id,
+            payload: { text: batch.texts.join(SEPARATOR_TAG), targetLang },
+        });
+        // Non-streaming: the upstream request is sent with stream:false (see
+        // chatCompleteNonStream) — page translation wants the full result in
+        // one response, not an SSE stream.
+        const full = await chatCompleteNonStream(provider, messages, { temperature, signal, params });
+        const outs = full.split(SEPARATOR_TAG).filter((s) => s.length > 0);
+
+        for (let i = 0; i < batch.texts.length; i++) {
+            // Guard against a short response — fall back to the source text so
+            // indices never drift out of alignment with the input array.
+            // todo fallback to machine translation
+            results[batch.start + i] = i < outs.length ? outs[i] : batch.texts[i];
+        }
+    };
+
+    // Fire every batch; the global semaphore in chatCompleteNonStream caps how
+    // many actually hit the network at once.
+    await Promise.all(batches.map(runBatch));
+
+    return results;
+}
+
+// ---------------------------------------------------------------------------
+// Message + port bridge
+// ---------------------------------------------------------------------------
+
+type MessageHandler = (message: any, sendResponse: (r: any) => void) => boolean | void;
+
+/** AI actions handled in background, keyed by ACTION. Consumed by background.ts. */
+export const aiMessageHandlers: Record<string, MessageHandler> = {
+    [ACTION.AI_PROVIDER_TEST]: (message, sendResponse) => {
+        // Options sends the whole provider record — possibly an unsaved draft,
+        // possibly disabled — so it is used as-is rather than resolved by id.
+        const provider = normalizeProvider(message.data);
+        return handleAsync('AI provider test', sendResponse, async () => {
+            const gen = chatStream(
+                provider,
+                [
+                    { role: "system", content: "Reply with exactly: ok" },
+                    { role: "user", content: "ping" },
+                ],
+                { maxTokens: 16 },
+            );
+            let collected = "";
+            for await (const delta of gen) {
+                collected += delta;
+                if (collected.length > 32) break;
+            }
+            return { reply: collected.trim() };
+        });
+    },
+
+    [ACTION.AI_TRANSLATE_TEXT]: (message, sendResponse) => handleAbortable(
+        ABORT_SCOPE.AI_TRANSLATE, 'AI translate', message, sendResponse,
+        async (data, signal) => {
+            const { providerId, texts, targetLang } = data as {
+                providerId?: string; texts: string[]; targetLang: string;
+            };
+            return await aiPageTranslate(providerId, texts, targetLang, signal);
+        },
+    ),
+
+    [ACTION.AI_TRANSLATE_ABORT]: (message, sendResponse) =>
+        handleAbort(ABORT_SCOPE.AI_TRANSLATE, message, sendResponse),
+
+    [ACTION.AI_COMPLETE]: (message, sendResponse) => handleAbortable(
+        ABORT_SCOPE.AI_COMPLETE, 'AI complete', message, sendResponse,
+        async (data, signal) => {
+            const { providerId, task, payload } = data as {
+                providerId?: string;
+                task: AI_TASK;
+                payload: { text: string; targetLang?: string; systemPrompt?: string; lang?: string };
+            };
+            const provider = await resolveAiProviderOrThrow(providerId);
+            const messages = buildPrompt({ task, providerId: provider.id, payload });
+            const text = await chatCompleteNonStream(provider, messages, {
+                temperature: 0,
+                signal,
+                params: providerTaskParams(provider),
+            });
+            return { text };
+        },
+    ),
+
+    [ACTION.AI_COMPLETE_ABORT]: (message, sendResponse) =>
+        handleAbort(ABORT_SCOPE.AI_COMPLETE, message, sendResponse),
+};
+
+/**
+ * Register the AI Writing streaming bridge (content port <-> provider SSE).
+ *
+ * MUST be called synchronously during background startup, for the same reason
+ * as registerAutoSyncListeners() — see the MV3 note in main/background.ts. A
+ * listener registered after an `await` misses the very connection that woke the
+ * worker, and Firefox's non-persistent event page never wakes for it at all.
+ */
+export function registerAiBridge(): void {
+    browser.runtime.onConnect.addListener((port) => {
+        if (port.name !== PORT_NAME.AI_CHAT_STREAM) return;
+        const controller = new AbortController();
+        let disposed = false;
+        const send = (msg: AiStreamMessage) => {
+            if (disposed) return;
+            try { port.postMessage(msg); } catch { /* port may have closed */ }
         };
-        signal.addEventListener("abort", onAbort);
-    }
-
-    try {
-        const res = (await sendMessageToBackground(
-            {
-                action: ACTION.AI_COMPLETE,
-                data: { requestId, providerId: req.providerId, task: req.task, payload: req.payload },
-            },
-            AI_COMPLETE_TIMEOUT,
-        )) as { text?: string } | undefined;
-
-        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        // `sendMessageToBackground` turns a failed request into `undefined`
-        // rather than throwing, so this is the error path too.
-        if (!res || typeof res.text !== "string") throw new Error("AI request failed");
-        return res.text;
-    } finally {
-        if (onAbort) signal?.removeEventListener("abort", onAbort);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Task wrappers (content-side convenience)
-// ---------------------------------------------------------------------------
-
-export function aiTranslate(text: string, targetLang: string) {
-    return startAiChatStream({
-        task: AI_TASK.TRANSLATE,
-        payload: { text, targetLang },
-    });
-}
-
-export function aiEnhance(
-    text: string,
-    mode: AI_TASK.GRAMMAR | AI_TASK.POLISH | AI_TASK.FORMAL | AI_TASK.CASUAL,
-    lang?: string,
-) {
-    return startAiChatStream({
-        task: mode,
-        payload: { text, lang },
-    });
-}
-
-export function aiCustom(systemPrompt: string, userText: string) {
-    return startAiChatStream({
-        task: AI_TASK.CUSTOM,
-        payload: { text: userText, systemPrompt },
+        port.onDisconnect.addListener(() => {
+            disposed = true;
+            controller.abort();
+        });
+        port.onMessage.addListener(async (raw) => {
+            const req = raw as AiStreamRequest;
+            try {
+                const provider = await resolveAiProvider(req.providerId);
+                if (!provider) {
+                    send({ type: "error", message: NO_PROVIDER_ERROR });
+                    return;
+                }
+                const messages = buildPrompt(req);
+                const gen = chatStream(provider, messages, { signal: controller.signal });
+                for await (const delta of gen) {
+                    if (disposed) return;
+                    send({ type: "delta", text: delta });
+                }
+                send({ type: "done" });
+            } catch (e: any) {
+                if (controller.signal.aborted) return;
+                send({ type: "error", message: e?.message || String(e) });
+            }
+        });
     });
 }

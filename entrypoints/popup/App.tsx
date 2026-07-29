@@ -22,7 +22,7 @@ import {
   TranslateServiceMeta,
   VIEW_STRATEGY,
 } from '@/main/constants';
-import type { AiProvider } from '@/main/aiService';
+import type { AiProvider } from '@/main/aiProvider';
 import { sendMessageToAllTabs, sendMessageToBackground, sendMessageToTab } from '@/utils/message';
 import { cn } from '@/lib/cn';
 import { Card, CardDivider, CardTitle } from '@/components/ui/card';
@@ -281,7 +281,7 @@ export default function App() {
 
   // Flat (ungrouped) list of translators + AI providers — shared shape used by
   // every service picker (popup / options / AI writing). AI provider entries
-  // use the `ai:<id>` value scheme the background's AI_TRANSLATE port consumes.
+  // use the `ai:<id>` value scheme AiTranslateService resolves.
   const serviceList = buildServiceOptions(translateServices, aiProviders);
 
   const version =

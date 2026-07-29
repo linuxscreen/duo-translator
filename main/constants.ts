@@ -1,5 +1,5 @@
 // UI metadata for a translate service shown in settings/popup. Not the runtime
-// translation client — for that see TranslateService in entrypoints/translateService.ts.
+// translation client — for that see TranslateService in main/translateClient.ts.
 export class TranslateServiceMeta {
     name: string;
     value: string;
@@ -169,15 +169,11 @@ export enum ACTION {
     AI_PROVIDER_TEST = 'aiProviderTest',
     // Test a built-in translation service (google/microsoft/deepl) from Options.
     TRANSLATE_SERVICE_TEST = 'translateServiceTest',
-    // DeepL request proxy. DeepL's API has no CORS headers, so the content
-    // script cannot fetch it directly — background performs the fetch and
-    // returns the raw JSON payload. content reshapes it into TranslateResult[].
-    DEEPL_REQUEST = 'deeplRequest',
-    // One-shot (non-streaming) page-translation request to an AI provider.
-    // Unlike PORT_NAME.AI_TRANSLATE (port-based, abortable), this uses a plain
-    // sendMessage round-trip: background calls chatComplete and returns the
-    // full translations array. Preferred for page translation where streaming
-    // is unnecessary. The port path is kept as `streamTranslateText`.
+    // One-shot (non-streaming) page-translation request to an AI provider:
+    // background batches the texts, calls chatCompleteNonStream and returns the
+    // full translations array. Page translation has nothing to show until a
+    // whole batch is back, so streaming would only add port traffic. Abortable
+    // out of band via AI_TRANSLATE_ABORT below.
     AI_TRANSLATE_TEXT = 'aiTranslateText',
     // Out-of-band cancellation for AI_TRANSLATE_TEXT. sendMessage has no native
     // abort, so content fires this with the same requestId on signal abort;
@@ -438,10 +434,6 @@ export function configDefault(name: string): unknown {
  */
 export enum PORT_NAME {
     AI_CHAT_STREAM = 'aiChatStream',
-    // Page-translation request to an AI provider. Port-based (not sendMessage)
-    // so the content script can disconnect to abort the in-flight fetch in
-    // background — `runtime.sendMessage` has no native cancellation path.
-    AI_TRANSLATE = 'aiTranslate',
 }
 
 /** What the AI writing pipeline is being asked to do. */

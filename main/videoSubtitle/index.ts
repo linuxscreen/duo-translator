@@ -7,7 +7,7 @@ import {
 import { readConfig } from "@/utils/reactiveConfig";
 import { setConfig } from "@/utils/db";
 import { buildAiTranslateService } from "@/utils/service";
-import { translateTextsWithCache } from "@/main/translateService";
+import { translateTextsWithCache } from "@/main/translateClient";
 import { openSelectionTranslate } from "@/main/aiWriting/selectionPopup";
 import { SubtitleOverlay } from "./overlay";
 import { mountSubtitleControls, type SubtitleControlsController } from "./controls";

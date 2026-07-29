@@ -5,7 +5,7 @@ import { franc } from "franc";
 import { isTraditionalChinese } from "@/utils/language";
 import { iso6393To1Map, excludedTagSet, TRANSLATE_SERVICE } from "@/main/constants";
 import { shuffle } from "@/utils/arrays";
-import { translationServices } from "@/main/translateService";
+import { translationServices } from "@/main/translateClient";
 import { allParagraphs } from "@/main/dom/paragraphMarks";
 
 const utf8Encoder = new TextEncoder();

@@ -17,7 +17,7 @@ vi.mock("@/utils/language", () => ({ isTraditionalChinese: vi.fn(() => false) })
 vi.mock("@/utils/arrays", () => ({ shuffle: (a: unknown[]) => a }));
 // Only `translationServices` is consumed by detect.ts — provide a registry
 // whose "microsoft" entry exposes a controllable detectLanguage().
-vi.mock("@/main/translateService", () => ({
+vi.mock("@/main/translateClient", () => ({
     translationServices: new Map([["microsoft", { detectLanguage: mockMsDetect }]]),
 }));
 

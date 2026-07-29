@@ -54,6 +54,22 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
 }
 
 /**
+ * Extract a human-readable reason from a STATUS_FAIL response's `data`.
+ *
+ * Handlers are inconsistent about the shape: the network handlers reply
+ * `{ message }` while the sync handlers reply a bare string. `String(data)` on
+ * the former yields "[object Object]", destroying the real error at exactly the
+ * point it was meant to be preserved — so unwrap both shapes explicitly.
+ */
+function failureMessage(action: string, data: any): string {
+    if (data && typeof data === 'object' && typeof data.message === 'string' && data.message) {
+        return data.message
+    }
+    if (typeof data === 'string' && data) return data
+    return `${action} failed`
+}
+
+/**
  * Like {@link sendMessageToBackground}, but rejects with the background's error
  * message on a STATUS_FAIL response (or a timeout) instead of silently
  * resolving `undefined`. Use this when the caller needs to surface the real
@@ -70,16 +86,23 @@ export function sendMessageToBackgroundOrThrow(message: Message, timeout: number
         new Promise((resolve, reject) => {
             browser.runtime.sendMessage(message).then((response) => {
                 clearTimeout(timeoutId)
+                // An empty response is the MV3 service-worker cold-start race
+                // ("Could not establish connection"). Resolving undefined here
+                // would make the OrThrow variant silently not throw on the most
+                // common failure of all — reject instead.
                 if (!response) {
-                    resolve(undefined)
+                    reject(new Error(`${message.action}: no response from background`))
                     return
                 }
                 if (response.status === STATUS_SUCCESS) {
                     resolve(response.data);
                 } else {
-                    reject(new Error(response.data ? String(response.data) : `${message.action} failed`))
+                    reject(new Error(failureMessage(message.action, response.data)))
                 }
-            }).catch(reject);
+            }).catch((e) => {
+                clearTimeout(timeoutId)
+                reject(e)
+            });
         }),
         new Promise((_resolve, reject) => {
             timeoutId = setTimeout(() => {

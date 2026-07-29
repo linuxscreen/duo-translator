@@ -10,8 +10,8 @@ import {
     LANGUAGES,
     type TranslateServiceMeta,
 } from "@/main/constants";
-import type { AiProvider } from "@/main/aiService";
-import { startAiChatStream } from "@/main/aiService";
+import type { AiProvider } from "@/main/aiProvider";
+import { startAiChatStream } from "@/main/aiClient";
 import { buildServiceOptions, getAiTranslateService } from "@/utils/service";
 import { getConfig, setConfig } from "@/utils/db";
 import { applyTextToTarget, canApplyToTarget } from "./applyText";

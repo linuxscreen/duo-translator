@@ -1,6 +1,6 @@
 import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
 import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage } from "./constants";
-import { restore, translateParams, getTranslateResult, translate, TranslateResult, resetTranslationCacheEnabled, translationServices, TranslateService } from "./translateService";
+import { restore, translateParams, getTranslateResult, translate, TranslateResult, resetTranslationCacheEnabled, translationServices, TranslateService } from "./translateClient";
 import { sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
 import { mountFloatBall, type FloatBallController } from "./floatBall";

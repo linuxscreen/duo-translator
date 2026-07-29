@@ -1,14 +1,21 @@
-// Unit tests for the non-DOM surface of main/translateService.ts.
+// Unit tests for the non-DOM surface of main/translateClient.ts.
 // Runs in the default `node` environment (WxtVitest sets no DOM) — these cover
 // pure string/tag transforms, data classes, and every provider's translateText
 // / detectLanguage / batching with message mocks. All provider HTTP goes
 // through the background proxy (ACTION.TRANSLATE_PROXY_FETCH), so network
 // behavior is mocked via sendMessageToBackground, not global fetch.
-// DOM-dependent orchestration lives in translateService.dom.test.ts (jsdom env).
+// DOM-dependent orchestration lives in translateClient.dom.test.ts (jsdom env).
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
 // --- module mocks (hoisted) ---------------------------------------------------
-vi.mock("@/utils/message", () => ({ sendMessageToBackground: vi.fn() }));
+// One shared transport stub behind both names: abortableRequest uses the
+// throwing variant, the provider classes the plain one, and every assertion
+// below is on the message that reaches this seam.
+const { sendStub } = vi.hoisted(() => ({ sendStub: vi.fn() }));
+vi.mock("@/utils/message", () => ({
+    sendMessageToBackground: sendStub,
+    sendMessageToBackgroundOrThrow: sendStub,
+}));
 vi.mock("@/utils/db", () => ({ getConfig: vi.fn(async () => undefined) }));
 vi.mock("@/utils/language", () => ({ isTraditionalChinese: vi.fn(() => false) }));
 
@@ -29,7 +36,7 @@ import {
     googleTranslationService,
     microsoftTranslationService,
     deeplTranslationService,
-} from "@/main/translateService";
+} from "@/main/translateClient";
 import { ACTION, TRANSLATE_SERVICE, AI_PREFIX } from "@/main/constants";
 import { sendMessageToBackground } from "@/utils/message";
 import { isTraditionalChinese } from "@/utils/language";
@@ -335,27 +342,51 @@ describe("MicrosoftTranslateService.detectLanguage", () => {
 // DeepLTranslateService
 // ---------------------------------------------------------------------------
 describe("DeepLTranslateService.translateText", () => {
-    it("proxies through background and maps the target language code", async () => {
-        mockSend.mockResolvedValue({
+    // DeepL now goes through the SAME background proxy as Google/Microsoft
+    // (TRANSLATE_PROXY_FETCH): the full request, including the Authorization
+    // header, is built on this side. It used to have its own DEEPL_REQUEST
+    // action where background attached key + endpoint.
+    it("builds a full authorized request and maps the target language code", async () => {
+        mockProxyRoutes(() => proxyReply({
             translations: [{ text: "你好", detected_source_language: "EN" }],
-        });
-        const svc = new DeepLTranslateService();
+        }));
+        const svc = new DeepLTranslateService("key-abc");
         const out = await svc.translateText(["hello"], "zh-CN");
         expect(out[0].translatedMappedHtmlText).toBe("你好");
+
+        const [[msg]] = sendCalls(ACTION.TRANSLATE_PROXY_FETCH) as any[];
+        expect(msg.data.url).toBe("https://api.deepl.com/v2/translate");
+        expect(msg.data.init.headers.Authorization).toBe("DeepL-Auth-Key key-abc");
         // zh-CN must be converted to DeepL's ZH-HANS in the request body.
-        expect(mockSend).toHaveBeenCalledWith(
-            expect.objectContaining({
-                action: ACTION.DEEPL_REQUEST,
-                data: expect.objectContaining({
-                    body: expect.objectContaining({ target_lang: "ZH-HANS" }),
-                }),
-            }),
-        );
+        expect(JSON.parse(msg.data.init.body)).toMatchObject({ target_lang: "ZH-HANS" });
     });
 
-    it("returns [] when background returns nothing", async () => {
-        mockSend.mockResolvedValue(undefined);
+    it("picks the free endpoint for a :fx key", async () => {
+        mockProxyRoutes(() => proxyReply({ translations: [{ text: "你好", detected_source_language: "EN" }] }));
+        await new DeepLTranslateService("key-abc:fx").translateText(["hello"], "zh-CN");
+        const [[msg]] = sendCalls(ACTION.TRANSLATE_PROXY_FETCH) as any[];
+        expect(msg.data.url).toBe("https://api-free.deepl.com/v2/translate");
+    });
+
+    it("returns [] when no API key is configured (getConfig mock yields undefined)", async () => {
+        mockProxyRoutes(() => proxyReply({}));
         const svc = new DeepLTranslateService();
+        expect(await svc.translateText(["hello"], "zh-CN")).toEqual([]);
+        // Never reaches the network without a key.
+        expect(sendCalls(ACTION.TRANSLATE_PROXY_FETCH)).toHaveLength(0);
+    });
+
+    it("throws instead of degrading when strict", async () => {
+        mockProxyRoutes(() => proxyReply(null, 403));
+        const svc = new DeepLTranslateService("key-abc");
+        await expect(
+            svc.translateText(["hello"], "zh-CN", undefined, undefined, { strict: true }),
+        ).rejects.toThrow(/403/);
+    });
+
+    it("returns [] on a non-200 response", async () => {
+        mockProxyRoutes(() => proxyReply(null, 403));
+        const svc = new DeepLTranslateService("key-abc");
         expect(await svc.translateText(["hello"], "zh-CN")).toEqual([]);
     });
 

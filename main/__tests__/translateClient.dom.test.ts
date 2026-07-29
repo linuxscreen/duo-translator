@@ -1,13 +1,20 @@
 // @vitest-environment jsdom
 //
-// DOM-dependent tests for main/translateService.ts. These need a browser-
+// DOM-dependent tests for main/translateClient.ts. These need a browser-
 // faithful DOM: the pipeline parses non-standard <b0>/<b1> placeholder tags via
 // innerHTML, relies on Node.TEXT_NODE/ELEMENT_NODE, cloneNode, outerHTML and
 // .remove(). WxtVitest sets no DOM environment (default is node), so we opt into
-// jsdom per-file here. Pure/provider tests live in translateService.test.ts.
+// jsdom per-file here. Pure/provider tests live in translateClient.test.ts.
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
-vi.mock("@/utils/message", () => ({ sendMessageToBackground: vi.fn() }));
+// One shared transport stub behind both names: abortableRequest uses the
+// throwing variant, the provider classes the plain one, and every assertion
+// below is on the message that reaches this seam.
+const { sendStub } = vi.hoisted(() => ({ sendStub: vi.fn() }));
+vi.mock("@/utils/message", () => ({
+    sendMessageToBackground: sendStub,
+    sendMessageToBackgroundOrThrow: sendStub,
+}));
 vi.mock("@/utils/db", () => ({ getConfig: vi.fn(async () => undefined) }));
 vi.mock("@/utils/language", () => ({ isTraditionalChinese: vi.fn(() => false) }));
 
@@ -22,8 +29,8 @@ import {
     getElementPreProcessResult,
     updateTranslateElementContent,
     DeepLTranslateService,
-} from "@/main/translateService";
-import { VIEW_STRATEGY } from "@/main/constants";
+} from "@/main/translateClient";
+import { ACTION, VIEW_STRATEGY } from "@/main/constants";
 import { sendMessageToBackground } from "@/utils/message";
 
 const mockSend = sendMessageToBackground as unknown as Mock;
@@ -294,21 +301,24 @@ describe("updateTranslateElementContent — scoped to a unit range", () => {
 // ---------------------------------------------------------------------------
 describe("DeepLTranslateService.translateHtml", () => {
     it("sends element outerHTML with tag_handling=html and surfaces the HTML result", async () => {
+        // DeepL goes through the shared TRANSLATE_PROXY_FETCH proxy; the full
+        // request (URL + Authorization + JSON body) is built on this side.
         mockSend.mockResolvedValue({
-            translations: [{ text: "<p>你好</p>", detected_source_language: "EN" }],
+            status: 200,
+            statusText: "OK",
+            bodyText: JSON.stringify({
+                translations: [{ text: "<p>你好</p>", detected_source_language: "EN" }],
+            }),
         });
         document.body.innerHTML = "<p>Hello</p>";
         const p = document.body.querySelector("p")! as HTMLElement;
 
-        const out = await new DeepLTranslateService().translateHtml([p], "zh-CN");
+        const out = await new DeepLTranslateService("key-abc").translateHtml([p], "zh-CN");
 
         expect(out[0].translatedHtmlText).toBe("<p>你好</p>");
-        expect(mockSend).toHaveBeenCalledWith(
-            expect.objectContaining({
-                data: expect.objectContaining({
-                    body: expect.objectContaining({ tag_handling: "html" }),
-                }),
-            }),
-        );
+        const [[msg]] = mockSend.mock.calls.filter(
+            ([m]: any[]) => m?.action === ACTION.TRANSLATE_PROXY_FETCH,
+        ) as any[];
+        expect(JSON.parse(msg.data.init.body)).toMatchObject({ tag_handling: "html" });
     });
 });

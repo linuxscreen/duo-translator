@@ -20,8 +20,8 @@ import {
     LANGUAGES,
 } from "@/main/constants";
 import { sendMessageToBackground } from "@/utils/message";
-import type { AiProvider } from "@/main/aiService";
-import { startAiChatStream } from "@/main/aiService";
+import type { AiProvider } from "@/main/aiProvider";
+import { startAiChatStream } from "@/main/aiClient";
 import { buildAiTranslateService, buildServiceOptions, type ServiceOption } from "@/utils/service";
 import { getConfig, setConfig } from "@/utils/db";
 import { useConfig } from "@/utils/reactiveConfig";
@@ -451,8 +451,8 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
         setResult({
             task: mode, original, output: "", running: true, serviceKey: providerId,
         });
-        // Use startAiChatStream directly so we can pin to the chosen providerId
-        // (aiEnhance defers to the configured active provider only).
+        // startAiChatStream takes an explicit providerId, so the request is
+        // pinned to the provider chosen here rather than the globally active one.
         const { stream, abort } = startAiChatStream({
             task: mode, providerId, payload: { text: original },
         });

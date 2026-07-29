@@ -1,5 +1,5 @@
 import { AI_TASK } from "@/main/constants";
-import { aiComplete } from "@/main/aiService";
+import { aiComplete } from "@/main/aiClient";
 import type { SubtitleCue, SubtitleWord } from "./types";
 
 /**

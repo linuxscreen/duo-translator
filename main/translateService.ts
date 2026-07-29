@@ -1,1437 +1,261 @@
-import { ACTION, AI_PREFIX, APP_NAME_WITH_SUFFIX, CONFIG_KEY, EXCLUDE_CHILD_ELEMENT_TAGS, PORT_NAME, TRANSLATE_SERVICE, TRANSLATE_SERVICES, VIEW_STRATEGY } from "@/main/constants";
-import { sendMessageToBackground } from "../utils/message";
-import { getConfig } from "@/utils/db";
-import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
-import { browser } from "wxt/browser";
-import { isTraditionalChinese } from "@/utils/language";
-import { contentInvisible, decodeHtmlText } from "@/utils/dom";
-import type { TranslationUnit } from "@/main/dom/segments";
-
-//#region types
 // ---------------------------------------------------------------------------
-// Domain types
-// ---------------------------------------------------------------------------
-
-/**
- * Exclusive boundary anchors of a translation unit among its container's
- * direct children (null = container edge). Anchors sit *outside* the unit and
- * are never moved by the unit's own rewrite, so they stay valid across
- * translate/restore round-trips.
- */
-export interface UnitRange {
-    start: ChildNode | null;
-    end: ChildNode | null;
-}
-
-export class Token {
-    constructor(public token: string, public expireTime: number) { }
-
-    isValid(): boolean {
-        return !!this.token && this.expireTime > Date.now();
-    }
-
-    static fromData(data: any): Token | null {
-        if (!data || typeof data.token !== "string" || typeof data.expireTime !== "number") return null
-        return new Token(data.token, data.expireTime);
-    }
-}
-
-export class TranslateResult {
-    translatedMappedHtmlText: string; // translated innerHtml of the mapped tag element, for example <b0>translated text</b0>, or <a i=0>translated text</a>(google translate)
-    sourceLang: string;
-    score: number;
-    rawText: string = "";
-    rawTextLength: number = 0; // original text length, sum of all text nodes length
-    translatedCopyElement?: HTMLElement; // a translated copy of the original element use for double view strategy
-    originalSliceElements?: HTMLElement[]; // first element is the original element itself, then are child elements of the original element
-    rawMappedHtmlText?: string; // original innerHtml of the mapped tag element, for example <b0>original text</b0>
-    translatedHtmlText?: string; // translated innerHtml of the original tag element, for example <p class="x" id="y">translated text</p>
-    targetLang?: string;
-    textNodes?: Text[];
-    textIndexMap?: Map<number, number>; // key: text node index, value: corresponding childNode of original element(ancestor of text node) index
-    replacedTextNodes?: Text[]; // use for SINGLE view strategy, text nodes that have been replaced(has been translated or restored)
-    unit?: TranslationUnit; // the logical paragraph this result belongs to
-    // SINGLE only: the unit's span among the container's direct children, as
-    // exclusive boundary anchors (null = container edge). Write-back and
-    // restore stay inside this range so sibling units are never touched.
-    unitRange?: UnitRange;
-
-    constructor(rawTranslatedText: string, sourceLang: string, score: number) {
-        this.translatedMappedHtmlText = rawTranslatedText;
-        this.sourceLang = sourceLang;
-        this.score = score;
-    }
-}
-
-export class TranslateParams {
-    constructor(
-        public serviceName: string,
-        public targetLang: string,
-        public sourceLang?: string,
-        public defaultStrategy?: string,
-        public autoTrigger?: boolean,
-        public isBody?: boolean,
-    ) { }
-}
-// Backward-compatible alias for existing call sites that use lowercase name.
-export { TranslateParams as translateParams };
-
-export default defineUnlistedScript(() => { });
-
-// ---------------------------------------------------------------------------
-// Tag handling helpers (placeholder tags so translators preserve markup)
-// ---------------------------------------------------------------------------
-
-type Tag = { match: string; tagName: string; index: number };
-
-/**
- * Replaces native HTML tags with synthetic <bN> placeholders so translation
- * APIs (which often mangle real HTML) preserve the structure. A fresh
- * instance must be used per request — state is request-scoped.
- */
-export class TagReplacer {
-    private tagCounter = 11;
-    private tagStack: Tag[] = [];
-    private tagMap: Record<string, Tag> = {};
-
-    replaceTags(html: string): string {
-        const tagRegex = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
-        return html.replace(tagRegex, (match, tagName) => {
-            if (match.startsWith("</")) {
-                let lastTag = this.tagStack.pop();
-                while (lastTag && tagName !== lastTag.tagName) {
-                    lastTag = this.tagStack.pop();
-                }
-                if (!lastTag) return match;
-                return `</b${lastTag.index}>`;
-            }
-            const currentTag: Tag = { match, tagName, index: this.tagCounter };
-            this.tagStack.push(currentTag);
-            this.tagMap[`b${this.tagCounter}`] = currentTag;
-            this.tagCounter++;
-            return `<b${currentTag.index}>`;
-        });
-    }
-
-    restoreTags(customHtml: string): string {
-        const customTagRegex = /<\/?b([0-9]+)>/g;
-        return customHtml.replace(customTagRegex, (match, tagNumber) => {
-            const originalTag = this.tagMap[`b${tagNumber}`];
-            if (!originalTag) return match;
-            return match.startsWith("</") ? `</${originalTag.tagName}>` : originalTag.match;
-        });
-    }
-}
-//#endregion
-
-//#region translate service classes
-// ---------------------------------------------------------------------------
-// TranslateService — abstract base shared by every provider
-// ---------------------------------------------------------------------------
-
-export interface TranslateRequestOptions {
-    retryCount?: number;
-}
-
-/**
- * Runtime translation provider. Each provider (Google, Microsoft, DeepL …)
- * subclasses this and implements the methods relevant to its API.
- * todo migrate to background
- */
-export abstract class TranslateService {
-    abstract readonly name: string;
-
-    /** Translate a list of plain-text snippets. */
-    abstract translateText(
-        texts: string[],
-        targetLang: string,
-        signal?: AbortSignal | null,
-        sourceLang?: string,
-        options?: TranslateRequestOptions,
-    ): Promise<TranslateResult[]>;
-
-    /** 
-     * @deprecated
-     * Translate a list of HTML elements while preserving inline tags.
-    */
-    abstract translateHtml(
-        html: HTMLElement[],
-        targetLang: string,
-        signal?: AbortSignal | null,
-        sourceLang?: string,
-    ): Promise<TranslateResult[]>;
-
-    /**
-     * Translate a possibly large batch of texts. Default behaviour just
-     * delegates to {@link translateText}. Override when chunking/retrying is
-     * required (Microsoft does this to respect API limits).
-     */
-    translateBatchText(
-        texts: string[],
-        targetLang: string,
-        signal?: AbortSignal | null,
-        sourceLang?: string,
-    ): Promise<TranslateResult[]> {
-        return this.translateText(texts, targetLang, signal, sourceLang);
-    }
-
-    /** Detect the dominant language. Default: not supported. */
-    detectLanguage(_texts: string[]): Promise<string> {
-        return Promise.resolve("");
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Background-proxied fetch shared by the built-in providers (Google/Microsoft)
-// ---------------------------------------------------------------------------
-// Content-script fetches get no cross-origin privileges in MV3: Firefox
-// applies the host page's CSP connect-src (e.g. chatgpt.com blocks these
-// hosts outright) and Chrome applies page-origin CORS (works today only
-// because these endpoints answer permissive preflights). Background fetches
-// with the extension principal are subject to neither, so all provider HTTP
-// goes through ACTION.TRANSLATE_PROXY_FETCH — same reasoning as the existing
-// DeepL proxy (ACTION.DEEPL_REQUEST) and the TTS fetches.
-
-const GOOGLE_TRANSLATE_URL = "https://translate-pa.googleapis.com/v1/translateHtml";
-const MS_TRANSLATE_URL =
-    "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&includeSentenceLength=true&";
-const MS_DETECT_URL =
-    "https://api-edge.cognitive.microsofttranslator.com/detect?api-version=3.0";
-
-/**
- * URL prefixes the background proxy is willing to fetch. Keep this list to
- * fixed provider endpoints so the proxy can never be used as a generic
- * fetch-with-extension-privileges primitive.
- */
-export const TRANSLATE_PROXY_ALLOWED_URLS: readonly string[] = [
-    GOOGLE_TRANSLATE_URL,
-    MS_TRANSLATE_URL,
-    MS_DETECT_URL,
-];
-
-// The direct fetches this replaces had no timeout; keep the ceiling generous
-// so a large single-shot Google batch on a slow network still completes.
-const PROXY_FETCH_TIMEOUT = 60000;
-
-interface ProxyFetchInit {
-    method: string;
-    headers: Record<string, string>;
-    body: string;
-}
-
-interface ProxyFetchResponse {
-    status: number;
-    statusText: string;
-    json: () => Promise<any>;
-}
-
-/**
- * fetch()-shaped wrapper over the background proxy. sendMessage has no native
- * cancellation, so abort is relayed out of band with a requestId (same pattern
- * as AI_TRANSLATE_TEXT/ABORT): background holds an AbortController per request
- * and cancels the upstream fetch. Rejects with an AbortError like fetch would.
- */
-async function proxyFetch(
-    url: string,
-    init: ProxyFetchInit,
-    signal?: AbortSignal | null,
-): Promise<ProxyFetchResponse> {
-    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    const requestId =
-        (globalThis.crypto?.randomUUID?.() as string | undefined) ??
-        `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-
-    let onAbort: (() => void) | null = null;
-    if (signal) {
-        onAbort = () => {
-            void sendMessageToBackground({
-                action: ACTION.TRANSLATE_PROXY_ABORT,
-                data: { requestId },
-            });
-        };
-        signal.addEventListener("abort", onAbort);
-    }
-
-    try {
-        const resp = await sendMessageToBackground(
-            { action: ACTION.TRANSLATE_PROXY_FETCH, data: { requestId, url, init } },
-            PROXY_FETCH_TIMEOUT,
-        );
-        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-        if (!resp) throw new Error("translate proxy fetch failed");
-        return {
-            status: resp.status,
-            statusText: resp.statusText,
-            json: async () => JSON.parse(resp.bodyText),
-        };
-    } finally {
-        if (onAbort) signal?.removeEventListener("abort", onAbort);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Google
-// ---------------------------------------------------------------------------
-
-export class GoogleTranslateService extends TranslateService {
-    readonly name = TRANSLATE_SERVICE.GOOGLE;
-    // TODO: support a configurable mirror URL and automatic failover.
-    private readonly endpoint = GOOGLE_TRANSLATE_URL;
-    private readonly apiKey: string;
-
-    constructor(apiKey: string = import.meta.env.VITE_GOOGLE_API_KEY) {
-        super();
-        this.apiKey = apiKey;
-    }
-
-    async translateText(
-        texts: string[],
-        targetLang: string,
-        signal?: AbortSignal,
-        _sourceLang?: string,
-    ): Promise<TranslateResult[]> {
-        if (texts.length === 0) return [];
-
-        const response = await proxyFetch(this.endpoint, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json+protobuf",
-                "x-goog-api-key": this.apiKey,
-            },
-            body: JSON.stringify([[texts, "auto", targetLang], "te_lib"]),
-        }, signal);
-
-        if (response.status !== 200) {
-            console.error(APP_NAME_WITH_SUFFIX, "Google Translate API error:", response.statusText);
-            return [];
-        }
-
-        const data = await response.json();
-        if (!data || data.length < 2) return [];
-
-        const result: TranslateResult[] = [];
-        for (let i = 0; i < data[0].length; i++) {
-            result.push(new TranslateResult(data[0][i], data[1][i], 1));
-        }
-        return result;
-    }
-
-    async translateHtml(
-        html: HTMLElement[],
-        targetLang: string,
-        signal?: AbortSignal,
-        sourceLang?: string,
-    ): Promise<TranslateResult[]> {
-        const tagRegex = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
-        const tagMapList: Map<string, string>[] = [];
-        const texts: string[] = [];
-
-        for (let i = 0; i < html.length; i++) {
-            tagMapList.push(new Map<string, string>());
-            let count = 0;
-            const originalHtml = html[i].outerHTML.replace(tagRegex, (match, tagName) => {
-                const key = `<${tagName} i=${count}>`;
-                count++;
-                tagMapList[i].set(key, match);
-                return key;
-            });
-            texts.push(originalHtml);
-        }
-
-        const translated = await this.translateText(texts, targetLang, signal, sourceLang);
-        for (let i = 0; i < translated.length; i++) {
-            tagMapList[i].forEach((value, key) => {
-                translated[i].translatedHtmlText = translated[i]?.translatedHtmlText?.replace(key, value);
-            });
-        }
-        return translated;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Microsoft
-// ---------------------------------------------------------------------------
-
-const MS_MAX_RETRY = 5;
-const MS_BATCH_CHAR_LIMIT = 4500;
-const MS_BATCH_ITEM_LIMIT = 900;
-const utf8Encoder = new TextEncoder();
-
-export class MicrosoftTranslateService extends TranslateService {
-    readonly name = TRANSLATE_SERVICE.MICROSOFT;
-    private authToken: Token = new Token("", 0);
-
-    private async fetchToken(): Promise<Token> {
-        // Uncaught (in promise) TypeError: this.authToken.isValid is not a function
-        // What sendMessage returns across processes is a pure object that has been structured and cloned. 
-        // The prototype has been lost and needs to be repackaged into a Token instance.
-        const raw = await sendMessageToBackground({
-            action: ACTION.ACCESS_TOKEN_GET,
-            data: { service: this.name },
-        });
-        if (!raw || typeof raw.token !== "string") return new Token("", 0);
-        return new Token(raw.token, raw.expireTime ?? 0);
-    }
-
-    private async ensureToken(): Promise<void> {
-        if (this.authToken.isValid()) return;
-        this.authToken = await this.fetchToken();
-    }
-
-    private async refreshTokenForce(): Promise<void> {
-        const raw = await sendMessageToBackground({
-            action: ACTION.ACCESS_TOKEN_REFRESH,
-            data: { service: this.name },
-        })
-        if (!raw || typeof raw.token !== "string") return;
-        this.authToken = new Token(raw.token, raw.expireTime ?? 0);
-    }
-
-    async translateText(
-        texts: string[],
-        targetLang: string,
-        signal?: AbortSignal | null,
-        sourceLang?: string,
-        options: TranslateRequestOptions = { retryCount: 0 },
-    ): Promise<TranslateResult[]> {
-        if (texts.length === 0) return [];
-
-        await this.ensureToken();
-        const url = MS_TRANSLATE_URL + "to=" + targetLang;
-        const response = await proxyFetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: "Bearer " + this.authToken.token,
-            },
-            body: JSON.stringify(texts.map((t) => ({ text: t }))),
-        }, signal);
-
-        if (response.status === 401) {
-            const retryCount = (options.retryCount ?? 0) + 1;
-            if (retryCount > MS_MAX_RETRY) return [];
-            await this.refreshTokenForce();
-            return this.translateText(texts, targetLang, signal, sourceLang, { retryCount });
-        }
-
-        if (response.status !== 200) {
-            console.error(APP_NAME_WITH_SUFFIX, "Microsoft Translate API error:", response.statusText);
-            return [];
-        }
-
-        const data: Array<{
-            translations: { text: string }[];
-            detectedLanguage: { language: string; score: number };
-        }> = await response.json();
-
-        return data.map(
-            (d) =>
-                new TranslateResult(
-                    d.translations[0].text,
-                    transferLanguageCode(d.detectedLanguage.language),
-                    d.detectedLanguage.score,
-                ),
-        );
-    }
-
-    /**
-     * Microsoft caps each request at ~5000 chars / 1000 elements. Split the
-     * batch into sub-requests, dispatch concurrently, then re-assemble in
-     * original order.
-     */
-    async translateBatchText(
-        texts: string[],
-        targetLang: string,
-        signal?: AbortSignal | null,
-        sourceLang?: string,
-    ): Promise<TranslateResult[]> {
-        if (texts.length === 0) return [];
-
-        const chunks: string[][] = [[]];
-        let charCount = 0;
-        let itemCount = 0;
-        for (let raw of texts) {
-            if (raw.length > MS_BATCH_CHAR_LIMIT) raw = raw.substring(0, MS_BATCH_CHAR_LIMIT);
-            charCount += raw.length;
-            itemCount++;
-            if (charCount > MS_BATCH_CHAR_LIMIT || itemCount > MS_BATCH_ITEM_LIMIT) {
-                chunks.push([]);
-                charCount = 0;
-                itemCount = 0;
-            }
-            chunks[chunks.length - 1].push(raw);
-        }
-
-        const responses = await Promise.all(
-            chunks.map((chunk, index) =>
-                this.translateText(chunk, targetLang, signal, sourceLang, { retryCount: 0 }).then(
-                    (translatedTexts) => ({ index, translatedTexts }),
-                ),
-            ),
-        );
-        responses.sort((a, b) => a.index - b.index);
-
-        const result: TranslateResult[] = [];
-        for (const r of responses) result.push(...r.translatedTexts);
-        return result;
-    }
-
-    async translateHtml(
-        html: HTMLElement[],
-        targetLang: string,
-        signal?: AbortSignal,
-        sourceLang?: string,
-    ): Promise<TranslateResult[]> {
-        if (html.length === 0) return [];
-
-        const cloned = html.map((ele) => ele.cloneNode(true) as HTMLElement);
-        const tagReplacer = new TagReplacer();
-        const texts: string[] = [];
-
-        for (const ele of cloned) {
-            // Collapse whitespace between tags so the translator doesn't try to
-            // translate stray indentation.
-            let originHtml = ele.outerHTML.replace(/>([^<]+)</gs, (_, p1) => `>${p1}<`);
-            texts.push(tagReplacer.replaceTags(originHtml));
-        }
-
-        const translated = await this.translateBatchText(texts, targetLang, signal, sourceLang);
-        for (const item of translated) {
-            if (!item.translatedHtmlText) continue;
-            const restored = tagReplacer.restoreTags(item.translatedHtmlText);
-            const container = document.createElement("div");
-            container.innerHTML = restored;
-            item.translatedHtmlText = container.innerHTML;
-        }
-        return translated;
-    }
-
-    async detectLanguage(texts: string[]): Promise<string> {
-        await this.ensureToken();
-        const response = await proxyFetch(MS_DETECT_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: "Bearer " + this.authToken.token,
-            },
-            body: JSON.stringify(texts.map((t) => ({ text: t }))),
-        });
-        if (response.status !== 200) return "";
-
-        const data: { language: string; score: number }[] = await response.json();
-        // Weight each detection by the byte length of its source text so that
-        // a single short paragraph in another language can't outvote the body.
-        const tally = new Map<string, number>();
-        data.forEach((d, i) => {
-            const weight = d.score * utf8Encoder.encode(texts[i]).length;
-            tally.set(d.language, (tally.get(d.language) || 0) + weight);
-        });
-
-        let maxScore = 0;
-        let maxLanguage = "";
-        tally.forEach((value, key) => {
-            if (value > maxScore) {
-                maxScore = value;
-                maxLanguage = key;
-            }
-        });
-        return transferLanguageCode(maxLanguage);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// DeepL (extension example — uses the official API)
-// ---------------------------------------------------------------------------
-
-export class DeepLTranslateService extends TranslateService {
-    readonly name = TRANSLATE_SERVICE.DEEPL;
-
-    constructor() {
-        super();
-    }
-
-    private targetLangConverter(lang: string): string {
-        if (lang === "zh-CN") return "ZH-HANS"
-        if (lang === "zh-TW") return "ZH-HANT"
-        return lang.toUpperCase()
-    }
-
-    // DeepL's API returns no CORS headers, so a content-script fetch is blocked.
-    // We proxy the request through background (which has host permissions and
-    // is not subject to page-origin CORS), passing only the request body — the
-    // API key + endpoint selection live in background.
-    private async request(body: Record<string, unknown>): Promise<any | null> {
-        const resp = await sendMessageToBackground({
-            action: ACTION.DEEPL_REQUEST,
-            data: { body },
-        });
-        // background returns the raw DeepL JSON payload, or undefined on error.
-        return resp ?? null;
-    }
-
-    private toResults(payload: any): TranslateResult[] {
-        const translations: { text: string; detected_source_language: string }[] =
-            payload?.translations ?? [];
-        return translations.map(
-            (t) =>
-                new TranslateResult(t.text, transferLanguageCode(t.detected_source_language, t.text), 1),
-        );
-    }
-
-    async translateText(
-        texts: string[],
-        targetLang: string,
-        _signal?: AbortSignal | null,
-        sourceLang?: string,
-    ): Promise<TranslateResult[]> {
-        if (texts.length === 0) return [];
-        const payload = await this.request({
-            text: texts,
-            target_lang: this.targetLangConverter(targetLang),
-            ...(sourceLang ? { source_lang: sourceLang.toUpperCase() } : {}),
-        });
-        return payload ? this.toResults(payload) : [];
-    }
-
-    async translateHtml(
-        html: HTMLElement[],
-        targetLang: string,
-        _signal?: AbortSignal | null,
-        sourceLang?: string,
-    ): Promise<TranslateResult[]> {
-        if (html.length === 0) return [];
-        // DeepL handles HTML natively when tag_handling=html, so no manual
-        // tag rewriting is needed.
-        const payload = await this.request({
-            text: html.map((ele) => ele.outerHTML),
-            target_lang: targetLang.toUpperCase(),
-            tag_handling: "html",
-            ...(sourceLang ? { source_lang: sourceLang.toUpperCase() } : {}),
-        });
-        if (!payload) return [];
-        const results = this.toResults(payload);
-        // For HTML mode the translator returns the HTML directly — surface it
-        // as translatedText so the bilingual renderer can use it verbatim.
-        for (const r of results) r.translatedHtmlText = r.translatedMappedHtmlText;
-        return results;
-    }
-}
-
-// AI completions can take well over the default 5s sendMessage timeout, so the
-// non-streaming page-translation round-trip uses a more generous budget.
-const AI_TRANSLATE_TIMEOUT = 120000;
-
-/**
- * Routes page-translation requests to a configured AI provider. The actual
- * HTTP call lives in background ([main/background.ts] AI_TRANSLATE) — both
- * for CORS reasons and to keep the API key out of the page's JS context.
- *
- * Tag preservation reuses the same `<bN>` placeholder convention as
- * MicrosoftTranslateService: the caller's `texts` already contain `<bN>`
- * markers; we JSON-stringify the array, the model returns a JSON array of
- * the same length, and we wrap each item in a TranslateResult.
- */
-export class AiTranslateService extends TranslateService {
-    readonly name: string;
-    private readonly providerId: string;
-
-    constructor(providerId: string) {
-        super();
-        this.providerId = providerId;
-        this.name = AI_PREFIX + providerId;
-    }
-
-    async translateText(
-        texts: string[],
-        targetLang: string,
-        signal?: AbortSignal | null,
-        _sourceLang?: string,
-    ): Promise<TranslateResult[]> {
-        if (texts.length === 0) return [];
-        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-
-        // Page translation doesn't need streaming. Use a one-shot message to
-        // background, which calls chatCompleteNonStream (stream:false) and
-        // returns the full JSON array of translations.
-        //
-        // sendMessage has no native cancellation, so abort is relayed out of
-        // band: we tag the request with a requestId and, on signal abort, fire
-        // an AI_TRANSLATE_ABORT message carrying that id. Background holds an
-        // AbortController per request and aborts the in-flight fetch — so the
-        // upstream HTTP request is genuinely cancelled, not just ignored.
-        const requestId =
-            (globalThis.crypto?.randomUUID?.() as string | undefined) ??
-            `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-
-        let onAbort: (() => void) | null = null;
-        if (signal) {
-            onAbort = () => {
-                void sendMessageToBackground({
-                    action: ACTION.AI_TRANSLATE_ABORT,
-                    data: { requestId },
-                });
-            };
-            signal.addEventListener("abort", onAbort);
-        }
-
-        try {
-            const translations = (await sendMessageToBackground(
-                {
-                    action: ACTION.AI_TRANSLATE_TEXT,
-                    data: { requestId, providerId: this.providerId, texts, targetLang },
-                },
-                AI_TRANSLATE_TIMEOUT,
-            )) as string[] | undefined;
-
-            if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-            if (!translations) return [];
-            return translations.map((t) => new TranslateResult(String(t ?? ""), "", 1));
-        } finally {
-            if (onAbort) signal?.removeEventListener("abort", onAbort);
-        }
-    }
-
-    /**
-     * Streaming (port-based) page translation. Kept for callers that need to
-     * abort an in-flight AI call mid-request: the content side disconnects the
-     * port and background turns onDisconnect into controller.abort(). The
-     * default {@link translateText} now uses the simpler non-streaming path.
-     */
-    async streamTranslateText(
-        texts: string[],
-        targetLang: string,
-        signal?: AbortSignal | null,
-        _sourceLang?: string,
-    ): Promise<TranslateResult[]> {
-        if (texts.length === 0) return [];
-        if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-
-        // Port-based so the content side can cancel an in-flight AI call by
-        // disconnecting — background turns onDisconnect into controller.abort().
-        const port = browser.runtime.connect({ name: PORT_NAME.AI_TRANSLATE });
-        let onAbort: (() => void) | null = null;
-
-        try {
-            const translations = await new Promise<string[] | null>((resolve) => {
-                let settled = false;
-                const finish = (v: string[] | null) => {
-                    if (settled) return;
-                    settled = true;
-                    resolve(v);
-                };
-                // Chrome only fires onDisconnect on the OTHER end of the port,
-                // so disconnecting locally on abort won't wake this promise —
-                // resolve it from the abort handler directly.
-                onAbort = () => {
-                    try { port.disconnect(); } catch { /* already gone */ }
-                    finish(null);
-                };
-                signal?.addEventListener("abort", onAbort);
-                port.onMessage.addListener((raw: any) => {
-                    const msg = raw as
-                        | { type: "result"; translations: string[] }
-                        | { type: "error"; message: string };
-                    if (msg?.type === "result" && Array.isArray(msg.translations)) {
-                        finish(msg.translations);
-                    } else if (msg?.type === "error") {
-                        console.error(APP_NAME_WITH_SUFFIX, "AI translate failed:", msg.message);
-                        finish(null);
-                    }
-                });
-                // Fires when background disconnects (e.g. after sending result
-                // or on its own error). Local self-disconnect does not fire it.
-                port.onDisconnect.addListener(() => finish(null));
-                try {
-                    port.postMessage({ providerId: this.providerId, texts, targetLang });
-                } catch {
-                    finish(null);
-                }
-            });
-
-            if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-            if (!translations) return [];
-            return translations.map((t) => new TranslateResult(String(t ?? ""), "", 1));
-        } finally {
-            if (onAbort) signal?.removeEventListener("abort", onAbort);
-            try { port.disconnect(); } catch { /* already disconnected */ }
-        }
-    }
-
-    async translateHtml(
-        html: HTMLElement[],
-        targetLang: string,
-        signal?: AbortSignal | null,
-        sourceLang?: string,
-    ): Promise<TranslateResult[]> {
-        if (html.length === 0) return [];
-        const cloned = html.map((ele) => ele.cloneNode(true) as HTMLElement);
-        const tagReplacer = new TagReplacer();
-        const texts: string[] = [];
-        for (const ele of cloned) {
-            const originHtml = ele.outerHTML.replace(/>([^<]+)</gs, (_, p1) => `>${p1}<`);
-            texts.push(tagReplacer.replaceTags(originHtml));
-        }
-        const translated = await this.translateText(texts, targetLang, signal, sourceLang);
-        for (const item of translated) {
-            if (!item.translatedHtmlText) continue;
-            const restored = tagReplacer.restoreTags(item.translatedHtmlText);
-            const container = document.createElement("div");
-            container.innerHTML = restored;
-            item.translatedHtmlText = container.innerHTML;
-        }
-        return translated;
-    }
-}
-//#endregion
-
-// ---------------------------------------------------------------------------
-// Service registry
-// ---------------------------------------------------------------------------
-
-export const googleTranslationService: TranslateService = new GoogleTranslateService();
-export const microsoftTranslationService: TranslateService = new MicrosoftTranslateService();
-export const deeplTranslationService: TranslateService = new DeepLTranslateService();
-
-// TODO: support user-defined custom keys / endpoints (Yandex, Youdao, …).
-export const translationServices = new Map<string, TranslateService>([
-    [googleTranslationService.name, googleTranslationService],
-    [microsoftTranslationService.name, microsoftTranslationService],
-    [deeplTranslationService.name, deeplTranslationService],
-]);
-
-//#region functions
-/**
- * Resolve a service identifier to a TranslateService instance.
- * Identifiers may be either a built-in name (`microsoft|google|deepl`) or
- * an AI provider id prefixed with `ai:` (e.g. `ai:p_xyz123`).
- */
-export function resolveTranslateService(service: string): TranslateService | undefined {
-    if (service.startsWith(AI_PREFIX)) {
-        return new AiTranslateService(service.slice(AI_PREFIX.length));
-    }
-    return translationServices.get(service);
-}
-
-/**
- * @deprecated
- * @param html 
- * @returns 
- */
-export function convertAToBTags(html: string): string {
-    if (html === "") return "";
-    let result = html.replace(/<a\s+i=(\d+)>/g, "<b$1>").replace(/<\/a>/g, "</b>");
-
-    const openTags: string[] = [];
-    let finalResult = "";
-    for (let i = 0; i < result.length; i++) {
-        if (result.substring(i, i + 2) === "<b") {
-            const numEnd = result.indexOf(">", i);
-            const tagNum = result.substring(i + 2, numEnd);
-            openTags.push(tagNum);
-            finalResult += `<b${tagNum}>`;
-            i = numEnd;
-        } else if (result.substring(i, i + 4) === "</b>") {
-            const lastTag = openTags.pop() || "";
-            finalResult += `</b${lastTag}>`;
-            i += 3;
-        } else {
-            finalResult += result[i];
-        }
-    }
-
-    return finalResult;
-}
-
-export function transferLanguageCode(language: string, text?: string): string {
-    if (language === "zh-Hans") return "zh-CN";
-    if (language === "zh-Hant") return "zh-TW";
-    if (language === "ZH") {
-        if (!text) return "zh-CN";
-        return isTraditionalChinese(text) ? "zh-TW" : "zh-CN";
-    }
-    return language;
-}
-//#endregion
-
-//#region translate cache
-// ---------------------------------------------------------------------------
-// Translation result cache (content-side client)
+// Translate provider services — BACKGROUND ONLY.
 //
-// The store itself lives in the background (IndexedDB, LRU, 100MB cap — see
-// main/storage/translationCache.ts). Here we only message it. Lookups are
-// keyed by (service, targetLang, sourceText); a hit reconstructs a
-// TranslateResult identical to a fresh API response.
+// The half of translation that needs the extension principal: outbound HTTP
+// (content-script fetches are blocked by the host page's CSP in Firefox and by
+// page-origin CORS in Chrome), the Microsoft auth token, and the DeepL API key.
+//
+// Content scripts must never import this module — they go through
+// main/translateClient.ts, which messages background instead.
 // ---------------------------------------------------------------------------
 
-interface CachedTranslation {
-    t: string; // translatedMappedHtmlText
-    s: string; // sourceLang
-    c: number; // score
-}
+import {
+    ACTION,
+    APP_NAME_WITH_SUFFIX,
+    CONFIG_KEY,
+    STATUS_FAIL,
+    STATUS_SUCCESS,
+    TRANSLATE_SERVICE,
+} from "@/main/constants";
+import {
+    DeepLTranslateService,
+    Token,
+    TRANSLATE_PROXY_ALLOWED_URLS,
+    resolveTranslateService,
+    setTranslateTransport,
+    type TranslateTransport,
+} from "@/main/translateClient";
+import { aiPageTranslate } from "@/main/aiService";
+import { configRepo } from "@/main/storage/configStore";
+import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
 
-// Memoized cache-enabled flag. Invalidated by the content script when the
-// Options switch broadcasts.
-let cacheEnabledMemo: boolean | null = null;
+// ---------------------------------------------------------------------------
+// Microsoft auth token
+// ---------------------------------------------------------------------------
 
-/** Reset (or directly set) the memoized cache-enabled flag. */
-export function resetTranslationCacheEnabled(value?: boolean): void {
-    cacheEnabledMemo = value === undefined ? null : value;
-}
+const MS_TOKEN_URL = "https://edge.microsoft.com/translate/auth";
+const MS_TOKEN_TTL = 10 * 60 * 1000;
 
-async function isTranslationCacheEnabled(): Promise<boolean> {
-    if (cacheEnabledMemo !== null) return cacheEnabledMemo;
-    const v = await getConfig(CONFIG_KEY.TRANSLATION_CACHE_SWITCH);
-    cacheEnabledMemo = v === undefined ? true : !!v;
-    return cacheEnabledMemo;
-}
+let cachedToken: Token | null = null;
+let inflight: Promise<Token> | null = null;
+let inflightForced = false;
 
-async function cacheGetMany(
-    service: string,
-    targetLang: string,
-    texts: string[],
-): Promise<(CachedTranslation | null)[]> {
-    if (texts.length === 0) return [];
-    const res = await sendMessageToBackground(
-        { action: ACTION.TRANSLATION_CACHE_GET, data: { service, targetLang, texts } },
-        15000,
-    );
-    if (!Array.isArray(res) || res.length !== texts.length) {
-        return new Array(texts.length).fill(null);
-    }
-    return res as (CachedTranslation | null)[];
-}
-
-function cachePutMany(
-    service: string,
-    targetLang: string,
-    entries: { text: string; value: CachedTranslation }[],
-): void {
-    if (entries.length === 0) return;
-    void sendMessageToBackground(
-        { action: ACTION.TRANSLATION_CACHE_PUT, data: { service, targetLang, entries } },
-        15000,
-    );
+if (import.meta.env.DEV) {
+    // Debug hook kept from the previous implementation; reads the live cache.
+    (globalThis as any).__debugMicrosoftToken = () => cachedToken;
 }
 
 /**
- * Translate `texts`, serving hits from the persistent cache and only sending
- * the misses to the provider. The returned array is always aligned 1:1 with
- * `texts` (order preserved); freshly fetched results are written back to the
- * cache. Returns undefined to mirror the original "no results" signal (unknown
- * service / provider failure) so callers bail out exactly as before.
+ * Fetch (or reuse) the Microsoft translate auth token.
+ *
+ * One latch covers both the normal and the forced path. Previously these were
+ * two mechanisms — an async-mutex for the cached read and a separate promise
+ * latch for the refresh — each repeating the same "store in cache, persist to
+ * config, return" triple.
+ *
+ * @param force skip the cache entirely. Used by the 401-retry path: it must NOT
+ *   join a non-forced in-flight request, or it could be handed back the very
+ *   stale token that caused the 401 and spin until MS_MAX_RETRY.
+ * @throws when the token cannot be fetched. Callers at the message boundary map
+ *   this to a STATUS_FAIL reply carrying an empty Token.
  */
-export async function translateTextsWithCache(
-    service: string,
-    texts: string[],
-    targetLang: string,
-    signal?: AbortSignal,
-): Promise<TranslateResult[] | undefined> {
-    if (texts.length === 0) return [];
+export function getMicrosoftToken(force = false): Promise<Token> {
+    if (!force && cachedToken?.isValid()) return Promise.resolve(cachedToken);
+    // Coalesce concurrent callers (a 401 storm across parallel batches shares
+    // one refetch), but never let a forced refresh join a non-forced request.
+    if (inflight && (inflightForced || !force)) return inflight;
 
-    if (!(await isTranslationCacheEnabled())) {
-        return resolveTranslateService(service)?.translateText(texts, targetLang, signal);
-    }
-
-    const cached = await cacheGetMany(service, targetLang, texts);
-    const missIndices: number[] = [];
-    const missTexts: string[] = [];
-    for (let i = 0; i < texts.length; i++) {
-        if (!cached[i]) {
-            missIndices.push(i);
-            missTexts.push(texts[i]);
+    inflightForced = force;
+    inflight = (async () => {
+        if (!force) {
+            const stored = Token.fromData(await configRepo.get(CONFIG_KEY.MICROSOFT_TOKEN));
+            if (stored?.isValid()) {
+                cachedToken = stored;
+                return stored;
+            }
         }
-    }
+        const raw = await fetch(MS_TOKEN_URL).then((r) => r.text());
+        const fresh = new Token(raw, Date.now() + MS_TOKEN_TTL);
+        cachedToken = fresh;
+        await configRepo.set(CONFIG_KEY.MICROSOFT_TOKEN, fresh);
+        return fresh;
+    })().finally(() => {
+        inflight = null;
+        inflightForced = false;
+    });
 
-    let fetched: TranslateResult[] = [];
-    if (missTexts.length > 0) {
-        const r = await resolveTranslateService(service)?.translateText(missTexts, targetLang, signal);
-        if (!r) return undefined; // unknown service / failure → bail like before
-        // Provider must answer 1:1 with the inputs. If it doesn't, the
-        // positional remap below would misalign — fall back to a full
-        // (uncached) translation rather than return a corrupt array.
-        if (r.length !== missTexts.length) {
-            return resolveTranslateService(service)?.translateText(texts, targetLang, signal);
-        }
-        fetched = r;
-    }
+    return inflight;
+}
 
-    const results: TranslateResult[] = new Array(texts.length);
-    for (let i = 0; i < texts.length; i++) {
-        const hit = cached[i];
-        if (hit) results[i] = new TranslateResult(hit.t, hit.s, hit.c);
-    }
-    const toCache: { text: string; value: CachedTranslation }[] = [];
-    for (let f = 0; f < missIndices.length; f++) {
-        const idx = missIndices[f];
-        const r = fetched[f];
-        results[idx] = r;
-        toCache.push({
-            text: texts[idx],
-            value: { t: r.translatedMappedHtmlText, s: r.sourceLang, c: r.score },
+/** Warm the token cache at startup. Failures are non-fatal. */
+export function initTokenMap(): void {
+    void getMicrosoftToken().catch((e) => {
+        console.error(APP_NAME_WITH_SUFFIX, "initTokenMap error", e);
+    });
+}
+
+/**
+ * ACCESS_TOKEN_GET / ACCESS_TOKEN_REFRESH reply shape.
+ *
+ * The wire contract is unchanged: STATUS_SUCCESS with the Token, or STATUS_FAIL
+ * with an empty Token. Content (`MicrosoftTranslateService.fetchToken`) checks
+ * `typeof raw.token === 'string'`, so the empty Token is the "no token" signal
+ * rather than an error it has to catch.
+ */
+function tokenResponse(sendResponse: (r: any) => void, force: boolean): true {
+    getMicrosoftToken(force)
+        .then((token) => sendResponse({ status: STATUS_SUCCESS, data: token }))
+        .catch((e) => {
+            console.error(APP_NAME_WITH_SUFFIX, "getMicrosoftToken error", e);
+            sendResponse({ status: STATUS_FAIL, data: new Token("", 0) });
         });
-    }
-
-    cachePutMany(service, targetLang, toCache);
-    return results;
+    return true;
 }
-//#endregion
 
-//#region dom
 // ---------------------------------------------------------------------------
-// DOM-level helpers used by content scripts
+// Message handlers
 // ---------------------------------------------------------------------------
-class PreProcessResult {
-    elements: HTMLElement[]; // original elements that need mapping tag, which come from element and its children
-    mappedHtmlText: string;
-    textNodes: Text[]; // text nodes that need to be deleted, which come from the child text nodes of element
-    text: string;
-    totalTextNodesLength: number;
-    textIndexMap: Map<number, number>
 
-    constructor(elements: HTMLElement[], mappedHtmlText: string, textNodes: Text[], text: string, totalTextNodesLength: number, textIndexMap: Map<number, number>) {
-        this.elements = elements;
-        this.mappedHtmlText = mappedHtmlText;
-        this.textNodes = textNodes;
-        this.text = text;
-        this.totalTextNodesLength = totalTextNodesLength;
-        this.textIndexMap = textIndexMap
-    }
-}
+type MessageHandler = (message: any, sendResponse: (r: any) => void) => boolean | void;
 
-export function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STRATEGY, nodes?: ChildNode[]): PreProcessResult {
-    let i = 0;
-    let totalTextNodesLength = 0;
-    let text = "";
-    const elements: HTMLElement[] = [];
-    const processParent = document.createElement("div");
-    const textNodes: Text[] = [];
-    // Default (whole element) keeps the legacy byte-identical serialization;
-    // a caller passing a unit's node list scopes everything to that unit.
-    const rootNodes: ChildNode[] = nodes ?? Array.from(element.childNodes);
-
-    // flag all children of the element that textNode is not empty
-    let textNotEmptyElementSet = new Set<HTMLElement>();
-    if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-        let notEmptyNodes: Node[] = [];
-        let stack = [...rootNodes];
-        while (stack.length > 0) {
-            let pop = stack.pop();
-            if (!pop) continue;
-            if (pop.nodeType === Node.TEXT_NODE && !contentInvisible(pop)) {
-                notEmptyNodes.push(pop);
-            }
-            if (pop.nodeType === Node.ELEMENT_NODE) {
-                let p = pop as HTMLElement;
-                if (EXCLUDE_CHILD_ELEMENT_TAGS.has(p.tagName)) continue;
-                stack.push(...pop.childNodes);
-            }
-        }
-        notEmptyNodes.forEach(node => {
-            while (node.parentNode !== element && node.parentNode?.nodeType === Node.ELEMENT_NODE) {
-                textNotEmptyElementSet.add(node.parentNode as HTMLElement);
-                node = node.parentNode;
-            }
-        });
-    }
-
-    elements.push(element);
-    const removeChildren: Node[] = []
-    let textIndex = 0
-    let textIndexMap = new Map<number, number>()
-    let index = 0
-    const process = (isSon: boolean, node: Node | null, parent: HTMLElement) => {
-        if (!node) return;
-        if (node.nodeType === Node.ELEMENT_NODE) {
-            const ele = node as HTMLElement;
-            // ignore empty element in double mode
-            if (viewStrategy === VIEW_STRATEGY.DOUBLE && !textNotEmptyElementSet.has(ele)) {
-                removeChildren.push(ele)
-                return
-            }
-            const rootProcessedElement = document.createElement("b" + i);
-            parent.appendChild(rootProcessedElement);
-            elements.push(ele);
-            i++;
-            for (const child of node.childNodes) process(false, child, rootProcessedElement);
-            if (isSon) {
-                index++
-            }
-        } else if (node.nodeType === Node.TEXT_NODE) {
-            const textNode = node as Text;
-            if (contentInvisible(textNode)) return;
-            totalTextNodesLength += textNode.textContent.length;
-            text += textNode.textContent;
-            textNodes.push(textNode);
-            textIndexMap.set(textIndex, index)
-            textIndex++
-            if (isSon) {
-                index++
-            }
-            parent.appendChild(textNode.cloneNode(true));
-        } else {
-            if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-                removeChildren.push(node)
-            }
-        }
-    };
-    rootNodes.forEach(child => process(true, child, processParent));
-    if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-        removeChildren.forEach(child => child.parentNode?.removeChild(child))
-    }
-    return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, totalTextNodesLength, text, textIndexMap };
-}
-
-export function updateTranslateElementContent(rawTranslatedHtml: string, originalElements: HTMLElement[], range?: UnitRange) {
-    if (originalElements.length === 0 || rawTranslatedHtml === "") return;
-
-    const container = originalElements[0];
-    // Anchors invalidated by page mutations degrade to whole-container writes.
-    const rangeStart = range?.start && range.start.parentNode === container ? range.start : null;
-    const rangeEnd = range?.end && range.end.parentNode === container ? range.end : null;
-
-    const translatedElement = document.createElement("div");
-    translatedElement.innerHTML = rawTranslatedHtml;
-    const replacedTextNodes: Text[] = [];
-    const element2TextNodes: Map<HTMLElement, Text[]> = new Map();
-    const element2TextNodeIndex: Map<HTMLElement, number> = new Map();
-
-    /** Direct children of the container inside the unit range (whole list when unbounded). */
-    function containerChildNodes(): ChildNode[] {
-        const out: ChildNode[] = [];
-        let node = rangeStart ? rangeStart.nextSibling : container.firstChild;
-        while (node && node !== rangeEnd) {
-            out.push(node);
-            node = node.nextSibling;
-        }
-        return out;
-    }
-
-    /** Container-level insert honoring the range end (plain append when unbounded). */
-    function appendToContainer(node: Node) {
-        if (rangeEnd) {
-            container.insertBefore(node, rangeEnd);
-        } else {
-            container.appendChild(node);
-        }
-    }
-
-    function getOriginalElement(tagName: string) {
-        if (tagName === "DIV") {
-            return originalElements[0];
-        } else {
-            const num = parseInt(tagName.replace("B", ""));
-            if (isNaN(num) || num + 1 >= originalElements.length) return null;
-            return originalElements[num + 1];
-        }
-    }
-
-    function getNextTextNode(element: HTMLElement): Text {
-        let textNodes = element2TextNodes.get(element);
-        if (textNodes === undefined) {
-            const candidates = element === container ? containerChildNodes() : Array.from(element.childNodes);
-            textNodes = candidates.filter(node => node.nodeType === Node.TEXT_NODE) as Text[];
-            element2TextNodes.set(element, textNodes)
-            element2TextNodeIndex.set(element, 0)
-        }
-        let index = element2TextNodeIndex.get(element) || 0
-        if (index >= textNodes.length) {
-            return document.createTextNode('')
-        }
-        element2TextNodeIndex.set(element, index + 1)
-        return textNodes[index]
-    }
-
-    function translate(node: Node | null) {
-        if (!node) return;
-        if (node.nodeType === Node.TEXT_NODE) {
-            const textParent = node.parentElement;
-            if (!textParent) return;
-            const original = getOriginalElement(textParent.tagName)
-            if (!original) return;
-            let textNode = getNextTextNode(original)
-            textNode.textContent = node.textContent
-            replacedTextNodes.push(textNode);
-            if (original === container) {
-                appendToContainer(textNode);
-            } else {
-                original.appendChild(textNode);
-            }
+/** Translate actions handled in background, keyed by ACTION. Consumed by background.ts. */
+export const translateMessageHandlers: Record<string, MessageHandler> = {
+    [ACTION.ACCESS_TOKEN_GET]: (message, sendResponse) => {
+        // todo support other services
+        if (message.data?.service !== TRANSLATE_SERVICE.MICROSOFT) {
+            sendResponse({ status: STATUS_FAIL, data: new Token("", 0) });
             return;
         }
-        if (node.nodeType === Node.ELEMENT_NODE) {
-            const ele = node as HTMLElement;
-            for (const child of node.childNodes) translate(child);
-            const eleParent = ele.parentElement;
-            if (eleParent) {
-                const originalParent = getOriginalElement(eleParent.tagName)
-                if (!originalParent) return;
-                const original = getOriginalElement(ele.tagName)
-                if (!original) return;
-                if (originalParent === container) {
-                    appendToContainer(original);
-                } else {
-                    originalParent.appendChild(original);
-                }
-            }
+        return tokenResponse(sendResponse, false);
+    },
+
+    [ACTION.ACCESS_TOKEN_REFRESH]: (message, sendResponse) => {
+        if (message.data?.service !== TRANSLATE_SERVICE.MICROSOFT) {
+            sendResponse({ status: STATUS_FAIL, data: new Token("", 0) });
+            return;
         }
-    }
-    translatedElement.childNodes.forEach(translate);
-    return replacedTextNodes
-}
+        return tokenResponse(sendResponse, true);
+    },
 
-/** Normalize a legacy element argument into a whole-element unit. */
-function toTranslationUnit(item: HTMLElement | TranslationUnit): TranslationUnit {
-    if (item instanceof HTMLElement) {
-        return {
-            container: item,
-            nodes: Array.from(item.childNodes),
-            wholeElement: true,
-            translated: false,
-        };
-    }
-    return item;
-}
-
-export async function getTranslateResult(
-    service: string,
-    elements: (HTMLElement | TranslationUnit)[],
-    targetLang: string,
-    viewStrategy: VIEW_STRATEGY,
-    signal?: AbortSignal
-): Promise<TranslateResult[]> {
-    if (!elements || elements.length === 0) return [];
-
-    // One pending entry per unit that survives preprocessing — kept aligned
-    // as an object instead of parallel arrays so later drops can't misalign
-    // the annotations.
-    interface PendingUnit {
-        unit: TranslationUnit;
-        pre: PreProcessResult;
-        text: string;
-        copy?: HTMLElement;
-        range?: UnitRange;
-    }
-    const pendings: PendingUnit[] = [];
-
-    for (const item of elements) {
-        const unit = toTranslationUnit(item);
-        let element = unit.container;
-        let nodes: ChildNode[] | undefined = unit.wholeElement ? undefined : unit.nodes;
-        let copy: HTMLElement | undefined;
-        let range: UnitRange | undefined;
-        if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-            // The detached copy holds only this unit's nodes, so downstream
-            // preprocessing/translation of the copy needs no node scoping.
-            copy = document.createElement("span");
-            for (const node of unit.nodes) copy.appendChild(node.cloneNode(true));
-            element = copy;
-            nodes = undefined;
-        } else {
-            // SINGLE writes back into the live container — capture the unit's
-            // exclusive boundary anchors before anything moves.
-            const first = unit.nodes[0];
-            const last = unit.nodes[unit.nodes.length - 1];
-            range = {
-                start: first?.previousSibling ?? null,
-                end: last?.nextSibling ?? null,
+    [ACTION.TRANSLATE_PROXY_FETCH]: (message, sendResponse) => handleAbortable(
+        // HTTP proxy for the built-in translate providers. Content fetches are
+        // blocked by the host page's CSP connect-src in Firefox MV3 and depend
+        // on page-origin CORS in Chrome, so the request runs here with the
+        // extension principal instead. Only fixed provider endpoints are
+        // allowed — this must never become a generic fetch proxy.
+        ABORT_SCOPE.TRANSLATE_PROXY, 'Translate proxy fetch', message, sendResponse,
+        async (data, signal) => {
+            const { url, init } = data as {
+                url?: string;
+                init?: { method?: string; headers?: Record<string, string>; body?: string };
             };
-        }
-        const pre = getElementPreProcessResult(element, viewStrategy, nodes);
-        if (pre.mappedHtmlText.trim() === "") continue;
-        let text: string;
-        if (service === TRANSLATE_SERVICE.GOOGLE) {
-            text = "";
-            for (let index = 0; index < pre.textNodes.length; index++) {
-                text += `<a i=${index}>${pre.textNodes[index].textContent}</a>`
+            if (!url || !TRANSLATE_PROXY_ALLOWED_URLS.some((prefix) => url.startsWith(prefix))) {
+                throw new Error(`URL not allowed by translate proxy: ${url}`);
             }
-        } else {
-            text = pre.mappedHtmlText;
-        }
-        pendings.push({ unit, pre, text, copy, range });
-    }
-    if (pendings.length === 0) return [];
+            const r = await fetch(url, {
+                method: init?.method ?? 'GET',
+                headers: init?.headers,
+                body: init?.body,
+                signal,
+            });
+            return { status: r.status, statusText: r.statusText, bodyText: await r.text() };
+        },
+    ),
 
-    const results = await translateTextsWithCache(service, pendings.map(p => p.text), targetLang, signal);
-    if (!results) return [];
+    [ACTION.TRANSLATE_PROXY_ABORT]: (message, sendResponse) =>
+        handleAbort(ABORT_SCOPE.TRANSLATE_PROXY, message, sendResponse),
 
-    const out: TranslateResult[] = [];
-    for (let i = 0; i < results.length && i < pendings.length; i++) {
-        const result = results[i];
-        const pending = pendings[i];
-        // Echoed translation (same as source) — nothing to change, drop it.
-        if (pending.text === result.translatedMappedHtmlText) continue;
-        result.unit = pending.unit;
-        result.originalSliceElements = pending.pre.elements
-        result.rawMappedHtmlText = pending.pre.mappedHtmlText;
-        result.rawTextLength = pending.pre.totalTextNodesLength;
-        result.rawText = pending.pre.text
-        service === TRANSLATE_SERVICE.GOOGLE && (result.textIndexMap = pending.pre.textIndexMap)
-        if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-            result.translatedCopyElement = pending.copy;
-        } else {
-            result.unitRange = pending.range;
-        }
-        result.textNodes = pending.pre.textNodes
-        out.push(result);
-    }
-    return out;
+    [ACTION.TRANSLATE_SERVICE_TEST]: (message, sendResponse) =>
+        handleAsync('Translate service test', sendResponse, () => testTranslateService(message.data)),
+};
+
+
+// ---------------------------------------------------------------------------
+// Background transport
+// ---------------------------------------------------------------------------
+
+/**
+ * Transport used when a provider class runs INSIDE background (the
+ * connectivity test). Fetches directly instead of messaging: background's own
+ * `runtime.sendMessage` is not delivered to its own onMessage listener, so the
+ * message transport would hang until the timeout and yield `undefined`.
+ */
+export function createBackgroundTransport(): TranslateTransport {
+    return {
+        async fetch(url, init, signal) {
+            // Enforced here too, even though this is a local call: one
+            // implementation, one invariant, independent of which transport is
+            // live.
+            if (!url || !TRANSLATE_PROXY_ALLOWED_URLS.some((prefix) => url.startsWith(prefix))) {
+                throw new Error(`URL not allowed by translate proxy: ${url}`);
+            }
+            const r = await fetch(url, {
+                method: init?.method ?? 'GET',
+                headers: init?.headers,
+                body: init?.body,
+                signal: signal ?? undefined,
+            });
+            const bodyText = await r.text();
+            return {
+                status: r.status,
+                statusText: r.statusText,
+                json: async () => JSON.parse(bodyText),
+            };
+        },
+
+        microsoftToken: (force = false) => getMicrosoftToken(force),
+
+        aiTranslate: (providerId, texts, targetLang, signal) =>
+            aiPageTranslate(providerId, texts, targetLang, signal ?? undefined),
+    };
 }
 
-export function parseIndexedText(input: string): { index: number, text: string }[] {
-    const result: { index: number, text: string }[] = []
-
-    const regex = /<a\b[^>]*\bi\s*=\s*["']?(-?\d+)["']?[^>]*>([\s\S]*?)<\/a>/gi
-
-    let lastIndex = 0
-    let match: RegExpExecArray | null
-
-    while ((match = regex.exec(input)) !== null) {
-        const beforeText = input.slice(lastIndex, match.index)
-
-        if (beforeText) {
-            result.push({ index: -1, text: beforeText })
-        }
-
-        const index = Number(match[1])
-        const text = match[2]
-
-        if (text) {
-            result.push({ index: Number.isFinite(index) ? index : -1, text })
-        }
-
-        lastIndex = regex.lastIndex
-    }
-
-    const restText = input.slice(lastIndex)
-
-    if (restText) {
-        result.push({ index: -1, text: restText })
-    }
-
-    return result
+/**
+ * Install the background transport and expose the translate message handlers.
+ *
+ * Called synchronously from background() in the same turn as the listener
+ * registrations, so no message can be dispatched before the transport is in
+ * place.
+ */
+export function registerTranslateBridge(): void {
+    setTranslateTransport(createBackgroundTransport());
 }
 
-export function googleTranslate(results: TranslateResult[]) {
-    for (const result of results) {
-        if (!result.originalSliceElements || result.originalSliceElements.length === 0) continue;
-        let targetElement = result.originalSliceElements[0]
-        // SINGLE per-unit: stay inside the unit's anchor range so sibling
-        // units of the same container are never reordered.
-        const rangeStart = result.unitRange?.start && result.unitRange.start.parentNode === targetElement
-            ? result.unitRange.start : null;
-        const rangeEnd = result.unitRange?.end && result.unitRange.end.parentNode === targetElement
-            ? result.unitRange.end : null;
-        let targetElementChildNodes: ChildNode[]
-        if (rangeStart || rangeEnd) {
-            targetElementChildNodes = []
-            let node = rangeStart ? rangeStart.nextSibling : targetElement.firstChild
-            while (node && node !== rangeEnd) {
-                targetElementChildNodes.push(node)
-                node = node.nextSibling
-            }
-        } else {
-            targetElementChildNodes = Array.from(targetElement.childNodes)
-        }
-        // Place a node at the start of the unit (container start when unbounded).
-        const placeFirst = (node: ChildNode) => {
-            if (rangeStart) {
-                rangeStart.after(node)
-            } else {
-                targetElement.prepend(node)
-            }
-        }
-        let emptyNode: ChildNode | null = null
-        for (let index = 0; index < targetElementChildNodes.length; index++) {
-            const element = targetElementChildNodes[index];
-            if (contentInvisible(element)) {
-                emptyNode = element
-            } else {
-                break
-            }
-        }
-        // .filter(node => node.nodeType !== Node.COMMENT_NODE)
-        let textNodes = result.textNodes
-        if (textNodes === undefined) return
-        let indexedTexts = parseIndexedText(result.translatedMappedHtmlText)
-        let replacedTextNodes = [...textNodes]
+// ---------------------------------------------------------------------------
+// Connectivity test (Options → Services)
+// ---------------------------------------------------------------------------
 
-        let movedNodeSet = new Set<number>()
-        let lastMovedNodeIndex = -1
-        let lastMovedNode: ChildNode | null = null
-        let lastTextNodeIndex = -1
-        for (const indexedText of indexedTexts) {
-            if (indexedText.text === "") continue
-            if (indexedText.index === -1) {
-                let textNode = document.createTextNode(decodeHtmlText(indexedText.text))
-                if (!lastMovedNode) {
-                    placeFirst(textNode)
-                } else {
-                    lastMovedNode.after(textNode)
-                }
-                lastMovedNode = textNode
-                if (indexedText.text.trim() === "") continue
-                lastMovedNodeIndex = -1
-                replacedTextNodes.push(textNode)
-                continue
-            }
-            let num = indexedText.index
-            if (num < 0 || num >= textNodes.length) continue
-            textNodes[num].textContent = decodeHtmlText(indexedText.text)
-            // console.log('debug', indexedText.text, textNodes[num].textContent, num, result.translatedCopyElement?.textContent)
-            let childIndex = result.textIndexMap?.get(num)
-            if (childIndex === undefined) continue
-            if (movedNodeSet.has(childIndex)) {
-                if (lastMovedNodeIndex === childIndex && lastTextNodeIndex < num) continue
-                lastMovedNode!.after(textNodes[num])
-                lastMovedNode = textNodes[num]
-                continue
-            }
-            if (!lastMovedNode) {
-                if (emptyNode) {
-                    emptyNode.after(targetElementChildNodes[childIndex])
-                } else {
-                    placeFirst(targetElementChildNodes[childIndex])
-                }
-            } else {
-                while (lastMovedNode?.nextSibling && contentInvisible(lastMovedNode?.nextSibling)) {
-                    lastMovedNode = lastMovedNode!.nextSibling
-                }
-                lastMovedNode!.after(targetElementChildNodes[childIndex])
-            }
-            lastMovedNode = targetElementChildNodes[childIndex]
-            lastMovedNodeIndex = childIndex
-            lastTextNodeIndex = num
-            movedNodeSet.add(childIndex)
-            // console.log('debug', result.translatedCopyElement?.textContent)
-        }
-        result.replacedTextNodes = replacedTextNodes
-    }
+/**
+ * Validate a service by running the REAL translation path against a sample.
+ *
+ * Deliberately not a hand-rolled request per provider: that older version
+ * hardcoded its own endpoints (which drifted from the ones actually used) and
+ * sent DeepL as form-urlencoded while production sends JSON — so a passing test
+ * did not prove production worked. Going through the provider classes means the
+ * test exercises exactly what a real translation does, and `ai:<id>` services
+ * become testable for free.
+ *
+ * `strict` turns the providers' degrade-to-`[]` behaviour into a throw, so the
+ * user sees the real reason rather than a bare failure.
+ */
+async function testTranslateService(
+    data: { service?: string; targetLang?: string; apiKey?: string } | undefined,
+): Promise<{ reply: string }> {
+    const svc = data?.service;
+    const targetLang = data?.targetLang || 'zh-CN';
+    if (!svc) throw new Error('Unknown service: undefined');
 
+    // A draft DeepL key typed into the Options dialog but not yet saved needs a
+    // one-off instance; everything else uses the shared singletons.
+    const service = (svc === TRANSLATE_SERVICE.DEEPL && data?.apiKey)
+        ? new DeepLTranslateService(data.apiKey)
+        : resolveTranslateService(svc);
+    if (!service) throw new Error(`Unknown service: ${svc}`);
+
+    const results = await service.translateText(
+        ['Hello, world.'], targetLang, undefined, undefined, { strict: true },
+    );
+    const reply = results[0]?.translatedMappedHtmlText;
+    if (!reply) throw new Error('empty translation response');
+    return { reply };
 }
-
-// replace the element content with the translated text
-export async function translate(service: string, results: TranslateResult[]): Promise<void> {
-    if (service === TRANSLATE_SERVICE.GOOGLE) {
-        googleTranslate(results)
-        return
-    }
-    for (const result of results) {
-        result.textNodes?.forEach(text => {
-            text.textContent = ""
-        });
-        let textNodes = updateTranslateElementContent(result.translatedMappedHtmlText, result.originalSliceElements || [], result.unitRange);
-        result.replacedTextNodes = textNodes
-    }
-}
-
-// replace the element content with the original text, use for SINGLE view strategy
-export async function restore(results: TranslateResult[]): Promise<void> {
-    for (const result of results) {
-        if (!result.rawMappedHtmlText) continue;
-        result.replacedTextNodes?.forEach(text => {
-            text.textContent = ""
-        })
-        updateTranslateElementContent(result.rawMappedHtmlText, result.originalSliceElements || [], result.unitRange);
-    }
-}
-//#endregion

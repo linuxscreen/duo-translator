@@ -1,6 +1,6 @@
 import { AI_PREFIX, AI_TASK, DEFAULT_VALUE, TRANSLATE_SERVICE } from "@/main/constants";
-import { translationServices } from "@/main/translateService";
-import { startAiChatStream } from "@/main/aiService";
+import { translationServices } from "@/main/translateClient";
+import { startAiChatStream } from "@/main/aiClient";
 
 /**
  * The user can route the floating-dot Translate button through either:

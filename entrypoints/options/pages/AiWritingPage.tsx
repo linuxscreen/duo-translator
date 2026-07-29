@@ -10,7 +10,7 @@ import {
 } from '@/main/constants';
 import { getConfig, setConfig } from '@/utils/db';
 import { sendMessageToBackground } from '@/utils/message';
-import { type AiProvider } from '@/main/aiService';
+import { type AiProvider } from '@/main/aiProvider';
 import { buildServiceOptions, getAiTranslateService, type ServiceOption } from '@/utils/service';
 import { Switch } from '@/components/ui/switch';
 import {

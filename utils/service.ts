@@ -1,4 +1,4 @@
-import { AiProvider, normalizeProvider } from "@/main/aiService";
+import { AiProvider, normalizeProvider } from "@/main/aiProvider";
 import { ACTION, AI_PREFIX, CONFIG_KEY, TRANSLATE_SERVICE, TRANSLATE_SERVICES, TranslateServiceMeta } from "@/main/constants";
 import { getConfig } from "./db";
 import { parseTranslateServiceKey } from "@/main/aiWriting/translateRunner";

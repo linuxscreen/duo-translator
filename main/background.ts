@@ -10,32 +10,18 @@ import {
     STORAGE_ACTION,
     ACTION,
     VIEW_STRATEGY,
-    PORT_NAME,
     APP_NAME_WITH_SUFFIX,
-    AI_TASK,
     SYNC_ACTION,
     SYNC_PROVIDER_ID,
-    DEFAULT_VALUE,
     IS_FIREFOX,
 } from "@/main/constants";
 import { Browser, browser } from "wxt/browser";
-import { Token, TRANSLATE_PROXY_ALLOWED_URLS, translationServices } from "@/main/translateService";
-import { Mutex } from "async-mutex";
 import type { InterfaceLang } from "@/main/constants";
 import { INTERFACE_LOCALES, detectInterfaceLang, normalizeInterfaceLang } from "@/utils/interfaceLang";
-import {
-    AiStreamRequest,
-    AiStreamMessage,
-    buildPrompt,
-    chatStream,
-    chatComplete,
-    chatCompleteNonStream,
-    AiProvider,
-    normalizeProvider,
-} from "@/main/aiService";
+import { aiMessageHandlers, registerAiBridge } from "@/main/aiService";
+import { initTokenMap, registerTranslateBridge, translateMessageHandlers } from "@/main/translateService";
 import { getDomainWithPortFromUrl } from '@/utils/url';
-import { storage } from 'wxt/utils/storage';
-import { configRepo, domainRepo, getConfigItem, ruleRepo, type DomainDoc } from "@/main/storage/configStore";
+import { configRepo, domainRepo, ruleRepo, type DomainDoc } from "@/main/storage/configStore";
 import * as translationCache from "@/main/storage/translationCache";
 import { synthesizeTts } from "@/main/ttsService";
 import { migrateFromPouchIfNeeded } from "@/main/storage/migrateFromPouch";
@@ -47,20 +33,14 @@ import {
 } from "@/main/storage/sync/syncManager";
 import { registerAutoSyncListeners, startAutoSync, applyAutoSyncConfig } from "@/main/storage/sync/autoSync";
 import { getWebdavConfig, type WebDavCredentials } from "@/main/storage/sync/webdavProvider";
-import { sendMessageToTab } from "@/utils/message";
-
-declare global {
-    var __debugServiceTokenMap: Map<string, Token>
-}
+import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
 
 export async function background() {
     //#region main
     console.log("background loaded")
-    const mutex = new Mutex();
     let translateStatus = false
     let paraTranslateStatus = false
     let paraContextMenuShowStatus = false
-    let freshTokenTask: Promise<Token | undefined> | null = null
 
     // `contextMenuSwitch` / `currentInterfaceLang` are hydrated from storage by
     // the async bootstrap below, but must EXIST synchronously because the
@@ -72,16 +52,17 @@ export async function background() {
     const getMsg = (key: string) => INTERFACE_LOCALES[currentInterfaceLang][key] ?? INTERFACE_LOCALES.en[key] ?? key
 
 
-    const serviceTokenMap = new Map<string, Token>()
-    let tokenUrl = "https://edge.microsoft.com/translate/auth"
-
-    if (import.meta.env.DEV) {
-        globalThis.__debugServiceTokenMap = serviceTokenMap
-    }
-
     // Register auto-sync alarm/storage listeners synchronously at SW startup so
     // an alarm that wakes the worker is always caught.
     registerAutoSyncListeners();
+
+    // AI Writing streaming bridge (runtime.onConnect). Same first-synchronous-
+    // turn requirement as the listeners above.
+    registerAiBridge();
+
+    // Install the direct-fetch transport so provider classes running inside
+    // background (the connectivity test) don't message background itself.
+    registerTranslateBridge();
 
     // Shortcut (commands) dispatch. MUST be registered here in the first
     // synchronous turn — same MV3 rule as onMessage below. A suspended
@@ -139,35 +120,12 @@ export async function background() {
             }
         }
         console.log('background onMessage', message)
+        // Feature modules own their own handlers; background only dispatches.
+        // A plain synchronous table lookup, so the MV3 first-turn registration
+        // rule above is unaffected.
+        const featureHandler = translateMessageHandlers[message.action] ?? aiMessageHandlers[message.action]
+        if (featureHandler) return featureHandler(message, sendResponse)
         switch (message.action) {
-            case ACTION.ACCESS_TOKEN_GET: {
-                // console.log("getAccessToken", serviceTokenMap.get("microsoft"))
-                let service: string = message.data.service
-                if (service != TRANSLATE_SERVICE.MICROSOFT) {
-                    sendResponse({ status: STATUS_FAIL, data: new Token("", 0) })
-                    return
-                }
-                // todo support other service
-                getMicrosoftToken().then((token) => {
-                    sendResponse({ status: STATUS_SUCCESS, data: token })
-                }).catch((e) => {
-                    sendResponse({ status: STATUS_FAIL, data: new Token("", 0) })
-                })
-                return true
-            }
-            case ACTION.ACCESS_TOKEN_REFRESH: {
-                let service = message.data.service
-                if (service == TRANSLATE_SERVICE.MICROSOFT) {
-                    refreshMicrosoftToken().then((token) => {
-                        if (token) {
-                            sendResponse({ status: STATUS_SUCCESS, data: token })
-                            return
-                        }
-                        sendResponse({ status: STATUS_FAIL, data: new Token("", 0) })
-                    })
-                }
-                return true
-            }
             case ACTION.TRANSLATE_HTML:
                 // todo
                 break
@@ -502,252 +460,6 @@ export async function background() {
                     }
                 })()
                 return true
-            case ACTION.AI_PROVIDER_TEST: {
-                const provider = normalizeProvider(message.data);
-                (async () => {
-                    try {
-                        const gen = chatStream(
-                            provider,
-                            [
-                                { role: "system", content: "Reply with exactly: ok" },
-                                { role: "user", content: "ping" },
-                            ],
-                            { maxTokens: 16 },
-                        );
-                        let collected = "";
-                        for await (const delta of gen) {
-                            collected += delta;
-                            if (collected.length > 32) break;
-                        }
-                        sendResponse({ status: STATUS_SUCCESS, data: { reply: collected.trim() } });
-                    } catch (e: any) {
-                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
-                    }
-                })();
-                return true;
-            }
-            case ACTION.TRANSLATE_SERVICE_TEST: {
-                (async () => {
-                    try {
-                        const svc: string = message.data?.service;
-                        const targetLang: string = message.data?.targetLang || 'zh-CN';
-                        const sample = 'Hello, world.';
-                        let reply = '';
-                        if (svc === TRANSLATE_SERVICE.GOOGLE) {
-                            const r = await fetch('https://translate-pa.googleapis.com/v1/translateHtml', {
-                                method: 'POST',
-                                headers: {
-                                    "Content-Type": "application/json+protobuf",
-                                    "x-goog-api-key": import.meta.env.VITE_GOOGLE_API_KEY,
-                                },
-                                body: JSON.stringify([[[sample], "auto", targetLang], "te_lib"]),
-                            });
-                            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-                            const data = await r.json()
-                            if (!data || data.length < 2) throw new Error('invalid response');
-                            reply = data?.[0][0] || 'OK';
-                        } else if (svc === TRANSLATE_SERVICE.MICROSOFT) {
-                            const token = await getMicrosoftToken();
-                            if (!token?.token) throw new Error('Failed to obtain Microsoft token');
-                            const r = await fetch(`https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=${encodeURIComponent(targetLang)}`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token.token },
-                                body: JSON.stringify([{ Text: sample }]),
-                            });
-                            if (!r.ok) throw new Error(`HTTP ${r.status}`);
-                            const j = await r.json();
-                            reply = j?.[0]?.translations?.[0]?.text || 'OK';
-                        } else if (svc === TRANSLATE_SERVICE.DEEPL) {
-                            const key: string = (message.data?.apiKey ?? '') || ((await configRepo.get(CONFIG_KEY.DEEPL_API_KEY)) as string) || '';
-                            if (!key) throw new Error('DeepL API key is not configured');
-                            const url = key.endsWith(':fx') ? 'https://api-free.deepl.com/v2/translate' : 'https://api.deepl.com/v2/translate';
-                            const params = new URLSearchParams();
-                            params.append('text', sample);
-                            params.append('target_lang', (targetLang.split('-')[0] || 'EN').toUpperCase());
-                            const r = await fetch(url, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `DeepL-Auth-Key ${key}` },
-                                body: params.toString(),
-                            });
-                            if (!r.ok) {
-                                let detail = '';
-                                try { detail = (await r.text()).slice(0, 200); } catch { }
-                                throw new Error(`HTTP ${r.status}${detail ? ': ' + detail : ''}`);
-                            }
-                            const j = await r.json();
-                            reply = j?.translations?.[0]?.text || 'OK';
-                        } else {
-                            throw new Error(`Unknown service: ${svc}`);
-                        }
-                        sendResponse({ status: STATUS_SUCCESS, data: { reply } });
-                    } catch (e: any) {
-                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
-                    }
-                })();
-                return true;
-            }
-            case ACTION.DEEPL_REQUEST: {
-                // CORS proxy for DeepL: content sends the JSON request body,
-                // background attaches the configured key + endpoint and fetches.
-                (async () => {
-                    try {
-                        const body = message.data?.body;
-                        const key = ((await configRepo.get(CONFIG_KEY.DEEPL_API_KEY)) as string) || '';
-                        if (!key) throw new Error('DeepL API key is not configured');
-                        const url = key.endsWith(':fx')
-                            ? 'https://api-free.deepl.com/v2/translate'
-                            : 'https://api.deepl.com/v2/translate';
-                        const r = await fetch(url, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                Authorization: `DeepL-Auth-Key ${key}`,
-                            },
-                            body: JSON.stringify(body),
-                        });
-                        if (r.status !== 200) {
-                            let detail = '';
-                            try { detail = (await r.text()).slice(0, 200); } catch { }
-                            throw new Error(`HTTP ${r.status}${detail ? ': ' + detail : ''}`);
-                        }
-                        const payload = await r.json();
-                        sendResponse({ status: STATUS_SUCCESS, data: payload });
-                    } catch (e: any) {
-                        console.error(APP_NAME_WITH_SUFFIX, 'DeepL request failed:', e?.message || e);
-                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
-                    }
-                })();
-                return true;
-            }
-            case ACTION.TRANSLATE_PROXY_FETCH: {
-                // HTTP proxy for the built-in translate providers. Content
-                // fetches are blocked by the host page's CSP connect-src in
-                // Firefox MV3 and depend on page-origin CORS in Chrome, so the
-                // request runs here with the extension principal instead.
-                // Only fixed provider endpoints are allowed — this must never
-                // become a generic fetch proxy.
-                (async () => {
-                    const { requestId, url, init } = (message.data || {}) as {
-                        requestId?: string;
-                        url?: string;
-                        init?: { method?: string; headers?: Record<string, string>; body?: string };
-                    };
-                    const controller = new AbortController();
-                    if (requestId) translateProxyAborters.set(requestId, controller);
-                    try {
-                        if (!url || !TRANSLATE_PROXY_ALLOWED_URLS.some((prefix) => url.startsWith(prefix))) {
-                            throw new Error(`URL not allowed by translate proxy: ${url}`);
-                        }
-                        const r = await fetch(url, {
-                            method: init?.method ?? 'GET',
-                            headers: init?.headers,
-                            body: init?.body,
-                            signal: controller.signal,
-                        });
-                        const bodyText = await r.text();
-                        sendResponse({
-                            status: STATUS_SUCCESS,
-                            data: { status: r.status, statusText: r.statusText, bodyText },
-                        });
-                    } catch (e: any) {
-                        console.error(APP_NAME_WITH_SUFFIX, 'Translate proxy fetch failed:', e?.message || e);
-                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
-                    } finally {
-                        if (requestId) translateProxyAborters.delete(requestId);
-                    }
-                })();
-                return true;
-            }
-            case ACTION.TRANSLATE_PROXY_ABORT: {
-                // Cancel the in-flight TRANSLATE_PROXY_FETCH for this requestId.
-                const requestId: string | undefined = message.data?.requestId;
-                const controller = requestId ? translateProxyAborters.get(requestId) : undefined;
-                if (controller) {
-                    controller.abort();
-                    translateProxyAborters.delete(requestId!);
-                }
-                sendResponse({ status: STATUS_SUCCESS });
-                break;
-            }
-            case ACTION.AI_TRANSLATE_TEXT: {
-                // One-shot (non-streaming) page-translation via AI. content sends
-                // { requestId, providerId?, texts, targetLang }; we return the
-                // translations array. Cancellation: an AbortController is stored
-                // under requestId and its signal is forwarded to the upstream
-                // fetch, so an AI_TRANSLATE_ABORT for the same id cancels it.
-                (async () => {
-                    const { requestId, providerId, texts, targetLang } = (message.data || {}) as {
-                        requestId?: string;
-                        providerId?: string;
-                        texts: string[];
-                        targetLang: string;
-                    };
-                    const controller = new AbortController();
-                    if (requestId) aiTranslateAborters.set(requestId, controller);
-                    try {
-                        const translations = await aiPageTranslate(providerId, texts, targetLang, controller.signal);
-                        sendResponse({ status: STATUS_SUCCESS, data: translations });
-                    } catch (e: any) {
-                        console.error(APP_NAME_WITH_SUFFIX, 'AI translate failed:', e?.message || e);
-                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
-                    } finally {
-                        if (requestId) aiTranslateAborters.delete(requestId);
-                    }
-                })();
-                return true;
-            }
-            case ACTION.AI_COMPLETE: {
-                // Generic one-shot AI completion (see ACTION.AI_COMPLETE).
-                // Same requestId-based cancellation as AI_TRANSLATE_TEXT.
-                (async () => {
-                    const { requestId, providerId, task, payload } = (message.data || {}) as {
-                        requestId?: string;
-                        providerId?: string;
-                        task: AI_TASK;
-                        payload: { text: string; targetLang?: string; systemPrompt?: string; lang?: string };
-                    };
-                    const controller = new AbortController();
-                    if (requestId) aiCompleteAborters.set(requestId, controller);
-                    try {
-                        const provider = await resolveAiProvider(providerId);
-                        if (!provider) throw new Error("No enabled AI provider configured.");
-                        const messages = buildPrompt({ task, providerId: provider.id, payload });
-                        const text = await chatCompleteNonStream(provider, messages, {
-                            temperature: 0,
-                            signal: controller.signal,
-                            params: providerTaskParams(provider),
-                        });
-                        sendResponse({ status: STATUS_SUCCESS, data: { text } });
-                    } catch (e: any) {
-                        console.error(APP_NAME_WITH_SUFFIX, 'AI complete failed:', e?.message || e);
-                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
-                    } finally {
-                        if (requestId) aiCompleteAborters.delete(requestId);
-                    }
-                })();
-                return true;
-            }
-            case ACTION.AI_COMPLETE_ABORT: {
-                const requestId: string | undefined = message.data?.requestId;
-                const controller = requestId ? aiCompleteAborters.get(requestId) : undefined;
-                if (controller) {
-                    controller.abort();
-                    aiCompleteAborters.delete(requestId!);
-                }
-                sendResponse({ status: STATUS_SUCCESS });
-                break;
-            }
-            case ACTION.AI_TRANSLATE_ABORT: {
-                // Cancel the in-flight AI_TRANSLATE_TEXT fetch for this requestId.
-                const requestId: string | undefined = message.data?.requestId;
-                const controller = requestId ? aiTranslateAborters.get(requestId) : undefined;
-                if (controller) {
-                    controller.abort();
-                    aiTranslateAborters.delete(requestId!);
-                }
-                sendResponse({ status: STATUS_SUCCESS });
-                break;
-            }
             case ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU:
                 (async () => {
                     let translateStatus = message.data.translated as boolean
@@ -866,19 +578,12 @@ export async function background() {
                 })
                 return true
             case ACTION.TTS_SYNTHESIZE: {
-                (async () => {
-                    try {
-                        const { text, lang, service } = (message.data || {}) as {
-                            text: string; lang: string; service: string;
-                        };
-                        const audios = await synthesizeTts(text, lang, service);
-                        sendResponse({ status: STATUS_SUCCESS, data: { audios } });
-                    } catch (e: any) {
-                        console.error(APP_NAME_WITH_SUFFIX, 'TTS synthesize failed:', e?.message || e);
-                        sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
-                    }
-                })();
-                return true;
+                return handleAsync('TTS synthesize', sendResponse, async () => {
+                    const { text, lang, service } = (message.data || {}) as {
+                        text: string; lang: string; service: string;
+                    };
+                    return { audios: await synthesizeTts(text, lang, service) };
+                });
             }
             case ACTION.CONFIG_CHANGED:
                 if (typeof message.data !== 'object') return
@@ -906,110 +611,6 @@ export async function background() {
         browser.storage.session.remove(TRANSLATE_STATUS_KEY + tabId)
     })
 
-    // -----------------------------------------------------------------
-    // Page translation via AI: port-based so the content script can abort
-    // the in-flight fetch by disconnecting. One request per port — the
-    // response is a single { translations } message followed by disconnect.
-    //   request:  { providerId?: string; texts: string[]; targetLang: string }
-    //   response: { type: "result"; translations: string[] }
-    //             | { type: "error"; message: string }
-    // -----------------------------------------------------------------
-    browser.runtime.onConnect.addListener((port) => {
-        if (port.name !== PORT_NAME.AI_TRANSLATE) return;
-        const controller = new AbortController();
-        let disposed = false;
-        const send = (msg: { type: "result"; translations: string[] } | { type: "error"; message: string }) => {
-            if (disposed) return;
-            try { port.postMessage(msg); } catch { /* port may have closed */ }
-        };
-        port.onDisconnect.addListener(() => {
-            disposed = true;
-            controller.abort();
-        });
-        port.onMessage.addListener(async (raw) => {
-            const { providerId, texts, targetLang } = (raw || {}) as {
-                providerId?: string;
-                texts: string[];
-                targetLang: string;
-            };
-            try {
-                const raw_list: any[] = ((await configRepo.get(CONFIG_KEY.AI_PROVIDERS)) as any[] | null) || [];
-                const list: AiProvider[] = raw_list.map(normalizeProvider);
-                let provider: AiProvider | undefined;
-                if (list.length > 0) {
-                    const id = providerId || (await configRepo.get(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID));
-                    provider = list.find((p) => p.id === id && p.enabled !== false)
-                        || list.find((p) => p.enabled !== false);
-                }
-                if (!provider) {
-                    send({ type: "error", message: "No enabled AI provider configured." });
-                    return;
-                }
-                const messages = buildPrompt({
-                    task: AI_TASK.PAGE_TRANSLATE,
-                    providerId: provider.id,
-                    payload: { text: texts.join(SEPARATOR_TAG), targetLang },
-                });
-                const full = await chatComplete(provider, messages, { signal: controller.signal });
-                if (disposed) return;
-                send({ type: "result", translations: full.split(SEPARATOR_TAG).filter((s) => s.length > 0) });
-            } catch (e: any) {
-                send({ type: "error", message: e?.message || String(e) });
-                // if (controller.signal.aborted) return;
-            } finally {
-                try { port.disconnect(); } catch { }
-            }
-        });
-    });
-
-    // -----------------------------------------------------------------
-    // AI Writing: streaming SSE bridge (content port <-> OpenAI fetch)
-    // -----------------------------------------------------------------
-    browser.runtime.onConnect.addListener((port) => {
-        if (port.name !== PORT_NAME.AI_CHAT_STREAM) return;
-        const controller = new AbortController();
-        let disposed = false;
-        const send = (msg: AiStreamMessage) => {
-            if (disposed) return;
-            try { port.postMessage(msg); } catch { /* port may have closed */ }
-        };
-        port.onDisconnect.addListener(() => {
-            disposed = true;
-            controller.abort();
-        });
-        port.onMessage.addListener(async (raw) => {
-            const req = raw as AiStreamRequest;
-            try {
-                // Look up provider directly from the in-scope ConfigStorage.
-                // Round-tripping through sendMessageToBackground
-                // here would deadlock: we ARE the background.
-                const raw_list: any[] = ((await configRepo.get(CONFIG_KEY.AI_PROVIDERS)) as any[] | null) || [];
-                const list: AiProvider[] = raw_list.map(normalizeProvider);
-                // Selection: explicit providerId wins; otherwise stored active
-                // id; otherwise the first ENABLED provider in the list.
-                let provider: AiProvider | undefined;
-                if (list.length > 0) {
-                    const id = req.providerId || (await configRepo.get(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID));
-                    provider = list.find((p) => p.id === id && p.enabled !== false)
-                        || list.find((p) => p.enabled !== false);
-                }
-                if (!provider) {
-                    send({ type: "error", message: "No enabled AI provider configured. Add or enable one in extension Options → Services." });
-                    return;
-                }
-                const messages = buildPrompt(req);
-                const gen = chatStream(provider, messages, { signal: controller.signal });
-                for await (const delta of gen) {
-                    if (disposed) return;
-                    send({ type: "delta", text: delta });
-                }
-                send({ type: "done" });
-            } catch (e: any) {
-                if (controller.signal.aborted) return;
-                send({ type: "error", message: e?.message || String(e) });
-            }
-        });
-    });
     //#endregion
 
     //#region functions
@@ -1176,48 +777,6 @@ export async function background() {
         })
     }
 
-    async function getMicrosoftToken(): Promise<Token> {
-        const release = await mutex.acquire(); // Acquire the lock
-        try {
-            let tokenCache = serviceTokenMap.get(TRANSLATE_SERVICE.MICROSOFT)
-            let token = (tokenCache?.isValid() ? tokenCache : null) || Token.fromData(await configRepo.get(CONFIG_KEY.MICROSOFT_TOKEN))
-            if (token?.isValid()) return token
-            let fetchToken = await fetch(tokenUrl).then(response => response.text());
-            // save token to db
-            let freshToken = new Token(fetchToken, Date.now() + 10 * 60 * 1000)
-            serviceTokenMap.set(TRANSLATE_SERVICE.MICROSOFT, freshToken)
-            await configRepo.set(CONFIG_KEY.MICROSOFT_TOKEN, freshToken)
-            return freshToken
-        } catch (e) {
-            console.error(APP_NAME_WITH_SUFFIX, "getMicrosoftToken error", e)
-            return new Token("", 0)
-        } finally {
-            release();
-        }
-
-    }
-
-    function refreshMicrosoftToken() {
-        if (freshTokenTask) return freshTokenTask
-        freshTokenTask = (async () => {
-            try {
-                let token = await fetch(tokenUrl).then(response => response.text());
-                let freshToken = new Token(token, Date.now() + 10 * 60 * 1000)
-                serviceTokenMap.set(TRANSLATE_SERVICE.MICROSOFT, freshToken)
-                await configRepo.set(CONFIG_KEY.MICROSOFT_TOKEN, freshToken)
-                return freshToken
-            } catch (e) {
-                console.error(APP_NAME_WITH_SUFFIX, "refreshMicrosoftToken error", e)
-            } finally {
-                freshTokenTask = null
-            }
-        })()
-        return freshTokenTask
-    }
-
-    async function initTokenMap() {
-        await getMicrosoftToken()
-    }
     //#endregion
 }
 
@@ -1241,132 +800,12 @@ export async function background() {
 // is locked to the browser UI language at install time, so for a
 // user-overridable UI language we have to do the lookup ourselves.
 
-const SEPARATOR_TAG = "<sep/>"
 const CONTEXT_MENU_TRANSLATE_TITLE = 'contextMenuTranslate'
 const CONTEXT_MENU_RESTORE_TITLE = 'contextMenuRestore'
 const CONTEXT_MENU_TRANSLATE_PARA_TITLE = 'contextMenuTranslatePara'
 const CONTEXT_MENU_RESTORE_PARA_TITLE = 'contextMenuRestorePara'
 const CONTEXT_MENU_TRANSLATE_INPUT_BOX_TITLE = 'contextMenuTranslateInputBox'
 const CONTEXT_MENU_TRANSLATE_SELECTION_TITLE = 'contextMenuTranslateSelection'
-
-// In-flight AbortControllers for one-shot AI_TRANSLATE_TEXT requests, keyed by
-// the content-supplied requestId. AI_TRANSLATE_ABORT looks one up to cancel the
-// upstream fetch. Entries are removed when the request settles.
-const aiTranslateAborters = new Map<string, AbortController>();
-
-// Same pattern for TRANSLATE_PROXY_FETCH (Google/Microsoft background proxy).
-const translateProxyAborters = new Map<string, AbortController>();
-
-// ...and for the generic one-shot ACTION.AI_COMPLETE.
-const aiCompleteAborters = new Map<string, AbortController>();
-
-/**
- * Resolve which provider a request should use: the explicitly requested one,
- * else the stored active one, else the first enabled one. Disabled providers
- * are never selected.
- */
-async function resolveAiProvider(providerId?: string): Promise<AiProvider | undefined> {
-    const raw_list: any[] = ((await configRepo.get(CONFIG_KEY.AI_PROVIDERS)) as any[] | null) || [];
-    const list: AiProvider[] = raw_list.map(normalizeProvider);
-    if (list.length === 0) return undefined;
-    const id = providerId || (await configRepo.get(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID));
-    return list.find((p) => p.id === id && p.enabled !== false)
-        || list.find((p) => p.enabled !== false);
-}
-
-/**
- * Provider-specific body extras for our non-interactive tasks (page
- * translation, subtitle segmentation). These want the answer, not the model's
- * reasoning: thinking costs tokens and seconds, and buys nothing on
- * mechanical rewrite work. DeepSeek's reasoning models take this switch in the
- * request body; providers without one are left alone.
- */
-function providerTaskParams(provider: AiProvider): any {
-    if (provider.type === "deepseek") return { thinking: { type: "disabled" } };
-    return undefined;
-}
-
-/**
- * Run a page-translation request against the configured AI provider and return
- * the translations array. Shared by both the port-based streaming bridge
- * (PORT_NAME.AI_TRANSLATE) and the one-shot ACTION.AI_TRANSLATE_TEXT handler.
- * Throws on misconfiguration or a non-array model response.
- */
-// Batch texts up to this many characters per upstream request. The concurrency
-// cap is enforced globally inside chatCompleteNonStream (a shared semaphore), so
-// firing every batch at once here is fine — the limiter throttles the actual
-// requests across all callers, not just this one invocation.
-const AI_PAGE_TRANSLATE_BATCH_CHARS = 500;
-
-async function aiPageTranslate(
-    providerId: string | undefined,
-    texts: string[],
-    targetLang: string,
-    signal?: AbortSignal,
-): Promise<string[]> {
-    const provider = await resolveAiProvider(providerId);
-    if (!provider) throw new Error("No enabled AI provider configured.");
-
-    let temperature = 0; // todo support use defined temperature
-    const params = providerTaskParams(provider); // todo support use defined params
-
-    const all = texts ?? [];
-    if (all.length === 0) return [];
-
-    // Split into batches of <= AI_PAGE_TRANSLATE_BATCH_CHARS characters. Each
-    // batch is a contiguous slice so results can be written back into their
-    // original positions regardless of completion order. Concurrency is capped
-    // downstream by chatCompleteNonStream's global semaphore.
-    const batches: { start: number; texts: string[] }[] = [];
-    let cur: string[] = [];
-    let curStart = 0;
-    let curChars = 0;
-    for (let i = 0; i < all.length; i++) {
-        const len = all[i].length;
-        // Close the current batch if appending this text would exceed the
-        // char budget — unless the batch is empty (a single oversized text
-        // still has to go out on its own).
-        if (cur.length > 0 && curChars + len > AI_PAGE_TRANSLATE_BATCH_CHARS) {
-            batches.push({ start: curStart, texts: cur });
-            cur = [];
-            curStart = i;
-            curChars = 0;
-        }
-        cur.push(all[i]);
-        curChars += len;
-    }
-    if (cur.length > 0) batches.push({ start: curStart, texts: cur });
-
-    const results: string[] = new Array(all.length);
-
-    // Translate one batch and write its results back at the right offset.
-    const runBatch = async (batch: { start: number; texts: string[] }) => {
-        const messages = buildPrompt({
-            task: AI_TASK.PAGE_TRANSLATE,
-            providerId: provider!.id,
-            payload: { text: batch.texts.join(SEPARATOR_TAG), targetLang },
-        });
-        // Non-streaming: the upstream request is sent with stream:false (see
-        // chatCompleteNonStream) — page translation wants the full result in
-        // one response, not an SSE stream.
-        const full = await chatCompleteNonStream(provider!, messages, { temperature, signal, params });
-        const outs = full.split(SEPARATOR_TAG).filter((s) => s.length > 0);
-        // if (outs.length != texts.length) throw new Error(`Expected ${texts.length} translations, got ${outs.length}`)
-
-        for (let i = 0; i < batch.texts.length; i++) {
-            // Guard against a short response — fall back to the source text so
-            // indices never drift out of alignment with the input array.
-            // todo fallback to machine translation
-            results[batch.start + i] = i < outs.length ? outs[i] : batch.texts[i];
-        }
-    };
-
-    // Fire every batch; the global semaphore in chatCompleteNonStream caps how
-    // many actually hit the network at once.
-    await Promise.all(batches.map(runBatch));
-
-    return results;
-}
 
 export class Domain {
     constructor(domain: string, strategy?: DOMAIN_STRATEGY, aiWritingDisabled?: boolean, aiWritingEnabled?: boolean) {
