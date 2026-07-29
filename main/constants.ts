@@ -491,24 +491,36 @@ export const INTERFACE_LANGUAGES: { value: InterfaceLang; title: string }[] = [
 ];
 
 /**
- * Default TRANSLATE-TARGET language for a user who has never picked one,
- * derived from the browser UI language. Every fallback in the codebase goes
- * through this.
+ * Reduce any BCP-47 tag (`en-US`, `pt-BR`, `zh-Hant`, `cmn-Hans-CN`…) to the
+ * codes used as translate targets in `LANGUAGES`. Empty tag → "".
  *
  * The bare base tag is wrong for Chinese: `LANGUAGES` has no `zh`, only
- * `zh-CN` / `zh-TW`, so `zh-TW` browsers used to fall back to a target that
- * matches nothing and silently degraded to whatever the picker did with an
- * unknown value. Script is what matters, not region — Singapore is simplified,
- * Hong Kong/Macau traditional — so the region test mirrors `detectInterfaceLang`
- * in utils/interfaceLang.ts (`zh-Hant` and `zh-MO` included for the same
- * reason). Everything else keeps the plain base tag.
+ * `zh-CN` / `zh-TW`. Script is what matters, not region — Singapore is
+ * simplified, Hong Kong/Macau traditional — so the region test mirrors
+ * `detectInterfaceLang` in utils/interfaceLang.ts (`zh-Hant` and `zh-MO`
+ * included for the same reason). Everything else keeps the plain base tag.
+ *
+ * Use this for ANY comparison between language tags of different origin (a
+ * caption track's code vs. the configured target, say). Raw tags do not
+ * compare: `zh-Hans` and `zh-CN` are the same language, `en` and `en-US` too.
+ */
+export function normalizeLanguageTag(tag: string | undefined | null): string {
+    const t = (tag || '').toLowerCase().trim();
+    if (t === '') return '';
+    // `cmn` (Mandarin, ISO-639-3) shows up in franc output and some tracks.
+    if (t.startsWith('zh') || t.startsWith('cmn')) {
+        return /-(tw|hk|mo|hant)\b/.test(t) ? 'zh-TW' : 'zh-CN';
+    }
+    return t.split('-')[0];
+}
+
+/**
+ * Default TRANSLATE-TARGET language for a user who has never picked one,
+ * derived from the browser UI language. Every fallback in the codebase goes
+ * through this — do not re-inline `navigator.language.split('-')[0]`.
  */
 export function browserTargetLanguage(): string {
-    const ui = (globalThis.navigator?.language || 'en').toLowerCase();
-    if (ui.startsWith('zh')) {
-        return /^zh-(tw|hk|mo|hant)/.test(ui) ? 'zh-TW' : 'zh-CN';
-    }
-    return ui.split('-')[0];
+    return normalizeLanguageTag(globalThis.navigator?.language) || 'en';
 }
 
 export const LANGUAGES = [

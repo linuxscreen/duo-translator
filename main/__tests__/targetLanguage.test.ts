@@ -2,7 +2,7 @@
 // translate target". Pure, so it runs in the default node environment; the
 // browser UI language is stubbed per case.
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { browserTargetLanguage } from "@/main/constants";
+import { browserTargetLanguage, normalizeLanguageTag } from "@/main/constants";
 
 function withUiLanguage(value: string | undefined): void {
     vi.stubGlobal("navigator", value === undefined ? {} : { language: value });
@@ -46,5 +46,31 @@ describe("browserTargetLanguage", () => {
     it("falls back to English when the browser reports nothing", () => {
         withUiLanguage(undefined);
         expect(browserTargetLanguage()).toBe("en");
+    });
+});
+
+describe("normalizeLanguageTag", () => {
+    // Caption-track codes vs. configured targets: the whole point is that tags
+    // of different origin still compare equal when they are the same language.
+    it("makes tags from different sources comparable", () => {
+        expect(normalizeLanguageTag("zh-Hans")).toBe(normalizeLanguageTag("zh-CN"));
+        expect(normalizeLanguageTag("zh-Hant")).toBe(normalizeLanguageTag("zh-TW"));
+        expect(normalizeLanguageTag("en-US")).toBe(normalizeLanguageTag("en"));
+        expect(normalizeLanguageTag("pt-BR")).toBe(normalizeLanguageTag("pt"));
+    });
+
+    it("keeps simplified and traditional Chinese apart", () => {
+        expect(normalizeLanguageTag("zh-CN")).not.toBe(normalizeLanguageTag("zh-TW"));
+    });
+
+    it("handles the ISO-639-3 Mandarin code franc emits", () => {
+        expect(normalizeLanguageTag("cmn")).toBe("zh-CN");
+        expect(normalizeLanguageTag("cmn-Hant")).toBe("zh-TW");
+    });
+
+    it("returns an empty string for a missing tag", () => {
+        expect(normalizeLanguageTag(undefined)).toBe("");
+        expect(normalizeLanguageTag(null)).toBe("");
+        expect(normalizeLanguageTag("  ")).toBe("");
     });
 });

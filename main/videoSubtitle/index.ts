@@ -2,6 +2,7 @@ import {
     AI_PREFIX,
     browserTargetLanguage,
     CONFIG_KEY,
+    normalizeLanguageTag,
 } from "@/main/constants";
 import { readConfig } from "@/utils/reactiveConfig";
 import { setConfig } from "@/utils/db";
@@ -84,6 +85,12 @@ type CaptionLoadState = "pending" | "loading" | "ready" | "gaveup";
 interface VideoSession {
     videoId: string;
     abort: AbortController;
+    /**
+     * Language of the loaded caption track, normalized for comparison with the
+     * target language. "" when unknown (never equals a target, so translation
+     * still runs — the safe direction).
+     */
+    sourceLang: string;
     /** Whole track, blank words dropped. Empty until the load succeeds. */
     words: SubtitleWord[];
     cues: SubtitleCue[];
@@ -296,6 +303,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
         session = {
             videoId,
             abort: new AbortController(),
+            sourceLang: "",
             words: [],
             cues: [],
             starts: [],
@@ -343,6 +351,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
                     failLoad(s, "no caption track");
                     return;
                 }
+                s.sourceLang = normalizeLanguageTag(track.languageCode);
                 const words = await adapter.fetchTrack(track);
                 if (abort.signal.aborted || session !== s) return;
                 if (words.length === 0) {
@@ -521,6 +530,13 @@ export function initVideoSubtitle(): VideoSubtitleController {
             for (const c of s.cues) c.translated = undefined;
         }
         s.translationKey = key;
+
+        // Captions already in the target language: nothing to translate, and a
+        // second identical line under every cue is just noise. Checked here
+        // rather than at load so switching the target language to (or away
+        // from) the caption language takes effect immediately — the stale-key
+        // sweep above has already dropped any translations from before.
+        if (s.sourceLang !== "" && s.sourceLang === normalizeLanguageTag(lang)) return;
 
         const end = Math.min(s.cues.length, fromIdx + TRANSLATE_AHEAD);
         const pendingIdx: number[] = [];
