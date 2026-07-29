@@ -435,7 +435,7 @@
   "videoSubtitleAiSegment": "Segmentazione delle frasi tramite IA",
   "videoSubtitleAiSegmentHint": "Utilizza un provider di intelligenza artificiale per suddividere in frasi più accurate le didascalie generate automaticamente.",
   "videoSubtitlePauseOnSelect": "Metti in pausa la riproduzione quando selezioni il testo",
-  "videoSubtitlePauseOnSelectHint": "Metti in pausa il video non appena selezioni il testo dei sottotitoli, in modo che rimanga sullo schermo.",
+  "videoSubtitlePauseOnSelectHint": "Mette in pausa il video non appena selezioni il testo dei sottotitoli e riprende la riproduzione quando annulli la selezione",
   "videoSubtitleColor": "Colore",
   "videoSubtitleFontSize": "Misurare",
   "videoSubtitleFontSizeHint": "Dimensione del carattere in pixel (si adatta al lettore)",

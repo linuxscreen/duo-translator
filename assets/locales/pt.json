@@ -435,7 +435,7 @@
   "videoSubtitleAiSegment": "Segmentação de frases por IA",
   "videoSubtitleAiSegmentHint": "Utilize um serviço de IA para dividir legendas geradas automaticamente em frases com maior precisão.",
   "videoSubtitlePauseOnSelect": "Pausar a reprodução ao selecionar o texto",
-  "videoSubtitlePauseOnSelectHint": "Pause o vídeo assim que selecionar o texto da legenda, para que ela permaneça na tela.",
+  "videoSubtitlePauseOnSelectHint": "Pausa o vídeo assim que você seleciona o texto da legenda e retoma a reprodução ao cancelar a seleção",
   "videoSubtitleColor": "Cor",
   "videoSubtitleFontSize": "Tamanho",
   "videoSubtitleFontSizeHint": "Tamanho da fonte em pixels (ajustável conforme o jogador)",

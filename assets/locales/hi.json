@@ -435,7 +435,7 @@
   "videoSubtitleAiSegment": "एआई वाक्य विभाजन",
   "videoSubtitleAiSegmentHint": "स्वचालित रूप से उत्पन्न कैप्शन को वाक्यों में अधिक सटीक रूप से विभाजित करने के लिए एआई प्रदाता का उपयोग करें।",
   "videoSubtitlePauseOnSelect": "टेक्स्ट का चयन करते समय प्लेबैक रोकें",
-  "videoSubtitlePauseOnSelectHint": "सबटाइटल टेक्स्ट का चयन करते ही वीडियो को रोक दें, ताकि वह स्क्रीन पर बना रहे।",
+  "videoSubtitlePauseOnSelectHint": "सबटाइटल टेक्स्ट चुनते ही वीडियो रोक देता है और चयन हटाने पर फिर से चलाता है",
   "videoSubtitleColor": "रंग",
   "videoSubtitleFontSize": "आकार",
   "videoSubtitleFontSizeHint": "पिक्सेल में फ़ॉन्ट का आकार (प्लेयर के साथ बदलता है)",

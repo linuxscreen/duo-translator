@@ -435,7 +435,7 @@
   "videoSubtitleAiSegment": "AI 문장 분할",
   "videoSubtitleAiSegmentHint": "AI 제공업체를 활용하여 자동 생성된 캡션을 문장으로 더욱 정확하게 분할하세요.",
   "videoSubtitlePauseOnSelect": "텍스트를 선택할 때 재생을 일시 중지합니다.",
-  "videoSubtitlePauseOnSelectHint": "자막 텍스트를 선택하는 즉시 비디오를 일시 정지하여 자막이 화면에 계속 표시되도록 하세요.",
+  "videoSubtitlePauseOnSelectHint": "자막 텍스트를 선택하면 즉시 동영상을 일시 정지하고 선택을 해제하면 재생을 재개합니다",
   "videoSubtitleColor": "색상",
   "videoSubtitleFontSize": "크기",
   "videoSubtitleFontSizeHint": "글꼴 크기(픽셀 단위, 플레이어 크기에 따라 확대/축소됨)",

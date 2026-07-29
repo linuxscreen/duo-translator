@@ -435,7 +435,7 @@
   "videoSubtitleAiSegment": "segmentation de phrases par IA",
   "videoSubtitleAiSegmentHint": "Utilisez un fournisseur d'IA pour diviser plus précisément les légendes générées automatiquement en phrases.",
   "videoSubtitlePauseOnSelect": "Mettez la lecture en pause lors de la sélection du texte.",
-  "videoSubtitlePauseOnSelectHint": "Mettez la vidéo en pause dès que vous sélectionnez le texte des sous-titres, afin qu'il reste affiché à l'écran.",
+  "videoSubtitlePauseOnSelectHint": "Met la vidéo en pause dès que vous sélectionnez du texte de sous-titres et reprend la lecture lorsque la sélection est annulée",
   "videoSubtitleColor": "Couleur",
   "videoSubtitleFontSize": "Taille",
   "videoSubtitleFontSizeHint": "Taille de la police en pixels (s'adapte à la taille du lecteur)",

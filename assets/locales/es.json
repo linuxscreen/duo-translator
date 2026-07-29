@@ -435,7 +435,7 @@
   "videoSubtitleAiSegment": "segmentación de oraciones mediante IA",
   "videoSubtitleAiSegmentHint": "Utilice un proveedor de IA para dividir los subtítulos generados automáticamente en oraciones con mayor precisión.",
   "videoSubtitlePauseOnSelect": "Pausar la reproducción al seleccionar texto",
-  "videoSubtitlePauseOnSelectHint": "Pausa el vídeo en cuanto selecciones el texto de los subtítulos para que permanezca en pantalla.",
+  "videoSubtitlePauseOnSelectHint": "Pausa el vídeo en cuanto seleccionas texto de los subtítulos y reanuda la reproducción al deseleccionarlo",
   "videoSubtitleColor": "Color",
   "videoSubtitleFontSize": "Tamaño",
   "videoSubtitleFontSizeHint": "Tamaño de fuente en píxeles (se ajusta al tamaño del reproductor)",

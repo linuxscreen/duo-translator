@@ -435,7 +435,7 @@
   "videoSubtitleAiSegment": "KI-Satzsegmentierung",
   "videoSubtitleAiSegmentHint": "Nutzen Sie einen KI-Anbieter, um automatisch generierte Untertitel genauer in Sätze zu unterteilen.",
   "videoSubtitlePauseOnSelect": "Wiedergabe pausieren, wenn Text ausgewählt wird",
-  "videoSubtitlePauseOnSelectHint": "Pausieren Sie das Video, sobald Sie den Untertiteltext auswählen, damit er auf dem Bildschirm bleibt.",
+  "videoSubtitlePauseOnSelectHint": "Pausiert das Video, sobald Sie Untertiteltext auswählen, und setzt die Wiedergabe fort, wenn die Auswahl aufgehoben wird",
   "videoSubtitleColor": "Farbe",
   "videoSubtitleFontSize": "Größe",
   "videoSubtitleFontSizeHint": "Schriftgröße in Pixeln (skaliert mit dem Player)",

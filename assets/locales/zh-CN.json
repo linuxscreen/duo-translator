@@ -435,7 +435,7 @@
   "videoSubtitleAiSegment": "AI 分句",
   "videoSubtitleAiSegmentHint": "使用 AI 更准确地将自动生成的字幕切分为句子",
   "videoSubtitlePauseOnSelect": "选中文本时暂停播放",
-  "videoSubtitlePauseOnSelectHint": "选中字幕文本时立即暂停视频",
+  "videoSubtitlePauseOnSelectHint": "选中字幕文本时立即暂停视频，取消选中时恢复播放",
   "videoSubtitleColor": "颜色",
   "videoSubtitleFontSize": "字号",
   "videoSubtitleFontSizeHint": "字体大小(像素,会随播放器尺寸缩放)",

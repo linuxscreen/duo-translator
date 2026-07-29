@@ -435,7 +435,7 @@
   "videoSubtitleAiSegment": "AI sentence segmentation",
   "videoSubtitleAiSegmentHint": "Use an AI provider to split auto-generated captions into sentences more accurately",
   "videoSubtitlePauseOnSelect": "Pause playback when selecting text",
-  "videoSubtitlePauseOnSelectHint": "Pause the video as soon as you select subtitle text, so it stays on screen",
+  "videoSubtitlePauseOnSelectHint": "Pause the video as soon as you select subtitle text, and resume when the selection is cleared",
   "videoSubtitleColor": "Color",
   "videoSubtitleFontSize": "Size",
   "videoSubtitleFontSizeHint": "Font size in pixels (scales with the player)",

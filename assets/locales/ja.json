@@ -435,7 +435,7 @@
   "videoSubtitleAiSegment": "AIによる文分割",
   "videoSubtitleAiSegmentHint": "AIプロバイダーを利用して、自動生成されたキャプションをより正確に文に分割する",
   "videoSubtitlePauseOnSelect": "テキストを選択する際に再生を一時停止します",
-  "videoSubtitlePauseOnSelectHint": "字幕テキストを選択したらすぐにビデオを一時停止して、画面に表示されたままにします。",
+  "videoSubtitlePauseOnSelectHint": "字幕テキストを選択すると動画をすぐに一時停止し、選択を解除すると再生を再開します",
   "videoSubtitleColor": "色",
   "videoSubtitleFontSize": "サイズ",
   "videoSubtitleFontSizeHint": "フォントサイズ（ピクセル単位、プレーヤーのサイズに合わせて拡大縮小されます）",

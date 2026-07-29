@@ -1,6 +1,7 @@
 import { VIDEO_SUBTITLE_DISPLAY_MODE } from "@/main/constants";
 import type { SubtitleCue, VideoSubtitleStyle } from "./types";
 import { markNoTranslate } from "../dom/paragraphMarks";
+import { t } from "@/main/aiWriting/i18n";
 
 /**
  * Subtitle overlay — the bilingual caption box drawn inside the player.
@@ -63,6 +64,21 @@ const HANDLE_HIDE_DELAY_MS = 200;
 /** Reference player height the configured px font sizes are relative to. */
 const BASE_PLAYER_HEIGHT = 720;
 
+/** Side of the square selection mini-button, px. */
+const SELECT_BTN_PX = 26;
+/**
+ * Lucide's "languages" glyph — the 文/A translate mark used by the rest of the
+ * UI. Inlined because this surface is deliberately vanilla DOM (see the class
+ * doc), so the lucide-react component is not available here. `currentColor`
+ * makes it follow the button's own color.
+ */
+const TRANSLATE_ICON_SVG =
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/>' +
+    '<path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>' +
+    "</svg>";
+
 function hexToRgba(hex: string, alpha: number): string {
     const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
     if (!m) return `rgba(0,0,0,${alpha})`;
@@ -86,6 +102,14 @@ export class SubtitleOverlay {
     private handlePill: HTMLDivElement;
     private handleHideTimer: number | null = null;
     private pauseOnSelect = false;
+    /**
+     * Whether the pause currently in effect is OURS. Playback is only resumed
+     * when this is set, so a video the user paused themselves before selecting
+     * is never started behind their back.
+     */
+    private pausedBySelection = false;
+    /** A selection drag is in progress (button held down inside the box). */
+    private selecting = false;
     /**
      * Position is tracked as two values: `desiredPct` is what the user/config
      * asked for, `bottomPct` is that value clamped to what actually fits right
@@ -138,7 +162,10 @@ export class SubtitleOverlay {
 
         this.selectBtn = document.createElement("button");
         this.selectBtn.type = "button";
-        this.selectBtn.textContent = "译";
+        this.selectBtn.innerHTML = TRANSLATE_ICON_SVG;
+        const translateLabel = t("translate", "Translate");
+        this.selectBtn.title = translateLabel;
+        this.selectBtn.setAttribute("aria-label", translateLabel);
         this.applyBaseStyles();
         this.applyStyle();
 
@@ -326,15 +353,14 @@ export class SubtitleOverlay {
             // Must sit above the box itself (see the box's zIndex), or the
             // button is hidden behind the subtitle it belongs to.
             zIndex: "1000",
-            width: "26px",
-            height: "26px",
+            width: `${SELECT_BTN_PX}px`,
+            height: `${SELECT_BTN_PX}px`,
             borderRadius: "6px",
             border: "none",
             background: "#1f1f1f",
             color: "#fff",
-            fontSize: "13px",
-            lineHeight: "26px",
-            textAlign: "center",
+            alignItems: "center",
+            justifyContent: "center",
             cursor: "pointer",
             boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
             padding: "0",
@@ -357,9 +383,14 @@ export class SubtitleOverlay {
         this.render(true);
     }
 
-    /** When on, selecting subtitle text pauses playback (opt-in setting). */
+    /**
+     * When on, selecting subtitle text pauses playback and clearing the
+     * selection resumes it (opt-in setting).
+     */
     setPauseOnSelect(v: boolean): void {
         this.pauseOnSelect = v;
+        // Turning the setting off mid-pause must not strand the video.
+        if (!v) this.resumePlayback();
     }
 
     setPosition(bottomPct: number): void {
@@ -390,6 +421,9 @@ export class SubtitleOverlay {
         }
         this.disposers.forEach((d) => d());
         this.disposers = [];
+        // Never leave the video stuck on a pause whose owner just went away
+        // (feature switched off, player replaced on SPA navigation…).
+        this.resumePlayback();
         this.box.remove();
         this.selectBtn.remove();
     }
@@ -414,6 +448,32 @@ export class SubtitleOverlay {
         } as Partial<CSSStyleDeclaration>);
     }
 
+    /**
+     * Replace one line's text, dropping any selection that covered it. Returns
+     * true if the selection was dropped.
+     *
+     * Clearing has to be explicit. Overwriting `textContent` detaches the old
+     * text node, which does collapse a selection anchored INSIDE that node —
+     * but a range anchored on the LINE ELEMENT (what select-all and
+     * triple-click produce: element + child offsets) survives the swap and
+     * simply re-covers whatever text lands there, so every following subtitle
+     * line came up looking fully selected.
+     *
+     * Skipping unchanged lines is what keeps a selection of the original text
+     * alive when only the translation arrives a moment later.
+     */
+    private writeLine(el: HTMLElement, text: string): boolean {
+        if (el.textContent === text) return false;
+        let cleared = false;
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0 && !sel.isCollapsed && sel.getRangeAt(0).intersectsNode(el)) {
+            sel.removeAllRanges();
+            cleared = true;
+        }
+        el.textContent = text;
+        return cleared;
+    }
+
     private render(force: boolean): void {
         const cue = this.currentCue;
         if (!cue) return;
@@ -424,10 +484,14 @@ export class SubtitleOverlay {
         this.applyStyle();
         const bilingual = this.mode === VIDEO_SUBTITLE_DISPLAY_MODE.BILINGUAL;
         const showOriginal = bilingual || !cue.translated;
-        this.originalLine.textContent = showOriginal ? cue.text : "";
+        const clearedOriginal = this.writeLine(this.originalLine, showOriginal ? cue.text : "");
         this.originalLine.style.display = showOriginal ? "" : "none";
-        this.translationLine.textContent = cue.translated ?? "";
+        const clearedTranslation = this.writeLine(this.translationLine, cue.translated ?? "");
         this.translationLine.style.display = cue.translated ? "" : "none";
+        // The mini button acts on the selection, so it goes when the selection
+        // does — otherwise it survived onto every following subtitle line,
+        // pointing at text that was long gone.
+        if (clearedOriginal || clearedTranslation) this.hideSelectButton();
         this.box.style.display = "";
         // The box just changed height (line count / mode / font size), so the
         // fit ceiling moved — re-clamp so a tall cue can't overflow the top,
@@ -525,42 +589,91 @@ export class SubtitleOverlay {
         this.selectBtn.style.display = "none";
     }
 
+    /** True while a non-empty selection lives inside the subtitle box. */
+    private hasSelectionInBox(): boolean {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return false;
+        if ((sel.toString().trim()) === "") return false;
+        const anchor = sel.anchorNode;
+        return !!anchor && this.box.contains(anchor);
+    }
+
+    private pausePlayback(): void {
+        const video = this.player.querySelector("video");
+        // Already paused by the user — leave it alone, and remember that the
+        // pause is not ours so we never "resume" into a state they chose.
+        if (!video || video.paused) return;
+        video.pause();
+        this.pausedBySelection = true;
+    }
+
+    /** Undo our own pause, if that is still what is holding the video. */
+    private resumePlayback(): void {
+        if (!this.pausedBySelection) return;
+        this.pausedBySelection = false;
+        const video = this.player.querySelector("video");
+        // Not paused any more means the user restarted it themselves; nothing
+        // to undo. `play()` rejects if the element is torn down mid-call.
+        if (video && video.paused) void video.play().catch(() => { });
+    }
+
     private bindSelection(): void {
         const onMouseUp = () => {
             // Let the click finish first — the selection is final after mouseup.
             setTimeout(() => {
                 if (this.disposed || this.dragging) return;
                 const sel = window.getSelection();
-                const text = sel?.toString().trim() ?? "";
-                if (!sel || text === "" || sel.rangeCount === 0) {
+                if (!this.hasSelectionInBox() || !sel) {
                     this.hideSelectButton();
+                    this.resumePlayback();
                     return;
                 }
-                const anchor = sel.anchorNode;
-                if (!anchor || !this.box.contains(anchor)) {
-                    this.hideSelectButton();
-                    return;
-                }
-                if (this.pauseOnSelect) {
-                    const video = this.player.querySelector("video");
-                    if (video && !video.paused) video.pause();
-                }
+                if (this.pauseOnSelect) this.pausePlayback();
                 const rect = sel.getRangeAt(0).getBoundingClientRect();
                 const playerRect = this.player.getBoundingClientRect();
                 // Position just above the selection, clamped inside the player.
-                const btnW = 26;
+                const btnW = SELECT_BTN_PX;
                 let left = rect.left + rect.width / 2 - playerRect.left - btnW / 2;
                 left = Math.max(4, Math.min(left, playerRect.width - btnW - 4));
                 let top = rect.top - playerRect.top - btnW - 6;
                 if (top < 4) top = rect.bottom - playerRect.top + 6;
                 this.selectBtn.style.left = `${left}px`;
                 this.selectBtn.style.top = `${top}px`;
-                this.selectBtn.style.display = "";
+                // "flex", not "" — the icon is centered by the flex box, and an
+                // empty string would fall back to the button's own `inline-block`.
+                this.selectBtn.style.display = "flex";
             }, 0);
         };
         const onDocMouseDown = (e: MouseEvent) => {
             if (e.target === this.selectBtn) return;
             this.hideSelectButton();
+            // A press inside the box starts a new selection drag: hold off the
+            // resume until it ends, or the video would stutter back to life for
+            // the length of the drag (`selectionchange` collapses the old
+            // selection the moment the drag begins).
+            this.selecting = this.box.contains(e.target as Node);
+        };
+        const onDocMouseUp = () => {
+            if (!this.selecting) return;
+            this.selecting = false;
+            // The drag may have ended on empty space — settle after the
+            // selection is final (same reason as onMouseUp's timeout).
+            setTimeout(() => {
+                if (this.disposed) return;
+                if (!this.hasSelectionInBox()) this.resumePlayback();
+            }, 0);
+        };
+        /**
+         * Single source of truth for "the selection went away": covers every
+         * route out of a selection — clicking elsewhere, pressing a key,
+         * Escape, the page rewriting the subtitle text under it — instead of
+         * one handler per route.
+         */
+        const onSelectionChange = () => {
+            if (this.disposed || this.selecting) return;
+            if (this.hasSelectionInBox()) return;
+            this.hideSelectButton();
+            this.resumePlayback();
         };
         const onBtnClick = (e: MouseEvent) => {
             e.stopPropagation();
@@ -582,11 +695,15 @@ export class SubtitleOverlay {
         };
         this.box.addEventListener("mouseup", onMouseUp);
         document.addEventListener("mousedown", onDocMouseDown, true);
+        document.addEventListener("mouseup", onDocMouseUp, true);
+        document.addEventListener("selectionchange", onSelectionChange);
         this.selectBtn.addEventListener("click", onBtnClick);
         this.selectBtn.addEventListener("mousedown", onBtnMouseDown);
         this.disposers.push(() => {
             this.box.removeEventListener("mouseup", onMouseUp);
             document.removeEventListener("mousedown", onDocMouseDown, true);
+            document.removeEventListener("mouseup", onDocMouseUp, true);
+            document.removeEventListener("selectionchange", onSelectionChange);
             this.selectBtn.removeEventListener("click", onBtnClick);
             this.selectBtn.removeEventListener("mousedown", onBtnMouseDown);
         });
