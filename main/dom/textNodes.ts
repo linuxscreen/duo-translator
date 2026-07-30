@@ -1,7 +1,8 @@
 // Text-node / cleanup DOM helpers extracted from main/content.ts so they can be
 // unit tested in isolation (jsdom). Behaviour is preserved verbatim.
 import { EXCLUDE_CHILD_ELEMENT_TAGS } from "@/main/constants";
-import { contentVisible } from "@/utils/dom";
+import { contentValid, contentVisible } from "@/utils/dom";
+import { isEditable, isExcludedNodeType } from "@/main/dom/predicates";
 
 /** Strip every `duo-*` class and attribute the extension added to an element. */
 export function removeDuoClassAndAttribute(element: HTMLElement) {
@@ -98,6 +99,38 @@ export function isContainsValidTextElement(element: Node): boolean | undefined {
             stack.push(...pop.childNodes);
         }
     }
+}
+
+/**
+ * Does this subtree hold text worth translating? Early-exit walk, used by the
+ * segmentation to qualify an inline run whose text may sit anywhere inside it
+ * (not only in direct child text nodes).
+ *
+ * Deliberately NOT the same question as `isContainsValidTextElement` above —
+ * do not merge them:
+ *   - the skip set is `excludedTagSet` (script/style/code/pre/img/video/…, via
+ *     `isExcludedNodeType`) — the tags the marking scan refuses to mark — not
+ *     the narrower EXCLUDE_CHILD_ELEMENT_TAGS used when serializing a run that
+ *     already qualified;
+ *   - editable subtrees are skipped: we never translate what the user is
+ *     typing, so their text must not qualify a run either;
+ *   - the text test is `contentValid` (non-blank) rather than `contentVisible`
+ *     (non-zero-width) — a whitespace-only run is not a paragraph.
+ */
+export function hasTranslatableText(node: Node): boolean {
+    const stack: Node[] = [node];
+    while (stack.length > 0) {
+        const cur = stack.pop()!;
+        if (cur.nodeType === Node.TEXT_NODE) {
+            if (contentValid(cur)) return true;
+            continue;
+        }
+        if (cur.nodeType !== Node.ELEMENT_NODE) continue;
+        const el = cur as HTMLElement;
+        if (isExcludedNodeType(el) || isEditable(el)) continue;
+        stack.push(...el.childNodes);
+    }
+    return false;
 }
 
 /** The last child node that actually contains rendered text. */

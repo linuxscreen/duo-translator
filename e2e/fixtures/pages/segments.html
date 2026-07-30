@@ -12,5 +12,10 @@
     </ul>Trailing conclusion text after the list.</div>
     <div id="brsplit">First visual paragraph before the double break.<br><br>Second visual paragraph after the double break.</div>
     <div id="softbr">Only line one here.<br>Only line two here.</div>
+    <!-- No direct text of its own: the sentence is spread over inline children,
+         so it must still be ONE translation unit. -->
+    <div id="inlineonly"><span>A sentence split across </span><b>several inline</b><span> children.</span></div>
+    <!-- A single inline wrapper is unwrapped: the span itself is the container. -->
+    <div id="lonewrapper"><span id="lonespan">Wrapped in exactly one inline element.</span></div>
 </body>
 </html>

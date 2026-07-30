@@ -2,7 +2,6 @@
 // Extracted from main/content.ts so the marking/skip rules are unit-testable
 // without a full content() context.
 import { excludedTagSet } from "@/main/constants";
-import { contentValid, contentVisible } from "@/utils/dom";
 import { isNoTranslate } from "@/main/dom/paragraphMarks";
 
 /** An element the user (or a rule) marked as a no-translate region. */
@@ -39,18 +38,10 @@ export function isEditable(element: HTMLElement): boolean {
     return false;
 }
 
-/**
- * An element is a "paragraph" (translation unit) when it has at least one direct
- * child text node with non-zero-width, non-whitespace content.
- */
-export function isParagraphElement(element: HTMLElement): boolean {
-    for (let i = 0; i < element.childNodes.length; i++) {
-        if (
-            element.childNodes[i].nodeType === Node.TEXT_NODE &&
-            contentValid(element.childNodes[i])
-        ) {
-            return true;
-        }
-    }
-    return false;
-}
+// NOTE: there is deliberately no `isParagraphElement` here any more. "Is this a
+// paragraph?" used to mean "does the element own >= 1 valid direct text node",
+// which made a container whose sentence is spread over inline children
+// (`<div><span>Hello </span><span>world</span></div>`) not a paragraph — each
+// span was then translated on its own. The question is now answered by
+// segmentParagraph in main/dom/segments.ts: an element is a unit container iff
+// it has a qualifying run. Do not reintroduce a direct-text-node gate.

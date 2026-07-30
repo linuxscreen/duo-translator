@@ -19,7 +19,7 @@ import { readConfig } from "@/utils/reactiveConfig";
 import { getDomainWithPortFromUrl } from "@/utils/url";
 import { getAiTranslateService, getTranslateService } from "@/utils/service";
 import { buildTranslationCss } from "@/main/css";
-import { isEditable, isNotMarkElement, isNotTranslateElement, isParagraphElement } from "@/main/dom/predicates";
+import { isEditable, isNotMarkElement, isNotTranslateElement } from "@/main/dom/predicates";
 import { getTextNodesAndText, getTextNodesAndTextOfNodes, isContainsValidTextElement, removeDuoClassAndAttribute, removeTextNodes } from "@/main/dom/textNodes";
 import {
     allParagraphs,
@@ -34,8 +34,8 @@ import {
     needsTranslateParagraphs,
     resetNoTranslateMarks,
 } from "@/main/dom/paragraphMarks";
-import { isBlockBoundary, segmentParagraph, type TranslationUnit } from "@/main/dom/segments";
-import { BLOCK_SELECTOR } from "@/main/constants";
+import { isSegmentBoundary, segmentParagraph, type TranslationUnit, type UnitRange } from "@/main/dom/segments";
+import { directChildOf, nodesInRange, rangeContains, resolveCandidateAtPoint, unitRangeOf } from "@/main/dom/unitHit";
 import { initVideoSubtitle, type VideoSubtitleController } from "@/main/videoSubtitle";
 
 export async function content() {
@@ -104,8 +104,35 @@ export async function content() {
     let manualTrigger = false // @deprecated
     const ignoreMutationElements = new WeakSet();
     const paragraphElementMap = new Map<HTMLElement, ELEMENT_STATUS>();
-    // translated elements of DOUBLE view strategy
-    let duoTranslatedElementMap = new Map<HTMLElement, { text: Text, content: string }[]>()
+    // DOUBLE: one record per translated unit, grouped by container.
+    //
+    // The key stays the *container* even though the granularity is per unit: a
+    // unit is derived data with no object identity to key on, and its only
+    // stable identity is (container, exclusive anchors) — which is exactly this
+    // shape. Container keys are also load-bearing elsewhere:
+    // cleanupRemovedSubtree sweeps by `removed.contains(key)`, ignoreMutation
+    // walks real nodes, IntersectionObserver takes elements, and the highlight
+    // binding is one-per-container by design.
+    interface DuoUnitRecord {
+        /** Exclusive anchors captured before our nodes were inserted. */
+        range: UnitRange
+        /** The inserted `.duo-translation` and its `.duo-divide` separator. */
+        translation: HTMLElement
+        divide: HTMLElement
+        /** Original text captured before sentence-highlight wrapping emptied it. */
+        texts: { text: Text, content: string }[]
+    }
+    let duoTranslatedElementMap = new Map<HTMLElement, DuoUnitRecord[]>()
+
+    /**
+     * One logical-paragraph unit resolved from a pointer position, tagged with
+     * how (or whether) it is currently translated. `range` is the unit's stable
+     * identity, so a stored target can be re-validated after page mutations.
+     */
+    type UnitTarget =
+        | { container: HTMLElement, kind: "unit", range: UnitRange, unit: TranslationUnit }
+        | { container: HTMLElement, kind: "duo", range: UnitRange, record: DuoUnitRecord }
+        | { container: HTMLElement, kind: "single", range: UnitRange, result: TranslateResult }
     // per-paragraph disposers for the delegated bilingual-highlight listeners;
     // WeakMap so paragraphs removed by the page don't pin the closures
     const highlightDisposers = new WeakMap<HTMLElement, () => void>()
@@ -148,7 +175,8 @@ export async function content() {
     let targetLanguage = targetLanguageConfig || browserTargetLanguage()
     let domainStrategy = (rawDomainStrategy?.strategy || DOMAIN_STRATEGY.AUTO) as string
     let lastX = 0, lastY = 0
-    let lastContextMenuElement: HTMLElement | null = null
+    // The unit the context menu was opened over (see resolveUnitTargetAtPoint).
+    let lastContextMenuTarget: UnitTarget | null = null
     let lastEditableElement: HTMLElement | null = null
 
     // ===== Mutation queue + cooperative scheduling =====
@@ -337,12 +365,19 @@ export async function content() {
             case TRANSLATE_ACTION.TRANSLATE_INPUT_BOX:
                 translateInputBox();
             case TRANSLATE_ACTION.TRANSLATE_PARA:
-                if (!lastContextMenuElement) return
-                translateParagraphElements([lastContextMenuElement]);
-                break
             case TRANSLATE_ACTION.SHOW_ORIGINAL_PARA:
-                if (!lastContextMenuElement) return
-                restoreOriginalParagraphElement(lastContextMenuElement);
+                // Both menu items act on the unit that was under the pointer
+                // when the menu opened; which one the menu showed was decided by
+                // that unit's state (see notifyParaContextMenuUpdate). The page
+                // may have mutated since, so re-validate and fall back to the
+                // whole container if the unit is gone.
+                if (!lastContextMenuTarget) return
+                const menuTarget = revalidateUnitTarget(lastContextMenuTarget)
+                if (menuTarget) {
+                    applyUnitTarget(menuTarget)
+                } else if (lastContextMenuTarget.container.isConnected) {
+                    toggleTranslateContainer(lastContextMenuTarget.container)
+                }
                 break
             case TRANSLATE_ACTION.TRANSLATE_SELECTION:
                 translateSelectionAction(message.data as string)
@@ -419,10 +454,7 @@ export async function content() {
             if (e.button !== 2 || !contextMenuSwitch) { // ignore non right click
                 return
             }
-            const target = e.target as HTMLElement | null;
-            const para = closestParagraph(target)
-
-            notifyParaContextMenuUpdate(e.clientX, e.clientY, para)
+            notifyParaContextMenuUpdate(e.clientX, e.clientY)
         }, true);
     }
 
@@ -437,33 +469,31 @@ export async function content() {
             lastEditableElement = target
         }
         if (IS_FIREFOX) {
-            let ele = document.elementFromPoint(lastX, lastY) as Element | null
-            const para = closestParagraph(ele)
-
-            notifyParaContextMenuUpdate(lastX, lastY, para)
+            notifyParaContextMenuUpdate(lastX, lastY)
         }
     })
     //#endregion
 
     //#region functions
-    function notifyParaContextMenuUpdate(lastX: number, lastY: number, element: HTMLElement | null) {
-        if (element && isPointOverText(lastX, lastY, element)) {
-            let translated
-            if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
-                translated = duoTranslatedElementMap.has(element);
-            } else {
-                translated = translatedElementMap.has(element);
-            }
-            browser.runtime.sendMessage({ action: ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU, data: { translated: translated } }).then((msg) => {
+    function notifyParaContextMenuUpdate(lastX: number, lastY: number) {
+        const target = resolveUnitTargetAtPoint(lastX, lastY)
+        if (target) {
+            browser.runtime.sendMessage({
+                action: ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU,
+                // "unit" is the only untranslated kind, so the menu title
+                // follows the state of the unit under the pointer, not of the
+                // whole container.
+                data: { translated: target.kind !== "unit" },
+            }).then((msg) => {
                 if (msg.status === STATUS_SUCCESS) {
-                    lastContextMenuElement = element
+                    lastContextMenuTarget = target
                 }
             });
 
         } else {
             browser.runtime.sendMessage({ action: ACTION.HIDE_TRANSLATE_RESTORE_PARA_MENU }).then((msg) => {
                 if (msg.status === STATUS_SUCCESS) {
-                    lastContextMenuElement = null
+                    lastContextMenuTarget = null
                 }
             });
         }
@@ -713,41 +743,121 @@ export async function content() {
 
     }
 
-    // Decide whether the pointer is over the paragraph's text — counting both
-    // glyphs themselves and the blank gaps *between* lines (line-height leading,
-    // <br>, wrapped lines), while still excluding the paragraph's outer padding
-    // and the empty space past the end of a short line.
-    //
-    // `getClientRects()` over the paragraph's contents yields one rect per line
-    // fragment. The pointer counts as "on text" when it is either directly on a
-    // line fragment, or in a vertical gap that has a text line both above AND
-    // below it at the same x (an inter-line gap) — outer padding only ever has a
-    // line on one side, so it is correctly rejected.
-    function isPointOverText(x: number, y: number, container: HTMLElement): boolean {
-        const range = document.createRange();
-        range.selectNodeContents(container);
-        const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
-        // Line fragments whose horizontal span covers the pointer.
-        const overX = rects.filter((r) => x >= r.left && x <= r.right);
-        if (overX.length === 0) return false;
-        // Directly on a text line.
-        if (overX.some((r) => y >= r.top && y <= r.bottom)) return true;
-        // In a blank gap with a text line both above and below at this x.
-        const hasAbove = overX.some((r) => r.bottom <= y);
-        const hasBelow = overX.some((r) => r.top >= y);
-        return hasAbove && hasBelow;
-    };
+    /**
+     * Which logical-paragraph unit is the pointer over, and is it translated?
+     *
+     * Pointer gestures act on one unit, not on the whole container: a single
+     * `<div>` can hold several visual paragraphs (`text<br><br>text`) or a run
+     * plus a list, and "translate this paragraph" should mean the one under the
+     * cursor. Single-unit containers — the vast majority — resolve to their one
+     * unit, so their behavior is unchanged.
+     *
+     * Already-translated candidates come first so a pointer over translated text
+     * toggles it off rather than re-translating it (in SINGLE the same unit
+     * appears in both lists — `unit.translated` is DOUBLE-only, derived from the
+     * adjacent .duo-translation).
+     *
+     * Returns null when the pointer is over no unit's text (container padding,
+     * the blank space past a short line): callers then fall back to whole-
+     * container behavior so the gesture never silently does nothing.
+     */
+    function resolveUnitTargetAtPoint(x: number, y: number): UnitTarget | null {
+        const hit = document.elementFromPoint(x, y) as Element | null
+        const container = closestParagraph(hit)
+        if (!(container instanceof HTMLElement)) return null
+
+        const candidates: UnitTarget[] = []
+        for (const record of duoTranslatedElementMap.get(container) ?? []) {
+            candidates.push({ container, kind: "duo", range: record.range, record })
+        }
+        for (const result of translatedElementMap.get(container) ?? []) {
+            candidates.push({
+                container,
+                kind: "single",
+                range: result.unitRange ?? { start: null, end: null },
+                result,
+            })
+        }
+        for (const unit of segmentParagraph(container).units) {
+            if (unit.translated) continue
+            candidates.push({ container, kind: "unit", range: unitRangeOf(unit), unit })
+        }
+        if (candidates.length === 0) return null
+
+        const index = resolveCandidateAtPoint(
+            container,
+            candidates.map(c => nodesInRange(container, c.range)),
+            hit,
+            x,
+            y,
+        )
+        return index < 0 ? null : candidates[index]
+    }
+
+    /**
+     * Is a stored target still actionable? The context menu keeps one across the
+     * gap between right-click and menu click, during which the page may mutate.
+     * A stale target degrades to whole-container behavior rather than doing
+     * nothing.
+     */
+    function revalidateUnitTarget(target: UnitTarget): UnitTarget | null {
+        if (!target.container.isConnected) return null
+        switch (target.kind) {
+            case "duo":
+                return duoTranslatedElementMap.get(target.container)?.includes(target.record)
+                    ? target : null
+            case "single":
+                return translatedElementMap.get(target.container)?.includes(target.result)
+                    ? target : null
+            case "unit": {
+                // Units are re-derived, so match by the stable identity: the
+                // exclusive anchors.
+                for (const unit of segmentParagraph(target.container).units) {
+                    if (unit.translated) continue
+                    const range = unitRangeOf(unit)
+                    if (range.start === target.range.start && range.end === target.range.end) {
+                        return { ...target, range, unit }
+                    }
+                }
+                return null
+            }
+        }
+    }
+
+    /** Translate or restore the resolved unit. */
+    function applyUnitTarget(target: UnitTarget) {
+        switch (target.kind) {
+            case "unit":
+                translateUnits([target.unit])
+                break
+            case "duo":
+                restoreDuoRecords(target.container, [target.record])
+                break
+            case "single":
+                restoreSingleResults(target.container, [target.result])
+                break
+        }
+    }
+
+    /** Whole-container fallback — the behavior before per-unit targeting. */
+    function toggleTranslateContainer(container: HTMLElement) {
+        const translated = duoTranslatedElementMap.has(container) || translatedElementMap.has(container)
+        if (translated) {
+            restoreOriginalParagraphElement(container)
+        } else {
+            translateParagraphElements([container])
+        }
+    }
 
     function toggleTranslateParagraph() {
-        let ele = document.elementFromPoint(lastX, lastY) as Element | null
-        let target = closestParagraph(ele)
-        if (!(target instanceof HTMLElement)) return
-        const translated = duoTranslatedElementMap.has(target) || translatedElementMap.has(target)
-        if (translated) {
-            restoreOriginalParagraphElement(target)
-        } else {
-            translateParagraphElements([target])
+        const target = resolveUnitTargetAtPoint(lastX, lastY)
+        if (target) {
+            applyUnitTarget(target)
+            return
         }
+        const ele = document.elementFromPoint(lastX, lastY) as Element | null
+        const container = closestParagraph(ele)
+        if (container instanceof HTMLElement) toggleTranslateContainer(container)
     }
 
     function IsEditableElement(element: HTMLElement): boolean {
@@ -1187,53 +1297,118 @@ export async function content() {
         })
     }
 
-    async function restoreOriginalParagraphElement(element: HTMLElement) {
-        let duoTexts = duoTranslatedElementMap.get(element)
-        if (duoTexts) {
-            ignoreMutationElements.add(element)
+    /**
+     * Remove the highlight `duo-span`s inside `nodes` that belong to
+     * `container`. A mixed container's nested marked paragraphs (an `<li>`) own
+     * their spans and restore them through their own bookkeeping, so they must
+     * be left alone — hence the closestParagraph ownership filter.
+     */
+    function removeDuoSpansIn(container: HTMLElement, nodes: ChildNode[]) {
+        for (const node of nodes) {
+            if (node.nodeType !== Node.ELEMENT_NODE) continue
+            const el = node as HTMLElement
+            if (el.tagName === "DUO-SPAN") {
+                el.remove()
+                continue
+            }
+            for (const span of el.querySelectorAll("duo-span")) {
+                if (closestParagraph(span) === container) span.remove()
+            }
+        }
+    }
+
+    /**
+     * DOUBLE: undo `records` of `element`. Passing every record of the container
+     * is a whole-container restore; passing a single one is the per-unit toggle,
+     * which leaves the container's other translated units untouched.
+     */
+    function restoreDuoRecords(element: HTMLElement, records: DuoUnitRecord[]) {
+        const all = duoTranslatedElementMap.get(element) ?? []
+        const remaining = all.filter(r => !records.includes(r))
+        ignoreMutationElements.add(element)
+        if (remaining.length === 0) {
+            // Nothing translated left in this container: drop the delegated
+            // highlight binding with it.
             highlightDisposers.get(element)?.()
             highlightDisposers.delete(element)
-            try {
-                // Remove only nodes owned by THIS container — a mixed
-                // container may hold nested marked paragraphs (<li>) whose
-                // translations/spans are restored by their own entries.
-                for (let node of element.querySelectorAll(".duo-translation, .duo-divide")) {
+        }
+        try {
+            for (const record of records) {
+                // Our inserted nodes are known exactly; the unit's range scopes
+                // the span sweep so sibling units keep theirs.
+                const nodes = nodesInRange(element, record.range)
+                record.divide.remove()
+                record.translation.remove()
+                removeDuoSpansIn(element, nodes)
+            }
+            if (remaining.length === 0) {
+                // Full restore: also sweep anything left over that no record
+                // accounts for (a translation inserted by a round whose
+                // bookkeeping was dropped by a re-scan).
+                for (const node of element.querySelectorAll(".duo-translation, .duo-divide")) {
                     if (closestParagraph(node) === element) node.remove()
                 }
-                for (let span of element.querySelectorAll("duo-span")) {
-                    if (closestParagraph(span) === element) span.remove()
-                }
-            } catch (e) {
-                console.error(APP_NAME_WITH_SUFFIX, "restore original paragraph error:", e)
+                removeDuoSpansIn(element, Array.from(element.childNodes))
             }
-            duoTexts.forEach(t => {
-                ignoreMutationElements.add(t)
+        } catch (e) {
+            console.error(APP_NAME_WITH_SUFFIX, "restore original paragraph error:", e)
+        }
+        for (const record of records) {
+            record.texts.forEach(t => {
+                ignoreMutationElements.add(t.text)
                 t.text.textContent = t.content
             })
-
-            Promise.resolve().then(() => {
-                ignoreMutationElements.delete(element)
-                duoTexts.forEach(t => {
+        }
+        // Delete the ignore marks after the observer task of the next event loop.
+        Promise.resolve().then(() => {
+            ignoreMutationElements.delete(element)
+            for (const record of records) {
+                record.texts.forEach(t => {
                     ignoreMutationElements.delete(t.text)
                 })
+            }
+            if (remaining.length > 0) {
+                duoTranslatedElementMap.set(element, remaining)
+            } else {
                 duoTranslatedElementMap.delete(element)
-            })
+            }
+        })
+    }
+
+    /**
+     * SINGLE: replay the original text of `results` (one per unit). Same
+     * split as restoreDuoRecords — all of them, or just the hovered unit's.
+     */
+    async function restoreSingleResults(element: HTMLElement, results: TranslateResult[]) {
+        const all = translatedElementMap.get(element) ?? []
+        const remaining = all.filter(r => !results.includes(r))
+        ignoreMutationElements.add(element)
+        results.forEach(result => result.replacedTextNodes?.forEach(text => {
+            ignoreMutationElements.add(text)
+        }))
+        await restore(results)
+        Promise.resolve().then(() => {
+            ignoreMutationElements.delete(element)
+            results.forEach(result => result.replacedTextNodes?.forEach(text => {
+                ignoreMutationElements.delete(text)
+            }))
+            if (remaining.length > 0) {
+                translatedElementMap.set(element, remaining)
+            } else {
+                translatedElementMap.delete(element)
+            }
+        })
+    }
+
+    async function restoreOriginalParagraphElement(element: HTMLElement) {
+        const records = duoTranslatedElementMap.get(element)
+        if (records) {
+            restoreDuoRecords(element, [...records])
             return
         }
-        let results = translatedElementMap.get(element)
+        const results = translatedElementMap.get(element)
         if (results) {
-            ignoreMutationElements.add(element)
-            results.forEach(result => result.replacedTextNodes?.forEach(text => {
-                ignoreMutationElements.add(text)
-            }))
-            await restore(results)
-            Promise.resolve().then(() => {
-                ignoreMutationElements.delete(element)
-                results.forEach(result => result.replacedTextNodes?.forEach(text => {
-                    ignoreMutationElements.delete(text)
-                }))
-                translatedElementMap.delete(element)
-            })
+            await restoreSingleResults(element, [...results])
         }
     }
 
@@ -1247,50 +1422,16 @@ export async function content() {
         }
 
         if (duoTranslatedElementMap.size > 0) {
-            for (let [element, texts] of duoTranslatedElementMap) {
+            // Every container, every record — same code path as the per-unit
+            // toggle, so the two can't drift. Each call defers its ignore-mark
+            // cleanup and its map delete to a microtask that runs after the
+            // observer's, exactly as the single batched version used to.
+            for (const [element, records] of Array.from(duoTranslatedElementMap)) {
                 if (!element) {
                     continue
                 }
-                ignoreMutationElements.add(element)
-                highlightDisposers.get(element)?.()
-                highlightDisposers.delete(element)
-                try {
-                    // Remove only nodes owned by THIS container — a mixed
-                    // container may hold nested marked paragraphs (<li>) whose
-                    // translations/spans are restored by their own entries.
-                    // querySelectorAll: one container may carry several unit
-                    // translations.
-                    for (let node of element.querySelectorAll(".duo-translation, .duo-divide")) {
-                        if (closestParagraph(node) === element) node.remove()
-                    }
-                    for (let span of element.querySelectorAll("duo-span")) {
-                        if (closestParagraph(span) === element) span.remove()
-                    }
-                } catch (e) {
-                    console.error(APP_NAME_WITH_SUFFIX, "restore original page error:", e)
-                }
-                texts.forEach(t => {
-                    ignoreMutationElements.add(t.text)
-                    t.text.textContent = t.content
-                })
+                restoreDuoRecords(element, [...records])
             }
-            // add delete ignoreMutationElements task to the macro-task queue, will process after observe task when next event loop starts
-            // setTimeout(() => {
-            //     for (let element of duoTranslatedElementMap) {
-            //         ignoreMutationElements.delete(element?.[0])
-            //     }
-            // }, 0);
-
-            // add delete ignoreMutationElements task to the micro-task queue after observe task
-            Promise.resolve().then(() => {
-                for (let [element, texts] of duoTranslatedElementMap) {
-                    ignoreMutationElements.delete(element)
-                    texts.forEach(t => {
-                        ignoreMutationElements.delete(t.text)
-                    })
-                }
-                duoTranslatedElementMap.clear()
-            })
         }
         if (translatedElementMap.size > 0) {
             let results: TranslateResult[] = []
@@ -1452,7 +1593,7 @@ export async function content() {
                     // (a nested mark or the Phase B scan handles it). Anything
                     // else sits inside one of the container's own inline runs.
                     const child = (i > 0 ? parentElements[i - 1] : rawElement);
-                    if (isBlockBoundary(child) || child.querySelector(BLOCK_SELECTOR)) {
+                    if (isSegmentBoundary(child)) {
                         continue;
                     }
                 }
@@ -1495,51 +1636,35 @@ export async function content() {
                 }
             }
 
-            if (isParagraph(el)) {
-                // Re-segment on every visit: structural mutations can change
-                // the element's runs/block children, so refresh the mixed
-                // flag, re-collect when an untranslated unit exists, and keep
-                // descending into block-ish children (their own marks live
-                // deeper).
-                const seg = segmentParagraph(el);
-                markParagraph(el, !nt, seg.descendChildren.length > 0);
-                if (!nt && seg.units.some(u => !u.translated)) collectElements.push(el);
-                for (let j = seg.descendChildren.length - 1; j >= 0; j--) {
-                    stack.push({ el: seg.descendChildren[j], notTranslate: nt, depth: depth + 1 });
-                }
-                continue;
-            }
             if (isEditable(el)) continue;
 
-            if (isParagraphElement(el)) {
-                // >=1 valid direct text node guarantees >=1 unit.
-                const seg = segmentParagraph(el);
+            // One segmentation decides everything about this element. There is
+            // no separate "is this a paragraph?" gate any more: an element is a
+            // unit container iff segmentParagraph finds a qualifying run in it,
+            // and `descendChildren` is exactly what the scan should visit next
+            // (block-ish children, unwrapped lone inline wrappers, and the
+            // elements of runs holding no translatable text).
+            //
+            // Re-segmenting on every visit — including already-marked elements —
+            // is deliberate: structural mutations change an element's runs and
+            // block children, so the mixed flag, the collect decision and the
+            // descent list all have to be recomputed from the live DOM.
+            const seg = segmentParagraph(el);
+            // An existing mark is kept alive even when the element momentarily
+            // has no qualifying run (its text may be mid-mutation): dropping it
+            // would strand the bookkeeping keyed by this container, and
+            // refreshing `mixed` is what lets cleanupParagraphMarks sweep the
+            // marks nested underneath it.
+            if (seg.units.length > 0 || isParagraph(el)) {
                 markParagraph(el, !nt, seg.descendChildren.length > 0);
                 if (!nt && seg.units.some(u => !u.translated)) collectElements.push(el);
-                for (let j = seg.descendChildren.length - 1; j >= 0; j--) {
-                    stack.push({ el: seg.descendChildren[j], notTranslate: nt, depth: depth + 1 });
-                }
-                continue;
             }
-
-            // Walk children in document order, doing inline text-node→duo-span
-            // wrapping. Capture element children to a list first; some may be
-            // merged into a paraElement by text-wrap below — we filter them
-            // out via the parentElement check before pushing to the stack.
-            const recurseChildren: HTMLElement[] = [];
-            let i = 0;
-            while (i < el.childNodes.length) {
-                const c = el.childNodes[i];
-                if (c.nodeType === Node.ELEMENT_NODE) {
-                    recurseChildren.push(c as HTMLElement);
-                }
-                i++;
-            }
-            // Push in reverse so pop order = forward visit. Skip children that
-            // got merged into a paraElement (their parent is no longer `el`).
-            for (let j = recurseChildren.length - 1; j >= 0; j--) {
-                if (recurseChildren[j].parentElement === el) {
-                    stack.push({ el: recurseChildren[j], notTranslate: nt, depth: depth + 1 });
+            // Push in reverse so pop order = forward visit. Skip children the
+            // page detached while we were yielding.
+            for (let j = seg.descendChildren.length - 1; j >= 0; j--) {
+                const child = seg.descendChildren[j];
+                if (child.parentElement === el) {
+                    stack.push({ el: child, notTranslate: nt, depth: depth + 1 });
                 }
             }
         }
@@ -1618,35 +1743,48 @@ export async function content() {
      * @param context hasDuplicated is false, indicate that the element has not been duplicated. targetTranslateService set custom translate service
      */
     async function translateParagraphElements(elements: HTMLElement[], context?: any) {
-        let viewStrategyCopy = viewStrategy
         if (elements.length == 0) {
+            return
+        }
+        console.log('translateParagraphElements: ', elements.length)
+        // @debuglog
+        // elements.forEach((element) => {
+        //     console.log('translateParagraphElements element:', element.textContent)
+        // })
+        if (context && typeof context.hasDuplicated === 'boolean' && !context.hasDuplicated) {
+            // remove duplicate elements
+            elements = Array.from(new Set(elements))
+        }
+        // Expand each container into its untranslated logical-paragraph units;
+        // containers with nothing left to do (translation in flight, or every
+        // unit already translated) are skipped.
+        const units: TranslationUnit[] = []
+        for (const element of elements) {
+            units.push(...segmentParagraph(element).units.filter(u => !u.translated))
+        }
+        await translateUnits(units, context)
+    }
+
+    /**
+     * Translate the given logical-paragraph units. The only entry point that
+     * actually talks to the provider and writes translations: the whole-container
+     * path above expands to units first, and the pointer-driven per-unit toggle
+     * passes a single unit — so both share this body verbatim.
+     */
+    async function translateUnits(allUnits: TranslationUnit[], context?: any) {
+        let viewStrategyCopy = viewStrategy
+        // A container whose guard is already set has a translation in flight —
+        // drop its units so we never translate the same text twice.
+        const units = allUnits.filter(u => !ignoreMutationElements.has(u.container))
+        if (units.length === 0) {
             return
         }
         let ignoreElements: Node[] = []
         try {
-            console.log('translateParagraphElements: ', elements.length)
-            // @debuglog
-            // elements.forEach((element) => {
-            //     console.log('translateParagraphElements element:', element.textContent)
-            // })
-            if (context && typeof context.hasDuplicated === 'boolean' && !context.hasDuplicated) {
-                // remove duplicate elements
-                elements = Array.from(new Set(elements))
-            }
-            // Expand each container into its untranslated logical-paragraph
-            // units; containers with nothing left to do (translation in
-            // flight, or every unit already translated) are skipped.
-            const units: TranslationUnit[] = []
-            for (const element of elements) {
-                if (ignoreMutationElements.has(element)) continue
-                const segUnits = segmentParagraph(element).units.filter(u => !u.translated)
-                if (segUnits.length === 0) continue
-                units.push(...segUnits)
-                ignoreElements.push(element)
-                ignoreMutationElements.add(element)
-            }
-            if (units.length === 0) {
-                return
+            // Guard the containers, deduplicated — several units may share one.
+            for (const container of new Set(units.map(u => u.container))) {
+                ignoreElements.push(container)
+                ignoreMutationElements.add(container)
             }
             let service = translateService
             if (context && typeof context.targetTranslateService === "string" && context.targetTranslateService) {
@@ -1710,7 +1848,9 @@ export async function content() {
                     resultsByContainer.set(element, list)
                 }
                 for (const [element, containerResults] of resultsByContainer) {
-                    const originalTexts: { text: Text, content: string }[] = duoTranslatedElementMap.get(element) ?? []
+                    // Records of units translated in earlier rounds are kept —
+                    // this round appends, never overwrites.
+                    const records: DuoUnitRecord[] = duoTranslatedElementMap.get(element) ?? []
                     // Continue sequence numbering after spans of earlier rounds.
                     let sequenceOffset = 0
                     for (const span of element.querySelectorAll('duo-span[duo-sequence]')) {
@@ -1738,6 +1878,10 @@ export async function content() {
                         const next = lastChild.nextSibling as HTMLElement | null
                         if (next?.classList?.contains("duo-divide") || next?.classList?.contains("duo-translation")) continue
 
+                        // Capture the unit's anchors BEFORE inserting our nodes,
+                        // so the record's range brackets the unit (and the
+                        // translation we are about to put inside it).
+                        const range = unitRangeOf(unit)
                         const originalTextResult = getTextNodesAndTextOfNodes(unit.nodes)
                         originalTextResult.textNodes.forEach(textNode => {
                             ignoreElements.push(textNode)
@@ -1761,6 +1905,8 @@ export async function content() {
                             element.appendChild(translatedElement)
                         }
                         insertedAny = true
+                        const record: DuoUnitRecord = { range, translation: translatedElement, divide, texts: [] }
+                        records.push(record)
 
                         // Bilingual sentence highlighting, gated per unit — a
                         // unit failing the gates only skips its own wrapping.
@@ -1773,7 +1919,7 @@ export async function content() {
                         const translatedSentences = splitSentence(translatedTextResult.text)
                         if (translatedSentences.length != originalSentences.length) continue
                         originalTextResult.textNodes.forEach(textNode => {
-                            originalTexts.push({ text: textNode, content: textNode.textContent })
+                            record.texts.push({ text: textNode, content: textNode.textContent })
                         })
                         let spans = wrapTextNode2Span(originalTextResult.textNodes, originalSentences, ignoreMutationElements, sequenceOffset)
                         spans.push(...wrapTextNode2Span(translatedTextResult.textNodes, translatedSentences, ignoreMutationElements, sequenceOffset))
@@ -1781,7 +1927,7 @@ export async function content() {
                         if (spans.length > 0) wrappedAny = true
                     }
                     if (insertedAny) {
-                        duoTranslatedElementMap.set(element, originalTexts)
+                        duoTranslatedElementMap.set(element, records)
                         translatedContainers.add(element)
                     }
                     if (wrappedAny) {

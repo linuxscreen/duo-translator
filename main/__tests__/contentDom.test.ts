@@ -9,7 +9,6 @@ import {
     isExcludedNodeType,
     isNotMarkElement,
     isNotTranslateElement,
-    isParagraphElement,
 } from "@/main/dom/predicates";
 import {
     removeDuoClassAndAttribute,
@@ -78,18 +77,8 @@ describe("isEditable", () => {
     });
 });
 
-describe("isParagraphElement", () => {
-    it("is true when there is a direct non-empty text node", () => {
-        expect(isParagraphElement(el("<p>hello</p>"))).toBe(true);
-        expect(isParagraphElement(el("<p>hi <b>there</b></p>"))).toBe(true);
-    });
-
-    it("is false without a direct text node, or with only whitespace/zero-width", () => {
-        expect(isParagraphElement(el("<p><span>only child</span></p>"))).toBe(false);
-        expect(isParagraphElement(el("<p>   </p>"))).toBe(false);
-        expect(isParagraphElement(el("<p>​</p>"))).toBe(false);
-    });
-});
+// isParagraphElement is gone on purpose — paragraph-hood is now decided by
+// segmentParagraph (see main/__tests__/segments.test.ts, "run qualification").
 
 // ---------------------------------------------------------------------------
 // textNodes

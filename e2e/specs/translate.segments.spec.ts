@@ -69,6 +69,28 @@ test.describe('@segments logical paragraphs (mocked providers)', () => {
         await expect(page.locator('#softbr > .duo-translation')).toContainText('line two');
     });
 
+    test('a container with no direct text is still ONE unit spanning its inline children', async ({ page }) => {
+        await page.goto('/segments.html');
+
+        // One translation for the whole sentence, not one per inline child.
+        await expect(page.locator('#inlineonly .duo-translation')).toHaveCount(1);
+        const translation = page.locator('#inlineonly > .duo-translation');
+        await expect(translation).toContainText(ZH);
+        // The request carried the whole run, so the echoed original proves the
+        // inline children were translated together.
+        await expect(translation).toContainText('A sentence split across');
+        await expect(translation).toContainText('children.');
+        // It is inserted after the run, as the container's last element.
+        const isLast = await page.evaluate(
+            () => document.querySelector('#inlineonly')!.lastElementChild?.classList.contains('duo-translation') === true,
+        );
+        expect(isLast).toBe(true);
+
+        // A lone inline wrapper is unwrapped: the span owns the translation.
+        await expect(page.locator('#lonespan > .duo-translation')).toHaveCount(1);
+        await expect(page.locator('#lonewrapper > .duo-translation')).toHaveCount(0);
+    });
+
     test('restore removes all unit translations and keeps the original intact; re-translate restores them', async ({ page, serviceWorker }) => {
         await page.goto('/segments.html');
         await expect(page.locator('#mixed > .duo-translation')).toHaveCount(2);

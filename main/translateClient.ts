@@ -5,23 +5,17 @@ import { getConfig } from "@/utils/db";
 import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
 import { isTraditionalChinese } from "@/utils/language";
 import { contentInvisible, decodeHtmlText } from "@/utils/dom";
-import type { TranslationUnit } from "@/main/dom/segments";
+import type { TranslationUnit, UnitRange } from "@/main/dom/segments";
+import { unitRangeOf } from "@/main/dom/unitHit";
 
 //#region types
 // ---------------------------------------------------------------------------
 // Domain types
 // ---------------------------------------------------------------------------
 
-/**
- * Exclusive boundary anchors of a translation unit among its container's
- * direct children (null = container edge). Anchors sit *outside* the unit and
- * are never moved by the unit's own rewrite, so they stay valid across
- * translate/restore round-trips.
- */
-export interface UnitRange {
-    start: ChildNode | null;
-    end: ChildNode | null;
-}
+// UnitRange is a unit concept and lives with the segmentation; re-exported here
+// because it is part of TranslateResult's shape.
+export type { UnitRange } from "@/main/dom/segments";
 
 export class TranslateResult {
     translatedMappedHtmlText: string; // translated innerHtml of the mapped tag element, for example <b0>translated text</b0>, or <a i=0>translated text</a>(google translate)
@@ -320,12 +314,7 @@ export async function getTranslateResult(
         } else {
             // SINGLE writes back into the live container — capture the unit's
             // exclusive boundary anchors before anything moves.
-            const first = unit.nodes[0];
-            const last = unit.nodes[unit.nodes.length - 1];
-            range = {
-                start: first?.previousSibling ?? null,
-                end: last?.nextSibling ?? null,
-            };
+            range = unitRangeOf(unit);
         }
         const pre = getElementPreProcessResult(element, viewStrategy, nodes);
         if (pre.mappedHtmlText.trim() === "") continue;

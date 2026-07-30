@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
     segmentParagraph,
     isBlockBoundary,
+    isSegmentBoundary,
     hasUntranslatedUnit,
 } from "@/main/dom/segments";
 
@@ -89,12 +90,112 @@ describe("segmentParagraph — block children split units", () => {
         expect(scan.descendChildren).toEqual([div.querySelector("span")]);
     });
 
-    it("inline-only run without direct text does not become a unit; descends into its elements", () => {
+    it("inline-only run with >= 2 element nodes becomes ONE unit; blocks still descend", () => {
         const div = el("<div><span>a</span><span>b</span><ul><li>c</li></ul></div>");
         const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].nodes).toEqual(Array.from(div.querySelectorAll("span")));
+        expect(scan.descendChildren).toEqual([div.querySelector("ul")]);
+    });
+});
+
+describe("segmentParagraph — run qualification (text anywhere inside the run)", () => {
+    it("a lone inline wrapper is unwrapped: descend instead of making a unit", () => {
+        const div = el("<div><span>a b</span></div>");
+        const scan = segmentParagraph(div);
         expect(scan.units).toHaveLength(0);
-        const spans = Array.from(div.querySelectorAll("span"));
-        expect(scan.descendChildren).toEqual([...spans, div.querySelector("ul")]);
+        expect(scan.descendChildren).toEqual([div.querySelector("span")]);
+    });
+
+    it("a lone inline wrapper is unwrapped even with surrounding whitespace/comments", () => {
+        const div = el("<div>  <span>a b</span><!-- c --> </div>");
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(0);
+        expect(scan.descendChildren).toEqual([div.querySelector("span")]);
+    });
+
+    it("keeps the whole run — including the whitespace between inline elements", () => {
+        const div = el("<div><b>a</b> <i>b</i></div>");
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].nodes).toEqual(Array.from(div.childNodes));
+        expect(scan.units[0].wholeElement).toBe(true);
+    });
+
+    it("text inside excluded tags does not qualify a run", () => {
+        const div = el("<div><code>foo()</code><code>bar()</code></div>");
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(0);
+        expect(scan.descendChildren).toEqual(Array.from(div.querySelectorAll("code")));
+    });
+
+    it("text inside editable elements does not qualify a run", () => {
+        // <textarea> rather than contentEditable: jsdom does not implement
+        // `isContentEditable`, so only the instanceof branch of isEditable is
+        // observable here.
+        const div = el("<div><textarea>x</textarea><textarea>y</textarea></div>");
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(0);
+        expect(scan.descendChildren).toEqual(Array.from(div.querySelectorAll("textarea")));
+    });
+
+    it("a run of inline elements holding no text at all is not a unit", () => {
+        const div = el('<div><span> </span><i></i><img src="x"></div>');
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(0);
+        expect(scan.descendChildren).toEqual([
+            div.querySelector("span"),
+            div.querySelector("i"),
+            div.querySelector("img"),
+        ]);
+    });
+
+    it("qualifies on text nested deeper inside the run's inline elements", () => {
+        const div = el("<div><span><b>deep</b></span><span><i>text</i></span></div>");
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].nodes).toEqual(Array.from(div.childNodes));
+    });
+
+    it("a highlight-wrapped unit stays one translated unit and is not descended into", () => {
+        // What the DOM looks like after DOUBLE + sentence wrapping: the original
+        // text nodes are emptied and their content lives in <duo-span>s.
+        const div = el(
+            '<div><duo-span duo-sequence="0">Hello world.</duo-span>' +
+            '<span class="duo-divide">&nbsp;</span>' +
+            '<span class="duo-translation">你好世界。</span></div>'
+        );
+        div.insertBefore(document.createTextNode(""), div.firstChild);
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].translated).toBe(true);
+        expect(scan.descendChildren).toHaveLength(0);
+        expect(hasUntranslatedUnit(div)).toBe(false);
+    });
+
+    it("stays one translated unit when the duo-spans sit inside an inline child", () => {
+        // Wrapping happens at each text node's own parent, so a paragraph like
+        // `<div><b>One. Two.</b></div>` ends up with its spans nested in the <b>
+        // — the lone-wrapper unwrap must not descend into it either.
+        const div = el(
+            '<div><b><duo-span duo-sequence="0">One.</duo-span>' +
+            '<duo-span duo-sequence="1">Two.</duo-span></b>' +
+            '<br class="duo-divide"><span class="duo-translation">一。二。</span></div>'
+        );
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].translated).toBe(true);
+        expect(scan.units[0].nodes).toEqual([div.querySelector("b")]);
+        expect(scan.descendChildren).toHaveLength(0);
+    });
+
+    it("CSS-blockified spans are still separate units, never merged into one run", () => {
+        const div = el(
+            '<div><span style="display:block">a</span><span style="display:block">b</span></div>'
+        );
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(0);
+        expect(scan.descendChildren).toEqual(Array.from(div.querySelectorAll("span")));
     });
 });
 
@@ -179,6 +280,26 @@ describe("isBlockBoundary — computed style first, static tag set fallback", ()
         expect(isBlockBoundary(document.createElement("b"))).toBe(false);
     });
 
+    // display:contents generates no box at all, so the element itself is
+    // neither block nor inline — what renders is its children.
+    it("display:contents defers to what its children render as", () => {
+        expect(isBlockBoundary(el('<div style="display:contents"><p>x</p></div>'))).toBe(true);
+        expect(isBlockBoundary(el('<span style="display:contents">text only</span>'))).toBe(false);
+        expect(isBlockBoundary(el('<span style="display:contents"><b>inline</b></span>'))).toBe(false);
+        // CSS-blockified child: the tag set could never see this one.
+        expect(
+            isBlockBoundary(el('<span style="display:contents"><span style="display:block">x</span></span>'))
+        ).toBe(true);
+        // Chained transparent wrappers resolve through to the real box.
+        expect(
+            isBlockBoundary(el('<div style="display:contents"><div style="display:contents"><p>x</p></div></div>'))
+        ).toBe(true);
+        // Children that render nothing are not boxes either.
+        expect(
+            isBlockBoundary(el('<span style="display:contents"><div style="display:none">x</div></span>'))
+        ).toBe(false);
+    });
+
     it("CSS-inlined div inside a text container does not split the run", () => {
         const div = el('<div>before <div style="display:inline">chip</div> after</div>');
         const scan = segmentParagraph(div);
@@ -191,5 +312,77 @@ describe("isBlockBoundary — computed style first, static tag set fallback", ()
         const scan = segmentParagraph(div);
         expect(scan.units).toHaveLength(2);
         expect(scan.descendChildren).toEqual([div.querySelector("span")]);
+    });
+});
+
+describe("isSegmentBoundary — tag-level probe gated by a computed-style recheck", () => {
+    it("is true for an element that is itself a block box", () => {
+        expect(isSegmentBoundary(el("<p>x</p>"))).toBe(true);
+        expect(isSegmentBoundary(el('<span style="display:block">x</span>'))).toBe(true);
+    });
+
+    it("is false for a plain inline element with no block-tagged descendant", () => {
+        expect(isSegmentBoundary(el("<span>x <b>y</b></span>"))).toBe(false);
+    });
+
+    it("is true for an inline element wrapping a real block descendant", () => {
+        expect(isSegmentBoundary(el("<span>x <div>block</div></span>"))).toBe(true);
+    });
+
+    it("is FALSE when every block-tagged descendant is CSS-inlined", () => {
+        // The tag-level probe hits the inner <div>, but it renders inline, so
+        // the span is inline content — splitting here would cut a sentence.
+        const span = el('<span>x <div style="display:inline">chip</div> y</span>');
+        expect(isSegmentBoundary(span)).toBe(false);
+    });
+
+    it("checks every candidate, not a capped sample", () => {
+        const chips = Array.from({ length: 12 }, () => '<div style="display:inline">c</div>').join("");
+        const span = el(`<span>${chips}<p>real block</p></span>`);
+        expect(isSegmentBoundary(span)).toBe(true);
+    });
+
+    it("ignores block descendants inside non-rendering / opaque subtrees", () => {
+        const span = el("<span>x</span>");
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        const inner = document.createElement("div");
+        inner.textContent = "in svg";
+        svg.appendChild(inner);
+        span.appendChild(svg);
+        expect(span.querySelector("div")).toBe(inner); // the tag probe does hit it
+        expect(isSegmentBoundary(span)).toBe(false);
+    });
+
+    it("falls back to the static tag set for detached elements", () => {
+        const span = document.createElement("span");
+        span.appendChild(document.createElement("div"));
+        expect(isSegmentBoundary(span)).toBe(true);
+        expect(isSegmentBoundary(document.createElement("span"))).toBe(false);
+    });
+
+    it("a transparent display:contents wrapper splits the run like its children do", () => {
+        const div = el(
+            '<div>intro <span style="display:contents"><span style="display:block">Block</span></span> tail</div>'
+        );
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(2);
+        expect(scan.descendChildren).toEqual([div.querySelector("span")]);
+    });
+
+    it("a transparent display:contents wrapper of inline content stays in the run", () => {
+        const div = el('<div>intro <span style="display:contents"><b>mid</b></span> tail</div>');
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].wholeElement).toBe(true);
+        expect(scan.descendChildren).toHaveLength(0);
+    });
+
+    it("a run is not split by an inline wrapper whose blocks are all CSS-inlined", () => {
+        const div = el(
+            '<div>before <span>mid <div style="display:inline">chip</div></span> after</div>'
+        );
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.descendChildren).toHaveLength(0);
     });
 });
