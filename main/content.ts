@@ -1,6 +1,6 @@
 import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
 import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage } from "./constants";
-import { restore, translateParams, getTranslateResult, translate, TranslateResult, resetTranslationCacheEnabled, translationServices, TranslateService } from "./translateClient";
+import { restore, translateParams, getTranslateResult, translate, TranslateResult } from "./translateClient";
 import { sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
 import { mountFloatBall, type FloatBallController } from "./floatBall";
@@ -37,16 +37,6 @@ import {
 import { isBlockBoundary, segmentParagraph, type TranslationUnit } from "@/main/dom/segments";
 import { BLOCK_SELECTOR } from "@/main/constants";
 import { initVideoSubtitle, type VideoSubtitleController } from "@/main/videoSubtitle";
-
-declare global {
-    var __debugTranslationServices:
-        | typeof translationServices
-        | undefined
-}
-
-if (import.meta.env.DEV) {
-    globalThis.__debugTranslationServices ??= translationServices
-}
 
 export async function content() {
     //#region main
@@ -535,10 +525,10 @@ export async function content() {
                 }
                 break
             case CONFIG_KEY.TRANSLATION_CACHE_SWITCH:
-                // Drop the memoized cache-enabled flag so the next translate
-                // batch re-reads the toggle.
-                if (typeof value !== "boolean") return
-                resetTranslationCacheEnabled(value)
+                // No-op here: the cache and its switch are both read in
+                // background now (see translateTextsWithCache), which re-reads
+                // the toggle per batch — nothing on this side to invalidate.
+                break
             case CONFIG_KEY.TARGET_LANGUAGE:
                 if (typeof value === "string" && targetLanguage !== value && LANGUAGES_MAP.has(value)) {
                     targetLanguage = value

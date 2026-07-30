@@ -15,10 +15,10 @@ vi.mock("franc", () => ({ franc: mockFranc }));
 vi.mock("@/utils/language", () => ({ isTraditionalChinese: vi.fn(() => false) }));
 // shuffle -> identity so the sampling order is deterministic in tests.
 vi.mock("@/utils/arrays", () => ({ shuffle: (a: unknown[]) => a }));
-// Only `translationServices` is consumed by detect.ts — provide a registry
-// whose "microsoft" entry exposes a controllable detectLanguage().
+// Provider-backed detection now goes to background through this one client
+// function (the provider classes live in main/translateService.ts).
 vi.mock("@/main/translateClient", () => ({
-    translationServices: new Map([["microsoft", { detectLanguage: mockMsDetect }]]),
+    detectTextsLanguage: mockMsDetect,
 }));
 
 import { getElementTextContent, detectLanguage } from "@/main/lang";

@@ -1,194 +1,39 @@
-// Unit tests for the non-DOM surface of main/translateClient.ts.
-// Runs in the default `node` environment (WxtVitest sets no DOM) — these cover
-// pure string/tag transforms, data classes, and every provider's translateText
-// / detectLanguage / batching with message mocks. All provider HTTP goes
-// through the background proxy (ACTION.TRANSLATE_PROXY_FETCH), so network
-// behavior is mocked via sendMessageToBackground, not global fetch.
-// DOM-dependent orchestration lives in translateClient.dom.test.ts (jsdom env).
+// Unit tests for the non-DOM surface of main/translateClient.ts — the content
+// side. Runs in the default `node` environment (WxtVitest sets no DOM).
+//
+// The provider classes moved to background; their tests are in
+// translateService.test.ts (mocking global fetch, so they assert the real
+// provider request rather than a proxy envelope). DOM-dependent orchestration
+// lives in translateClient.dom.test.ts (jsdom env).
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
 // --- module mocks (hoisted) ---------------------------------------------------
-// One shared transport stub behind both names: abortableRequest uses the
-// throwing variant, the provider classes the plain one, and every assertion
-// below is on the message that reaches this seam.
 const { sendStub } = vi.hoisted(() => ({ sendStub: vi.fn() }));
 vi.mock("@/utils/message", () => ({
     sendMessageToBackground: sendStub,
     sendMessageToBackgroundOrThrow: sendStub,
 }));
 vi.mock("@/utils/db", () => ({ getConfig: vi.fn(async () => undefined) }));
-vi.mock("@/utils/language", () => ({ isTraditionalChinese: vi.fn(() => false) }));
 
 import {
-    convertAToBTags,
-    TagReplacer,
-    transferLanguageCode,
-    Token,
     TranslateResult,
     TranslateParams,
-    GoogleTranslateService,
-    MicrosoftTranslateService,
-    DeepLTranslateService,
-    AiTranslateService,
-    resolveTranslateService,
     parseIndexedText,
-    translationServices,
-    googleTranslationService,
-    microsoftTranslationService,
-    deeplTranslationService,
+    translateTexts,
+    detectTextsLanguage,
 } from "@/main/translateClient";
-import { ACTION, TRANSLATE_SERVICE, AI_PREFIX } from "@/main/constants";
+import { ACTION } from "@/main/constants";
 import { sendMessageToBackground } from "@/utils/message";
-import { isTraditionalChinese } from "@/utils/language";
 
 const mockSend = sendMessageToBackground as unknown as Mock;
-const mockIsTraditional = isTraditionalChinese as unknown as Mock;
-
-/** Build the background's TRANSLATE_PROXY_FETCH reply for a JSON payload. */
-function proxyReply(body: unknown, status = 200): any {
-    return { status, statusText: status === 200 ? "OK" : "ERR", bodyText: JSON.stringify(body) };
-}
-
-/** mockSend calls carrying the given action. */
-function sendCalls(action: string) {
-    return mockSend.mock.calls.filter(([msg]: any[]) => msg?.action === action);
-}
-
-/**
- * Route mockSend by action: ACCESS_TOKEN_GET returns a valid token,
- * TRANSLATE_PROXY_FETCH is answered by `handler(url, init)`.
- */
-function mockProxyRoutes(handler: (url: string, init: any) => any) {
-    mockSend.mockImplementation(async (msg: any) => {
-        if (msg.action === ACTION.ACCESS_TOKEN_GET) {
-            return { token: "tok", expireTime: Date.now() + 600000 };
-        }
-        if (msg.action === ACTION.TRANSLATE_PROXY_FETCH) {
-            return handler(msg.data.url, msg.data.init);
-        }
-        return undefined;
-    });
-}
 
 beforeEach(() => {
     vi.clearAllMocks();
-    mockIsTraditional.mockReturnValue(false);
-});
-
-// ---------------------------------------------------------------------------
-// convertAToBTags
-// ---------------------------------------------------------------------------
-describe("convertAToBTags", () => {
-    it("converts a single <a i=N> pair to <bN>", () => {
-        expect(convertAToBTags("<a i=0>x</a>")).toBe("<b0>x</b0>");
-    });
-
-    it("numbers multiple sibling tags independently", () => {
-        expect(convertAToBTags("<a i=0>a</a><a i=1>b</a>")).toBe("<b0>a</b0><b1>b</b1>");
-    });
-
-    it("closes nested tags with the matching open number (stack)", () => {
-        expect(convertAToBTags("<a i=0><a i=1>x</a></a>")).toBe("<b0><b1>x</b1></b0>");
-    });
-
-    it("handles deep nesting", () => {
-        expect(convertAToBTags("<a i=0><a i=1><a i=2>x</a></a></a>")).toBe(
-            "<b0><b1><b2>x</b2></b1></b0>",
-        );
-    });
-
-    it("handles text outside the tag", () => {
-        expect(convertAToBTags("hello <a i=0>world</a>")).toBe("hello <b0>world</b0>");
-        expect(convertAToBTags("<a i=0>hello</a> world")).toBe("<b0>hello</b0> world");
-    })
-
-    it("returns empty string unchanged", () => {
-        expect(convertAToBTags("")).toBe("");
-    });
-
-    it("leaves tag-free text untouched", () => {
-        expect(convertAToBTags("hello world")).toBe("hello world");
-    });
-});
-
-// ---------------------------------------------------------------------------
-// TagReplacer
-// ---------------------------------------------------------------------------
-describe("TagReplacer", () => {
-    it("round-trips real tags through <bN> placeholders preserving attributes", () => {
-        const tr = new TagReplacer();
-        const html = '<p class="x">Hi <b>bold</b></p>';
-        const replaced = tr.replaceTags(html);
-        expect(replaced).toBe("<b11>Hi <b12>bold</b12></b11>");
-        expect(tr.restoreTags(replaced)).toBe(html);
-    });
-
-    it("starts numbering at 11", () => {
-        const tr = new TagReplacer();
-        expect(tr.replaceTags("<span>x</span>")).toBe("<b11>x</b11>");
-    });
-
-    it("uses a fresh counter per instance (request isolation)", () => {
-        const a = new TagReplacer();
-        a.replaceTags("<p>1</p>");
-        const b = new TagReplacer();
-        expect(b.replaceTags("<p>2</p>")).toBe("<b11>2</b11>");
-    });
-
-    it("matches nested closing tags to the correct opener", () => {
-        const tr = new TagReplacer();
-        const replaced = tr.replaceTags("<div><span>x</span></div>");
-        expect(replaced).toBe("<b11><b12>x</b12></b11>");
-    });
-
-    it("leaves unknown <bN> markers untouched on restore", () => {
-        const tr = new TagReplacer();
-        // b99 was never registered
-        expect(tr.restoreTags("<b99>x</b99>")).toBe("<b99>x</b99>");
-    });
-});
-
-// ---------------------------------------------------------------------------
-// transferLanguageCode
-// ---------------------------------------------------------------------------
-describe("transferLanguageCode", () => {
-    it("maps zh-Hans -> zh-CN and zh-Hant -> zh-TW", () => {
-        expect(transferLanguageCode("zh-Hans")).toBe("zh-CN");
-        expect(transferLanguageCode("zh-Hant")).toBe("zh-TW");
-    });
-
-    it("defaults bare ZH to zh-CN when no text is given", () => {
-        expect(transferLanguageCode("ZH")).toBe("zh-CN");
-    });
-
-    it("resolves ZH via isTraditionalChinese when text is provided", () => {
-        mockIsTraditional.mockReturnValue(true);
-        expect(transferLanguageCode("ZH", "繁體")).toBe("zh-TW");
-        mockIsTraditional.mockReturnValue(false);
-        expect(transferLanguageCode("ZH", "简体")).toBe("zh-CN");
-    });
-
-    it("passes other languages through unchanged", () => {
-        expect(transferLanguageCode("en")).toBe("en");
-        expect(transferLanguageCode("fr")).toBe("fr");
-    });
 });
 
 // ---------------------------------------------------------------------------
 // Data classes
 // ---------------------------------------------------------------------------
-describe("Token", () => {
-    it("is invalid when empty", () => {
-        expect(new Token("", Date.now() + 10000).isValid()).toBe(false);
-    });
-    it("is invalid when expired", () => {
-        expect(new Token("t", Date.now() - 1).isValid()).toBe(false);
-    });
-    it("is valid with a token and a future expiry", () => {
-        expect(new Token("t", Date.now() + 10000).isValid()).toBe(true);
-    });
-});
-
 describe("TranslateResult / TranslateParams", () => {
     it("TranslateResult stores the constructor args", () => {
         const r = new TranslateResult("译文", "en", 0.9);
@@ -206,286 +51,6 @@ describe("TranslateResult / TranslateParams", () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// GoogleTranslateService.translateText
-// ---------------------------------------------------------------------------
-describe("GoogleTranslateService.translateText", () => {
-    it("returns [] for empty input without hitting the proxy", async () => {
-        const svc = new GoogleTranslateService("k");
-        expect(await svc.translateText([], "zh-CN")).toEqual([]);
-        expect(mockSend).not.toHaveBeenCalled();
-    });
-
-    it("sends a proxied request and parses text + detected language on 200", async () => {
-        mockSend.mockResolvedValue(proxyReply([["你好"], ["en"]]));
-        const svc = new GoogleTranslateService("k");
-        const out = await svc.translateText(["hello"], "zh-CN");
-        expect(out).toHaveLength(1);
-        expect(out[0].translatedMappedHtmlText).toBe("你好");
-        expect(out[0].sourceLang).toBe("en");
-        expect(mockSend).toHaveBeenCalledWith(
-            expect.objectContaining({
-                action: ACTION.TRANSLATE_PROXY_FETCH,
-                data: expect.objectContaining({
-                    requestId: expect.any(String),
-                    url: expect.stringContaining("translate-pa.googleapis.com"),
-                }),
-            }),
-            expect.any(Number),
-        );
-    });
-
-    it("converts <a i=N> tags in the response to <bN>", async () => {
-        mockSend.mockResolvedValue(proxyReply([["<a i=0>你好</a>"], ["en"]]));
-        const svc = new GoogleTranslateService("k");
-        const out = await svc.translateText(["<a i=0>hello</a>"], "zh-CN");
-        expect(out[0].translatedMappedHtmlText).toBe("<a i=0>你好</a>");
-    });
-
-    it("returns [] on a non-200 response", async () => {
-        mockSend.mockResolvedValue(proxyReply(null, 500));
-        const svc = new GoogleTranslateService("k");
-        expect(await svc.translateText(["hello"], "zh-CN")).toEqual([]);
-    });
-});
-
-// ---------------------------------------------------------------------------
-// MicrosoftTranslateService
-// ---------------------------------------------------------------------------
-describe("MicrosoftTranslateService.translateText", () => {
-    it("fetches a token then parses the translation response", async () => {
-        mockProxyRoutes(() =>
-            proxyReply([
-                { translations: [{ text: "你好" }], detectedLanguage: { language: "en", score: 0.97 } },
-            ]),
-        );
-        const svc = new MicrosoftTranslateService();
-        const out = await svc.translateText(["hello"], "zh-CN");
-        expect(mockSend).toHaveBeenCalledWith(
-            expect.objectContaining({ action: ACTION.ACCESS_TOKEN_GET }),
-        );
-        expect(out[0].translatedMappedHtmlText).toBe("你好");
-        expect(out[0].sourceLang).toBe("en");
-        expect(out[0].score).toBe(0.97);
-    });
-
-    it("refreshes the token and retries on 401, giving up after MS_MAX_RETRY", async () => {
-        mockProxyRoutes(() => proxyReply(null, 401));
-        const svc = new MicrosoftTranslateService();
-        const out = await svc.translateText(["hello"], "zh-CN");
-        expect(out).toEqual([]);
-        // initial attempt + 5 retries = 6 proxied requests
-        expect(sendCalls(ACTION.TRANSLATE_PROXY_FETCH)).toHaveLength(6);
-    });
-
-    it("returns [] for empty input", async () => {
-        const svc = new MicrosoftTranslateService();
-        expect(await svc.translateText([], "zh-CN")).toEqual([]);
-    });
-});
-
-describe("MicrosoftTranslateService.translateBatchText", () => {
-    // Echo each request 1:1 so we can assert order/length across chunks.
-    function echoRoutes() {
-        mockProxyRoutes((_url, init) => {
-            const items: { text: string }[] = JSON.parse(init.body);
-            return proxyReply(
-                items.map((it) => ({
-                    translations: [{ text: it.text }],
-                    detectedLanguage: { language: "en", score: 1 },
-                })),
-            );
-        });
-    }
-
-    it("returns results 1:1 in order for a single chunk", async () => {
-        echoRoutes();
-        const svc = new MicrosoftTranslateService();
-        const out = await svc.translateBatchText(["a", "b", "c"], "zh-CN");
-        expect(out.map((r) => r.translatedMappedHtmlText)).toEqual(["a", "b", "c"]);
-        expect(sendCalls(ACTION.TRANSLATE_PROXY_FETCH)).toHaveLength(1);
-    });
-
-    it("splits past the 900-item limit into multiple chunks, preserving order", async () => {
-        echoRoutes();
-        const inputs = Array.from({ length: 901 }, (_, i) => `t${i}`);
-        const svc = new MicrosoftTranslateService();
-        const out = await svc.translateBatchText(inputs, "zh-CN");
-        expect(out).toHaveLength(901);
-        expect(out.map((r) => r.translatedMappedHtmlText)).toEqual(inputs);
-        expect(sendCalls(ACTION.TRANSLATE_PROXY_FETCH)).toHaveLength(2);
-    });
-});
-
-describe("MicrosoftTranslateService.detectLanguage", () => {
-    it("returns the byte-weighted dominant language", async () => {
-        mockProxyRoutes(() =>
-            proxyReply([
-                { language: "en", score: 0.99 },
-                { language: "fr", score: 0.99 },
-            ]),
-        );
-        const svc = new MicrosoftTranslateService();
-        // First text is much longer -> more bytes -> higher weight -> wins.
-        const lang = await svc.detectLanguage(["a very long english paragraph here", "le"]);
-        expect(lang).toBe("en");
-    });
-
-    it("returns '' on a non-200 response", async () => {
-        mockProxyRoutes(() => proxyReply(null, 500));
-        const svc = new MicrosoftTranslateService();
-        expect(await svc.detectLanguage(["x"])).toBe("");
-    });
-});
-
-// ---------------------------------------------------------------------------
-// DeepLTranslateService
-// ---------------------------------------------------------------------------
-describe("DeepLTranslateService.translateText", () => {
-    // DeepL now goes through the SAME background proxy as Google/Microsoft
-    // (TRANSLATE_PROXY_FETCH): the full request, including the Authorization
-    // header, is built on this side. It used to have its own DEEPL_REQUEST
-    // action where background attached key + endpoint.
-    it("builds a full authorized request and maps the target language code", async () => {
-        mockProxyRoutes(() => proxyReply({
-            translations: [{ text: "你好", detected_source_language: "EN" }],
-        }));
-        const svc = new DeepLTranslateService("key-abc");
-        const out = await svc.translateText(["hello"], "zh-CN");
-        expect(out[0].translatedMappedHtmlText).toBe("你好");
-
-        const [[msg]] = sendCalls(ACTION.TRANSLATE_PROXY_FETCH) as any[];
-        expect(msg.data.url).toBe("https://api.deepl.com/v2/translate");
-        expect(msg.data.init.headers.Authorization).toBe("DeepL-Auth-Key key-abc");
-        // zh-CN must be converted to DeepL's ZH-HANS in the request body.
-        expect(JSON.parse(msg.data.init.body)).toMatchObject({ target_lang: "ZH-HANS" });
-    });
-
-    it("picks the free endpoint for a :fx key", async () => {
-        mockProxyRoutes(() => proxyReply({ translations: [{ text: "你好", detected_source_language: "EN" }] }));
-        await new DeepLTranslateService("key-abc:fx").translateText(["hello"], "zh-CN");
-        const [[msg]] = sendCalls(ACTION.TRANSLATE_PROXY_FETCH) as any[];
-        expect(msg.data.url).toBe("https://api-free.deepl.com/v2/translate");
-    });
-
-    it("returns [] when no API key is configured (getConfig mock yields undefined)", async () => {
-        mockProxyRoutes(() => proxyReply({}));
-        const svc = new DeepLTranslateService();
-        expect(await svc.translateText(["hello"], "zh-CN")).toEqual([]);
-        // Never reaches the network without a key.
-        expect(sendCalls(ACTION.TRANSLATE_PROXY_FETCH)).toHaveLength(0);
-    });
-
-    it("throws instead of degrading when strict", async () => {
-        mockProxyRoutes(() => proxyReply(null, 403));
-        const svc = new DeepLTranslateService("key-abc");
-        await expect(
-            svc.translateText(["hello"], "zh-CN", undefined, undefined, { strict: true }),
-        ).rejects.toThrow(/403/);
-    });
-
-    it("returns [] on a non-200 response", async () => {
-        mockProxyRoutes(() => proxyReply(null, 403));
-        const svc = new DeepLTranslateService("key-abc");
-        expect(await svc.translateText(["hello"], "zh-CN")).toEqual([]);
-    });
-
-    it("returns [] for empty input", async () => {
-        const svc = new DeepLTranslateService();
-        expect(await svc.translateText([], "zh-CN")).toEqual([]);
-    });
-});
-
-// ---------------------------------------------------------------------------
-// AiTranslateService.translateText (non-streaming, one-shot message)
-// ---------------------------------------------------------------------------
-describe("AiTranslateService.translateText", () => {
-    it("derives its name from the provider id", () => {
-        expect(new AiTranslateService("p1").name).toBe(AI_PREFIX + "p1");
-    });
-
-    it("maps the background translations array to results", async () => {
-        mockSend.mockResolvedValue(["你好", "世界"]);
-        const svc = new AiTranslateService("p1");
-        const out = await svc.translateText(["hello", "world"], "zh-CN");
-        expect(out.map((r) => r.translatedMappedHtmlText)).toEqual(["你好", "世界"]);
-        expect(mockSend).toHaveBeenCalledWith(
-            expect.objectContaining({
-                action: ACTION.AI_TRANSLATE_TEXT,
-                data: expect.objectContaining({ providerId: "p1", requestId: expect.any(String) }),
-            }),
-            expect.any(Number),
-        );
-    });
-
-    it("returns [] when background yields no translations", async () => {
-        mockSend.mockResolvedValue(undefined);
-        const svc = new AiTranslateService("p1");
-        expect(await svc.translateText(["hello"], "zh-CN")).toEqual([]);
-    });
-
-    it("throws AbortError immediately when the signal is already aborted", async () => {
-        const svc = new AiTranslateService("p1");
-        const ctrl = new AbortController();
-        ctrl.abort();
-        await expect(svc.translateText(["x"], "zh-CN", ctrl.signal)).rejects.toMatchObject({
-            name: "AbortError",
-        });
-        expect(mockSend).not.toHaveBeenCalled();
-    });
-
-    it("relays an abort message with the same requestId and throws AbortError", async () => {
-        let capturedRequestId: string | undefined;
-        let resolveText!: (v: unknown) => void;
-        mockSend.mockImplementation((msg: any) => {
-            if (msg.action === ACTION.AI_TRANSLATE_TEXT) {
-                capturedRequestId = msg.data.requestId;
-                return new Promise((r) => (resolveText = r));
-            }
-            return Promise.resolve(undefined); // the abort message
-        });
-
-        const svc = new AiTranslateService("p1");
-        const ctrl = new AbortController();
-        const p = svc.translateText(["x"], "zh-CN", ctrl.signal);
-        ctrl.abort();
-        resolveText(undefined);
-
-        await expect(p).rejects.toMatchObject({ name: "AbortError" });
-        expect(mockSend).toHaveBeenCalledWith(
-            expect.objectContaining({
-                action: ACTION.AI_TRANSLATE_ABORT,
-                data: { requestId: capturedRequestId },
-            }),
-        );
-    });
-});
-
-// ---------------------------------------------------------------------------
-// resolveTranslateService + registry
-// ---------------------------------------------------------------------------
-describe("resolveTranslateService", () => {
-    it("resolves built-in services from the shared registry", () => {
-        expect(resolveTranslateService(TRANSLATE_SERVICE.GOOGLE)).toBe(googleTranslationService);
-        expect(resolveTranslateService(TRANSLATE_SERVICE.MICROSOFT)).toBe(microsoftTranslationService);
-        expect(resolveTranslateService(TRANSLATE_SERVICE.DEEPL)).toBe(deeplTranslationService);
-    });
-
-    it("creates an AiTranslateService for ai:-prefixed ids", () => {
-        const svc = resolveTranslateService(AI_PREFIX + "abc");
-        expect(svc).toBeInstanceOf(AiTranslateService);
-        expect(svc!.name).toBe(AI_PREFIX + "abc");
-    });
-
-    it("returns undefined for an unknown service", () => {
-        expect(resolveTranslateService("nope")).toBeUndefined();
-    });
-
-    it("registers all three built-ins in translationServices", () => {
-        expect(translationServices.get(TRANSLATE_SERVICE.GOOGLE)).toBe(googleTranslationService);
-        expect(translationServices.size).toBeGreaterThanOrEqual(3);
-    });
-});
 
 describe("parseIndexedText", () => {
     it("returns an empty array for an empty string", () => {
@@ -555,5 +120,52 @@ describe("parseIndexedText", () => {
         expect(parseIndexedText("<a i=0>line1\nline2</a>")).toEqual([
             { index: 0, text: "line1\nline2" },
         ]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Background bridge
+// ---------------------------------------------------------------------------
+describe("translateTexts", () => {
+    it("sends the service + texts and rebuilds real TranslateResult instances", async () => {
+        // Background replies with structured-cloned plain objects.
+        mockSend.mockResolvedValue([
+            { translatedMappedHtmlText: "你好", sourceLang: "en", score: 1, rawText: "hello" },
+        ]);
+        const out = await translateTexts("google", ["hello"], "zh-CN");
+
+        expect(out).toHaveLength(1);
+        // Must be a real instance, not the bare clone — callers set DOM-bearing
+        // fields on these afterwards.
+        expect(out![0]).toBeInstanceOf(TranslateResult);
+        expect(out![0].translatedMappedHtmlText).toBe("你好");
+        expect(out![0].rawText).toBe("hello");
+
+        const [[msg]] = mockSend.mock.calls as any[];
+        expect(msg.action).toBe(ACTION.TRANSLATE_TEXTS);
+        expect(msg.data).toMatchObject({ service: "google", texts: ["hello"], targetLang: "zh-CN" });
+    });
+
+    it("returns [] for empty input without messaging background", async () => {
+        expect(await translateTexts("google", [], "zh-CN")).toEqual([]);
+        expect(mockSend).not.toHaveBeenCalled();
+    });
+
+    it("returns undefined when background reports no result", async () => {
+        mockSend.mockResolvedValue(null);
+        expect(await translateTexts("google", ["x"], "zh-CN")).toBeUndefined();
+    });
+});
+
+describe("detectTextsLanguage", () => {
+    it("returns the detected language", async () => {
+        mockSend.mockResolvedValue({ lang: "en" });
+        expect(await detectTextsLanguage(["hello"])).toBe("en");
+        expect((mockSend.mock.calls[0][0] as any).action).toBe(ACTION.DETECT_LANGUAGE);
+    });
+
+    it("returns '' when detection is unavailable", async () => {
+        mockSend.mockResolvedValue(undefined);
+        expect(await detectTextsLanguage(["hello"])).toBe("");
     });
 });

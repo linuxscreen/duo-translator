@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ACTION, CONFIG_KEY, DEFAULT_VALUE } from "@/main/constants";
+import { ACTION, API_REQUEST_TIMEOUT, CONFIG_KEY, DEFAULT_VALUE } from "@/main/constants";
 import { getConfig } from "@/utils/db";
 import { sendMessageToBackground } from "@/utils/message";
 
@@ -72,7 +72,7 @@ export function useTts(): {
             const service = (await getConfig(CONFIG_KEY.TTS_SERVICE)) || DEFAULT_VALUE.TTS_SERVICE;
             const resp = await sendMessageToBackground(
                 { action: ACTION.TTS_SYNTHESIZE, data: { text: clean, lang, service } },
-                30000,
+                API_REQUEST_TIMEOUT,
             );
             // Superseded while we were fetching.
             if (runId !== runIdRef.current) return;

@@ -1,5 +1,5 @@
 import { AI_PREFIX, AI_TASK, DEFAULT_VALUE, TRANSLATE_SERVICE } from "@/main/constants";
-import { translationServices } from "@/main/translateClient";
+import { translateTexts } from "@/main/translateClient";
 import { startAiChatStream } from "@/main/aiClient";
 
 /**
@@ -66,9 +66,8 @@ function startRegularTranslate(
                 async next(): Promise<IteratorResult<string>> {
                     if (done || aborted) return { value: undefined as any, done: true };
                     done = true;
-                    const svc = translationServices.get(service);
-                    if (!svc) throw new Error(`Unknown translate service: ${service}`);
-                    const results = await svc.translateText([text], targetLang);
+                    const results = await translateTexts(service, [text], targetLang);
+                    if (!results) throw new Error(`Unknown translate service: ${service}`);
                     if (aborted) return { value: undefined as any, done: true };
                     const sourceLang = results?.[0]?.sourceLang;
                     if (sourceLang) onSourceLang?.(sourceLang);

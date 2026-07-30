@@ -16,29 +16,38 @@ const OUT = resolve(here, '../../.output/e2e-build/chrome-mv3-dev');
  * These assertions turn that implicit assumption into a failing test.
  */
 test.describe('@bundle background/content separation', () => {
-    test('content script contains no background-only provider clients', () => {
+    test('content script contains no provider endpoints or credentials', () => {
         const content = readFileSync(`${OUT}/content-scripts/content.js`, 'utf8');
 
-        // Provider SSE/completion clients and their auth headers. If any of
-        // these appear, a content module imported main/aiService.ts.
-        for (const marker of ['anthropic-version', 'x-api-key', 'chatCompleteNonStream', 'acquireNonStreamSlot']) {
+        // Content asks for a translation by meaning (ACTION.TRANSLATE_TEXTS) and
+        // never builds a provider request, so NO provider host, auth header or
+        // client symbol may appear here.
+        const forbidden = [
+            // AI provider clients
+            'anthropic-version', 'x-api-key', 'chatCompleteNonStream', 'acquireNonStreamSlot',
+            // Translate provider endpoints
+            'translate-pa.googleapis.com', 'cognitive.microsofttranslator.com',
+            'edge.microsoft.com/translate/auth',
+            'api.deepl.com', 'api-free.deepl.com',
+            // Credentials
+            'DeepL-Auth-Key', 'x-goog-api-key',
+        ];
+        for (const marker of forbidden) {
             expect(content, `content.js must not contain "${marker}"`).not.toContain(marker);
         }
-
-        // The Microsoft token endpoint is minted in background only.
-        expect(content).not.toContain('edge.microsoft.com/translate/auth');
-
-        // NOTE: DeepL's endpoints and the DeepL-Auth-Key header ARE expected in
-        // content.js — DeepL builds its full request on the content side and
-        // sends it through the background proxy, whose allow-list is what
-        // constrains where the key can go. Do not add them here.
     });
 
     test('background bundle does contain the provider clients', () => {
         const background = readFileSync(`${OUT}/background.js`, 'utf8');
         // Guards against the inverse mistake: the split silently moving the
-        // clients out of background would break every AI feature at runtime.
-        expect(background).toContain('anthropic-version');
-        expect(background).toContain('edge.microsoft.com/translate/auth');
+        // clients out of background would break translation at runtime.
+        for (const marker of [
+            'anthropic-version',
+            'edge.microsoft.com/translate/auth',
+            'translate-pa.googleapis.com',
+            'DeepL-Auth-Key',
+        ]) {
+            expect(background, `background.js must contain "${marker}"`).toContain(marker);
+        }
     });
 });

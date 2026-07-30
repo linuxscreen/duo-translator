@@ -30,6 +30,15 @@ export const STATUS_FAIL = '500';
 export const TRANSLATE_STATUS_KEY = 'tabTranslateStatus#'
 
 export const AI_PREFIX = "ai:";
+
+// Request-timeout budgets for content → background round-trips. Two categories,
+// because only one of them waits on a language model:
+//   - AI provider: the model generates the whole answer/batch.
+//   - conventional API: one HTTP round-trip.
+// Both are far above the 5s `sendMessageToBackground` default, which is sized
+// for storage/config reads, not network calls.
+export const AI_REQUEST_TIMEOUT = 120_000;
+export const API_REQUEST_TIMEOUT = 30_000;
 export const IS_FIREFOX = import.meta.env.FIREFOX;
 
 export enum DB_ACTION {
@@ -159,8 +168,19 @@ export enum TRANSLATE_ACTION {
 }
 
 export enum ACTION {
-    ACCESS_TOKEN_GET = 'getAccessToken',
-    TRANSLATE_HTML = 'translateHtml',
+    // One-shot text translation. Content sends { service, texts, targetLang };
+    // background picks the provider, serves the cache and performs the request,
+    // replying with a 1:1 result array. The provider classes live in background
+    // (main/translateService.ts) — content never builds a provider request, so
+    // there is no URL proxy and no API key on the content side.
+    TRANSLATE_TEXTS = 'translateTexts',
+    // Out-of-band cancellation for TRANSLATE_TEXTS. sendMessage has no native
+    // abort, so content fires this with the same requestId on signal abort;
+    // background aborts the in-flight fetch for that request.
+    TRANSLATE_TEXTS_ABORT = 'translateTextsAbort',
+    // Provider-backed language detection (Microsoft detect endpoint), used when
+    // local franc detection is inconclusive.
+    DETECT_LANGUAGE = 'detectLanguage',
     STYLE_CHANGED = 'styleChanged',
     DOMAIN_STRATEGY_CHANGED = 'domainStrategyChanged',
     ENTER_SELECTION_MODE = 'enterSelectionMode',
@@ -169,16 +189,6 @@ export enum ACTION {
     AI_PROVIDER_TEST = 'aiProviderTest',
     // Test a built-in translation service (google/microsoft/deepl) from Options.
     TRANSLATE_SERVICE_TEST = 'translateServiceTest',
-    // One-shot (non-streaming) page-translation request to an AI provider:
-    // background batches the texts, calls chatCompleteNonStream and returns the
-    // full translations array. Page translation has nothing to show until a
-    // whole batch is back, so streaming would only add port traffic. Abortable
-    // out of band via AI_TRANSLATE_ABORT below.
-    AI_TRANSLATE_TEXT = 'aiTranslateText',
-    // Out-of-band cancellation for AI_TRANSLATE_TEXT. sendMessage has no native
-    // abort, so content fires this with the same requestId on signal abort;
-    // background aborts the in-flight fetch for that request.
-    AI_TRANSLATE_ABORT = 'aiTranslateAbort',
     // Generic one-shot (non-streaming) AI completion: content sends a task +
     // payload, background builds the prompt, calls chatCompleteNonStream and
     // returns the whole answer. For callers that have nothing to show until the
@@ -188,15 +198,6 @@ export enum ACTION {
     // Out-of-band cancellation for AI_COMPLETE (same requestId mechanism as
     // AI_TRANSLATE_ABORT).
     AI_COMPLETE_ABORT = 'aiCompleteAbort',
-    // HTTP proxy for the built-in translate providers (Google/Microsoft).
-    // Content-script fetches are subject to the host page's CSP connect-src in
-    // Firefox MV3 and to page-origin CORS in Chrome MV3, so the actual request
-    // is performed in the background (extension principal — neither applies).
-    // Restricted to TRANSLATE_PROXY_ALLOWED_URLS; never a generic fetch proxy.
-    TRANSLATE_PROXY_FETCH = 'translateProxyFetch',
-    // Out-of-band cancellation for TRANSLATE_PROXY_FETCH (same requestId
-    // mechanism as AI_TRANSLATE_ABORT).
-    TRANSLATE_PROXY_ABORT = 'translateProxyAbort',
     OPEN_OPTIONS_PAGE = 'openOptionsPage',
     // Open the toolbar action popup (popup.html) anchored to the extension
     // icon — same surface/position as a manual icon click. Requested from the
@@ -211,8 +212,6 @@ export enum ACTION {
     // GET: batch-lookup translations for (service, targetLang, texts[]).
     // PUT: batch-store freshly fetched translations.
     // CLEAR: wipe the whole cache (from the Options "clear cache" button).
-    TRANSLATION_CACHE_GET = 'translationCacheGet',
-    TRANSLATION_CACHE_PUT = 'translationCachePut',
     TRANSLATION_CACHE_CLEAR = 'translationCacheClear',
     // Current approximate cache size in bytes (for the Options "clear cache"
     // confirmation prompt).
@@ -231,7 +230,6 @@ export enum ACTION {
     // and returns an array of base64 `data:` URLs (one per <=170-char chunk) that
     // the content script plays sequentially through an <audio> element.
     TTS_SYNTHESIZE = 'ttsSynthesize',
-    ACCESS_TOKEN_REFRESH = "refreshAccessToken",
 }
 
 export enum CONFIG_KEY {

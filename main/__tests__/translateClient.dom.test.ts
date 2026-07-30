@@ -7,57 +7,43 @@
 // jsdom per-file here. Pure/provider tests live in translateClient.test.ts.
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
-// One shared transport stub behind both names: abortableRequest uses the
-// throwing variant, the provider classes the plain one, and every assertion
-// below is on the message that reaches this seam.
-const { sendStub } = vi.hoisted(() => ({ sendStub: vi.fn() }));
+// The providers now run in background, so the seam for these orchestration
+// tests is the message client. abortableRequest lives in its own module
+// precisely so it can be intercepted here (a helper defined inside
+// utils/message.ts would call its own binding and escape the mock).
+const { abortStub } = vi.hoisted(() => ({ abortStub: vi.fn() }));
+vi.mock("@/utils/abortableRequest", () => ({ abortableRequest: abortStub }));
 vi.mock("@/utils/message", () => ({
-    sendMessageToBackground: sendStub,
-    sendMessageToBackgroundOrThrow: sendStub,
+    sendMessageToBackground: vi.fn(),
+    sendMessageToBackgroundOrThrow: vi.fn(),
 }));
 vi.mock("@/utils/db", () => ({ getConfig: vi.fn(async () => undefined) }));
 vi.mock("@/utils/language", () => ({ isTraditionalChinese: vi.fn(() => false) }));
 
 import {
-    TranslateService,
     TranslateResult,
-    translationServices,
-    resetTranslationCacheEnabled,
     getTranslateResult,
     translate,
     restore,
     getElementPreProcessResult,
     updateTranslateElementContent,
-    DeepLTranslateService,
 } from "@/main/translateClient";
-import { ACTION, VIEW_STRATEGY } from "@/main/constants";
-import { sendMessageToBackground } from "@/utils/message";
+import { VIEW_STRATEGY } from "@/main/constants";
+import { abortableRequest } from "@/utils/abortableRequest";
 
-const mockSend = sendMessageToBackground as unknown as Mock;
+const mockTranslate = abortableRequest as unknown as Mock;
 
-/** A controllable in-memory provider, registered into the shared registry. */
-class FakeService extends TranslateService {
-    readonly name = "fake";
-    constructor(private fn: (texts: string[]) => TranslateResult[]) {
-        super();
-    }
-    async translateText(texts: string[]) {
-        return this.fn(texts);
-    }
-    async translateHtml() {
-        return [];
-    }
-}
-
+/**
+ * Stand in for the background translation service: `fn` receives the texts the
+ * orchestration layer extracted and returns the results it would have gotten.
+ */
 function registerFake(fn: (texts: string[]) => TranslateResult[]) {
-    translationServices.set("fake", new FakeService(fn));
+    mockTranslate.mockImplementation(async (opts: any) => fn(opts.data.texts));
 }
 
 beforeEach(() => {
     vi.clearAllMocks();
     document.body.innerHTML = "";
-    // Bypass the cache so getTranslateResult calls the provider directly.
-    resetTranslationCacheEnabled(false);
 });
 
 // ---------------------------------------------------------------------------
@@ -293,32 +279,5 @@ describe("updateTranslateElementContent — scoped to a unit range", () => {
         expect(div.firstChild!.textContent).toBe("one");
         expect(div.lastChild!.textContent).toBe("新二");
         expect(div.lastChild!.previousSibling).toBe(ul);
-    });
-});
-
-// ---------------------------------------------------------------------------
-// translateHtml (DeepL — the provider that surfaces translatedHtmlText)
-// ---------------------------------------------------------------------------
-describe("DeepLTranslateService.translateHtml", () => {
-    it("sends element outerHTML with tag_handling=html and surfaces the HTML result", async () => {
-        // DeepL goes through the shared TRANSLATE_PROXY_FETCH proxy; the full
-        // request (URL + Authorization + JSON body) is built on this side.
-        mockSend.mockResolvedValue({
-            status: 200,
-            statusText: "OK",
-            bodyText: JSON.stringify({
-                translations: [{ text: "<p>你好</p>", detected_source_language: "EN" }],
-            }),
-        });
-        document.body.innerHTML = "<p>Hello</p>";
-        const p = document.body.querySelector("p")! as HTMLElement;
-
-        const out = await new DeepLTranslateService("key-abc").translateHtml([p], "zh-CN");
-
-        expect(out[0].translatedHtmlText).toBe("<p>你好</p>");
-        const [[msg]] = mockSend.mock.calls.filter(
-            ([m]: any[]) => m?.action === ACTION.TRANSLATE_PROXY_FETCH,
-        ) as any[];
-        expect(JSON.parse(msg.data.init.body)).toMatchObject({ tag_handling: "html" });
     });
 });

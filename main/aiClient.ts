@@ -7,7 +7,7 @@
 // main/aiService.ts, which content must never import.
 // ---------------------------------------------------------------------------
 
-import { ACTION, PORT_NAME } from "@/main/constants";
+import { ACTION, AI_REQUEST_TIMEOUT, PORT_NAME } from "@/main/constants";
 import { browser } from "wxt/browser";
 import { abortableRequest } from "@/utils/abortableRequest";
 import type { AiStreamRequest, AiStreamMessage } from "@/main/aiProvider";
@@ -111,9 +111,6 @@ export function startAiChatStream(req: AiStreamRequest): {
 // Content-side helper: one-shot completion (no streaming)
 // ---------------------------------------------------------------------------
 
-/** Upper bound for one non-streaming AI call. Generous — providers can be slow. */
-const AI_COMPLETE_TIMEOUT = 120_000;
-
 /**
  * Run one AI task and resolve with the complete answer.
  *
@@ -136,7 +133,7 @@ export async function aiComplete(req: AiStreamRequest, signal?: AbortSignal): Pr
         abortAction: ACTION.AI_COMPLETE_ABORT,
         data: { providerId: req.providerId, task: req.task, payload: req.payload },
         signal,
-        timeout: AI_COMPLETE_TIMEOUT,
+        timeout: AI_REQUEST_TIMEOUT,
     });
 
     // A failed request resolves `undefined` rather than throwing, so this is

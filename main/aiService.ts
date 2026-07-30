@@ -692,19 +692,6 @@ export const aiMessageHandlers: Record<string, MessageHandler> = {
         });
     },
 
-    [ACTION.AI_TRANSLATE_TEXT]: (message, sendResponse) => handleAbortable(
-        ABORT_SCOPE.AI_TRANSLATE, 'AI translate', message, sendResponse,
-        async (data, signal) => {
-            const { providerId, texts, targetLang } = data as {
-                providerId?: string; texts: string[]; targetLang: string;
-            };
-            return await aiPageTranslate(providerId, texts, targetLang, signal);
-        },
-    ),
-
-    [ACTION.AI_TRANSLATE_ABORT]: (message, sendResponse) =>
-        handleAbort(ABORT_SCOPE.AI_TRANSLATE, message, sendResponse),
-
     [ACTION.AI_COMPLETE]: (message, sendResponse) => handleAbortable(
         ABORT_SCOPE.AI_COMPLETE, 'AI complete', message, sendResponse,
         async (data, signal) => {

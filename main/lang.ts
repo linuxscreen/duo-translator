@@ -5,7 +5,7 @@ import { franc } from "franc";
 import { isTraditionalChinese } from "@/utils/language";
 import { iso6393To1Map, excludedTagSet, TRANSLATE_SERVICE } from "@/main/constants";
 import { shuffle } from "@/utils/arrays";
-import { translationServices } from "@/main/translateClient";
+import { detectTextsLanguage } from "@/main/translateClient";
 import { allParagraphs } from "@/main/dom/paragraphMarks";
 
 const utf8Encoder = new TextEncoder();
@@ -113,7 +113,7 @@ export async function detectLanguage(elements?: HTMLElement[]): Promise<string> 
 
     // Fallback: ask the Microsoft translate service to detect the language.
     try {
-        lang = (await translationServices.get(TRANSLATE_SERVICE.MICROSOFT)?.detectLanguage?.(needsDetectTexts)) || "und";
+        lang = (await detectTextsLanguage(needsDetectTexts)) || "und";
         console.log("detect language by microsoft translate: %s", lang);
         return lang;
     } catch {

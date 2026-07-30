@@ -12,7 +12,7 @@
 // the request/response envelopes are exactly what they were. Only the
 // scaffolding is shared.
 //
-// The content-side twin of this file is `abortableRequest` in utils/message.ts.
+// The content-side twin of this file is utils/abortableRequest.ts.
 // ---------------------------------------------------------------------------
 
 import { APP_NAME_WITH_SUFFIX, STATUS_FAIL, STATUS_SUCCESS } from "@/main/constants";
@@ -122,7 +122,7 @@ export function handleAbort(scope: string, message: any, sendResponse: SendRespo
 
 /** Abort scopes. Values are arbitrary but must be unique per feature. */
 export const ABORT_SCOPE = {
-    TRANSLATE_PROXY: "translateProxy",
+    TRANSLATE: "translate",
     AI_TRANSLATE: "aiTranslate",
     AI_COMPLETE: "aiComplete",
 } as const;

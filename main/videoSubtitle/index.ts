@@ -7,7 +7,7 @@ import {
 import { readConfig } from "@/utils/reactiveConfig";
 import { setConfig } from "@/utils/db";
 import { buildAiTranslateService } from "@/utils/service";
-import { translateTextsWithCache } from "@/main/translateClient";
+import { translateTexts } from "@/main/translateClient";
 import { openSelectionTranslate } from "@/main/aiWriting/selectionPopup";
 import { SubtitleOverlay } from "./overlay";
 import { mountSubtitleControls, type SubtitleControlsController } from "./controls";
@@ -547,7 +547,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
 
         s.translating = true;
         const texts = pendingIdx.map((i) => s.cues[i].text);
-        void translateTextsWithCache(service, texts, lang, s.abort.signal)
+        void translateTexts(service, texts, lang, s.abort.signal)
             .then((results) => {
                 if (session !== s || s.abort.signal.aborted) return;
                 if (!results || results.length !== texts.length) return;

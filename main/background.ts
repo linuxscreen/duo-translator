@@ -19,7 +19,7 @@ import { Browser, browser } from "wxt/browser";
 import type { InterfaceLang } from "@/main/constants";
 import { INTERFACE_LOCALES, detectInterfaceLang, normalizeInterfaceLang } from "@/utils/interfaceLang";
 import { aiMessageHandlers, registerAiBridge } from "@/main/aiService";
-import { initTokenMap, registerTranslateBridge, translateMessageHandlers } from "@/main/translateService";
+import { translateMessageHandlers } from "@/main/translateService";
 import { getDomainWithPortFromUrl } from '@/utils/url';
 import { configRepo, domainRepo, ruleRepo, type DomainDoc } from "@/main/storage/configStore";
 import * as translationCache from "@/main/storage/translationCache";
@@ -59,10 +59,6 @@ export async function background() {
     // AI Writing streaming bridge (runtime.onConnect). Same first-synchronous-
     // turn requirement as the listeners above.
     registerAiBridge();
-
-    // Install the direct-fetch transport so provider classes running inside
-    // background (the connectivity test) don't message background itself.
-    registerTranslateBridge();
 
     // Shortcut (commands) dispatch. MUST be registered here in the first
     // synchronous turn — same MV3 rule as onMessage below. A suspended
@@ -105,7 +101,6 @@ export async function background() {
         // Schedule periodic auto-sync + run the startup sync (if enabled) once
         // migration settled.
         void startAutoSync();
-        initTokenMap();
     })();
     //#endregion
 
@@ -126,9 +121,6 @@ export async function background() {
         const featureHandler = translateMessageHandlers[message.action] ?? aiMessageHandlers[message.action]
         if (featureHandler) return featureHandler(message, sendResponse)
         switch (message.action) {
-            case ACTION.TRANSLATE_HTML:
-                // todo
-                break
             case DB_ACTION.RULE_ADD:
                 ruleRepo.add(message.data.domain, message.data.data).then(() => {
                     sendResponse({ status: STATUS_SUCCESS, data: "add success" });
@@ -540,28 +532,6 @@ export async function background() {
                     });
                 })()
 
-                return true
-            case ACTION.TRANSLATION_CACHE_GET:
-                translationCache.getMany(
-                    message.data.service,
-                    message.data.targetLang,
-                    message.data.texts ?? [],
-                ).then((data) => {
-                    sendResponse({ status: STATUS_SUCCESS, data })
-                }).catch((e) => {
-                    sendResponse({ status: STATUS_FAIL, data: { name: e?.name, message: e?.message } })
-                })
-                return true
-            case ACTION.TRANSLATION_CACHE_PUT:
-                translationCache.putMany(
-                    message.data.service,
-                    message.data.targetLang,
-                    message.data.entries ?? [],
-                ).then(() => {
-                    sendResponse({ status: STATUS_SUCCESS })
-                }).catch((e) => {
-                    sendResponse({ status: STATUS_FAIL, data: { name: e?.name, message: e?.message } })
-                })
                 return true
             case ACTION.TRANSLATION_CACHE_CLEAR:
                 translationCache.clearAll().then(() => {
