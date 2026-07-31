@@ -3,6 +3,7 @@
 // isolation (no DOM, no config). content.ts reads config and feeds the values
 // in via buildTranslationCss().
 import { effectiveFontColor } from "@/utils/color";
+import { HIGHLIGHT_ORIGINAL, HIGHLIGHT_TRANSLATION } from "@/main/dom/sentenceHighlight";
 
 export interface TranslationCssOptions {
     bgColor: string;
@@ -88,7 +89,17 @@ export function buildTranslationCss(opts: TranslationCssOptions): string {
         blocks.push(`.duo-translation { ${translationDecls.join(" ")} }`);
     }
 
-    // Bilingual highlighting — unified across original + translation spans.
+    // Bilingual highlighting — unified across the original and its translation.
+    //
+    // These are CSS Custom Highlight pseudo-elements, not classes: the sentence
+    // under the pointer is registered as a Range in CSS.highlights (see
+    // main/dom/sentenceHighlight.ts), so nothing in the page is wrapped. A
+    // highlight pseudo is painted as an overlay and never enters the box tree,
+    // so only paint-only properties apply — background-color / color /
+    // text-decoration do, `border` does not. The border variants of
+    // getCSSRuleString are therefore inert here: the declaration parses and is
+    // simply never applied. Mapping them onto a text-decoration equivalent is
+    // deliberately left for a follow-up.
     if (opts.highlightSwitch) {
         const highlightDecls: string[] = [];
         if (opts.highlightBg) highlightDecls.push(`background-color: ${opts.highlightBg};`);
@@ -98,7 +109,7 @@ export function buildTranslationCss(opts: TranslationCssOptions): string {
         if (highlightRule) highlightDecls.push(highlightRule);
         if (highlightDecls.length > 0) {
             blocks.push(
-                `.duo-highlight-original, .duo-highlight-translation { ${highlightDecls.join(" ")} }`,
+                `::highlight(${HIGHLIGHT_ORIGINAL}), ::highlight(${HIGHLIGHT_TRANSLATION}) { ${highlightDecls.join(" ")} }`,
             );
         }
     }

@@ -1,4 +1,4 @@
-import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
+import { splitSentence } from "@/main/dom/sentence";
 import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage } from "./constants";
 import { restore, translateParams, getTranslateResult, translate, TranslateResult } from "./translateClient";
 import { sendMessageToBackground } from "../utils/message";
@@ -36,6 +36,13 @@ import {
 } from "@/main/dom/paragraphMarks";
 import { isSegmentBoundary, segmentParagraph, type TranslationUnit, type UnitRange } from "@/main/dom/segments";
 import { directChildOf, nodesInRange, rangeContains, resolveCandidateAtPoint, unitRangeOf } from "@/main/dom/unitHit";
+import {
+    buildSentenceRanges,
+    clearSentenceHighlight,
+    isPointOverRange,
+    showSentenceHighlight,
+    supportsHighlightApi,
+} from "@/main/dom/sentenceHighlight";
 import { initVideoSubtitle, type VideoSubtitleController } from "@/main/videoSubtitle";
 
 export async function content() {
@@ -119,8 +126,12 @@ export async function content() {
         /** The inserted `.duo-translation` and its `.duo-divide` separator. */
         translation: HTMLElement
         divide: HTMLElement
-        /** Original text captured before sentence-highlight wrapping emptied it. */
-        texts: { text: Text, content: string }[]
+        /**
+         * Index-aligned sentence ranges of the two sides, for bilingual
+         * highlighting; null when the unit failed the gates (or the browser has
+         * no Highlight API). Live Ranges — no page DOM was modified to get them.
+         */
+        sentences: { original: Range[], translation: Range[] } | null
     }
     let duoTranslatedElementMap = new Map<HTMLElement, DuoUnitRecord[]>()
 
@@ -136,6 +147,9 @@ export async function content() {
     // per-paragraph disposers for the delegated bilingual-highlight listeners;
     // WeakMap so paragraphs removed by the page don't pin the closures
     const highlightDisposers = new WeakMap<HTMLElement, () => void>()
+    // Bilingual highlighting is painted with the CSS Custom Highlight API and has
+    // no wrapper-based fallback; where it is missing the feature stays off.
+    const highlightApiSupported = supportsHighlightApi()
     // translated elements of SINGLE view strategy
     // SINGLE: one TranslateResult per translated unit, grouped by container.
     let translatedElementMap = new Map<HTMLElement, TranslateResult[]>()
@@ -958,6 +972,10 @@ export async function content() {
             duoTranslatedElementMap.delete(removed);
             translatedElementMap.delete(removed);
             paragraphElementMap.delete(removed);
+            // The listeners go with the detached node, but the highlight paint is
+            // document-global — drop it if this paragraph is the one holding it.
+            clearSentenceHighlight(removed);
+            highlightDisposers.delete(removed);
             cleanupParagraphMarks(removed);
             return;
         }
@@ -970,6 +988,8 @@ export async function content() {
                 duoTranslatedElementMap.delete(tracked);
                 translatedElementMap.delete(tracked);
                 paragraphElementMap.delete(tracked);
+                clearSentenceHighlight(tracked);
+                highlightDisposers.delete(tracked);
             }
         }
     }
@@ -1298,34 +1318,22 @@ export async function content() {
     }
 
     /**
-     * Remove the highlight `duo-span`s inside `nodes` that belong to
-     * `container`. A mixed container's nested marked paragraphs (an `<li>`) own
-     * their spans and restore them through their own bookkeeping, so they must
-     * be left alone — hence the closestParagraph ownership filter.
-     */
-    function removeDuoSpansIn(container: HTMLElement, nodes: ChildNode[]) {
-        for (const node of nodes) {
-            if (node.nodeType !== Node.ELEMENT_NODE) continue
-            const el = node as HTMLElement
-            if (el.tagName === "DUO-SPAN") {
-                el.remove()
-                continue
-            }
-            for (const span of el.querySelectorAll("duo-span")) {
-                if (closestParagraph(span) === container) span.remove()
-            }
-        }
-    }
-
-    /**
      * DOUBLE: undo `records` of `element`. Passing every record of the container
      * is a whole-container restore; passing a single one is the per-unit toggle,
      * which leaves the container's other translated units untouched.
+     *
+     * Only our own inserted nodes are removed — the original text is never
+     * touched on the way in (sentence highlighting is Ranges, not wrappers), so
+     * there is nothing to replay on the way out.
      */
     function restoreDuoRecords(element: HTMLElement, records: DuoUnitRecord[]) {
         const all = duoTranslatedElementMap.get(element) ?? []
         const remaining = all.filter(r => !records.includes(r))
         ignoreMutationElements.add(element)
+        // The painted sentence may belong to a record we are dropping, and its
+        // translation-side range is about to collapse; drop the paint either way
+        // — it is transient hover state and the next move re-resolves it.
+        clearSentenceHighlight(element)
         if (remaining.length === 0) {
             // Nothing translated left in this container: drop the delegated
             // highlight binding with it.
@@ -1334,12 +1342,8 @@ export async function content() {
         }
         try {
             for (const record of records) {
-                // Our inserted nodes are known exactly; the unit's range scopes
-                // the span sweep so sibling units keep theirs.
-                const nodes = nodesInRange(element, record.range)
                 record.divide.remove()
                 record.translation.remove()
-                removeDuoSpansIn(element, nodes)
             }
             if (remaining.length === 0) {
                 // Full restore: also sweep anything left over that no record
@@ -1348,25 +1352,13 @@ export async function content() {
                 for (const node of element.querySelectorAll(".duo-translation, .duo-divide")) {
                     if (closestParagraph(node) === element) node.remove()
                 }
-                removeDuoSpansIn(element, Array.from(element.childNodes))
             }
         } catch (e) {
             console.error(APP_NAME_WITH_SUFFIX, "restore original paragraph error:", e)
         }
-        for (const record of records) {
-            record.texts.forEach(t => {
-                ignoreMutationElements.add(t.text)
-                t.text.textContent = t.content
-            })
-        }
         // Delete the ignore marks after the observer task of the next event loop.
         Promise.resolve().then(() => {
             ignoreMutationElements.delete(element)
-            for (const record of records) {
-                record.texts.forEach(t => {
-                    ignoreMutationElements.delete(t.text)
-                })
-            }
             if (remaining.length > 0) {
                 duoTranslatedElementMap.set(element, remaining)
             } else {
@@ -1568,8 +1560,8 @@ export async function content() {
     // Async + iterative to avoid blocking the main thread on large subtrees.
     // The walk yields to the browser every MARK_BUDGET_MS so a body-sized
     // input still mark-completes without freezing the page. Behaviour matches
-    // the previous recursive version (depth limit, text-node→duo-span wrapping,
-    // mutation suppression around our own DOM writes).
+    // the previous recursive version (depth limit, mutation suppression around
+    // our own DOM writes).
     async function markParagraphElement(element: HTMLElement): Promise<HTMLElement[]> {
         let notTranslate = false;
         const rawElement = element;
@@ -1671,69 +1663,85 @@ export async function content() {
         return collectElements;
     }
 
-    // Delegated bilingual highlighting: one listener pair per paragraph instead
-    // of per duo-span. The highlight is "sticky" — hovering blank areas inside
-    // the paragraph (line gaps of a multi-line sentence, the divide, padding)
-    // keeps the current sentence highlighted; it only switches when the pointer
-    // enters another sentence's span, and only clears on leaving the paragraph.
+    // Delegated bilingual highlighting: one listener pair per paragraph.
+    //
+    // There are no per-sentence elements any more — each sentence is a live
+    // Range (see main/dom/sentenceHighlight.ts), found under the pointer by its
+    // client rects and painted through the CSS Custom Highlight API. That keeps
+    // the sticky semantics intact: isPointOverRects counts the glyphs and the
+    // gaps *between* lines but not the blank past a short line, so hovering the
+    // divide or the paragraph padding keeps the current sentence, and only real
+    // text of another sentence switches it.
+    //
+    // mousemove replaces mouseover, since crossing a sentence boundary no longer
+    // crosses an element boundary; it is throttled to one resolve per animation
+    // frame. The reads stay cheap because this pipeline writes nothing to the
+    // DOM: layout is clean, so every getClientRects after the first in a frame
+    // is a lookup rather than a reflow.
+    //
     // Returns a disposer that clears the highlight and detaches the listeners.
-    function bindHighlightHandler(originalElement: HTMLElement): () => void {
-        let currentSequence: number | null = null
+    function bindHighlightHandler(container: HTMLElement): () => void {
+        let current: { record: DuoUnitRecord, index: number } | null = null
+        let frame = 0
+        let pointerX = 0
+        let pointerY = 0
 
-        // duo-sequence numbers are unique within one container (units of the
-        // same container share a running offset), so a single delegated
-        // binding per container pairs both sides. Ownership is resolved via
-        // closestParagraph so spans of nested marked paragraphs (an <li>
-        // inside a mixed container — they have their own binding and their
-        // own numbering) are never touched by this one.
-        function applyHighlight(sequence: number, add: boolean) {
-            let sequenceElements = originalElement.querySelectorAll('duo-span[duo-sequence="' + sequence + '"]')
-            for (let sequenceElement of sequenceElements) {
-                if (closestParagraph(sequenceElement) !== originalElement) continue
-                if (sequenceElement.closest('.duo-translation')) {
-                    sequenceElement.classList.toggle("duo-highlight-translation", add)
-                } else {
-                    sequenceElement.classList.toggle("duo-highlight-original", add)
-                }
-            }
+        /** Is the pointer over sentence `index` of `record`, on either side? */
+        function hits(record: DuoUnitRecord, index: number): boolean {
+            const pair = record.sentences
+            if (!pair) return false
+            const original = pair.original[index]
+            const translation = pair.translation[index]
+            return (!!original && isPointOverRange(pointerX, pointerY, original))
+                || (!!translation && isPointOverRange(pointerX, pointerY, translation))
         }
 
-        const onMouseOver = (event: Event) => {
-            const target = event.target as Element | null
-            const span = target?.closest?.('duo-span[duo-sequence]')
-            // No span under the pointer (blank area) → keep the current highlight.
-            // The ownership guard protects against spans of an enclosing or
-            // nested paragraph (each has its own binding).
-            if (!span || closestParagraph(span) !== originalElement) {
-                return
+        function resolve() {
+            frame = 0
+            const records = duoTranslatedElementMap.get(container) ?? []
+            // The record may have been restored away under us.
+            if (current && !records.includes(current.record)) current = null
+            // Cheapest first: the pointer usually stays inside the sentence it
+            // is already on.
+            if (current && hits(current.record, current.index)) return
+            for (const record of records) {
+                const pair = record.sentences
+                if (!pair) continue
+                // Both sides are indexed by non-blank sentence order and the
+                // gate equalized their counts; min() is belt-and-braces.
+                const count = Math.min(pair.original.length, pair.translation.length)
+                for (let i = 0; i < count; i++) {
+                    if (!hits(record, i)) continue
+                    current = { record, index: i }
+                    showSentenceHighlight(container, pair.original[i], pair.translation[i])
+                    return
+                }
             }
-            const sequence = parseInt(span.getAttribute("duo-sequence")!)
-            if (isNaN(sequence) || sequence === currentSequence) {
-                return
-            }
-            if (currentSequence !== null) {
-                applyHighlight(currentSequence, false)
-            }
-            currentSequence = sequence
-            applyHighlight(sequence, true)
+            // Over no sentence's text → keep whatever is painted (sticky).
+        }
+
+        const onMouseMove = (event: MouseEvent) => {
+            pointerX = event.clientX
+            pointerY = event.clientY
+            if (frame) return
+            frame = requestAnimationFrame(resolve)
         }
 
         // mouseleave does not bubble, so this only fires when the pointer
         // actually exits the whole paragraph (original + translation).
         const onMouseLeave = () => {
-            if (currentSequence === null) {
-                return
-            }
-            applyHighlight(currentSequence, false)
-            currentSequence = null
+            current = null
+            clearSentenceHighlight(container)
         }
 
-        originalElement.addEventListener("mouseover", onMouseOver)
-        originalElement.addEventListener("mouseleave", onMouseLeave)
+        container.addEventListener("mousemove", onMouseMove)
+        container.addEventListener("mouseleave", onMouseLeave)
         return () => {
+            if (frame) cancelAnimationFrame(frame)
+            frame = 0
             onMouseLeave()
-            originalElement.removeEventListener("mouseover", onMouseOver)
-            originalElement.removeEventListener("mouseleave", onMouseLeave)
+            container.removeEventListener("mousemove", onMouseMove)
+            container.removeEventListener("mouseleave", onMouseLeave)
         }
     }
 
@@ -1837,8 +1845,8 @@ export async function content() {
             // append translated copy element to original element in double view strategy
             if (viewStrategyCopy == VIEW_STRATEGY.DOUBLE) {
                 // Group per container: one bookkeeping entry and one highlight
-                // binding per container; duo-sequence numbers run across its
-                // units so pairing under the single binding stays unambiguous.
+                // binding per container, which then resolves the pointer against
+                // every record's sentence ranges.
                 const resultsByContainer = new Map<HTMLElement, TranslateResult[]>()
                 for (const result of translateResults) {
                     const element = result.unit?.container
@@ -1851,15 +1859,8 @@ export async function content() {
                     // Records of units translated in earlier rounds are kept —
                     // this round appends, never overwrites.
                     const records: DuoUnitRecord[] = duoTranslatedElementMap.get(element) ?? []
-                    // Continue sequence numbering after spans of earlier rounds.
-                    let sequenceOffset = 0
-                    for (const span of element.querySelectorAll('duo-span[duo-sequence]')) {
-                        if (closestParagraph(span) !== element) continue
-                        const seq = parseInt(span.getAttribute('duo-sequence')!)
-                        if (!isNaN(seq) && seq >= sequenceOffset) sequenceOffset = seq + 1
-                    }
                     let insertedAny = false
-                    let wrappedAny = false
+                    let highlightedAny = false
                     for (const result of containerResults) {
                         const unit = result.unit!
                         const translatedElement = result.translatedCopyElement!
@@ -1882,11 +1883,10 @@ export async function content() {
                         // so the record's range brackets the unit (and the
                         // translation we are about to put inside it).
                         const range = unitRangeOf(unit)
+                        // Read-only: the original text nodes are never modified —
+                        // the translation goes in as a sibling and sentence
+                        // highlighting only records Ranges over them.
                         const originalTextResult = getTextNodesAndTextOfNodes(unit.nodes)
-                        originalTextResult.textNodes.forEach(textNode => {
-                            ignoreElements.push(textNode)
-                            ignoreMutationElements.add(textNode)
-                        })
                         translatedElement.classList.add("duo-translation")
                         let divide: HTMLElement
                         if (originalTextResult.text.length >= translationLineBreakMinChars) {
@@ -1905,12 +1905,12 @@ export async function content() {
                             element.appendChild(translatedElement)
                         }
                         insertedAny = true
-                        const record: DuoUnitRecord = { range, translation: translatedElement, divide, texts: [] }
+                        const record: DuoUnitRecord = { range, translation: translatedElement, divide, sentences: null }
                         records.push(record)
 
                         // Bilingual sentence highlighting, gated per unit — a
-                        // unit failing the gates only skips its own wrapping.
-                        if (!bilingualHighlightingSwitch) continue
+                        // unit failing the gates only loses its own sentences.
+                        if (!bilingualHighlightingSwitch || !highlightApiSupported) continue
                         if (originalTextResult.text == "" || originalTextResult.textNodes.length == 0) continue
                         const translatedTextResult = getTextNodesAndText(translatedElement)
                         if (translatedTextResult.text == "" || translatedTextResult.textNodes.length == 0) continue
@@ -1919,19 +1919,21 @@ export async function content() {
                         if (originalSentences.length === 0 || validOriginalSentencesLen < bilingualHighlightingMinSentences) continue
                         const translatedSentences = splitSentence(translatedTextResult.text)
                         if (translatedSentences.filter(s => s.trim() !== '').length != validOriginalSentencesLen) continue // todo fallback to using AI for sentence segmentation
-                        originalTextResult.textNodes.forEach(textNode => {
-                            record.texts.push({ text: textNode, content: textNode.textContent })
-                        })
-                        let spans = wrapTextNode2Span(originalTextResult.textNodes, originalSentences, ignoreMutationElements, sequenceOffset)
-                        spans.push(...wrapTextNode2Span(translatedTextResult.textNodes, translatedSentences, ignoreMutationElements, sequenceOffset))
-                        sequenceOffset += originalSentences.length
-                        if (spans.length > 0) wrappedAny = true
+                        // Blank segments yield no range, so both arrays are
+                        // indexed by non-blank sentence order — the very count
+                        // the gate above equalized, which is what makes pairing
+                        // by index correct.
+                        const originalRanges = buildSentenceRanges(originalTextResult.textNodes, originalSentences)
+                        const translationRanges = buildSentenceRanges(translatedTextResult.textNodes, translatedSentences)
+                        if (originalRanges.length === 0 || translationRanges.length === 0) continue
+                        record.sentences = { original: originalRanges, translation: translationRanges }
+                        highlightedAny = true
                     }
                     if (insertedAny) {
                         duoTranslatedElementMap.set(element, records)
                         translatedContainers.add(element)
                     }
-                    if (wrappedAny) {
+                    if (highlightedAny) {
                         highlightDisposers.get(element)?.()
                         highlightDisposers.set(element, bindHighlightHandler(element))
                     }

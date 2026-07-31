@@ -112,12 +112,13 @@ describe("buildTranslationCss", () => {
     });
 
     it("omits the highlight block when highlightSwitch is off", () => {
-        expect(buildTranslationCss(base)).not.toContain("duo-highlight-original");
+        expect(buildTranslationCss(base)).not.toContain("::highlight(");
     });
 
     it("emits the unified highlight block when highlightSwitch is on", () => {
         const css = buildTranslationCss({ ...base, highlightSwitch: true });
-        expect(css).toContain(".duo-highlight-original, .duo-highlight-translation {");
+        // Highlight pseudo-elements, not classes — nothing in the page is wrapped.
+        expect(css).toContain("::highlight(duo-hl-original), ::highlight(duo-hl-translation) {");
         expect(css).toContain("background-color: #ff0;");
     });
 
