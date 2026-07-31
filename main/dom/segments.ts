@@ -218,12 +218,13 @@ export function segmentParagraph(container: HTMLElement): SegmentScan {
         //
         // `curTranslated` (an adjacent .duo-translation) qualifies the run on
         // its own, so a re-scan can never descend into our own output and
-        // translate an already-translated run a second time. This was load
-        // bearing when sentence highlighting wrapped the run's text into
-        // <duo-span>s and emptied the original text nodes (criterion 1 stopped
-        // firing, criterion 2 then "unwrapped" into the wrapper). Highlighting
-        // no longer writes to the page, so that exact shape can't occur — but
-        // the guard stays: it is the invariant, not the workaround.
+        // translate an already-translated run a second time. This is load
+        // bearing on the <duo-span> highlight fallback: wrapping moves the run's
+        // text into the spans and leaves the direct text nodes empty, so
+        // criterion 1 stops firing and criterion 2 would "unwrap" straight into
+        // our own output. The preferred Highlight-API path writes nothing to the
+        // page and never produces that shape — the guard is the invariant, not
+        // the workaround for one of the two paths.
         const qualifies =
             curHasText ||
             curTranslated ||

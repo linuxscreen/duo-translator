@@ -112,14 +112,19 @@ describe("buildTranslationCss", () => {
     });
 
     it("omits the highlight block when highlightSwitch is off", () => {
-        expect(buildTranslationCss(base)).not.toContain("::highlight(");
+        const css = buildTranslationCss(base);
+        expect(css).not.toContain("::highlight(");
+        expect(css).not.toContain("duo-highlight-original");
     });
 
-    it("emits the unified highlight block when highlightSwitch is on", () => {
+    it("emits both highlight strategies as separate rules when highlightSwitch is on", () => {
+        // Both must be present and separate: content.ts picks one at runtime, and
+        // an unsupported selector invalidates only the rule it appears in — so
+        // merging them would drop the class rule on the old browsers needing it.
         const css = buildTranslationCss({ ...base, highlightSwitch: true });
-        // Highlight pseudo-elements, not classes — nothing in the page is wrapped.
         expect(css).toContain("::highlight(duo-hl-original), ::highlight(duo-hl-translation) {");
-        expect(css).toContain("background-color: #ff0;");
+        expect(css).toContain(".duo-highlight-original, .duo-highlight-translation {");
+        expect(css.match(/background-color: #ff0;/g)).toHaveLength(2);
     });
 
     it("returns empty string when there is nothing to style", () => {

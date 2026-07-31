@@ -10,10 +10,11 @@
 // client rects (one per line fragment, which is exactly what isPointOverRects
 // wants).
 //
-// Why not wrap each sentence in a <duo-span>, as this used to:
+// Why this is preferred over wrapping each sentence in a <duo-span>, which is
+// still the fallback in main/dom/sentence.ts:
 //   - wrapping splits and empties the page's own text nodes, so a re-scan sees
-//     our own output and can re-translate it (a real regression), and every
-//     restore needs an original-text backup to replay;
+//     our own output and can re-translate it, and every restore needs an
+//     original-text backup to replay;
 //   - a <duo-span> is a real inline box, so a bordered highlight style shifts the
 //     surrounding text on hover.
 // A highlight pseudo-element never enters the box tree — it is painted as an
@@ -21,6 +22,10 @@
 // only paint-only properties are honored: background-color / color /
 // text-decoration / text-shadow work, `border` and anything else that would
 // affect layout does not. See buildTranslationCss in main/css.ts.
+//
+// The API is recent (Firefox only shipped it in 140 / June 2025), hence
+// supportsHighlightApi() and the wrapper fallback behind it — content.ts picks
+// one strategy per frame and never mixes them.
 import { isPointOverRects } from "@/main/dom/unitHit";
 
 /** Highlight registry names; the CSS side selects them via ::highlight(). */
@@ -29,8 +34,8 @@ export const HIGHLIGHT_TRANSLATION = "duo-hl-translation";
 
 /**
  * The document's highlight registry, or null where the API is unavailable
- * (older browsers). Callers degrade by skipping bilingual highlighting
- * altogether — there is no wrapper-based fallback any more.
+ * (older browsers) — in which case content.ts binds the <duo-span> fallback
+ * instead, and every function here is inert.
  */
 function registry(): HighlightRegistry | null {
     if (typeof CSS === "undefined" || typeof Highlight !== "function") return null;

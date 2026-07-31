@@ -89,17 +89,24 @@ export function buildTranslationCss(opts: TranslationCssOptions): string {
         blocks.push(`.duo-translation { ${translationDecls.join(" ")} }`);
     }
 
-    // Bilingual highlighting — unified across the original and its translation.
+    // Bilingual highlighting — unified across the original and its translation,
+    // and emitted for BOTH painting strategies (content.ts picks one at runtime
+    // via supportsHighlightApi; the other's rule simply never matches):
     //
-    // These are CSS Custom Highlight pseudo-elements, not classes: the sentence
-    // under the pointer is registered as a Range in CSS.highlights (see
-    // main/dom/sentenceHighlight.ts), so nothing in the page is wrapped. A
-    // highlight pseudo is painted as an overlay and never enters the box tree,
-    // so only paint-only properties apply — background-color / color /
-    // text-decoration do, `border` does not. The border variants of
-    // getCSSRuleString are therefore inert here: the declaration parses and is
-    // simply never applied. Mapping them onto a text-decoration equivalent is
-    // deliberately left for a follow-up.
+    //   - `::highlight(…)` for the CSS Custom Highlight API path, where the
+    //     hovered sentence is a Range registered in CSS.highlights and nothing
+    //     in the page is wrapped. A highlight pseudo is painted as an overlay
+    //     and never enters the box tree, so only paint-only properties apply —
+    //     background-color / color / text-decoration do, `border` does not. The
+    //     border variants of getCSSRuleString are inert here (the declaration
+    //     parses and is simply never applied); mapping them onto a
+    //     text-decoration equivalent is deliberately left for a follow-up.
+    //   - `.duo-highlight-*` for the <duo-span> fallback on browsers without
+    //     that API, where every property including `border` works.
+    //
+    // They must stay two separate rules: an unsupported selector invalidates the
+    // whole rule it appears in, so merging the four selectors into one list
+    // would lose the class rule on exactly the old browsers that need it.
     if (opts.highlightSwitch) {
         const highlightDecls: string[] = [];
         if (opts.highlightBg) highlightDecls.push(`background-color: ${opts.highlightBg};`);
@@ -108,9 +115,11 @@ export function buildTranslationCss(opts: TranslationCssOptions): string {
         const highlightRule = getCSSRuleString(opts.highlightStyle, opts.highlightBorderColor);
         if (highlightRule) highlightDecls.push(highlightRule);
         if (highlightDecls.length > 0) {
+            const decls = highlightDecls.join(" ");
             blocks.push(
-                `::highlight(${HIGHLIGHT_ORIGINAL}), ::highlight(${HIGHLIGHT_TRANSLATION}) { ${highlightDecls.join(" ")} }`,
+                `::highlight(${HIGHLIGHT_ORIGINAL}), ::highlight(${HIGHLIGHT_TRANSLATION}) { ${decls} }`,
             );
+            blocks.push(`.duo-highlight-original, .duo-highlight-translation { ${decls} }`);
         }
     }
     return blocks.join("\n");
