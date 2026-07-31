@@ -95,19 +95,19 @@ describe("getHighlightCSSRuleString", () => {
         // A highlight pseudo-element has no box, so a border can never render;
         // the top and bottom edges are as close as it gets.
         expect(getHighlightCSSRuleString("solidBorder")).toBe(
-            "text-decoration: underline overline solid;text-decoration-thickness: 2px;",
+            "text-decoration: underline overline solid;text-decoration-thickness: 1px;",
         );
         expect(getHighlightCSSRuleString("dottedBorder")).toBe(
-            "text-decoration: underline overline dotted;text-decoration-thickness: 2px;",
+            "text-decoration: underline overline dotted;text-decoration-thickness: 1px;",
         );
         expect(getHighlightCSSRuleString("dashedBorder")).toBe(
-            "text-decoration: underline overline dashed;text-decoration-thickness: 2px;",
+            "text-decoration: underline overline dashed;text-decoration-thickness: 1px;",
         );
     });
 
     it("carries the border color over as the decoration color", () => {
         expect(getHighlightCSSRuleString("solidBorder", "red")).toBe(
-            "text-decoration: underline overline solid;text-decoration-thickness: 2px;text-decoration-color: red;",
+            "text-decoration: underline overline solid;text-decoration-thickness: 1px;text-decoration-color: red;",
         );
     });
 

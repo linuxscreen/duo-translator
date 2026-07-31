@@ -99,8 +99,9 @@ export function getHighlightCSSRuleString(style: string, color?: string): string
     if (!lineStyle) {
         return getCSSRuleString(style, color);
     }
-    // Thickness must follow the shorthand, which resets it to auto. 1px is what
-    // the border it replaces used.
+    // Thickness must follow the shorthand, which resets it to auto. 1px rather
+    // than the 2px of the border being replaced: two 2px rules hugging the text
+    // read far heavier than a 2px frame around it.
     let cssRule = `text-decoration: underline overline ${lineStyle};text-decoration-thickness: 1px;`;
     if (color) {
         cssRule += `text-decoration-color: ${color};`;
