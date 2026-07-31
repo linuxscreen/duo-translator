@@ -1915,9 +1915,10 @@ export async function content() {
                         const translatedTextResult = getTextNodesAndText(translatedElement)
                         if (translatedTextResult.text == "" || translatedTextResult.textNodes.length == 0) continue
                         const originalSentences = splitSentence(originalTextResult.text)
-                        if (originalSentences.length === 0 || originalSentences.length < bilingualHighlightingMinSentences) continue
+                        let validOriginalSentencesLen = originalSentences.filter(s => s.trim() !== '').length;
+                        if (originalSentences.length === 0 || validOriginalSentencesLen < bilingualHighlightingMinSentences) continue
                         const translatedSentences = splitSentence(translatedTextResult.text)
-                        if (translatedSentences.length != originalSentences.length) continue
+                        if (translatedSentences.filter(s => s.trim() !== '').length != validOriginalSentencesLen) continue // todo fallback to using AI for sentence segmentation
                         originalTextResult.textNodes.forEach(textNode => {
                             record.texts.push({ text: textNode, content: textNode.textContent })
                         })

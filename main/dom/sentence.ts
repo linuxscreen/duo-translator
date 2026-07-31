@@ -49,14 +49,16 @@ export function wrapTextNode2Span(
             }
             if (sentence.length >= text.length) {
                 if (sentence.startsWith(text)) {
-                    const span = document.createElement("duo-span");
-                    ignoreMutationElements.add(span);
-                    span.setAttribute("duo-sequence", (startSequence + i).toString());
-                    let spanText = document.createTextNode(text);
-                    span.appendChild(spanText);
-                    textNodes[j]?.parentElement?.insertBefore(span, textNodes[j]);
-                    textNodes[j].textContent = "";
-                    spans.push(span);
+                    if (text.trim() !== '') {
+                        const span = document.createElement("duo-span");
+                        ignoreMutationElements.add(span);
+                        span.setAttribute("duo-sequence", (startSequence + i).toString());
+                        let spanText = document.createTextNode(text);
+                        span.appendChild(spanText);
+                        textNodes[j]?.parentElement?.insertBefore(span, textNodes[j]);
+                        textNodes[j].textContent = "";
+                        spans.push(span);
+                    }
                     sentence = sentence.slice(text.length);
                     j++;
                 } else {
@@ -65,6 +67,7 @@ export function wrapTextNode2Span(
             } else {
                 if (text.startsWith(sentence)) {
                     textNodes[j].textContent = text.slice(sentence.length);
+                    if (sentence.trim() === '') break
                     const span = document.createElement("duo-span");
                     ignoreMutationElements.add(span);
                     span.setAttribute("duo-sequence", (startSequence + i).toString());
