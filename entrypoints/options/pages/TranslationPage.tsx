@@ -450,6 +450,7 @@ export function TranslationPage() {
         bgColor: highlightBg,
         fontColor: highlightFontColor,
         borderColor: highlightBorderColor,
+        forHighlight: true,
       }),
     [highlightStyle, highlightBg, highlightFontColor, highlightBorderColor],
   );

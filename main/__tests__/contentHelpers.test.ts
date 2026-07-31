@@ -14,7 +14,7 @@ vi.mock("franc", () => ({ franc: vi.fn() }));
 vi.mock("@/utils/language", () => ({ isTraditionalChinese: vi.fn(() => false) }));
 
 import { needsTranslate } from "@/main/strategy";
-import { getCSSRuleString, buildTranslationCss } from "@/main/css";
+import { getCSSRuleString, getHighlightCSSRuleString, buildTranslationCss } from "@/main/css";
 import { getTextLanguage } from "@/main/lang";
 import { DOMAIN_STRATEGY, DEFAULT_STRATEGY } from "@/main/constants";
 import { franc } from "franc";
@@ -88,6 +88,37 @@ describe("getCSSRuleString", () => {
 });
 
 // ---------------------------------------------------------------------------
+// getHighlightCSSRuleString
+// ---------------------------------------------------------------------------
+describe("getHighlightCSSRuleString", () => {
+    it("remaps the border styles onto underline + overline", () => {
+        // A highlight pseudo-element has no box, so a border can never render;
+        // the top and bottom edges are as close as it gets.
+        expect(getHighlightCSSRuleString("solidBorder")).toBe(
+            "text-decoration: underline overline solid;text-decoration-thickness: 2px;",
+        );
+        expect(getHighlightCSSRuleString("dottedBorder")).toBe(
+            "text-decoration: underline overline dotted;text-decoration-thickness: 2px;",
+        );
+        expect(getHighlightCSSRuleString("dashedBorder")).toBe(
+            "text-decoration: underline overline dashed;text-decoration-thickness: 2px;",
+        );
+    });
+
+    it("carries the border color over as the decoration color", () => {
+        expect(getHighlightCSSRuleString("solidBorder", "red")).toBe(
+            "text-decoration: underline overline solid;text-decoration-thickness: 2px;text-decoration-color: red;",
+        );
+    });
+
+    it("leaves every other style to getCSSRuleString", () => {
+        for (const style of ["noneStyleSelect", "underLine", "wavyLine", "dottedLine", "bogus"]) {
+            expect(getHighlightCSSRuleString(style, "blue")).toBe(getCSSRuleString(style, "blue"));
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
 // buildTranslationCss
 // ---------------------------------------------------------------------------
 describe("buildTranslationCss", () => {
@@ -125,6 +156,20 @@ describe("buildTranslationCss", () => {
         expect(css).toContain("::highlight(duo-hl-original), ::highlight(duo-hl-translation) {");
         expect(css).toContain(".duo-highlight-original, .duo-highlight-translation {");
         expect(css.match(/background-color: #ff0;/g)).toHaveLength(2);
+    });
+
+    it("keeps a real border on the translation but remaps it on the highlight", () => {
+        // Same style name, two contexts: .duo-translation is a single block
+        // element (a border is fine and looks right), the highlight is neither.
+        const css = buildTranslationCss({
+            ...base,
+            borderStyle: "solidBorder",
+            highlightStyle: "solidBorder",
+            highlightSwitch: true,
+        });
+        expect(css).toContain(".duo-translation { background-color: #fff; color: #000; border: 2px solid; }");
+        expect(css).toContain("text-decoration: underline overline solid;");
+        expect(css).not.toContain("duo-highlight-original, .duo-highlight-translation { background-color: #ff0; color: #111; border:");
     });
 
     it("returns empty string when there is nothing to style", () => {

@@ -3,6 +3,7 @@
 // isolation (no DOM, no config). content.ts reads config and feeds the values
 // in via buildTranslationCss().
 import { effectiveFontColor } from "@/utils/color";
+import { HIGHLIGHT_BORDER_LINE_STYLE } from "@/utils/translationStyle";
 import { HIGHLIGHT_ORIGINAL, HIGHLIGHT_TRANSLATION } from "@/main/dom/sentenceHighlight";
 
 export interface TranslationCssOptions {
@@ -69,6 +70,45 @@ export function getCSSRuleString(style: string, color?: string): string {
 }
 
 /**
+ * getCSSRuleString for the *bilingual-highlight* styles, where the three border
+ * variants are remapped onto `underline overline` in the matching line style.
+ * Everything else is unchanged.
+ *
+ * A stroked rectangle is not expressible on the preferred painter: highlight
+ * pseudo-elements are a paint-time overlay with no box, so `border` (like
+ * anything else that would affect layout) is never applied — the top and bottom
+ * edges, which is what `underline overline` draws, are as close as that API
+ * gets. The left and right edges are not achievable at all.
+ *
+ * The <duo-span> fallback *could* draw a real border, but deliberately uses the
+ * same mapping, for two reasons: the two paths then look identical on old and
+ * new browsers, and a real border there draws one box per span — so a sentence
+ * crossing an inline element (`Hel<b>lo</b> there.`) gets internal vertical
+ * edges, while the underlines of adjacent elements are collinear and read as one
+ * continuous line.
+ *
+ * `.duo-translation` keeps its real border (getCSSRuleString): it is a single
+ * block-level element, where neither problem arises.
+ *
+ * No text-underline-offset here, unlike the *Line styles: there is no
+ * corresponding property for the overline, so offsetting only the underline
+ * would render the pair visibly lopsided.
+ */
+export function getHighlightCSSRuleString(style: string, color?: string): string {
+    const lineStyle = HIGHLIGHT_BORDER_LINE_STYLE[style];
+    if (!lineStyle) {
+        return getCSSRuleString(style, color);
+    }
+    // Thickness must follow the shorthand, which resets it to auto. 1px is what
+    // the border it replaces used.
+    let cssRule = `text-decoration: underline overline ${lineStyle};text-decoration-thickness: 1px;`;
+    if (color) {
+        cssRule += `text-decoration-color: ${color};`;
+    }
+    return cssRule;
+}
+
+/**
  * Build the full stylesheet text for translation styling + bilingual
  * highlighting. Always returns a complete CSS string so the caller can swap the
  * stylesheet atomically via replaceSync.
@@ -95,14 +135,13 @@ export function buildTranslationCss(opts: TranslationCssOptions): string {
     //
     //   - `::highlight(…)` for the CSS Custom Highlight API path, where the
     //     hovered sentence is a Range registered in CSS.highlights and nothing
-    //     in the page is wrapped. A highlight pseudo is painted as an overlay
-    //     and never enters the box tree, so only paint-only properties apply —
-    //     background-color / color / text-decoration do, `border` does not. The
-    //     border variants of getCSSRuleString are inert here (the declaration
-    //     parses and is simply never applied); mapping them onto a
-    //     text-decoration equivalent is deliberately left for a follow-up.
+    //     in the page is wrapped;
     //   - `.duo-highlight-*` for the <duo-span> fallback on browsers without
-    //     that API, where every property including `border` works.
+    //     that API.
+    //
+    // Both get the *same* declarations — see getHighlightCSSRuleString for why
+    // the border styles are remapped rather than rendered natively on the path
+    // that could.
     //
     // They must stay two separate rules: an unsupported selector invalidates the
     // whole rule it appears in, so merging the four selectors into one list
@@ -112,7 +151,7 @@ export function buildTranslationCss(opts: TranslationCssOptions): string {
         if (opts.highlightBg) highlightDecls.push(`background-color: ${opts.highlightBg};`);
         const highlightFont = effectiveFontColor(opts.highlightBg, opts.highlightFontColor);
         if (highlightFont) highlightDecls.push(`color: ${highlightFont};`);
-        const highlightRule = getCSSRuleString(opts.highlightStyle, opts.highlightBorderColor);
+        const highlightRule = getHighlightCSSRuleString(opts.highlightStyle, opts.highlightBorderColor);
         if (highlightRule) highlightDecls.push(highlightRule);
         if (highlightDecls.length > 0) {
             const decls = highlightDecls.join(" ");
