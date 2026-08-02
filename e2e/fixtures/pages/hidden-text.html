@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Duo Translator e2e — hidden text vs language detection</title>
+    <style>
+        /* One class per real-world "text nobody reads" recipe. Each is applied
+           either to every hidden paragraph (?on=self) or to their wrapper
+           (?on=ancestor) — the detection filter must be ancestor-aware. */
+        .hide-offscreen { position: absolute; left: -9999px; top: 0; }
+        .hide-above { position: absolute; left: 0; top: -9999px; }
+        .hide-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+        .hide-fontsize0 { font-size: 0; }
+        .hide-display-none { display: none; }
+        .hide-visibility { visibility: hidden; }
+        .hide-opacity { opacity: 0; }
+        /* Collapsed accordion: the children keep their full natural height and
+           are only unreadable because of the clip. */
+        .hide-collapsed { height: 0; overflow: hidden; }
+
+        .contents-wrap { display: contents; }
+    </style>
+</head>
+<body>
+    <article id="visible"></article>
+    <div id="hidden-host"></div>
+
+    <script>
+        // Built in an inline script so one fixture can serve every scenario:
+        //   ?hide=<recipe>   which hiding recipe the hidden block uses ('none' = plain)
+        //   ?on=self|ancestor  whether the recipe sits on the paragraphs or their wrapper
+        //   ?visible=zh|en   language of the *visible* article (hidden block gets the other)
+        //   ?shape=block|contents  visible article as <p>s, or inside a display:contents container
+        // Runs during parsing, so the DOM is final before the content script's
+        // document_idle pass.
+        const params = new URLSearchParams(location.search);
+        const hide = params.get('hide') || 'offscreen';
+        const on = params.get('on') || 'self';
+        const visibleLang = params.get('visible') || 'zh';
+        const shape = params.get('shape') || 'block';
+        const hiddenLang = visibleLang === 'zh' ? 'en' : 'zh';
+
+        const TEXTS = {
+            zh: [
+                '人工智能技术在最近几年发展得非常迅速，机器翻译的质量也有了显著的提升，越来越多的读者开始在日常阅读中借助翻译工具来理解外文资料。',
+                '一个好的网页翻译工具不仅要把句子翻译得通顺，还要尽量保留原来的排版结构，让读者可以对照着原文一句一句地阅读和核对。',
+                '浏览器扩展在页面上工作的时候，需要判断整个页面究竟是用什么语言写成的，然后才能决定是否需要把它翻译成用户设置的目标语言。',
+                '如果页面里藏着大量用户根本看不到的文字，这些文字就会干扰语言判断的结果，让扩展把一个中文页面误认成外文页面。',
+            ],
+            en: [
+                'Machine translation has improved considerably over the past decade, and readers now routinely rely on browser extensions to make sense of articles written in languages they do not speak at all.',
+                'A good page translator has to do more than produce fluent sentences: it must preserve the original layout closely enough that a reader can compare each sentence with its source line by line.',
+                'Before anything can be translated the extension has to decide which language the page is actually written in, because that verdict is what determines whether the page needs translating at all.',
+                'When a page hides a large block of text that no reader will ever see, that text can outweigh the real article and push the language verdict towards the wrong answer entirely.',
+            ],
+        };
+
+        function paragraphs(lang, repeat) {
+            const out = [];
+            for (let i = 0; i < repeat; i++) out.push(...TEXTS[lang]);
+            return out;
+        }
+
+        // --- visible article -------------------------------------------------
+        const visibleTexts = paragraphs(visibleLang, 1);
+        const article = document.getElementById('visible');
+        if (shape === 'contents') {
+            // A display:contents element with >= 2 inline children IS the unit
+            // container (see main/dom/segments.ts) — and it generates no box, so
+            // its own rect is 0x0. The filter must fall back to the content rect
+            // instead of writing it off as invisible.
+            const section = document.createElement('section');
+            const wrap = document.createElement('div');
+            wrap.className = 'contents-wrap';
+            for (const text of visibleTexts) {
+                const span = document.createElement('span');
+                span.textContent = text + ' ';
+                wrap.appendChild(span);
+            }
+            section.appendChild(wrap);
+            article.appendChild(section);
+        } else {
+            for (const text of visibleTexts) {
+                const p = document.createElement('p');
+                p.textContent = text;
+                article.appendChild(p);
+            }
+        }
+
+        // --- hidden block: deliberately ~3x the visible text ------------------
+        // Detection scores by byte length, so an unfiltered sample is dominated
+        // by this block and lands on the wrong language.
+        const host = document.getElementById('hidden-host');
+        const hideClass = hide === 'none' ? '' : 'hide-' + hide;
+        if (on === 'ancestor' && hideClass) host.className = hideClass;
+        for (const text of paragraphs(hiddenLang, 3)) {
+            const p = document.createElement('p');
+            p.textContent = text;
+            if (on === 'self' && hideClass) p.className = hideClass;
+            host.appendChild(p);
+        }
+    </script>
+</body>
+</html>
