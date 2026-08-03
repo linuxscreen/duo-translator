@@ -57,6 +57,24 @@ export enum DB_ACTION {
     BACKUP_IMPORT = 'backupImport',
 }
 
+/**
+ * Website translation rules (main/siteRules/). A separate enum from DB_ACTION
+ * on purpose: `RULE_*` above is the OLD per-host no-translate selector list
+ * (`rule_<host>`, ruleMode.ts), which this feature neither replaces nor touches.
+ * Two namespaces, no shared identifiers.
+ */
+export enum SITE_RULE_ACTION {
+    // Content → background: merge all three tiers for one URL. Called once at
+    // content start and again when an SPA changes the URL.
+    RESOLVE = 'siteRuleResolve',
+    // Options → background: everything the rules page renders (bundles per tier
+    // + subscription metadata), in one round trip.
+    OVERVIEW = 'siteRuleOverview',
+    // Options → background: fetch/refresh one subscription (or all of them when
+    // no url is given) and return the updated subscription metadata.
+    SUBSCRIPTION_REFRESH = 'siteRuleSubscriptionRefresh',
+}
+
 export enum SYNC_ACTION {
     SYNC_NOW = 'syncNow',
     SYNC_STATUS = 'syncStatus',
@@ -351,6 +369,23 @@ export enum CONFIG_KEY {
     // Vertical position of the subtitle overlay, percent of player height
     // measured from the bottom edge (user-draggable, persisted).
     VIDEO_SUBTITLE_POSITION = 'videoSubtitlePosition',
+
+    // --- Website translation rules (main/siteRules/) ------------------------
+    // Master switch for the whole rule system. Default on.
+    SITE_RULE_SWITCH = 'siteRuleSwitch',
+    // SiteRule[] — the user's own rules, in full. The only tier whose content
+    // is cloud-synced; system/subscription rules sync only their on/off state.
+    SITE_RULE_USER = 'siteRuleUser',
+    // Whether the built-in (system) rule package participates at all.
+    SITE_RULE_SYSTEM_ENABLED = 'siteRuleSystemEnabled',
+    // refKey strings (`<source>#<id>`) the user switched off. One flat list
+    // across system and subscription tiers — a bare id is not unique across
+    // sources, see main/siteRules/types.ts.
+    SITE_RULE_DISABLED_IDS = 'siteRuleDisabledIds',
+    // SiteRuleSubscription[] — subscription URLs plus their on/off state and
+    // last-fetch metadata. The fetched rule text itself is NOT here (and not
+    // synced): it lives under the `__site_rule_cache` internal key.
+    SITE_RULE_SUBSCRIPTIONS = 'siteRuleSubscriptions',
 }
 
 export const DEFAULT_VALUE = {
@@ -393,7 +428,27 @@ export const DEFAULT_VALUE = {
     // not do, the control bar being a different share of the height at every
     // player size.
     VIDEO_SUBTITLE_POSITION: 8,
+    SITE_RULE_SWITCH: true,
+    SITE_RULE_SYSTEM_ENABLED: true,
+    // Module-level constants, not inline literals: `useConfig` feeds its default
+    // straight into useSyncExternalStore, where a fresh array per render loops.
+    SITE_RULE_USER: [] as unknown[],
+    SITE_RULE_DISABLED_IDS: [] as string[],
+    SITE_RULE_SUBSCRIPTIONS: [] as unknown[],
 } as const;
+
+/**
+ * The official rule package, offered as a built-in subscription that cannot be
+ * removed (only disabled). The bundled baseline in assets/rules/system.json
+ * keeps the feature working offline and on first install; a successful fetch of
+ * a NEWER package replaces the baseline wholesale, so "System rules" always
+ * shows exactly one package rather than a merge of two.
+ */
+export const SITE_RULE_OFFICIAL_URL =
+    'https://raw.githubusercontent.com/linuxscreen/duo-translator-rules/main/rules.json';
+
+/** How often background refreshes every enabled subscription. */
+export const SITE_RULE_REFRESH_MINUTES = 24 * 60;
 
 /** Display modes for video bilingual subtitles. */
 export enum VIDEO_SUBTITLE_DISPLAY_MODE {

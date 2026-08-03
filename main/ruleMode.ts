@@ -263,6 +263,25 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
         }
     }
 
+    /** Add a selector to the live rule list the marking scan reads. */
+    function rememberRule(selector: string) {
+        if (!shareConfig.rules.includes(selector)) shareConfig.rules.push(selector);
+        shareConfig.rulesVersion++;
+    }
+
+    /**
+     * Drop a selector from the live rule list.
+     *
+     * The in-memory splice is the point: persisting the delete alone left the
+     * selector matching for the rest of the session, so a deselected region
+     * stayed untranslated until the page was reloaded.
+     */
+    function forgetRule(selector: string) {
+        const at = shareConfig.rules.indexOf(selector);
+        if (at >= 0) shareConfig.rules.splice(at, 1);
+        shareConfig.rulesVersion++;
+    }
+
     function removeNoTranslateMark(element: Element) {
         unmarkNoTranslate(element);
         // The element itself may be the paragraph (rule targets resolve to
@@ -284,6 +303,7 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
             // save to db
             let selector = getCssSelectorString(ele)
             deleteRuleFromDB(domainWithPort, selector)
+            forgetRule(selector)
             // remove the no-translate mark
             removeNoTranslateMark(ele)
         } else {
@@ -292,7 +312,9 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
             while (parent) {
                 if (parent.classList.contains("duo-selected")) {
                     parent.classList.remove("duo-selected")
-                    deleteRuleFromDB(domainWithPort, getCssSelectorString(parent))
+                    const parentSelector = getCssSelectorString(parent)
+                    deleteRuleFromDB(domainWithPort, parentSelector)
+                    forgetRule(parentSelector)
                     removeNoTranslateMark(parent)
                     return
                 }
@@ -310,11 +332,12 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
                 // save to db
                 let selector = getCssSelectorString(child as HTMLElement)
                 await deleteRuleFromDB(domainWithPort, selector)
+                forgetRule(selector)
                 removeNoTranslateMark(child)
             }
             const selector = getCssSelectorString(ele)
             await addRuleToDB(domainWithPort, selector)
-            shareConfig.rules.push(selector)
+            rememberRule(selector)
             markNoTranslate(ele)
             setNeedsTranslate(ele, false)
             paragraphsUnder(ele).forEach((element) => {

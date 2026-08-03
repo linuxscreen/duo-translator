@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Duo Translator e2e — website translation rules</title>
+    <style>
+        /* The clamp injectCss is expected to lift. Two lines at 20px line-height. */
+        #clamped {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            line-height: 20px;
+        }
+    </style>
+</head>
+<body>
+    <header id="masthead">
+        <p id="masthead-text">Header text that lives outside the main content area.</p>
+    </header>
+
+    <main id="main">
+        <p id="wanted">This paragraph is inside the main content area and should be translated.</p>
+        <div id="ads">
+            <p id="ad-text">This advertisement sits inside main but must never be translated.</p>
+        </div>
+    </main>
+
+    <aside id="aside">
+        <p id="unwanted">This sidebar paragraph is outside the main content area.</p>
+    </aside>
+
+    <p id="clamped">A clamped card title that would otherwise cut its translation off.</p>
+
+    <script>
+        // Page-identity marker for matchSelectors. Present from the start with
+        // ?ready=1 (the server-rendered case), otherwise flipped later by
+        // __markReady() to stand in for hydration / a client-side view swap.
+        if (location.search.includes('ready=1')) document.body.classList.add('spa-ready');
+        window.__markReady = function () {
+            document.body.classList.add('spa-ready');
+        };
+
+        // Append a paragraph inside the include root after load, so the spec can
+        // check the MutationObserver path honours includeSelectors too.
+        window.__addInsideMain = function () {
+            const p = document.createElement('p');
+            p.id = 'late';
+            p.textContent = 'This paragraph was added to main after the initial scan.';
+            document.querySelector('#main').appendChild(p);
+        };
+        window.__addOutsideMain = function () {
+            const p = document.createElement('p');
+            p.id = 'late-outside';
+            p.textContent = 'This paragraph was added outside main after the initial scan.';
+            document.querySelector('#aside').appendChild(p);
+        };
+    </script>
+</body>
+</html>

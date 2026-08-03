@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, Check, Trash2, AlertTriangle } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, Trash2, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import {
   ACTION,
@@ -70,7 +70,12 @@ function broadcastStyleChanged() {
   void sendMessageToAllTabs({ action: ACTION.STYLE_CHANGED });
 }
 
-export function TranslationPage() {
+type TranslationPageProps = {
+  /** Opens the website-rules sub-page. Routing lives in App.tsx. */
+  onOpenSiteRules: () => void;
+};
+
+export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   const { t } = useTranslation();
 
   // Settings (migrated from SettingsPage)
@@ -637,6 +642,19 @@ export function TranslationPage() {
                 ))}
               </SelectContent>
             </Select>
+          }
+        />
+        <SettingRow
+          label={t('websiteTranslationRules', 'Website translation rules')}
+          hint={t(
+            'websiteTranslationRulesHint',
+            'Per-site rules for which areas to translate, which to skip, and what CSS to inject',
+          )}
+          control={
+            <Button variant="outline" size="sm" onClick={onOpenSiteRules}>
+              {t('manage', 'Manage')}
+              <ChevronRight className="h-3.5 w-3.5" strokeWidth={1.8} />
+            </Button>
           }
         />
       </div>

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "name": "DuoTranslator Built-in Rules",
+  "updatedAt": "2026-08-03T00:00:00Z",
+  "rules": [
+    {
+      "id": "github-code-view",
+      "name": "GitHub",
+      "description": "Skip the code viewer, diffs and the file tree — identifiers are not prose and translating them makes the page unreadable.",
+      "includeUrls": "*://github.com/*",
+      "excludeSelectors": [
+        ".react-code-text",
+        ".blob-code",
+        ".diff-table",
+        "[data-testid=\"repos-file-tree-container\"]",
+        ".file-navigation"
+      ]
+    },
+    {
+      "id": "hackernews-meta",
+      "name": "Hacker News",
+      "description": "Skip the score/age/comment-count lines and the top navigation.",
+      "includeUrls": "*://news.ycombinator.com/*",
+      "excludeSelectors": [".subtext", ".pagetop", ".hnname"]
+    },
+    {
+      "id": "wikipedia-apparatus",
+      "name": "Wikipedia",
+      "description": "Skip references, navigation boxes and the [edit] links; keep the article body.",
+      "includeUrls": "*://*.wikipedia.org/*",
+      "excludeSelectors": [
+        ".reflist",
+        ".mw-references-wrap",
+        ".mw-editsection",
+        ".navbox",
+        "#mw-navigation",
+        "#footer"
+      ]
+    },
+    {
+      "id": "youtube-title-clamp",
+      "name": "YouTube — unclamp video titles",
+      "description": "Grid and sidebar titles are clamped to two lines, which cuts the translation off. Lift the clamp while the page is translated.",
+      "includeUrls": "*://www.youtube.com/*",
+      "excludeSelectors": ["#chips-wrapper", "ytd-thumbnail-overlay-time-status-renderer"],
+      "injectCss": "ytd-rich-grid-media #video-title, ytd-compact-video-renderer #video-title, ytd-video-renderer #video-title { -webkit-line-clamp: unset !important; max-height: none !important; }"
+    }
+  ]
+}

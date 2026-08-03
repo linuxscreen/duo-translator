@@ -7,6 +7,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { SettingsPage } from './pages/SettingsPage';
 import { ShortcutsPage } from './pages/ShortcutsPage';
 import { TranslationPage } from './pages/TranslationPage';
+import { SiteRulesPage } from './pages/SiteRulesPage';
 import { AiWritingPage } from './pages/AiWritingPage';
 import { VideoSubtitlePage } from './pages/VideoSubtitlePage';
 import { browser } from 'wxt/browser';
@@ -23,25 +24,41 @@ type Tab = {
 
 const VALID_TABS: TabId[] = ['settings', 'services', 'translation', 'aiWriting', 'videoSubtitle', 'shortcuts'];
 
-function getInitialTab(): TabId {
-  const hash = window.location.hash.replace(/^#/, '') as TabId;
-  return VALID_TABS.includes(hash) ? hash : 'settings';
+/** Sub-pages, addressed as `#<tab>/<sub>`. Only the Translation tab has one so far. */
+type SubId = 'siteRules';
+const VALID_SUBS: SubId[] = ['siteRules'];
+
+type Route = { tab: TabId; sub: SubId | null };
+
+/**
+ * Two-segment hash route. The first segment is still the sidebar tab, so every
+ * existing `#services`-style link keeps working; a second segment opens a
+ * sub-page inside that tab.
+ */
+function parseRoute(): Route {
+  const [rawTab, rawSub] = window.location.hash.replace(/^#/, '').split('/');
+  const tab = (VALID_TABS as string[]).includes(rawTab) ? (rawTab as TabId) : 'settings';
+  const sub = (VALID_SUBS as string[]).includes(rawSub) ? (rawSub as SubId) : null;
+  return { tab, sub };
 }
 
 export default function App() {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<TabId>(getInitialTab);
+  const [route, setRoute] = useState<Route>(parseRoute);
+  const { tab, sub } = route;
 
   // Allow in-page navigation between tabs via the URL hash (e.g. the AI Writing
   // page's "Configure" notice jumps to the Services tab).
   useEffect(() => {
-    const onHashChange = () => {
-      const hash = window.location.hash.replace(/^#/, '') as TabId;
-      if (VALID_TABS.includes(hash)) setTab(hash);
-    };
+    const onHashChange = () => setRoute(parseRoute());
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
+
+  const navigate = (next: Route) => {
+    setRoute(next);
+    window.history.replaceState(null, '', `#${next.tab}${next.sub ? `/${next.sub}` : ''}`);
+  };
 
   const tabs: Tab[] = [
     {
@@ -120,10 +137,7 @@ export default function App() {
                 <button
                   key={it.id}
                   type="button"
-                  onClick={() => {
-                    setTab(it.id);
-                    window.history.replaceState(null, '', `#${it.id}`);
-                  }}
+                  onClick={() => navigate({ tab: it.id, sub: null })}
                   className={cn(
                     'group relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px]',
                     'transition-colors duration-150',
@@ -153,11 +167,18 @@ export default function App() {
         {/* Right content */}
         <main className="min-w-0 flex-1">
           <h1 className="mb-4 text-[18px] font-semibold tracking-tight text-ink">
-            {tabs.find((x) => x.id === tab)?.label}
+            {sub === 'siteRules'
+              ? t('websiteTranslationRules', 'Website translation rules')
+              : tabs.find((x) => x.id === tab)?.label}
           </h1>
           {tab === 'settings' && <SettingsPage />}
           {tab === 'services' && <ServicesPage />}
-          {tab === 'translation' && <TranslationPage />}
+          {tab === 'translation' &&
+            (sub === 'siteRules' ? (
+              <SiteRulesPage onBack={() => navigate({ tab: 'translation', sub: null })} />
+            ) : (
+              <TranslationPage onOpenSiteRules={() => navigate({ tab: 'translation', sub: 'siteRules' })} />
+            ))}
           {tab === 'aiWriting' && <AiWritingPage />}
           {tab === 'videoSubtitle' && <VideoSubtitlePage />}
           {tab === 'shortcuts' && <ShortcutsPage />}

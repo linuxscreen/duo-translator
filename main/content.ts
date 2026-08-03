@@ -19,6 +19,14 @@ import { readConfig } from "@/utils/reactiveConfig";
 import { getDomainWithPortFromUrl } from "@/utils/url";
 import { getAiTranslateService, getTranslateService } from "@/utils/service";
 import { buildTranslationCss } from "@/main/css";
+import {
+    compileCandidates,
+    fetchSiteRuleCandidates,
+    hasConditionalRules,
+    unmatchedConditions,
+} from "@/main/siteRules/siteRuleClient";
+import { compileSelectorList } from "@/main/siteRules/selectors";
+import { EMPTY_CANDIDATES, EMPTY_COMPILED, type CompiledSiteRules, type SiteRuleCandidates } from "@/main/siteRules/types";
 import { isEditable, isNotMarkElement, isNotTranslateElement } from "@/main/dom/predicates";
 import { getTextNodesAndText, getTextNodesAndTextOfNodes, isContainsValidTextElement, removeDuoClassAndAttribute, removeTextNodes } from "@/main/dom/textNodes";
 import {
@@ -69,6 +77,13 @@ export async function content() {
     // reliably usable (reading it yields undefined → "not iterable"). On Firefox
     // we use a plain <style> node instead; Chrome keeps the adoptedStyleSheets path.
     let translationStyleElement: HTMLStyleElement | null = null
+
+    // A THIRD sheet, separate from the two above, carrying the `injectCss` of
+    // the matched website rules. Separate because `replaceSync` replaces a
+    // sheet's whole rule set — sharing one sheet would make every style-config
+    // change wipe the rule CSS and vice versa. Same Firefox branch as above.
+    let siteRuleStyleSheet: CSSStyleSheet | null = null
+    let siteRuleStyleElement: HTMLStyleElement | null = null
 
     let batchElements: HTMLElement[] = [];
     let batchTimer: NodeJS.Timeout | null = null
@@ -160,6 +175,18 @@ export async function content() {
     // translated elements of SINGLE view strategy
     // SINGLE: one TranslateResult per translated unit, grouped by container.
     let translatedElementMap = new Map<HTMLElement, TranslateResult[]>()
+    // Website rules, matched against THIS frame's own URL — a rule's selectors
+    // are written against one document, and this frame's URL is what identifies
+    // that document. (Per-domain strategy below deliberately uses the TOP
+    // domain instead: different question, different answer.)
+    //
+    // Started here but NOT awaited on the startup path. Everything awaited
+    // before the document event listeners are registered delays them, and the
+    // double-tap gesture is then lost for pages the user acts on immediately;
+    // the rules are not needed until the first marking scan, so the await sits
+    // in initTranslate. Kicking the request off now means it has resolved long
+    // before then.
+    const siteRuleCandidatesPromise = fetchSiteRuleCandidates(currentUrl)
     // get all config from storage
     let [rules, viewStrategy, targetLanguageConfig, translateServiceConfig, globalSwitch, defaultStrategy,
         rawDomainStrategy, floatBallSwitch, bilingualHighlightingSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey,
@@ -182,12 +209,24 @@ export async function content() {
                 getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
                 getConfig(CONFIG_KEY.AI_TARGET_LANGUAGE),
                 getConfig(CONFIG_KEY.CONTEXT_MENU_SWITCH),
-                getSessionStorage(tabTranslateStatusKey)
+                getSessionStorage(tabTranslateStatusKey),
             ]
         )
     translateStatus = !!translateStatusConfig
     rules = rules || []
     shareConfig.rules = rules
+    // Pre-join once instead of `rules.join(",")` per visited element, and drop
+    // selectors the engine rejects — one malformed selector used to make
+    // `el.matches()` throw for the whole list, silently disabling every rule.
+    let legacyRuleSelector = compileSelectorList(rules, "no-translate")
+    let legacyRuleVersion = shareConfig.rulesVersion
+    // Website rules arrive as candidates (URL-matched only); their
+    // `matchSelectors` conditions are evaluated against the live document, here
+    // and again once per scan cycle. Populated by awaitSiteRules() from
+    // initTranslate — see siteRuleCandidatesPromise above for why not here.
+    let siteRuleCandidates: SiteRuleCandidates = EMPTY_CANDIDATES
+    let siteRulesConditional = false
+    let siteRules: CompiledSiteRules = EMPTY_COMPILED
     let translateService = (await getTranslateService(translateServiceConfig)).activeService
     let aiTranslateService = (await getAiTranslateService(aiTranslateServiceKey)).activeService
     let parsedAiTranslateService = parseTranslateServiceKey(aiTranslateService)
@@ -945,6 +984,20 @@ export async function content() {
         if (processingActive) return;
         processingActive = true;
         try {
+            // Cheapest possible SPA-navigation detector: one string compare on
+            // a callback the DOM already woke us for. A soft navigation changes
+            // which website rules match (`/item*` and friends), and without
+            // this the whole URL dimension would be dead on SPAs. No history
+            // patching, no extra permission, no timer.
+            if (window.location.href !== currentUrl) {
+                currentUrl = window.location.href;
+                await refreshSiteRules(currentUrl);
+            } else if (siteRulesConditional && refreshCompiledSiteRules() && translateStatus) {
+                // A page-identity marker changed without the URL changing
+                // (hydration, a client-side view swap). Re-probing costs one
+                // querySelector per conditional rule, once per scan cycle.
+                applySiteRuleCss();
+            }
             // console.log("processPendingMutations ", pendingMarkRoots.size);
             // Drain in waves: roots added during our async work get picked up
             // on the next iteration of the outer loop.
@@ -1095,6 +1148,9 @@ export async function content() {
     }
 
     async function initTranslate() {
+        // The first marking scan is the earliest consumer of the website rules,
+        // so this is where the request started at entry is collected.
+        await awaitSiteRules()
         startObserveDom()
         let htmlElements = await markParagraphElement(document.body);
         let shouldTranslate = false
@@ -1120,8 +1176,13 @@ export async function content() {
             const tabTranslated = await getSessionStorage(tabTranslateStatusKey)
             if (tabTranslated === true) shouldTranslate = true
         }
+        warnOnRuleMiss()
         if (shouldTranslate || translateStatus) {
             await updateTranslateStatus(true, !translateStatus)
+            // updateTranslateStatus returns early when the status is already
+            // true (a tab restored mid-session), so the CSS needs applying here
+            // as well. Idempotent.
+            applySiteRuleCss()
             // Push the decision to sub-frames as an explicit TRANSLATE instead
             // of relying on them winning the session-storage race: a sub-frame
             // whose catch-up read (above) ran BEFORE we persisted the status
@@ -1136,6 +1197,44 @@ export async function content() {
         }
     }
 
+    /**
+     * Report website rules whose selectors found nothing. Both directions fail
+     * silently in the DOM, and one of them fails in the dangerous direction:
+     *
+     * - `includeSelectors` missing → the page is not translated at all. Loud in
+     *   effect but indistinguishable from "the extension is broken".
+     * - `matchSelectors` missing → the whole rule is skipped, so the page IS
+     *   translated, just without the exclusions the rule meant to apply. Nothing
+     *   looks wrong at all — this line is the only signal.
+     *
+     * Deferred to `load`: a marker that the SPA has not rendered yet is normal,
+     * and the per-scan re-probe picks it up when it appears. Only a still-empty
+     * match after load is worth reporting.
+     */
+    function warnOnRuleMiss() {
+        const includeSelector = siteRules.includeSelector
+        const conditional = siteRulesConditional
+        if (!includeSelector && !conditional) return
+        const check = () => {
+            if (includeSelector && !document.querySelector(includeSelector)) {
+                console.warn(
+                    APP_NAME_WITH_SUFFIX,
+                    `website rule includeSelectors matched no element — nothing on this page will be translated.`,
+                    { selector: includeSelector, rules: siteRules.matchedIds },
+                )
+            }
+            for (const rule of unmatchedConditions(siteRuleCandidates)) {
+                console.warn(
+                    APP_NAME_WITH_SUFFIX,
+                    `website rule "${rule.key}" is inactive: none of its matchSelectors matched this page.`,
+                    { matchSelectors: rule.matchSelectors },
+                )
+            }
+        }
+        if (document.readyState === 'complete') check()
+        else window.addEventListener('load', check, { once: true })
+    }
+
     async function initCSS() {
         // Rule mode style stays as a <style> element — it never changes after
         // init so the cost of adoptedStyleSheets bookkeeping isn't worth it.
@@ -1148,8 +1247,127 @@ export async function content() {
         await updateStyle()
     }
 
+    /** Join two already-validated selector strings, either of which may be empty. */
+    function joinSelectors(a: string, b: string): string {
+        if (a === "") return b
+        if (b === "") return a
+        return `${a},${b}`
+    }
+
+    /**
+     * `el.matches(selector)` with an empty selector meaning "no". Selectors
+     * reaching here were validated by compileSelectorList, but a page can still
+     * put an element in a state the engine rejects, so it stays defensive —
+     * without the old failure mode where the throw disabled every rule at once
+     * (the malformed entry is now dropped at compile time, not caught here).
+     */
+    function matchesSelector(el: HTMLElement, selector: string): boolean {
+        if (selector === "") return false
+        try {
+            return el.matches(selector)
+        } catch (e) {
+            console.warn(APP_NAME_WITH_SUFFIX, "selector match failed", selector, e)
+            return false
+        }
+    }
+
+    /**
+     * Apply the matched rules' `injectCss`.
+     *
+     * Called when the page actually starts translating and undone on restore:
+     * these declarations exist to make room for a translation (lifting a
+     * `-webkit-line-clamp`, say), so changing an untranslated page's appearance
+     * would be us overreaching.
+     */
+    function applySiteRuleCss() {
+        const css = siteRules.injectCss
+        if (!css) {
+            removeSiteRuleCss()
+            return
+        }
+        if (!siteRuleStyleSheet && !siteRuleStyleElement) {
+            if (import.meta.env.FIREFOX) {
+                siteRuleStyleElement = document.createElement('style')
+                siteRuleStyleElement.id = 'duo-site-rule-style'
+                document.head.appendChild(siteRuleStyleElement)
+            } else {
+                siteRuleStyleSheet = new CSSStyleSheet()
+                document.adoptedStyleSheets = [...document.adoptedStyleSheets, siteRuleStyleSheet]
+            }
+        }
+        if (siteRuleStyleSheet) {
+            siteRuleStyleSheet.replaceSync(css)
+        } else if (siteRuleStyleElement) {
+            siteRuleStyleElement.textContent = css
+        }
+    }
+
+    function removeSiteRuleCss() {
+        if (siteRuleStyleSheet) {
+            document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
+                (s) => s !== siteRuleStyleSheet,
+            )
+            siteRuleStyleSheet = null
+        }
+        if (siteRuleStyleElement) {
+            siteRuleStyleElement.remove()
+            siteRuleStyleElement = null
+        }
+    }
+
+    /**
+     * Re-evaluate the candidates' `matchSelectors` conditions against the DOM as
+     * it is right now, and recompile. Returns true when the effective rule set
+     * changed.
+     *
+     * A condition is a LIVE predicate, not a one-shot gate — that distinction is
+     * the whole point. Evaluated once at content start it would silently mis-fire
+     * on anything whose page-identity marker is not in the initial HTML, and the
+     * failure direction is the bad one: the rule quietly does not apply, so the
+     * page gets translated *without* its intended exclusions, and nothing looks
+     * wrong. (Contrast `includeSelectors` missing, which is loud — nothing gets
+     * translated at all.)
+     *
+     * Cost is one `querySelector` per conditional candidate per scan cycle —
+     * typically zero, at worst a handful.
+     */
+    /**
+     * Take delivery of the candidate set started at content-script entry and
+     * compile it. Idempotent — awaiting a settled promise costs a microtask.
+     */
+    async function awaitSiteRules() {
+        siteRuleCandidates = await siteRuleCandidatesPromise
+        siteRulesConditional = hasConditionalRules(siteRuleCandidates)
+        refreshCompiledSiteRules()
+    }
+
+    function refreshCompiledSiteRules(): boolean {
+        const next = compileCandidates(siteRuleCandidates)
+        const changed = next.includeSelector !== siteRules.includeSelector
+            || next.excludeSelector !== siteRules.excludeSelector
+            || next.injectCss !== siteRules.injectCss
+        siteRules = next
+        return changed
+    }
+
+    /**
+     * Re-resolve the rules after an SPA route change.
+     *
+     * Only the URL matters here — rules edited in Options deliberately take
+     * effect on the next page load, so there is no broadcast to handle. Already
+     * marked content is left alone: a route change replaces the DOM, and the
+     * MutationObserver marks the replacement with the new rules.
+     */
+    async function refreshSiteRules(url: string) {
+        siteRuleCandidates = await fetchSiteRuleCandidates(url)
+        siteRulesConditional = hasConditionalRules(siteRuleCandidates)
+        refreshCompiledSiteRules()
+        if (translateStatus) applySiteRuleCss()
+    }
+
     async function removeCSS() {
         document.getElementById('rule-mode-style')?.remove()
+        removeSiteRuleCss()
         if (translationStyleSheet) {
             document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
                 (s) => s !== translationStyleSheet,
@@ -1233,6 +1451,12 @@ export async function content() {
         if (translateStatus === status) {
             return
         }
+        // The rules' injectCss follows the translate status exactly, and this is
+        // the one place every entry point funnels through (popup, shortcut,
+        // float ball, context menu, auto-translate, sub-frame relays). Placed
+        // above the isTopFrame gate on purpose: a sub-frame's own document
+        // needs its rule CSS too.
+        if (status) applySiteRuleCss(); else removeSiteRuleCss()
         // Sub-frames mirror the status locally only — the tab-level session
         // record, the float ball, and the popup/badge broadcast are owned by
         // the top frame. If sub-frames wrote/broadcast too, they'd clobber the
@@ -1613,6 +1837,22 @@ export async function content() {
         let notTranslate = false;
         const rawElement = element;
         const collectElements: HTMLElement[] = [];
+        // Website rules, resolved for this frame's URL. `excludeSelector` is
+        // merged with the legacy per-host list (both mean "never translate in
+        // here"); `includeSelector` is the positive gate — when non-empty, only
+        // content inside a matching subtree is marked as needing translation.
+        // Rule mode edits the per-host list in place while the page is open;
+        // recompile only when it says something changed (once per scan at
+        // most, never per element).
+        if (legacyRuleVersion !== shareConfig.rulesVersion) {
+            legacyRuleVersion = shareConfig.rulesVersion;
+            legacyRuleSelector = compileSelectorList(shareConfig.rules, "no-translate");
+        }
+        const excludeSelector = joinSelectors(legacyRuleSelector, siteRules.excludeSelector);
+        const includeSelector = siteRules.includeSelector;
+        // With no include restriction the flag is true everywhere and every
+        // `matches()` below is skipped outright.
+        let inInclude = includeSelector === "";
 
         // Walk up — looking for an enclosing paragraph mark (early return) or
         // an isNotTranslateElement ancestor (sets the flag for descent).
@@ -1625,6 +1865,10 @@ export async function content() {
             const p = parentElements[i];
             if (isNotMarkElement(p)) return collectElements;
             if (!notTranslate && isNotTranslateElement(p)) notTranslate = true;
+            // Accumulate the include flag here too: a mutation-driven re-scan
+            // starts deep inside the include region, and without this walk it
+            // would look like it is outside one.
+            if (!inInclude && matchesSelector(p, includeSelector)) inInclude = true;
             if (isParagraph(p)) {
                 if (isMixedParagraph(p)) {
                     // Mixed container: a mutation under one of its block-ish
@@ -1636,15 +1880,15 @@ export async function content() {
                         continue;
                     }
                 }
-                if (!notTranslate) collectElements.push(p);
+                if (!notTranslate && inInclude) collectElements.push(p);
                 return collectElements;
             }
         }
 
         // Iterative DFS via a stack. Children are pushed in reverse order so
         // pop-order matches the original left-to-right recursion.
-        type Frame = { el: HTMLElement; notTranslate: boolean; depth: number };
-        const stack: Frame[] = [{ el: rawElement, notTranslate, depth: 0 }];
+        type Frame = { el: HTMLElement; notTranslate: boolean; inInclude: boolean; depth: number };
+        const stack: Frame[] = [{ el: rawElement, notTranslate, inInclude, depth: 0 }];
         let chunkStart = performance.now();
 
         while (stack.length > 0) {
@@ -1655,6 +1899,7 @@ export async function content() {
             const frame = stack.pop()!;
             const el = frame.el;
             let nt = frame.notTranslate;
+            let inc = frame.inInclude;
             const depth = frame.depth;
 
             if (depth > MARK_MAX_DEPTH) continue;
@@ -1662,18 +1907,16 @@ export async function content() {
             if (!el.isConnected) continue;
             if (isNotMarkElement(el)) continue;
             if (!nt && isNotTranslateElement(el)) nt = true;
-            if (!nt && rules?.length > 0) {
-                try {
-                    if (el.matches(rules.join(","))) {
-                        // Cache the positive rule match so re-scans of this
-                        // subtree short-circuit via isNotTranslateElement.
-                        markNoTranslate(el);
-                        nt = true
-                    }
-                } catch (e) {
-                    console.warn(APP_NAME_WITH_SUFFIX, "markParagraphElement matches failed", e);
-                }
+            if (!nt && matchesSelector(el, excludeSelector)) {
+                // Cache the positive rule match so re-scans of this
+                // subtree short-circuit via isNotTranslateElement.
+                markNoTranslate(el);
+                nt = true
             }
+            // The positive gate. NOT a `continue` when still outside: the
+            // include root may be further down, so the walk keeps descending
+            // and only withholds the needs-translate flag on the way.
+            if (!inc && matchesSelector(el, includeSelector)) inc = true;
 
             if (isEditable(el)) continue;
 
@@ -1695,15 +1938,15 @@ export async function content() {
             // refreshing `mixed` is what lets cleanupParagraphMarks sweep the
             // marks nested underneath it.
             if (seg.units.length > 0 || isParagraph(el)) {
-                markParagraph(el, !nt, seg.descendChildren.length > 0);
-                if (!nt && seg.units.some(u => !u.translated)) collectElements.push(el);
+                markParagraph(el, !nt && inc, seg.descendChildren.length > 0);
+                if (!nt && inc && seg.units.some(u => !u.translated)) collectElements.push(el);
             }
             // Push in reverse so pop order = forward visit. Skip children the
             // page detached while we were yielding.
             for (let j = seg.descendChildren.length - 1; j >= 0; j--) {
                 const child = seg.descendChildren[j];
                 if (child.parentElement === el) {
-                    stack.push({ el: child, notTranslate: nt, depth: depth + 1 });
+                    stack.push({ el: child, notTranslate: nt, inInclude: inc, depth: depth + 1 });
                 }
             }
         }
@@ -2115,10 +2358,17 @@ export async function content() {
 export const shareConfig: {
     aiTranslateServiceChoice: TranslateServiceChoice,
     aiTargetLanguage: string,
-    rules: string[]
+    rules: string[],
+    /**
+     * Bumped by rule mode on every add/remove so the marking scan knows to
+     * recompile its joined selector string. Without it, a removed selector kept
+     * matching for the rest of the session (rule mode only ever pushed, never
+     * spliced) and the user had to reload to see their own deletion take effect.
+     */
+    rulesVersion: number,
 } = {
     aiTranslateServiceChoice: { kind: 'trans', service: DEFAULT_VALUE.AI_TRANSLATE_SERVICE },
-    aiTargetLanguage: DEFAULT_VALUE.AI_TARGET_LANGUAGE, rules: []
+    aiTargetLanguage: DEFAULT_VALUE.AI_TARGET_LANGUAGE, rules: [], rulesVersion: 0
 };
 
 /**
