@@ -7,13 +7,17 @@
 // back to the marking scan so nested paragraphs (<li>, <p>, …) become units of
 // their own.
 //
-// A run becomes a unit when it holds translatable text *anywhere inside it* —
-// not only in a direct child text node. That is what makes
+// A run with no direct text of its own can still become a unit, but only when
+// *every* element in it is mergeable (`isMergeableInline`: an all-inline subtree
+// whose every leaf is a non-blank text node). That is what makes
 // `<div><span>Hello </span><span>world</span></div>` one sentence-sized unit
-// instead of one translation per span; the old "container must own >= 1 valid
-// direct text node" gate (isParagraphElement) is gone. See `flushRun` for the
-// four ordered criteria, including the lone-inline-wrapper unwrap that keeps
-// containers tight and translation-cache keys byte-compatible.
+// instead of one translation per span, while keeping runs that are really page
+// structure — a nested block, an `<img>`, an inline-block chip — out of the
+// merge; those are descended into and become containers of their own. The old
+// "container must own >= 1 valid direct text node" gate (isParagraphElement) is
+// gone. See `flushRun` for the four ordered criteria, including the
+// lone-inline-wrapper unwrap that keeps containers tight and translation-cache
+// keys byte-compatible.
 //
 // Units are *derived data* — recomputed from the live DOM on every call,
 // never stored. "Already translated" is likewise derived from the presence of
@@ -27,7 +31,7 @@ import {
     SEGMENT_BR_SPLIT_MIN,
 } from "@/main/constants";
 import { contentValid } from "@/utils/dom";
-import { hasTranslatableText } from "@/main/dom/textNodes";
+import { isEditable, isExcludedNodeType } from "@/main/dom/predicates";
 
 /**
  * Exclusive boundary anchors of a translation unit among its container's direct
@@ -157,6 +161,82 @@ export function isSegmentBoundary(el: HTMLElement): boolean {
     return walker.nextNode() !== null;
 }
 
+/**
+ * Whether `el` renders as a plain inline box. Strictly `display: inline` —
+ * `inline-block` / `inline-flex` / `inline-grid` are excluded on purpose: they
+ * are atomic boxes, laid out as a single unbreakable rectangle rather than as
+ * text flowing with its neighbours, so their content is not part of the
+ * surrounding sentence. `display: contents` is excluded too (it generates no box
+ * of its own, and what its children render as is already the boundary
+ * question `isBlockBoundary` answers).
+ *
+ * Detached elements / environments without computed style fall back to the
+ * static tag set, the same degradation `isBlockBoundary` uses.
+ *
+ * Cached like `isBlockBoundary`, and for the same reason squared: `display`
+ * rarely changes at runtime, a stale hit only degrades to static-tag precision,
+ * and `isMergeableInline` asks this of *every element in a run's subtree* on
+ * *every* scan — uncached that is one `getComputedStyle` per element per scan.
+ */
+const inlineBoxCache = new WeakMap<Element, boolean>();
+
+function isInlineBox(el: HTMLElement): boolean {
+    const cached = inlineBoxCache.get(el);
+    if (cached !== undefined) return cached;
+    const display = computedDisplay(el);
+    const result =
+        display === undefined
+            ? !blockTagSet.has(el.tagName.toLowerCase())
+            : display === "inline";
+    inlineBoxCache.set(el, result);
+    return result;
+}
+
+/**
+ * Whether `el` may be merged into a sibling run — the gate on run merging
+ * (criterion 3 in `flushRun`). Two conditions on the whole subtree, `el`
+ * included:
+ *
+ *   1. **every element in it is an inline box** — one block/inline-block
+ *      descendant anywhere and the element is out (`<a><span>a</span><div/></a>`);
+ *   2. **every leaf is a non-blank text node** — an element that bottoms out in
+ *      anything else contributes a box the merged text can't account for, so it
+ *      is out too: `<img>`, an empty `<i></i>`, a `<br>`, an `<svg>`.
+ *
+ * Branching is fine (that was the point of merging in the first place):
+ * `<a><span>a</span></a>`, `<a>b<span>a</span></a>` and
+ * `<a><span>a</span><span>b</span></a>` all qualify.
+ *
+ * Non-element nodes other than text — comments in particular — are simply
+ * skipped: they render nothing, and a React `<!---->` marker between two spans
+ * must not disqualify ordinary markup. Blank text nodes are skipped the same way
+ * (the whitespace in `<span> <b>x</b> </span>`), but they cannot satisfy
+ * condition 2 on their own — an element with no non-blank text anywhere inside
+ * has nothing to merge and is rejected.
+ *
+ * `excludedTagSet` tags (`<code>`, `<pre>`, `<video>`, `<img>`, …) and editable
+ * subtrees are rejected outright even when they do hold text: the marking scan
+ * refuses to translate them, so their text must not qualify a run either. This
+ * is what keeps `<div><code>foo()</code><code>bar()</code></div>` out of the
+ * merged path.
+ */
+export function isMergeableInline(el: HTMLElement): boolean {
+    if (isExcludedNodeType(el) || isEditable(el)) return false;
+    if (!isInlineBox(el)) return false;
+    let hasText = false;
+    for (const child of el.childNodes) {
+        if (child.nodeType === Node.TEXT_NODE) {
+            if (contentValid(child)) hasText = true;
+            continue;
+        }
+        // Comments and other non-element nodes render nothing — skip them.
+        if (child.nodeType !== Node.ELEMENT_NODE) continue;
+        if (!isMergeableInline(child as HTMLElement)) return false;
+        hasText = true; // a mergeable child always carries text of its own
+    }
+    return hasText;
+}
+
 type NodeKind = "text" | "passive" | "duo-marker" | "br" | "block" | "inline";
 
 function classify(node: ChildNode): NodeKind {
@@ -179,9 +259,9 @@ function classify(node: ChildNode): NodeKind {
 /**
  * Split `container`'s direct children into translation units. Pure DOM read.
  *
- * Runs without a valid direct text node do not become units — their element
- * children are returned in `descendChildren` instead, preserving the legacy
- * descent behavior for containers of nested <span>s.
+ * Runs that do not qualify (see `flushRun`) do not become units — their element
+ * children are returned in `descendChildren` instead, and the marking scan
+ * visits them next.
  */
 export function segmentParagraph(container: HTMLElement): SegmentScan {
     const units: TranslationUnit[] = [];
@@ -210,11 +290,16 @@ export function segmentParagraph(container: HTMLElement): SegmentScan {
         //      (`<div><span>text</span></div>`) so the container stays as tight
         //      as possible, the translation is inserted closest to the text,
         //      and the cache key matches what the whole-element path produced;
-        //   3. no direct text, >= 2 element nodes, and text anywhere inside the
-        //      run → one unit spanning the whole run. This is what makes
-        //      `<div><span>Hello </span><span>world</span></div>` a single
-        //      sentence-sized request instead of one request per span;
-        //   4. no translatable text at all → descend into the run's elements.
+        //   3. no direct text, >= 2 element nodes, and *every* one of them is
+        //      mergeable (see `isMergeableInline`: all-inline subtree, every leaf
+        //      a non-blank text node) → one unit spanning the whole run. This is
+        //      what makes `<div><span>Hello </span><span>world</span></div>` a
+        //      single sentence-sized request instead of one request per span.
+        //      One non-mergeable element is enough to disqualify the run — an
+        //      `<img>` or a nested block between two spans means the run is page
+        //      structure, not one sentence;
+        //   4. anything else → descend into the run's elements, each becoming a
+        //      container of its own.
         //
         // `curTranslated` (an adjacent .duo-translation) qualifies the run on
         // its own, so a re-scan can never descend into our own output and
@@ -225,10 +310,20 @@ export function segmentParagraph(container: HTMLElement): SegmentScan {
         // our own output. The preferred Highlight-API path writes nothing to the
         // page and never produces that shape — the guard is the invariant, not
         // the workaround for one of the two paths.
+        //
+        // Criterion 1 is deliberately NOT gated by the mergeable test: a run
+        // that owns its own sentence ("Use <a>the <b>new</b> API</a> now") is
+        // one paragraph by every reading, and re-cutting it would both split
+        // ordinary prose into three requests and change long-standing
+        // translation-cache keys.
+        //
+        // The merge test sits behind the `||` short-circuit on purpose: the two
+        // cheap flags answer for the overwhelming majority of runs, and this
+        // walks the run's whole subtree.
         const qualifies =
             curHasText ||
             curTranslated ||
-            (elementNodes.length > 1 && elementNodes.some(hasTranslatableText));
+            (elementNodes.length > 1 && elementNodes.every(isMergeableInline));
         if (qualifies) {
             units.push({
                 container,

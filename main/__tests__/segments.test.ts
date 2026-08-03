@@ -9,6 +9,7 @@ import {
     segmentParagraph,
     isBlockBoundary,
     isSegmentBoundary,
+    isMergeableInline,
     hasUntranslatedUnit,
 } from "@/main/dom/segments";
 
@@ -155,6 +156,66 @@ describe("segmentParagraph — run qualification (text anywhere inside the run)"
         const scan = segmentParagraph(div);
         expect(scan.units).toHaveLength(1);
         expect(scan.units[0].nodes).toEqual(Array.from(div.childNodes));
+    });
+
+    it("merges a run of branching but all-inline, all-text elements", () => {
+        const div = el("<div><a><span>a</span><span>b</span></a><a>c<span>d</span></a></div>");
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].nodes).toEqual(Array.from(div.childNodes));
+    });
+
+    it("does NOT merge a run holding an element with a nested block", () => {
+        const div = el("<div><span>lead </span><a><span>a</span><div>b</div></a></div>");
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(0);
+        expect(scan.descendChildren).toEqual([
+            div.querySelector("span"),
+            div.querySelector("a"),
+        ]);
+    });
+
+    it("does NOT merge a run holding an inline-block element", () => {
+        const div = el(
+            '<div><span>lead </span><span style="display:inline-block">chip</span></div>'
+        );
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(0);
+        expect(scan.descendChildren).toEqual(Array.from(div.querySelectorAll(":scope > span")));
+    });
+
+    it("does NOT merge a run holding an <img> — a leaf that is not text", () => {
+        const div = el('<div><span>Hello </span><img src="x"><span>world</span></div>');
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(0);
+        expect(scan.descendChildren).toEqual([
+            div.querySelector("span"),
+            div.querySelector("img"),
+            div.querySelector("span:last-of-type"),
+        ]);
+    });
+
+    it("does NOT merge a run holding a text-less inline wrapper", () => {
+        const div = el("<div><span>Hello </span><i></i><span>world</span></div>");
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(0);
+    });
+
+    it("comments between run elements do not disqualify the merge", () => {
+        const div = el("<div><span>Hello </span><!-- react --><span>world</span></div>");
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].nodes).toEqual(Array.from(div.childNodes));
+    });
+
+    it("a direct text node still carries the whole run, however rich its elements", () => {
+        // Criterion 1 is untouched by the merge gate: this is one sentence, and
+        // its serialization (and cache key) must stay byte-identical.
+        const p = el("<p>Use <a>the <b>new</b> API</a> now</p>");
+        const scan = segmentParagraph(p);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].wholeElement).toBe(true);
+        expect(scan.descendChildren).toHaveLength(0);
     });
 
     it("a highlight-wrapped unit stays one translated unit and is not descended into", () => {
@@ -312,6 +373,61 @@ describe("isBlockBoundary — computed style first, static tag set fallback", ()
         const scan = segmentParagraph(div);
         expect(scan.units).toHaveLength(2);
         expect(scan.descendChildren).toEqual([div.querySelector("span")]);
+    });
+});
+
+describe("isMergeableInline — all-inline subtree, every leaf a non-blank text node", () => {
+    it("accepts a plain inline element holding text", () => {
+        expect(isMergeableInline(el("<span>text</span>"))).toBe(true);
+        expect(isMergeableInline(el("<a>text</a>"))).toBe(true);
+    });
+
+    it("accepts nested and branching inline subtrees", () => {
+        expect(isMergeableInline(el("<b><i><span>text</span></i></b>"))).toBe(true);
+        expect(isMergeableInline(el("<a><span>a</span></a>"))).toBe(true);
+        expect(isMergeableInline(el("<a>b<span>a</span></a>"))).toBe(true);
+        expect(isMergeableInline(el("<a><span>a</span><span>b</span></a>"))).toBe(true);
+    });
+
+    it("skips blank text nodes and comments", () => {
+        expect(isMergeableInline(el("<span> <b>text</b> </span>"))).toBe(true);
+        expect(isMergeableInline(el("<span><!-- react --><b>text</b></span>"))).toBe(true);
+    });
+
+    it("rejects a subtree holding a non-inline box", () => {
+        expect(isMergeableInline(el("<a><span>a</span><div>b</div></a>"))).toBe(false);
+        expect(isMergeableInline(el("<a><p>text</p></a>"))).toBe(false);
+        expect(
+            isMergeableInline(el('<span><span style="display:inline-block">text</span></span>'))
+        ).toBe(false);
+        expect(isMergeableInline(el('<span style="display:block">text</span>'))).toBe(false);
+        expect(isMergeableInline(el('<span style="display:contents">text</span>'))).toBe(false);
+    });
+
+    it("rejects a subtree whose leaf is not a text node", () => {
+        expect(isMergeableInline(el('<a><span>a</span><img src="x"></a>'))).toBe(false);
+        expect(isMergeableInline(el("<a>text<i></i></a>"))).toBe(false);
+        expect(isMergeableInline(el("<a>text<br></a>"))).toBe(false);
+    });
+
+    it("rejects an element with nothing to translate", () => {
+        expect(isMergeableInline(el("<span> </span>"))).toBe(false);
+        expect(isMergeableInline(el("<span></span>"))).toBe(false);
+    });
+
+    it("rejects excluded tags and editable subtrees even when they hold text", () => {
+        expect(isMergeableInline(el("<code>foo()</code>"))).toBe(false);
+        expect(isMergeableInline(el("<span><code>foo()</code></span>"))).toBe(false);
+        expect(isMergeableInline(el("<span><textarea>x</textarea></span>"))).toBe(false);
+    });
+
+    it("falls back to the static tag set for detached elements", () => {
+        const span = document.createElement("span");
+        span.textContent = "text";
+        expect(isMergeableInline(span)).toBe(true);
+        const div = document.createElement("div");
+        div.textContent = "text";
+        expect(isMergeableInline(div)).toBe(false);
     });
 });
 
