@@ -202,10 +202,8 @@ export abstract class TranslateService {
 // DeepL and the TTS fetches.
 
 const GOOGLE_TRANSLATE_URL = "https://translate-pa.googleapis.com/v1/translateHtml";
-const MS_TRANSLATE_URL =
-    "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&includeSentenceLength=true&";
-const MS_DETECT_URL =
-    "https://api-edge.cognitive.microsofttranslator.com/detect?api-version=3.0";
+const MS_TRANSLATE_URL = "https://edge.microsoft.com/translate/translatetext?isEnterpriseClient=false&"
+const MS_DETECT_URL = `${MS_TRANSLATE_URL}to=en`
 const DEEPL_FREE_URL = "https://api-free.deepl.com/v2/translate";
 const DEEPL_PRO_URL = "https://api.deepl.com/v2/translate";
 
@@ -286,11 +284,17 @@ export class MicrosoftTranslateService extends TranslateService {
     readonly name = TRANSLATE_SERVICE.MICROSOFT;
     private authToken: Token = new Token("", 0);
 
+    /**
+     * @deprecated
+     */
     private async ensureToken(): Promise<void> {
         if (this.authToken.isValid()) return;
         this.authToken = await getMicrosoftToken(false);
     }
 
+    /**
+     * @deprecated
+     */
     private async refreshTokenForce(): Promise<void> {
         const token = await getMicrosoftToken(true);
         // Keep the old token on failure so the retry loop can still run.
@@ -306,26 +310,14 @@ export class MicrosoftTranslateService extends TranslateService {
     ): Promise<TranslateResult[]> {
         if (texts.length === 0) return [];
 
-        await this.ensureToken();
         const url = MS_TRANSLATE_URL + "to=" + targetLang;
         const response = await providerFetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                Authorization: "Bearer " + this.authToken.token,
             },
-            body: JSON.stringify(texts.map((t) => ({ text: t }))),
+            body: JSON.stringify(texts),
         }, signal);
-
-        if (response.status === 401) {
-            const retryCount = (options.retryCount ?? 0) + 1;
-            if (retryCount > MS_MAX_RETRY) {
-                if (options.strict) throw new Error("Microsoft auth failed (401) after retries");
-                return [];
-            }
-            await this.refreshTokenForce();
-            return this.translateText(texts, targetLang, signal, sourceLang, { ...options, retryCount });
-        }
 
         if (response.status !== 200) {
             if (options.strict) throw new Error(`HTTP ${response.status} ${response.statusText}`);
@@ -391,24 +383,22 @@ export class MicrosoftTranslateService extends TranslateService {
     }
 
     async detectLanguage(texts: string[]): Promise<string> {
-        await this.ensureToken();
         const response = await providerFetch(MS_DETECT_URL, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                Authorization: "Bearer " + this.authToken.token,
             },
-            body: JSON.stringify(texts.map((t) => ({ text: t }))),
+            body: JSON.stringify(texts),
         });
         if (response.status !== 200) return "";
 
-        const data: { language: string; score: number }[] = await response.json();
+        const data: { detectedLanguage : { language : string, score : number} }[] = await response.json();
         // Weight each detection by the byte length of its source text so that
         // a single short paragraph in another language can't outvote the body.
         const tally = new Map<string, number>();
         data.forEach((d, i) => {
-            const weight = d.score * utf8Encoder.encode(texts[i]).length;
-            tally.set(d.language, (tally.get(d.language) || 0) + weight);
+            const weight = d.detectedLanguage.score * utf8Encoder.encode(texts[i]).length;
+            tally.set(d.detectedLanguage.language, (tally.get(d.detectedLanguage.language) || 0) + weight);
         });
 
         let maxScore = 0;
