@@ -648,7 +648,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
           label={t('websiteTranslationRules', 'Website translation rules')}
           hint={t(
             'websiteTranslationRulesHint',
-            'Per-site rules for which areas to translate, which to skip, and what CSS to inject',
+            'Per-site translate areas, no-translate areas and custom CSS',
           )}
           control={
             <Button variant="outline" size="sm" onClick={onOpenSiteRules}>

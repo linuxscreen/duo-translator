@@ -54,6 +54,32 @@ describe("glob patterns", () => {
         expect(matchesAny("https://axcom/", ["*://x.com/*"])).toBe(false);
     });
 
+    it("lets the scheme be omitted entirely", () => {
+        // The way people actually type these.
+        expect(matchesAny("https://github.com/a/b", ["github.com/*"])).toBe(true);
+        expect(matchesAny("http://github.com/a/b", ["github.com/*"])).toBe(true);
+        expect(matchesAny("https://gitlab.com/a/b", ["github.com/*"])).toBe(false);
+        expect(matchesAny("https://news.example.com/x", ["*.example.com/*"])).toBe(true);
+    });
+
+    it("treats a bare host as the whole site", () => {
+        expect(matchesAny("https://github.com/", ["github.com"])).toBe(true);
+        expect(matchesAny("https://github.com/a/b?c=1", ["github.com"])).toBe(true);
+        expect(matchesAny("https://notgithub.com/a", ["github.com"])).toBe(false);
+    });
+
+    it("an omitted scheme is still a scheme, not a free wildcard", () => {
+        // Same open-redirect shape as above: the implied prefix must only match
+        // an actual scheme, or `github.com/*` would match this.
+        expect(matchesAny("https://evil.com/?u=https://github.com/", ["github.com/*"])).toBe(false);
+        expect(matchesAny("https://github.com.evil.com/", ["github.com/*"])).toBe(false);
+    });
+
+    it("still honours an explicitly written scheme", () => {
+        expect(matchesAny("https://github.com/a", ["https://github.com/*"])).toBe(true);
+        expect(matchesAny("http://github.com/a", ["https://github.com/*"])).toBe(false);
+    });
+
     it("includes the port when the URL has one", () => {
         expect(matchesAny("http://localhost:5173/x", ["*://localhost:5173/*"])).toBe(true);
         expect(matchesAny("http://localhost:3000/x", ["*://localhost:5173/*"])).toBe(false);
@@ -78,10 +104,10 @@ describe("regex patterns", () => {
     });
 
     it("a bare leading slash with no closing slash is treated as a glob", () => {
-        // "/foo" is a path-looking string, not a regex literal. (RegExp.source
-        // escapes the delimiter, hence `\/`.)
-        expect(compilePattern("/foo")!.source).toBe("^\\/foo$");
+        // "/foo" is a path-looking string, not a regex literal — it compiles
+        // (with the implied scheme) rather than being read as a broken regex.
         expect(compilePattern("/foo")!.flags).toBe("i");
+        expect(compilePattern("/foo")!.source).toContain("\\/foo$");
     });
 });
 

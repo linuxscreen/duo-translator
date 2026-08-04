@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { SiteRule, SiteRuleBundle, SiteRuleSubscription } from '@/main/siteRules/types';
 import { refKey, subSource } from '@/main/siteRules/types';
 import { RuleTable } from './RuleTable';
@@ -55,6 +56,7 @@ export function SubscriptionsTab({
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<SiteRuleSubscription | null>(null);
   const disabled = new Set(disabledIds);
 
   const add = (e: FormEvent) => {
@@ -96,17 +98,25 @@ export function SubscriptionsTab({
           </div>
         </div>
 
-        <form className="flex items-center gap-2 border-b border-line px-4 py-3" onSubmit={add}>
+        {/* nowrap + a shrinkable input: the buttons keep their intrinsic width
+            and the URL field gives way, so the row never wraps. */}
+        <form className="flex flex-nowrap items-center gap-2 border-b border-line px-4 py-3" onSubmit={add}>
           <Input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://raw.githubusercontent.com/user/repo/main/rules.json"
-            className="h-8"
+            className="h-8 min-w-0 flex-1"
           />
-          <Button size="sm" type="submit" disabled={busy}>
+          <Button className="shrink-0" size="sm" type="submit" disabled={busy}>
             {t('add', 'Add')}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => onRefresh()} disabled={busy}>
+          <Button
+            className="shrink-0 whitespace-nowrap"
+            variant="outline"
+            size="sm"
+            onClick={() => onRefresh()}
+            disabled={busy}
+          >
             <RefreshCw className={cn('h-3.5 w-3.5', busy && 'animate-spin')} strokeWidth={1.8} />
             {t('refreshAll', 'Refresh all')}
           </Button>
@@ -166,7 +176,7 @@ export function SubscriptionsTab({
                   variant="ghost"
                   size="sm"
                   className="text-danger hover:text-danger"
-                  onClick={() => onSave(subscriptions.filter((s) => s.url !== sub.url))}
+                  onClick={() => setPendingDelete(sub)}
                   title={t('delete', 'Delete')}
                   aria-label={t('delete', 'Delete')}
                 >
@@ -195,6 +205,19 @@ export function SubscriptionsTab({
           );
         })}
       </div>
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title={t('deleteSubscriptionTitle', 'Remove subscription?')}
+        description={t('deleteSubscriptionDesc', {
+          defaultValue: 'Its rules stop applying immediately.',
+        })}
+        onConfirm={() => {
+          onSave(subscriptions.filter((s) => s.url !== pendingDelete?.url));
+          setPendingDelete(null);
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

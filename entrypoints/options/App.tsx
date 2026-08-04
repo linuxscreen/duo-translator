@@ -47,8 +47,12 @@ export default function App() {
   const [route, setRoute] = useState<Route>(parseRoute);
   const { tab, sub } = route;
 
-  // Allow in-page navigation between tabs via the URL hash (e.g. the AI Writing
-  // page's "Configure" notice jumps to the Services tab).
+  // The hash is the single source of truth for where we are, so browser Back /
+  // Forward just work: every navigation writes a real history entry (assigning
+  // `location.hash`, NOT history.replaceState — replaceState overwrites the
+  // current entry, which is exactly why Back used to leave the page), and this
+  // listener is the ONLY thing that moves the React state. Back/Forward and an
+  // in-page click therefore travel the identical path.
   useEffect(() => {
     const onHashChange = () => setRoute(parseRoute());
     window.addEventListener('hashchange', onHashChange);
@@ -56,8 +60,13 @@ export default function App() {
   }, []);
 
   const navigate = (next: Route) => {
-    setRoute(next);
-    window.history.replaceState(null, '', `#${next.tab}${next.sub ? `/${next.sub}` : ''}`);
+    const hash = `#${next.tab}${next.sub ? `/${next.sub}` : ''}`;
+    if (window.location.hash === hash) {
+      // No hashchange will fire; nothing to navigate to either.
+      setRoute(next);
+      return;
+    }
+    window.location.hash = hash;
   };
 
   const tabs: Tab[] = [

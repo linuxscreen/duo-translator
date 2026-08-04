@@ -5,6 +5,7 @@ import { DB_ACTION, DOMAIN_STRATEGY } from '@/main/constants';
 import { sendMessageToBackground } from '@/utils/message';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { SearchInput } from '@/components/ui/search-input';
 import { cn } from '@/lib/cn';
 
 export type DomainItem = {
@@ -175,11 +176,11 @@ export function DomainListSection({
           </div>
         </div>
         {open && (
-          <Input
+          <SearchInput
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onValueChange={setQuery}
             placeholder={t('typeToSearch', 'Type to search')}
-            className="h-8 w-56"
+            className="w-56"
             onClick={(e) => e.stopPropagation()}
           />
         )}

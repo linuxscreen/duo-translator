@@ -10,7 +10,9 @@
 //
 //   glob     `*://*.github.com/*`   — `*` matches any run of characters,
 //                                     including `/`. Anchored (full match),
-//                                     case-insensitive.
+//                                     case-insensitive. The scheme may be left
+//                                     out (`github.com/*`), and a bare host
+//                                     (`github.com`) means the whole site.
 //   regex    `/^https:\/\/\w+\.zhihu\.com\/(question|p)\//i`
 //                                   — leading `/`, trailing `/` + optional
 //                                     flags. Unanchored (`.test()` semantics),
@@ -34,6 +36,9 @@
 const compiled = new Map<string, RegExp | null>();
 
 const REGEX_FLAGS = /^[gimsuy]*$/;
+
+/** Matches any single URL scheme, e.g. the `*` of `*://example.com/*`. */
+const SCHEME_WILDCARD = '[a-zA-Z][a-zA-Z0-9+.\\-]*://';
 
 /** Escape every regex metacharacter except `*`, which the caller turns into `.*`. */
 function escapeGlob(source: string): string {
@@ -64,14 +69,28 @@ export function compilePattern(pattern: string): RegExp | null {
                 result = new RegExp(body, flags);
             }
         } else {
-            // `*://` is a scheme wildcard, NOT a free wildcard. Compiling the
-            // leading `*` to `.*` would make `*://github.com/*` match
-            // `https://evil.com/?u=https://github.com/`, because `.*` happily
-            // eats a whole URL to reach the second `://`.
-            const schemeWildcard = source.startsWith('*://');
-            const rest = schemeWildcard ? source.slice(4) : source;
-            const prefix = schemeWildcard ? '[a-zA-Z][a-zA-Z0-9+.\\-]*://' : '';
-            result = new RegExp(`^${prefix}${escapeGlob(rest).replace(/\*/g, '.*')}$`, 'i');
+            const glob = (s: string) => escapeGlob(s).replace(/\*/g, '.*');
+            let prefix: string;
+            let rest: string;
+            const at = source.indexOf('://');
+            if (at >= 0) {
+                rest = source.slice(at + 3);
+                const scheme = source.slice(0, at);
+                // `*://` is a scheme wildcard, NOT a free wildcard. Compiling
+                // that leading `*` to `.*` would make `*://github.com/*` match
+                // `https://evil.com/?u=https://github.com/`, because `.*`
+                // happily eats a whole URL to reach the second `://`.
+                prefix = scheme === '*' ? SCHEME_WILDCARD : `${glob(scheme)}://`;
+            } else {
+                // No scheme written at all (`github.com/*`) — by far the most
+                // natural way to type one of these, so imply the wildcard
+                // rather than matching nothing.
+                prefix = SCHEME_WILDCARD;
+                rest = source;
+            }
+            // A bare host with no path (`github.com`) means the whole site.
+            if (!rest.includes('/')) rest += '/*';
+            result = new RegExp(`^${prefix}${glob(rest)}$`, 'i');
         }
     } catch {
         result = null;

@@ -1728,22 +1728,6 @@ export async function content() {
             resetNoTranslateMarks()
         }
         // console.log('restore original page', duoTranslatedElementMap)
-
-        // height and line limit restore
-        // let heightBreakElements = document.querySelectorAll(".duo-height-break")
-        // for (let heightBreakElement of heightBreakElements) {
-        //     let element = heightBreakElement as HTMLElement
-        //     element.style.maxHeight = element.getAttribute("duo-max-height") || ""
-        //     element.removeAttribute("duo-max-height")
-        //     element.classList.remove("duo-height-break")
-        // }
-        // let lineBreakElements = document.querySelectorAll(".duo-line-break")
-        // for (let lineBreakElement of lineBreakElements) {
-        //     let element = lineBreakElement as HTMLElement
-        //     element.style.setProperty("-webkit-line-clamp", element.getAttribute("duo-webkit-line-clamp") || "")
-        //     element.removeAttribute("duo-webkit-line-clamp")
-        //     element.classList.remove("duo-line-break")
-        // }
     }
 
     async function setSessionStorage(key: string, value: any) {

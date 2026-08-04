@@ -11,13 +11,27 @@ interface DialogProps {
     footer?: React.ReactNode;
     /** Tailwind width class — defaults to a comfortable form width. */
     widthClass?: string;
+    /**
+     * Whether a backdrop click closes the dialog. Turn it OFF for forms: a
+     * stray click outside would throw away everything the user typed, with no
+     * undo. ESC and the close button stay available either way.
+     */
+    dismissOnBackdrop?: boolean;
 }
 
 /**
  * Minimal modal: portal-rendered overlay + centered panel. ESC to close,
  * backdrop click to close. Body scroll is locked while open.
  */
-export function Dialog({ open, onClose, title, children, footer, widthClass = 'w-[480px]' }: DialogProps) {
+export function Dialog({
+    open,
+    onClose,
+    title,
+    children,
+    footer,
+    widthClass = 'w-[480px]',
+    dismissOnBackdrop = true,
+}: DialogProps) {
     useEffect(() => {
         if (!open) return;
         const onKey = (e: KeyboardEvent) => {
@@ -37,7 +51,7 @@ export function Dialog({ open, onClose, title, children, footer, widthClass = 'w
         <div
             className="fixed inset-0 z-[2147483600] flex items-center justify-center bg-black/50 backdrop-blur-sm"
             onMouseDown={(e) => {
-                if (e.target === e.currentTarget) onClose();
+                if (dismissOnBackdrop && e.target === e.currentTarget) onClose();
             }}
         >
             <div className={`${widthClass} max-w-[92vw] max-h-[88vh] flex flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-2xl`}>

@@ -4,7 +4,7 @@ import { Info, Pencil, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
+import { SearchInput } from '@/components/ui/search-input';
 import { Switch } from '@/components/ui/switch';
 import type { SiteRule } from '@/main/siteRules/types';
 
@@ -19,9 +19,13 @@ type Props = {
   /** Editable tiers (user rules) pass these; read-only tiers omit them. */
   onEdit?: (rule: SiteRule) => void;
   onDelete?: (rule: SiteRule) => void;
-  /** Multi-select, user rules only. */
+  /** Opting in to multi-select also renders the batch bar above the list. */
   selection?: Set<string>;
   onSelectionChange?: (next: Set<string>) => void;
+  /** Batch enable/disable of the selected rows. */
+  onBatchToggle?: (rules: SiteRule[], enabled: boolean) => void;
+  /** Batch delete. Only tiers we own the records of (user rules) pass this. */
+  onBatchDelete?: (rules: SiteRule[]) => void;
   emptyText: string;
 };
 
@@ -43,6 +47,8 @@ export function RuleTable({
   onDelete,
   selection,
   onSelectionChange,
+  onBatchToggle,
+  onBatchDelete,
   emptyText,
 }: Props) {
   const { t } = useTranslation();
@@ -58,6 +64,9 @@ export function RuleTable({
 
   const selectable = !!selection && !!onSelectionChange;
   const allSelected = selectable && filtered.length > 0 && filtered.every((r) => selection!.has(keyOf(r)));
+  // Batch actions act on what is selected AND currently visible — acting on
+  // rows hidden by the search filter would be a nasty surprise.
+  const selected = selectable ? filtered.filter((r) => selection!.has(keyOf(r))) : [];
 
   const toggleAll = () => {
     const next = new Set(selection);
@@ -81,13 +90,53 @@ export function RuleTable({
 
   return (
     <div>
-      <div className="border-b border-line px-4 py-2.5">
-        <Input
+      <div className="flex flex-nowrap items-center gap-2 border-b border-line px-4 py-2.5">
+        <SearchInput
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onValueChange={setQuery}
           placeholder={t('typeToSearch', 'Type to search')}
-          className="h-8"
+          className="min-w-0 flex-1"
         />
+        {/* Batch actions live here rather than in each tab's header, so every
+            tier that opts into multi-select gets the same bar. */}
+        {selectable && selected.length > 0 && (
+          <>
+            <span className="shrink-0 whitespace-nowrap text-[12px] text-ink-soft">
+              {t('selectedCount', { count: selected.length, defaultValue: '{{count}} selected' })}
+            </span>
+            {onBatchToggle && (
+              <>
+                <Button
+                  className="shrink-0"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onBatchToggle(selected, true)}
+                >
+                  {t('enable', 'Enable')}
+                </Button>
+                <Button
+                  className="shrink-0"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onBatchToggle(selected, false)}
+                >
+                  {t('disable', 'Disable')}
+                </Button>
+              </>
+            )}
+            {onBatchDelete && (
+              <Button
+                className="shrink-0"
+                variant="destructive"
+                size="sm"
+                onClick={() => onBatchDelete(selected)}
+              >
+                <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
+                {t('delete', 'Delete')}
+              </Button>
+            )}
+          </>
+        )}
       </div>
 
       <div

@@ -129,6 +129,8 @@ export function RuleEditorDialog({ open, rule, onClose, onSave }: Props) {
       onClose={onClose}
       title={rule ? t('editRule', 'Edit rule') : t('addRule', 'Add rule')}
       widthClass="w-[620px]"
+      // A misclick outside must not discard a half-filled rule form.
+      dismissOnBackdrop={false}
       footer={
         <>
           <Button variant="outline" size="sm" onClick={onClose}>
@@ -152,18 +154,18 @@ export function RuleEditorDialog({ open, rule, onClose, onSave }: Props) {
           label={t('ruleIncludeUrls', 'Include URLs')}
           hint={t(
             'ruleUrlSyntaxHint',
-            'One per line. Glob by default (* matches anything); wrap in slashes for a regex, e.g. /github\\.com\\/\\w+/i',
+            'One per line. Glob by default (* matches anything); the scheme may be omitted, e.g. github.com/*. Wrap in slashes for a regex, e.g. /github\\.com\\/\\w+/i',
           )}
           value={includeUrls}
           onChange={setIncludeUrls}
-          placeholder={'*://github.com/*'}
+          placeholder={'github.com/*'}
           rows={3}
         />
         <FormField
           label={t('ruleExcludeUrls', 'Exclude URLs')}
           value={excludeUrls}
           onChange={setExcludeUrls}
-          placeholder={'*://github.com/settings/*'}
+          placeholder={'github.com/settings/*'}
           rows={2}
         />
         <FormField

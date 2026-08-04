@@ -1,11 +1,12 @@
 import { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, Info, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowLeft, Info, Plus, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Tabs } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/toast';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { SettingRow } from '@/components/options/SettingRow';
 import { RuleTable } from '@/components/options/siteRules/RuleTable';
 import { RuleDetailDialog } from '@/components/options/siteRules/RuleDetailDialog';
@@ -40,6 +41,12 @@ export function SiteRulesPage({ onBack }: Props) {
     const [editorOpen, setEditorOpen] = useState(false);
     const [editing, setEditing] = useState<SiteRule | null>(null);
     const [selection, setSelection] = useState<Set<string>>(new Set());
+    const [systemSelection, setSystemSelection] = useState<Set<string>>(new Set());
+    // Rules awaiting delete confirmation. Always a list, so the single-row
+    // trash button and the batch button share one path — and the batch one
+    // carries the exact rows RuleTable acted on (selection ∩ current filter),
+    // which a re-derivation here would get wrong while a search is active.
+    const [pendingDelete, setPendingDelete] = useState<SiteRule[] | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const reload = useCallback(async () => {
@@ -61,13 +68,17 @@ export function SiteRulesPage({ onBack }: Props) {
         await reload();
     };
 
-    const setDisabled = (key: string, enabled: boolean) => {
+    const setDisabledMany = (keys: string[], enabled: boolean) => {
         if (!data) return;
         const next = new Set(data.disabledIds);
-        if (enabled) next.delete(key);
-        else next.add(key);
+        for (const key of keys) {
+            if (enabled) next.delete(key);
+            else next.add(key);
+        }
         void write(CONFIG_KEY.SITE_RULE_DISABLED_IDS, [...next]);
     };
+
+    const setDisabled = (key: string, enabled: boolean) => setDisabledMany([key], enabled);
 
     const saveUserRules = (rules: SiteRule[]) => write(CONFIG_KEY.SITE_RULE_USER, rules);
 
@@ -137,7 +148,6 @@ export function SiteRulesPage({ onBack }: Props) {
 
     const disabled = new Set(data.disabledIds);
     const userRules = data.user;
-    const selectedRules = userRules.filter((r) => selection.has(refKey('user', r.id)));
 
     const tabs = [
         { id: 'system' as const, label: t('ruleTabSystem', 'System'), badge: data.system.rules.length },
@@ -160,11 +170,7 @@ export function SiteRulesPage({ onBack }: Props) {
 
             <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
                 <SettingRow
-                    label={t('siteRuleSwitch', 'Enable website rules')}
-                    hint={t(
-                        'siteRuleSwitchHint',
-                        'Turn the whole rule system off without losing your rules.',
-                    )}
+                    label={t('globalSwitch', 'Global switch')}
                     control={
                         <Switch
                             checked={data.switchOn}
@@ -177,7 +183,7 @@ export function SiteRulesPage({ onBack }: Props) {
             <div className="flex items-start gap-2 rounded-lg border border-line bg-surface-2/50 px-3 py-2 text-[12px] text-ink-soft">
                 <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-mute" strokeWidth={1.8} />
                 <span>
-                    {t('siteRuleReloadNotice', 'Rule changes apply the next time a page loads — reload the tab to see them.')}
+                    {t('siteRuleReloadNotice', 'Rule changes take effect after the page is reloaded')}
                 </span>
             </div>
 
@@ -230,6 +236,14 @@ export function SiteRulesPage({ onBack }: Props) {
                         isEnabled={(r) => r.enabled && !disabled.has(refKey('system', r.id))}
                         onToggle={(r, v) => setDisabled(refKey('system', r.id), v)}
                         onDetail={setDetail}
+                        selection={systemSelection}
+                        onSelectionChange={setSystemSelection}
+                        // System rules are not ours to rewrite — their on/off
+                        // state is the disabled-refKey list, so a batch toggle
+                        // is one write of that list rather than N record edits.
+                        onBatchToggle={(rules, enabled) =>
+                            void setDisabledMany(rules.map((r) => refKey('system', r.id)), enabled)
+                        }
                         emptyText={t('noRulesConfigured', 'No rules')}
                     />
                 </div>
@@ -257,53 +271,6 @@ export function SiteRulesPage({ onBack }: Props) {
                             {t('ruleTabUser', 'My rules')}
                         </div>
                         <div className="flex items-center gap-2">
-                            {selectedRules.length > 0 && (
-                                <>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => {
-                                            const keys = new Set(selectedRules.map((r) => r.id));
-                                            void saveUserRules(
-                                                userRules.map((r) =>
-                                                    keys.has(r.id) ? { ...r, enabled: true } : r,
-                                                ),
-                                            );
-                                        }}
-                                    >
-                                        {t('enable', 'Enable')}
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => {
-                                            const keys = new Set(selectedRules.map((r) => r.id));
-                                            void saveUserRules(
-                                                userRules.map((r) =>
-                                                    keys.has(r.id) ? { ...r, enabled: false } : r,
-                                                ),
-                                            );
-                                        }}
-                                    >
-                                        {t('disable', 'Disable')}
-                                    </Button>
-                                    <Button
-                                        variant="destructive"
-                                        size="sm"
-                                        onClick={() => {
-                                            const keys = new Set(selectedRules.map((r) => r.id));
-                                            void saveUserRules(userRules.filter((r) => !keys.has(r.id)));
-                                            setSelection(new Set());
-                                        }}
-                                    >
-                                        <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
-                                        {t('deleteSelected', {
-                                            count: selectedRules.length,
-                                            defaultValue: 'Delete {{count}}',
-                                        })}
-                                    </Button>
-                                </>
-                            )}
                             <Button variant="outline" size="sm" onClick={onExport}>
                                 {t('backupExport', 'Export JSON')}
                             </Button>
@@ -350,14 +317,47 @@ export function SiteRulesPage({ onBack }: Props) {
                             setEditing(r);
                             setEditorOpen(true);
                         }}
-                        onDelete={(r) => void saveUserRules(userRules.filter((it) => it.id !== r.id))}
+                        onDelete={(r) => setPendingDelete([r])}
                         selection={selection}
                         onSelectionChange={setSelection}
+                        onBatchToggle={(rules, enabled) => {
+                            const keys = new Set(rules.map((r) => r.id));
+                            void saveUserRules(
+                                userRules.map((r) => (keys.has(r.id) ? { ...r, enabled } : r)),
+                            );
+                        }}
+                        onBatchDelete={(rules) => setPendingDelete(rules)}
                         emptyText={t('noUserRules', 'No rules yet — add one to control a specific site')}
                     />
                 </div>
             )}
 
+            <ConfirmDialog
+                open={!!pendingDelete}
+                title={t('deleteRuleTitle', 'Delete rule?')}
+                description={
+                    pendingDelete?.length === 1
+                        ? t('deleteRuleDesc', {
+                              name: pendingDelete[0].name,
+                              defaultValue: '"{{name}}" will be deleted. This cannot be undone.',
+                          })
+                        : t('deleteRulesDesc', {
+                              count: pendingDelete?.length ?? 0,
+                              defaultValue: '{{count}} rules will be deleted. This cannot be undone.',
+                          })
+                }
+                onConfirm={() => {
+                    const ids = new Set((pendingDelete ?? []).map((r) => r.id));
+                    void saveUserRules(userRules.filter((r) => !ids.has(r.id)));
+                    setSelection((cur) => {
+                        const next = new Set(cur);
+                        for (const id of ids) next.delete(refKey('user', id));
+                        return next;
+                    });
+                    setPendingDelete(null);
+                }}
+                onCancel={() => setPendingDelete(null)}
+            />
             <RuleDetailDialog rule={detail} onClose={() => setDetail(null)} />
             <RuleEditorDialog
                 open={editorOpen}
