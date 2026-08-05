@@ -28,6 +28,7 @@ import { aiPageTranslate } from "@/main/aiService";
 import { configRepo } from "@/main/storage/configStore";
 import * as translationCache from "@/main/storage/translationCache";
 import { isTraditionalChinese } from "@/utils/language";
+import { utf8Length } from "@/utils/text";
 import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
 
 // ---------------------------------------------------------------------------
@@ -278,7 +279,6 @@ export class GoogleTranslateService extends TranslateService {
 const MS_MAX_RETRY = 5;
 const MS_BATCH_CHAR_LIMIT = 4500;
 const MS_BATCH_ITEM_LIMIT = 900;
-const utf8Encoder = new TextEncoder();
 
 export class MicrosoftTranslateService extends TranslateService {
     readonly name = TRANSLATE_SERVICE.MICROSOFT;
@@ -397,7 +397,7 @@ export class MicrosoftTranslateService extends TranslateService {
         // a single short paragraph in another language can't outvote the body.
         const tally = new Map<string, number>();
         data.forEach((d, i) => {
-            const weight = d.detectedLanguage.score * utf8Encoder.encode(texts[i]).length;
+            const weight = d.detectedLanguage.score * utf8Length(texts[i]);
             tally.set(d.detectedLanguage.language, (tally.get(d.detectedLanguage.language) || 0) + weight);
         });
 

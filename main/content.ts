@@ -94,8 +94,6 @@ export async function content() {
     const MARK_BUDGET_MS = 20;
     const MARK_MAX_DEPTH = 50;
     // get the id of the current tab,which used unique defines the page
-    const encoder = new TextEncoder();
-
     let pageLanguage: string | undefined = undefined
     let tabId = await sendMessageToBackground({ action: TAB_ACTION.ID_GET })
     if (!tabId) {

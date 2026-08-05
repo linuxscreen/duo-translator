@@ -10,9 +10,8 @@ import { iso6393To1Map, excludedTagSet, TRANSLATE_SERVICE } from "@/main/constan
 import { shuffle } from "@/utils/arrays";
 import { detectTextsLanguage } from "@/main/translateClient";
 import { allParagraphs } from "@/main/dom/paragraphMarks";
+import { utf8Length } from "@/utils/text";
 import { isVisibleForDetect } from "@/main/dom/visibility";
-
-const utf8Encoder = new TextEncoder();
 
 /** Stop growing a sample once it carries this many UTF-8 bytes. */
 const SAMPLE_BUDGET_BYTES = 2000;
@@ -124,7 +123,7 @@ export async function detectLanguage(elements?: HTMLElement[]): Promise<string> 
     for (let index = 0; index < elements.length; index++) {
         const element = elements[index];
         let content = getElementTextContent(element);
-        let len = utf8Encoder.encode(content).length
+        let len = utf8Length(content)
         if (len === 0) continue
         // The visibility probe reads layout, so it sits behind the text check:
         // only elements that can actually enter the sample pay for it.

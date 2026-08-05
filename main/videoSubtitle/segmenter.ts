@@ -1,5 +1,6 @@
 import { AI_TASK } from "@/main/constants";
 import { aiComplete } from "@/main/aiClient";
+import { utf8Length } from "@/utils/text";
 import type { SubtitleCue, SubtitleWord } from "./types";
 
 /**
@@ -9,6 +10,8 @@ import type { SubtitleCue, SubtitleWord } from "./types";
  *   - break after sentence-final punctuation (. ! ? 。 ！ ？ …), guarding
  *     against common abbreviations ("Mr.", "U.S.", single initials);
  *   - break on silence gaps (ASR words far apart = a new utterance);
+ *   - on a track with NO punctuation at all, break at every source cue —
+ *     see {@link hasPunctuation};
  *   - soft/hard length caps so a run-on ASR transcript still yields
  *     displayable cues (prefer commas / cue ends / the largest gap).
  *
@@ -25,13 +28,44 @@ import type { SubtitleCue, SubtitleWord } from "./types";
  */
 
 const GAP_BREAK_MS = 1800;
-/** Prefer breaking once a sentence exceeds this many characters. */
-const SOFT_MAX_CHARS = 90;
-/** Never let a cue exceed this many characters. */
-const HARD_MAX_CHARS = 170;
+/**
+ * Cue length caps, in UTF-8 BYTES — not characters. A character budget is not
+ * the same amount of content in every language: 170 CJK characters is several
+ * times the text of 170 Latin ones, so a character cap produced subtitle lines
+ * that overran the screen on Chinese/Japanese tracks while behaving on English
+ * ones. Bytes track content much more evenly (CJK is 3 bytes, Latin 1), and the
+ * numbers are unchanged for Latin scripts where 1 char ≈ 1 byte.
+ */
+const SOFT_MAX_BYTES = 90;
+const HARD_MAX_BYTES = 170;
 
 const TERMINAL_PUNCT_RE = /[.!?。！？…][)"'”’」』\]]*$/;
 const CLAUSE_PUNCT_RE = /[,;:，；：、][)"'”’」』\]]*$/;
+/** Any punctuation, anywhere in the text (the two above are end-anchored). */
+const ANY_PUNCT_RE = /[.!?。！？…,;:，；：、]/g;
+
+/**
+ * Punctuation density, as UTF-8 bytes per mark, at or below which a track
+ * counts as punctuated. Above it (marks too sparse), the track is treated as
+ * having no usable punctuation.
+ *
+ * Reference density: English prose carries about 9 punctuation marks per 100
+ * words (~91k marks per million words across COCA/BNC), and the comma alone
+ * appears every 15–20 words — see Sun & Wang, "Frequency Distributions of
+ * Punctuation Marks in English: Evidence from Large-scale Corpora" (2019),
+ * https://doi.org/10.1075/etc.00021.sun. At ~5.5 bytes per English word that
+ * is roughly one mark per 60 bytes.
+ *
+ * The threshold is set at HALF that density (one mark per 120 bytes), so real
+ * prose clears it by a wide margin and only genuinely bare transcripts fall
+ * below. CJK is denser still per byte (a sentence runs ~15–25 characters, and
+ * each is 3 bytes), so the same number has even more headroom there.
+ *
+ * A density test rather than "is there any mark at all": a single "3.5" or
+ * "1,000" anywhere in a 20-minute ASR transcript would otherwise flip the
+ * whole track to "punctuated" and disable the per-cue splitting below.
+ */
+const MAX_BYTES_PER_PUNCT = 120;
 // "Mr." / "U.S." / "Dr." style tokens that end with a period but do not end a
 // sentence. Single uppercase letter + period is an initial ("J. Smith").
 const ABBREV_RE = /(?:^|\s)(?:[A-Z]\.|Mr\.|Mrs\.|Ms\.|Dr\.|Prof\.|St\.|Jr\.|Sr\.|vs\.|etc\.|e\.g\.|i\.e\.|U\.S\.|U\.K\.|No\.)$/i;
@@ -61,9 +95,36 @@ function endsSentence(text: string): boolean {
     return true;
 }
 
+/**
+ * Does this track punctuate densely enough to segment on?
+ *
+ * Auto-generated (ASR) captions usually carry no punctuation, and then none of
+ * the sentence signals below exist: everything runs together until a length cap
+ * fires, which cuts mid-sentence at an arbitrary point. The source cue is the
+ * only structure such a track has — it is what the site itself shows as one
+ * line — so on those tracks we keep its boundaries instead of inventing our own.
+ *
+ * Measured over the WHOLE track as a density (see MAX_BYTES_PER_PUNCT), and
+ * marks are counted anywhere in the text rather than only at a word's end: on
+ * manual tracks one "word" is a whole caption line, whose punctuation is mostly
+ * interior.
+ */
+function hasPunctuation(words: readonly SubtitleWord[]): boolean {
+    let marks = 0;
+    let bytes = 0;
+    for (const w of words) {
+        bytes += utf8Length(w.text);
+        marks += w.text.match(ANY_PUNCT_RE)?.length ?? 0;
+    }
+    if (bytes === 0) return false;
+    // marks / bytes >= 1 / MAX_BYTES_PER_PUNCT, without dividing by zero.
+    return marks * MAX_BYTES_PER_PUNCT >= bytes;
+}
+
 interface Pending {
     words: SubtitleWord[];
-    chars: number;
+    /** UTF-8 byte length of the pending text (see SOFT/HARD_MAX_BYTES). */
+    bytes: number;
     /** Index in `words` of the best mid-sentence break candidate. */
     softBreakIdx: number;
     softBreakScore: number;
@@ -82,7 +143,7 @@ function flush(pending: Pending, out: SubtitleCue[], upTo?: number): void {
         });
     }
     pending.words = pending.words.slice(take);
-    pending.chars = joinWords(pending.words).length;
+    pending.bytes = utf8Length(joinWords(pending.words));
     pending.softBreakIdx = -1;
     pending.softBreakScore = 0;
 }
@@ -90,19 +151,22 @@ function flush(pending: Pending, out: SubtitleCue[], upTo?: number): void {
 /** Rule-based sentence segmentation. Pure and synchronous. */
 export function segmentWords(wordsIn: readonly SubtitleWord[]): SubtitleCue[] {
     const out: SubtitleCue[] = [];
-    const pending: Pending = { words: [], chars: 0, softBreakIdx: -1, softBreakScore: 0 };
+    const pending: Pending = { words: [], bytes: 0, softBreakIdx: -1, softBreakScore: 0 };
 
     const words = wordsIn.filter((w) => w.text.trim() !== "");
+    const punctuated = hasPunctuation(words);
     for (let i = 0; i < words.length; i++) {
         const w = words[i];
         pending.words.push(w);
-        pending.chars += w.text.length + 1;
+        // +1 approximates the joining space; `flush` recomputes exactly.
+        pending.bytes += utf8Length(w.text) + 1;
 
         const next = words[i + 1];
         const gap = next ? next.startMs - w.endMs : 0;
 
-        // Hard sentence end: terminal punctuation, or a long silence gap.
-        if (endsSentence(w.text) || (next && gap >= GAP_BREAK_MS)) {
+        // Hard sentence end: terminal punctuation, a long silence gap, or — on
+        // a track with no punctuation to go by — the end of the source cue.
+        if (endsSentence(w.text) || (next && gap >= GAP_BREAK_MS) || (!punctuated && w.cueEnd)) {
             flush(pending, out);
             continue;
         }
@@ -119,9 +183,9 @@ export function segmentWords(wordsIn: readonly SubtitleWord[]): SubtitleCue[] {
             pending.softBreakIdx = idx;
         }
 
-        if (pending.chars >= HARD_MAX_CHARS) {
+        if (pending.bytes >= HARD_MAX_BYTES) {
             flush(pending, out, pending.softBreakIdx >= 0 ? pending.softBreakIdx : idx);
-        } else if (pending.chars >= SOFT_MAX_CHARS && pending.softBreakScore >= 2000) {
+        } else if (pending.bytes >= SOFT_MAX_BYTES && pending.softBreakScore >= 2000) {
             // Soft cap: only break at a good candidate (punctuation / cue end).
             flush(pending, out, pending.softBreakIdx);
         }
@@ -141,12 +205,18 @@ const AI_MARKER = "‖";
  * before it is needed, so the caps decide request latency (a subtitle gap if
  * the answer is late) and how many tokens are wasted when the user seeks away
  * or stops watching. Whichever cap is hit first ends the chunk.
+ *
+ * Sized in UTF-8 BYTES for the same reason as the cue caps above, with an extra
+ * one here: bytes also track TOKENS far better than characters do. A CJK
+ * character is roughly one token where four Latin characters are, so a
+ * character budget bought ~4x the tokens on a Chinese track — exactly where
+ * spending is meant to be bounded.
  */
-const AI_CHUNK_MAX_CHARS = 600;
+const AI_CHUNK_MAX_BYTES = 600;
 const AI_CHUNK_MAX_WORDS = 120;
 const AI_CHUNK_MAX_MS = 30_000;
 /** Below this a chunk is too small to be worth cutting at a silence gap. */
-const AI_CHUNK_MIN_CHARS = 200;
+const AI_CHUNK_MIN_BYTES = 200;
 /** Silence long enough to be a natural chunk edge. */
 const AI_CHUNK_GAP_MS = 400;
 
@@ -251,17 +321,17 @@ export function wordIndexAtTime(words: readonly SubtitleWord[], t: number): numb
 export function nextAiChunkEnd(words: readonly SubtitleWord[], from: number): number {
     if (from >= words.length) return from;
     const startMs = words[from].startMs;
-    let chars = 0;
+    let bytes = 0;
     let gapEnd = -1;
     for (let i = from; i < words.length; i++) {
-        chars += words[i].text.length + 1;
+        bytes += utf8Length(words[i].text) + 1;
         const next = words[i + 1];
         if (!next) return words.length;
-        if (chars >= AI_CHUNK_MIN_CHARS && next.startMs - words[i].endMs >= AI_CHUNK_GAP_MS) {
+        if (bytes >= AI_CHUNK_MIN_BYTES && next.startMs - words[i].endMs >= AI_CHUNK_GAP_MS) {
             gapEnd = i + 1;
         }
         const full =
-            chars >= AI_CHUNK_MAX_CHARS ||
+            bytes >= AI_CHUNK_MAX_BYTES ||
             i - from + 1 >= AI_CHUNK_MAX_WORDS ||
             words[i].endMs - startMs >= AI_CHUNK_MAX_MS;
         if (full) return gapEnd > from ? gapEnd : i + 1;
