@@ -28,6 +28,7 @@ import { bindThemeToElement } from "@/utils/theme";
 import { NoProviderNotice } from "./NoProviderNotice";
 import { t, useLang } from "./i18n";
 import { useCopyFeedback } from "./useCopyFeedback";
+import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
 
 // ---------------------------------------------------------------------------
 // Singleton mount
@@ -241,6 +242,17 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
             }
         } catch (e: any) {
             setError(e?.message || String(e));
+            // `silent`: the workbench renders `error` in its own body. Console
+            // only, so the reason survives closing the modal.
+            reportRequestError(ERROR_SCOPE.AI_WRITING, e, {
+                silent: true,
+                detail: {
+                    task,
+                    service: task === AI_TASK.TRANSLATE
+                        ? buildTranslateServiceKey(translateChoice)
+                        : enhanceProviderId,
+                },
+            });
         } finally {
             setRunning(false);
             abortRef.current = null;

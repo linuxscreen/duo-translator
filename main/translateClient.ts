@@ -1,6 +1,7 @@
 import { ACTION, AI_PREFIX, AI_REQUEST_TIMEOUT, APP_NAME_WITH_SUFFIX, CONFIG_KEY, EXCLUDE_CHILD_ELEMENT_TAGS, API_REQUEST_TIMEOUT, TRANSLATE_SERVICE, VIEW_STRATEGY } from "@/main/constants";
-import { sendMessageToBackground } from "../utils/message";
+import { sendMessageToBackgroundOrThrow } from "../utils/message";
 import { abortableRequest } from "@/utils/abortableRequest";
+import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
 import { getConfig } from "@/utils/db";
 import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
 import { isTraditionalChinese } from "@/utils/language";
@@ -529,8 +530,10 @@ export async function restore(results: TranslateResult[]): Promise<void> {
 /**
  * Translate `texts` with `service`, resolving 1:1 with the input order.
  *
- * Resolves `undefined` for "unknown service / provider failure" — the same
- * signal the in-process call used to give, so callers bail out unchanged.
+ * Resolves `undefined` only for an unknown service id. A provider that was
+ * reached and failed **rejects**, carrying the provider's own reason — callers
+ * report it (main/errorReport.ts) instead of silently rendering nothing. See
+ * the failure note in main/translateService.ts for why this is not a degrade.
  */
 export async function translateTexts(
     service: string,
@@ -561,11 +564,24 @@ export async function translateTexts(
  * inconclusive. Returns "" when detection is unavailable.
  */
 export async function detectTextsLanguage(texts: string[]): Promise<string> {
-    const res = await sendMessageToBackground(
-        { action: ACTION.DETECT_LANGUAGE, data: { texts } },
-        // One provider round-trip. NOT the 5s default.
-        API_REQUEST_TIMEOUT,
-    );
-    return res?.lang || "";
+    try {
+        const res = await sendMessageToBackgroundOrThrow(
+            { action: ACTION.DETECT_LANGUAGE, data: { texts } },
+            // One provider round-trip. NOT the 5s default.
+            API_REQUEST_TIMEOUT,
+        );
+        return res?.lang || "";
+    } catch (e) {
+        // The one request path that genuinely degrades: local franc detection is
+        // the primary and this is only the tie-breaker, so a failure costs the
+        // user nothing they could act on. Logged in full, but `silent` — a
+        // bubble here would just duplicate the translate error that the same
+        // dead endpoint is about to raise.
+        reportRequestError(ERROR_SCOPE.PAGE_TRANSLATE, e, {
+            silent: true,
+            detail: { phase: "language detection" },
+        });
+        return "";
+    }
 }
 //#endregion

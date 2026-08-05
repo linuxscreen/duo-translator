@@ -9,8 +9,10 @@ import { useTts } from "./useTts";
 import {
     startTranslate,
     parseTranslateServiceKey,
+    buildTranslateServiceKey,
     type TranslateServiceChoice,
 } from "./translateRunner";
+import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
 import { browserTargetLanguage, CONFIG_KEY, LANGUAGES, LANGUAGES_MAP } from "@/main/constants";
 import { getTextLanguage } from "@/main/lang";
 import { getConfig, setConfig } from "@/utils/db";
@@ -317,6 +319,14 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
                 }
             } catch (e: any) {
                 if (abortRef.current === myAbort) setError(e?.message || String(e));
+                // `silent`: the popup renders the reason inline (see `error`
+                // below). Only the full console line — incl. the background
+                // stack — is added here, so the failure stays diagnosable after
+                // the popup is closed without double-reporting it on screen.
+                reportRequestError(ERROR_SCOPE.SELECTION_TRANSLATE, e, {
+                    silent: true,
+                    detail: { service: buildTranslateServiceKey(choice), targetLang },
+                });
             } finally {
                 if (abortRef.current === myAbort) {
                     setRunning(false);

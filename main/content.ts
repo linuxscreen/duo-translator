@@ -10,6 +10,7 @@ import { openWorkbench, ensureWorkbenchMounted, destroyWorkbench } from "./aiWri
 import { openSelectionTranslate } from "./aiWriting/selectionPopup";
 import { getConfig, listRuleFromDB } from "@/utils/db";
 import { createRuleMode, type RuleModeController } from "./ruleMode";
+import { ERROR_SCOPE, reportRequestError, showRelayedError, type ErrorScope as ERROR_SCOPE_VALUE } from "./errorReport";
 import { confirmRuleModeHint } from "./ruleHintDialog";
 import { detectLanguage, getElementTextContent } from "@/main/lang";
 import { parseTranslateServiceKey, startTranslate, TranslateServiceChoice } from "./aiWriting/translateRunner";
@@ -374,6 +375,13 @@ export async function content() {
                 if (!isTopFrame) break
                 toggleTranslateStatus()
                 break
+            case ACTION.REPORT_ERROR:
+                // A sub-frame's request failed and background forwarded it here
+                // (frameId 0). The console line was already written in the frame
+                // that failed; this side only draws the bubble.
+                if (!isTopFrame) break
+                showRelayedError(message.data)
+                break
             case ACTION.AI_OPEN_WORKBENCH: {
                 // The workbench is a single tab-level surface. Keep it top-frame
                 // only so a fanned-out message doesn't open one per frame.
@@ -421,7 +429,12 @@ export async function content() {
                 }
                 break
             case TRANSLATE_ACTION.TRANSLATE_INPUT_BOX:
+                // `break` was missing here: translating an input box also fell
+                // through into the paragraph translate/restore case below and
+                // ran a second, unrelated action on whatever was under the
+                // pointer.
                 translateInputBox();
+                break
             case TRANSLATE_ACTION.TRANSLATE_PARA:
             case TRANSLATE_ACTION.SHOW_ORIGINAL_PARA:
                 // Both menu items act on the unit that was under the pointer
@@ -886,7 +899,9 @@ export async function content() {
     function applyUnitTarget(target: UnitTarget) {
         switch (target.kind) {
             case "unit":
-                translateUnits([target.unit])
+                // Pointer-driven single-paragraph translate — reported under its
+                // own label so the bubble matches what the user just did.
+                translateUnits([target.unit], undefined, ERROR_SCOPE.PARAGRAPH_TRANSLATE)
                 break
             case "duo":
                 restoreDuoRecords(target.container, [target.record])
@@ -934,12 +949,24 @@ export async function content() {
         if (originalText === "") return
         const runStream = startTranslate(originalText, shareConfig.aiTargetLanguage, shareConfig.aiTranslateServiceChoice);
         let translatedText = "";
-        for await (const chunk of runStream.stream) {
-            translatedText += chunk;
+        try {
+            for await (const chunk of runStream.stream) {
+                translatedText += chunk;
+            }
+        } catch (e) {
+            // This path has NO UI of its own — it is a double-tap gesture that
+            // silently rewrites the focused input in place. So a failure here
+            // was completely invisible: the text simply never changed. The
+            // bubble is the only channel it has.
+            reportRequestError(ERROR_SCOPE.SELECTION_TRANSLATE, e, {
+                detail: { via: "double-tap translate input", targetLang: shareConfig.aiTargetLanguage },
+            })
+            return
         }
-        console.log("translateInputBox: ", translatedText);
+        // Never overwrite the user's text with a partial or empty result: a
+        // stream that ends early would otherwise wipe the input.
+        if (translatedText === "") return
         await applyTextToTarget(lastEditableElement, translatedText);
-
     }
 
     // "Translate selection" context-menu action. The menu fans out to every
@@ -2145,7 +2172,12 @@ export async function content() {
      * path above expands to units first, and the pointer-driven per-unit toggle
      * passes a single unit — so both share this body verbatim.
      */
-    async function translateUnits(allUnits: TranslationUnit[], context?: any) {
+    async function translateUnits(
+        allUnits: TranslationUnit[],
+        context?: any,
+        /** Label a failure is reported under; the pointer gesture overrides it. */
+        errorScope: ERROR_SCOPE_VALUE = ERROR_SCOPE.PAGE_TRANSLATE,
+    ) {
         let viewStrategyCopy = viewStrategy
         // A container whose guard is already set has a translation in flight —
         // drop its units so we never translate the same text twice.
@@ -2348,11 +2380,17 @@ export async function content() {
                 intersectionObserver.unobserve(element)
             })
         } catch (e) {
-            // @ts-ignore
-            if (e.name === 'AbortError') { // user cancel translate
-                return
-            }
-            console.error(APP_NAME_WITH_SUFFIX, "translate paragraph error:", e)
+            // The resilience boundary for page translation: one failed batch
+            // must not stop the rest of the page. It stays a catch — but the
+            // reason is no longer dropped here. Providers now throw (see the
+            // failure note in main/translateService.ts) and this is where that
+            // throw becomes a page-console line and a bubble.
+            //
+            // `reportRequestError` filters aborts itself, so a user cancelling
+            // mid-translation still raises nothing.
+            reportRequestError(errorScope, e, {
+                detail: { service: translateService, targetLanguage, units: units.length },
+            })
         }
         finally {
             Promise.resolve().then(() => {

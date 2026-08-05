@@ -47,6 +47,7 @@ import {
     TranslateServiceChoice,
 } from "./translateRunner";
 import { getElementText } from "@/utils/dom";
+import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
 import { shareConfig } from "../content";
 
 const HOST_ID = "duo-ai-dot-host";
@@ -427,6 +428,14 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
             setResult((r) => (r ? { ...r, running: false } : r));
         } catch (e: any) {
             setResult((r) => (r ? { ...r, running: false, error: e?.message || String(e) } : r));
+            // `silent`: the result card above already shows this reason right
+            // next to the input the user is looking at. A page-level bubble
+            // would be the same error twice, in two places, each needing its
+            // own dismissal.
+            reportRequestError(ERROR_SCOPE.AI_WRITING, e, {
+                silent: true,
+                detail: { task: AI_TASK.TRANSLATE, service: buildTranslateServiceKey(choice), lang },
+            });
         } finally {
             abortRef.current = null;
         }
@@ -464,6 +473,12 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
             setResult((r) => (r ? { ...r, running: false } : r));
         } catch (e: any) {
             setResult((r) => (r ? { ...r, running: false, error: e?.message || String(e) } : r));
+            // `silent` for the same reason as runTranslate above — the result
+            // card renders `result.error` inline.
+            reportRequestError(ERROR_SCOPE.AI_WRITING, e, {
+                silent: true,
+                detail: { task: mode, providerId },
+            });
         } finally {
             abortRef.current = null;
         }

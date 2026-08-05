@@ -8,6 +8,7 @@ import { readConfig } from "@/utils/reactiveConfig";
 import { setConfig } from "@/utils/db";
 import { buildAiTranslateService } from "@/utils/service";
 import { translateTexts } from "@/main/translateClient";
+import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
 import { openSelectionTranslate } from "@/main/aiWriting/selectionPopup";
 import { SubtitleOverlay } from "./overlay";
 import { mountSubtitleControls, type SubtitleControlsController } from "./controls";
@@ -482,7 +483,13 @@ export function initVideoSubtitle(): VideoSubtitleController {
             } catch (e) {
                 if (abort.signal.aborted || session !== s) return;
                 s.segFailures++;
-                console.warn("duo video subtitle: AI segmentation failed, falling back", e);
+                // `silent`: segmentWords below is a working fallback, so the
+                // user still gets subtitles and has nothing to act on. The
+                // console line stays complete for diagnosis.
+                reportRequestError(ERROR_SCOPE.SUBTITLE, e, {
+                    silent: true,
+                    detail: { phase: "AI segmentation", providerId, failures: s.segFailures },
+                });
             } finally {
                 if (session === s) s.segmenting = false;
             }
@@ -556,7 +563,15 @@ export function initVideoSubtitle(): VideoSubtitleController {
                     s.cues[pendingIdx[k]].translated = results[k]?.translatedMappedHtmlText ?? "";
                 }
             })
-            .catch(() => { /* transient provider failure — retried next tick */ })
+            .catch((e) => {
+                // Retried on the next tick, so a transient blip self-heals —
+                // but a persistent one (dead endpoint, bad key) used to mean
+                // subtitles that simply never became bilingual, silently. The
+                // bubble's dedupe collapses the per-tick repeats into one entry
+                // with a counter, so reporting here cannot spam.
+                if (session !== s || s.abort.signal.aborted) return;
+                reportRequestError(ERROR_SCOPE.SUBTITLE, e, { detail: { service, lang } });
+            })
             .finally(() => {
                 if (session === s) s.translating = false;
             });

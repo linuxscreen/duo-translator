@@ -70,6 +70,37 @@ function failureMessage(action: string, data: any): string {
 }
 
 /**
+ * An error that was actually raised in the background service worker.
+ *
+ * The throw crosses a process boundary, so the local stack only records the
+ * `sendMessage` call — useless for diagnosis. `failResponse` in
+ * main/messageBridge.ts ships the originating name/stack/scope over the wire
+ * and they are re-attached here, so whoever reports this error can print where
+ * it really came from. See main/errorReport.ts, which consumes these fields.
+ */
+export class BackgroundRequestError extends Error {
+    /** ACTION that was being handled. */
+    readonly action: string
+    /** Handler label from the background side, e.g. "Translate texts". */
+    readonly scope?: string
+    /** `error.name` as thrown in background (e.g. "TypeError"). */
+    readonly originalName?: string
+    /** `error.stack` as thrown in background. */
+    readonly backgroundStack?: string
+
+    constructor(action: string, data: any) {
+        super(failureMessage(action, data))
+        this.name = 'BackgroundRequestError'
+        this.action = action
+        if (data && typeof data === 'object') {
+            this.scope = typeof data.scope === 'string' ? data.scope : undefined
+            this.originalName = typeof data.name === 'string' ? data.name : undefined
+            this.backgroundStack = typeof data.stack === 'string' ? data.stack : undefined
+        }
+    }
+}
+
+/**
  * Like {@link sendMessageToBackground}, but rejects with the background's error
  * message on a STATUS_FAIL response (or a timeout) instead of silently
  * resolving `undefined`. Use this when the caller needs to surface the real
@@ -97,7 +128,7 @@ export function sendMessageToBackgroundOrThrow(message: Message, timeout: number
                 if (response.status === STATUS_SUCCESS) {
                     resolve(response.data);
                 } else {
-                    reject(new Error(failureMessage(message.action, response.data)))
+                    reject(new BackgroundRequestError(message.action, response.data))
                 }
             }).catch((e) => {
                 clearTimeout(timeoutId)

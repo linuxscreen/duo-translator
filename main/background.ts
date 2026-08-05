@@ -425,6 +425,19 @@ export async function background() {
                     updateContextMenu(message.data.status)
                 }
                 break
+            case ACTION.REPORT_ERROR:
+                // Draw a sub-frame's error bubble in the top frame: an iframe
+                // has no room for a page-level notice and is often clipped to a
+                // few pixels. Targeted at frameId 0 rather than broadcast, so
+                // the reporting frame does not receive its own error back.
+                if (sender.tab?.id) {
+                    browser.tabs.sendMessage(
+                        sender.tab.id,
+                        { action: ACTION.REPORT_ERROR, data: message.data },
+                        { frameId: 0 },
+                    ).catch(() => { })
+                }
+                break
             case ACTION.RELAY_FRAMES:
                 // Re-broadcast an inner action to every frame of the sender's
                 // tab. The top-frame content script uses this to fan a

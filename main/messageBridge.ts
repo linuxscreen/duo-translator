@@ -40,10 +40,27 @@ function scopeTable(scope: string): Map<string, AbortController> {
     return table;
 }
 
-/** Shape every failure reply uses. Keep in sync with `failureMessage` in utils/message.ts. */
+/**
+ * Shape every failure reply uses. Keep in sync with `failureMessage` in
+ * utils/message.ts.
+ *
+ * `name` and `stack` ride along because this is a cross-context throw: the
+ * error was raised in the service worker, whose console the user never opens.
+ * Without them the content script can only ever print its own stack, which
+ * says "a message failed" and nothing about where. `label` is included as
+ * `scope` so the page-side report can name the operation, not just the reason.
+ */
 function failResponse(sendResponse: SendResponse, label: string, e: any): void {
-    console.error(APP_NAME_WITH_SUFFIX, `${label} failed:`, e?.message || e);
-    sendResponse({ status: STATUS_FAIL, data: { message: e?.message || String(e) } });
+    console.error(APP_NAME_WITH_SUFFIX, `${label} failed:`, e);
+    sendResponse({
+        status: STATUS_FAIL,
+        data: {
+            message: e?.message || String(e),
+            name: e?.name,
+            stack: e?.stack,
+            scope: label,
+        },
+    });
 }
 
 /**

@@ -44,7 +44,39 @@ interface ProviderFetchInit {
 interface ProviderResponse {
     status: number;
     statusText: string;
+    /**
+     * Raw response body. Retained (rather than only exposed through `json()`)
+     * so the error paths can quote the provider's own words: a bare status line
+     * almost never says *why*, while the body carries the real reason (bad key,
+     * quota exhausted, unknown endpoint).
+     */
+    bodyText: string;
     json: () => Promise<any>;
+}
+
+/** Host of a URL, for error messages. Never throws on a malformed URL. */
+function hostOf(url: string): string {
+    try {
+        return new URL(url).host;
+    } catch {
+        return url;
+    }
+}
+
+/** How much of a failing response body to quote. Enough to identify, short enough to toast. */
+const PROVIDER_ERROR_BODY_CHARS = 300;
+
+/**
+ * Error for a non-200 provider response.
+ *
+ * Every provider builds its failure through here so the message that reaches
+ * the user's page has the same three parts everywhere: which provider, what the
+ * transport said, and what the provider's body said.
+ */
+function providerHttpError(provider: string, url: string, response: ProviderResponse): Error {
+    const snippet = (response.bodyText || "").trim().slice(0, PROVIDER_ERROR_BODY_CHARS);
+    const status = `HTTP ${response.status}${response.statusText ? " " + response.statusText : ""}`;
+    return new Error(`${provider} ${status} (${hostOf(url)})${snippet ? ": " + snippet : ""}`);
 }
 
 /**
@@ -57,16 +89,28 @@ async function providerFetch(
     init: ProviderFetchInit,
     signal?: AbortSignal | null,
 ): Promise<ProviderResponse> {
-    const r = await fetch(url, {
-        method: init.method,
-        headers: init.headers,
-        body: init.body,
-        signal: signal ?? undefined,
-    });
+    let r: Response;
+    try {
+        r = await fetch(url, {
+            method: init.method,
+            headers: init.headers,
+            body: init.body,
+            signal: signal ?? undefined,
+        });
+    } catch (e: any) {
+        // An aborted request is a normal control-flow signal, not a failure —
+        // it must stay an AbortError so callers can tell the two apart.
+        if (e?.name === "AbortError") throw e;
+        // Otherwise this is `TypeError: Failed to fetch`, which names neither
+        // the provider nor the host it could not reach. Since this string is
+        // what ends up in the user's error bubble, say both.
+        throw new Error(`network error requesting ${hostOf(url)}: ${e?.message || e}`);
+    }
     const bodyText = await r.text();
     return {
         status: r.status,
         statusText: r.statusText,
+        bodyText,
         json: async () => JSON.parse(bodyText),
     };
 }
@@ -146,14 +190,23 @@ export function getMicrosoftToken(force = false): Promise<Token> {
 
 export interface TranslateRequestOptions {
     retryCount?: number;
-    /**
-     * Throw on a non-200 / empty provider response instead of degrading to `[]`.
-     * Off by default — page translation must stay resilient, a failed batch
-     * should leave the page readable rather than reject. Used by the Options
-     * "test connection" path, which needs the real reason to show the user.
-     */
-    strict?: boolean;
 }
+
+// A NOTE ON FAILURE, since this reverses an earlier design:
+//
+// Providers used to swallow their own failures — log to the background console
+// and return `[]` — so that "page translation degrades rather than rejects".
+// The degrading worked; the *reporting* did not. The background console is a
+// separate console the user never opens, so a dead endpoint, an expired key or
+// a quota wall all looked identical from the page: nothing translated, nothing
+// said, nowhere to look. A `strict` flag existed to opt back into throwing, and
+// exactly one caller (the Options connectivity test) ever set it.
+//
+// So providers now always throw, and resilience is enforced where it actually
+// belongs: `translateUnits` in main/content.ts already wraps every batch in a
+// try/catch, so one failed batch still leaves the rest of the page readable —
+// but now the reason travels back over the message reply, into the page console
+// and into the error bubble. `strict` is gone; there is one behaviour.
 
 /**
  * Runtime translation provider. Each provider (Google, Microsoft, DeepL …)
@@ -238,7 +291,7 @@ export class GoogleTranslateService extends TranslateService {
         targetLang: string,
         signal?: AbortSignal,
         _sourceLang?: string,
-        options?: TranslateRequestOptions,
+        _options?: TranslateRequestOptions,
     ): Promise<TranslateResult[]> {
         if (texts.length === 0) return [];
 
@@ -252,15 +305,12 @@ export class GoogleTranslateService extends TranslateService {
         }, signal);
 
         if (response.status !== 200) {
-            if (options?.strict) throw new Error(`HTTP ${response.status} ${response.statusText}`);
-            console.error(APP_NAME_WITH_SUFFIX, "Google Translate API error:", response.statusText);
-            return [];
+            throw providerHttpError("Google Translate", this.endpoint, response);
         }
 
         const data = await response.json();
         if (!data || data.length < 2) {
-            if (options?.strict) throw new Error("invalid Google translate response");
-            return [];
+            throw new Error("Google Translate returned an unrecognized response shape");
         }
 
         const result: TranslateResult[] = [];
@@ -320,9 +370,7 @@ export class MicrosoftTranslateService extends TranslateService {
         }, signal);
 
         if (response.status !== 200) {
-            if (options.strict) throw new Error(`HTTP ${response.status} ${response.statusText}`);
-            console.error(APP_NAME_WITH_SUFFIX, "Microsoft Translate API error:", response.statusText);
-            return [];
+            throw providerHttpError("Microsoft Translate", url, response);
         }
 
         const data: Array<{
@@ -390,7 +438,11 @@ export class MicrosoftTranslateService extends TranslateService {
             },
             body: JSON.stringify(texts),
         });
-        if (response.status !== 200) return "";
+        // Throws like every other provider call. Detection is the one path with
+        // a real local fallback (franc), so its *caller* — detectTextsLanguage
+        // in translateClient.ts — logs the reason and degrades to "" rather than
+        // raising a bubble the user can do nothing about.
+        if (response.status !== 200) throw providerHttpError("Microsoft Detect", MS_DETECT_URL, response);
 
         const data: { detectedLanguage : { language : string, score : number} }[] = await response.json();
         // Weight each detection by the byte length of its source text so that
@@ -445,34 +497,22 @@ export class DeepLTranslateService extends TranslateService {
     private async request(
         body: Record<string, unknown>,
         signal?: AbortSignal | null,
-        options?: TranslateRequestOptions,
-    ): Promise<any | null> {
+    ): Promise<any> {
         const key = this.apiKeyOverride || ((await configRepo.get(CONFIG_KEY.DEEPL_API_KEY)) as string) || "";
-        if (!key) {
-            if (options?.strict) throw new Error("DeepL API key is not configured");
-            console.error(APP_NAME_WITH_SUFFIX, "DeepL API key is not configured");
-            return null;
-        }
-        try {
-            const response = await providerFetch(deeplEndpointFor(key), {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `DeepL-Auth-Key ${key}`,
-                },
-                body: JSON.stringify(body),
-            }, signal);
-            if (response.status !== 200) {
-                throw new Error(`HTTP ${response.status} ${response.statusText}`);
-            }
-            return await response.json();
-        } catch (e: any) {
-            // Page translation must degrade rather than reject; only the
-            // connectivity test wants the real reason surfaced.
-            if (options?.strict) throw e;
-            console.error(APP_NAME_WITH_SUFFIX, "DeepL request failed:", e?.message || e);
-            return null;
-        }
+        // A missing key is the single most likely DeepL failure and the one the
+        // user can actually fix — it must reach them, not the background console.
+        if (!key) throw new Error("DeepL API key is not configured");
+        const url = deeplEndpointFor(key);
+        const response = await providerFetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `DeepL-Auth-Key ${key}`,
+            },
+            body: JSON.stringify(body),
+        }, signal);
+        if (response.status !== 200) throw providerHttpError("DeepL", url, response);
+        return await response.json();
     }
 
     private toResults(payload: any): TranslateResult[] {
@@ -489,16 +529,16 @@ export class DeepLTranslateService extends TranslateService {
         targetLang: string,
         signal?: AbortSignal | null,
         sourceLang?: string,
-        options?: TranslateRequestOptions,
+        _options?: TranslateRequestOptions,
     ): Promise<TranslateResult[]> {
         if (texts.length === 0) return [];
         const payload = await this.request({
             text: texts,
             target_lang: this.targetLangConverter(targetLang),
             ...(sourceLang ? { source_lang: sourceLang.toUpperCase() } : {}),
-        }, signal, options);
-        if (!payload && options?.strict) throw new Error("empty DeepL response");
-        return payload ? this.toResults(payload) : [];
+        }, signal);
+        if (!payload) throw new Error("DeepL returned an empty response");
+        return this.toResults(payload);
     }
 
 }
@@ -528,30 +568,18 @@ export class AiTranslateService extends TranslateService {
         targetLang: string,
         signal?: AbortSignal | null,
         _sourceLang?: string,
-        options?: TranslateRequestOptions,
+        _options?: TranslateRequestOptions,
     ): Promise<TranslateResult[]> {
         if (texts.length === 0) return [];
 
         // Page translation doesn't need streaming — background batches the
         // texts, calls chatCompleteNonStream (stream:false) and returns the
-        // full array.
-        let translations: string[] | undefined;
-        try {
-            translations = await aiPageTranslate(this.providerId, texts, targetLang, signal ?? undefined);
-        } catch (e: any) {
-            // Provider boundary: page translation must degrade, not reject, or
-            // one failed batch takes down the whole page. The real reason still
-            // reaches the console; only `strict` (the Options connectivity
-            // test) propagates it to the caller.
-            if (options?.strict || e?.name === "AbortError") throw e;
-            console.error(APP_NAME_WITH_SUFFIX, "AI translate failed:", e?.message || e);
-            return [];
-        }
-
-        if (!translations) {
-            if (options?.strict) throw new Error("empty AI translation response");
-            return [];
-        }
+        // full array. Failures propagate: an AI provider's message ("invalid
+        // api key", "insufficient balance", a model name typo) is the most
+        // actionable error in the whole pipeline, so it is exactly the one the
+        // user must see.
+        const translations = await aiPageTranslate(this.providerId, texts, targetLang, signal ?? undefined);
+        if (!translations) throw new Error("AI provider returned an empty translation response");
         return translations.map((t) => new TranslateResult(String(t ?? ""), "", 1));
     }
 
@@ -654,21 +682,23 @@ function cachePutMany(
  * Translate `texts`, serving hits from the persistent cache and only sending
  * the misses to the provider. The returned array is always aligned 1:1 with
  * `texts` (order preserved); freshly fetched results are written back to the
- * cache. Returns undefined to mirror the original "no results" signal (unknown
- * service / provider failure) so callers bail out exactly as before.
+ * cache.
+ *
+ * Returns undefined for an *unknown service id* only — that is a configuration
+ * bug, not a request failure, and callers bail out on it silently as they
+ * always have. A provider that was reached and failed **throws**; the reason
+ * travels back to the page (see the failure note above the provider classes).
  */
 export async function translateTextsWithCache(
     service: string,
     texts: string[],
     targetLang: string,
     signal?: AbortSignal,
-    strict?: boolean,
 ): Promise<TranslateResult[] | undefined> {
     if (texts.length === 0) return [];
-    const opts = strict ? { strict: true } : undefined;
 
     if (!(await isTranslationCacheEnabled())) {
-        return resolveTranslateService(service)?.translateText(texts, targetLang, signal, undefined, opts);
+        return resolveTranslateService(service)?.translateText(texts, targetLang, signal);
     }
 
     const cached = await cacheGetMany(service, targetLang, texts);
@@ -683,13 +713,13 @@ export async function translateTextsWithCache(
 
     let fetched: TranslateResult[] = [];
     if (missTexts.length > 0) {
-        const r = await resolveTranslateService(service)?.translateText(missTexts, targetLang, signal, undefined, opts);
-        if (!r) return undefined; // unknown service / failure → bail like before
+        const r = await resolveTranslateService(service)?.translateText(missTexts, targetLang, signal);
+        if (!r) return undefined; // unknown service → bail like before
         // Provider must answer 1:1 with the inputs. If it doesn't, the
         // positional remap below would misalign — fall back to a full
         // (uncached) translation rather than return a corrupt array.
         if (r.length !== missTexts.length) {
-            return resolveTranslateService(service)?.translateText(texts, targetLang, signal, undefined, opts);
+            return resolveTranslateService(service)?.translateText(texts, targetLang, signal);
         }
         fetched = r;
     }
@@ -727,12 +757,13 @@ export const translateMessageHandlers: Record<string, MessageHandler> = {
     [ACTION.TRANSLATE_TEXTS]: (message, sendResponse) => handleAbortable(
         ABORT_SCOPE.TRANSLATE, 'Translate texts', message, sendResponse,
         async (data, signal) => {
-            const { service, texts, targetLang, strict } = data as {
-                service: string; texts: string[]; targetLang: string; strict?: boolean;
+            const { service, texts, targetLang } = data as {
+                service: string; texts: string[]; targetLang: string;
             };
-            const results = await translateTextsWithCache(service, texts, targetLang, signal, strict);
-            // `undefined` means "unknown service / provider failure" — preserve
-            // that distinction on the wire, content degrades on it.
+            const results = await translateTextsWithCache(service, texts, targetLang, signal);
+            // `null` means "unknown service id" — content degrades silently on
+            // it. A provider that failed throws instead, and handleAbortable
+            // turns that into a STATUS_FAIL reply carrying the real reason.
             return results ?? null;
         },
     ),
@@ -758,8 +789,8 @@ export const translateMessageHandlers: Record<string, MessageHandler> = {
 /**
  * Validate a service by running the REAL translation path against a sample.
  *
- * `strict` turns the providers' degrade-to-`[]` behaviour into a throw, so the
- * user sees the actual reason rather than a bare failure.
+ * Needs no special mode any more: providers always throw on failure, so the
+ * reason arrives here on its own and `handleAsync` relays it to the dialog.
  */
 async function testTranslateService(
     data: { service?: string; targetLang?: string; apiKey?: string } | undefined,
@@ -775,9 +806,7 @@ async function testTranslateService(
         : resolveTranslateService(svc);
     if (!service) throw new Error(`Unknown service: ${svc}`);
 
-    const results = await service.translateText(
-        ['Hello, world.'], targetLang, undefined, undefined, { strict: true },
-    );
+    const results = await service.translateText(['Hello, world.'], targetLang);
     const reply = results[0]?.translatedMappedHtmlText;
     if (!reply) throw new Error('empty translation response');
     return { reply };

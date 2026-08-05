@@ -142,16 +142,21 @@ describe("GoogleTranslateService.translateText", () => {
         expect(JSON.parse(init.body)).toEqual([[["hello"], "auto", "zh-CN"], "te_lib"]);
     });
 
-    it("returns [] on a non-200 response", async () => {
-        routeFetch(() => reply(null, 500));
-        expect(await new GoogleTranslateService("k").translateText(["x"], "zh-CN")).toEqual([]);
-    });
-
-    it("throws on a non-200 response when strict", async () => {
+    // Providers always throw now — the old degrade-to-[] path hid the reason in
+    // the background console, which is exactly the bug this replaced. Resilience
+    // moved to translateUnits in main/content.ts.
+    it("throws on a non-200 response, naming the provider and host", async () => {
         routeFetch(() => reply(null, 500));
         await expect(
-            new GoogleTranslateService("k").translateText(["x"], "zh-CN", undefined, undefined, { strict: true }),
-        ).rejects.toThrow(/500/);
+            new GoogleTranslateService("k").translateText(["x"], "zh-CN"),
+        ).rejects.toThrow(/Google Translate HTTP 500.*translate-pa\.googleapis\.com/);
+    });
+
+    it("quotes the response body in the error so the provider's reason survives", async () => {
+        routeFetch(() => reply({ error: { message: "API key not valid" } }, 400));
+        await expect(
+            new GoogleTranslateService("k").translateText(["x"], "zh-CN"),
+        ).rejects.toThrow(/API key not valid/);
     });
 
     it("returns [] for empty input without touching the network", async () => {
@@ -182,9 +187,11 @@ describe("MicrosoftTranslateService.translateText", () => {
         expect(JSON.parse(init.body)).toEqual(["hello"]);
     });
 
-    it("returns [] on a non-200 response", async () => {
+    it("throws on a non-200 response", async () => {
         routeFetch(() => reply(null, 500));
-        expect(await new MicrosoftTranslateService().translateText(["x"], "zh-CN")).toEqual([]);
+        await expect(
+            new MicrosoftTranslateService().translateText(["x"], "zh-CN"),
+        ).rejects.toThrow(/Microsoft Translate HTTP 500/);
     });
 });
 
@@ -220,9 +227,15 @@ describe("MicrosoftTranslateService.detectLanguage", () => {
         expect(await new MicrosoftTranslateService().detectLanguage(["a", "b"])).toBe("en");
     });
 
-    it("returns '' on a non-200 response", async () => {
+    // Detection throws like every other provider call. The degrade to "" moved
+    // one level out, to detectTextsLanguage in main/translateClient.ts, which
+    // logs the reason and falls back to the local franc detector — see the
+    // `silent` reporting case there.
+    it("throws on a non-200 response", async () => {
         routeFetch(() => reply(null, 500));
-        expect(await new MicrosoftTranslateService().detectLanguage(["x"])).toBe("");
+        await expect(
+            new MicrosoftTranslateService().detectLanguage(["x"]),
+        ).rejects.toThrow(/Microsoft Detect HTTP 500/);
     });
 });
 
@@ -256,17 +269,19 @@ describe("DeepLTranslateService.translateText", () => {
         expect(init.headers.Authorization).toBe("DeepL-Auth-Key stored-key");
     });
 
-    it("returns [] and never calls the network without a key", async () => {
+    it("throws without a key and never calls the network", async () => {
         routeFetch(() => reply({}));
-        expect(await new DeepLTranslateService().translateText(["hello"], "zh-CN")).toEqual([]);
+        await expect(
+            new DeepLTranslateService().translateText(["hello"], "zh-CN"),
+        ).rejects.toThrow(/API key is not configured/);
         expect(fetchCalls("https://api")).toHaveLength(0);
     });
 
-    it("throws instead of degrading when strict", async () => {
+    it("throws on a non-200 response", async () => {
         routeFetch(() => reply(null, 403));
         await expect(
-            new DeepLTranslateService("key-abc").translateText(["hello"], "zh-CN", undefined, undefined, { strict: true }),
-        ).rejects.toThrow(/403/);
+            new DeepLTranslateService("key-abc").translateText(["hello"], "zh-CN"),
+        ).rejects.toThrow(/DeepL HTTP 403/);
     });
 });
 
@@ -285,15 +300,12 @@ describe("AiTranslateService.translateText", () => {
         expect(mockAiPageTranslate).toHaveBeenCalledWith("p1", ["hello", "world"], "zh-CN", undefined);
     });
 
-    it("degrades to [] when the provider fails", async () => {
-        mockAiPageTranslate.mockRejectedValue(new Error("boom"));
-        expect(await new AiTranslateService("p1").translateText(["hello"], "zh-CN")).toEqual([]);
-    });
-
-    it("throws when strict", async () => {
+    // An AI provider's own message ("invalid api key", "insufficient balance")
+    // is the most actionable error in the pipeline — it must not be swallowed.
+    it("propagates the provider's failure", async () => {
         mockAiPageTranslate.mockRejectedValue(new Error("boom"));
         await expect(
-            new AiTranslateService("p1").translateText(["hello"], "zh-CN", undefined, undefined, { strict: true }),
+            new AiTranslateService("p1").translateText(["hello"], "zh-CN"),
         ).rejects.toThrow(/boom/);
     });
 

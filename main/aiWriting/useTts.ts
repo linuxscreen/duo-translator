@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ACTION, API_REQUEST_TIMEOUT, CONFIG_KEY, DEFAULT_VALUE } from "@/main/constants";
 import { getConfig } from "@/utils/db";
-import { sendMessageToBackground } from "@/utils/message";
+import { sendMessageToBackgroundOrThrow } from "@/utils/message";
+import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
 
 /**
  * Text-to-speech playback for the selection-translate popup.
@@ -70,15 +71,31 @@ export function useTts(): {
 
         (async () => {
             const service = (await getConfig(CONFIG_KEY.TTS_SERVICE)) || DEFAULT_VALUE.TTS_SERVICE;
-            const resp = await sendMessageToBackground(
-                { action: ACTION.TTS_SYNTHESIZE, data: { text: clean, lang, service } },
-                API_REQUEST_TIMEOUT,
-            );
+            let resp: any;
+            try {
+                // Throwing variant: the swallowing one turned every TTS failure
+                // (dead endpoint, Bing token scrape broken, unsupported
+                // language) into a button that flickers and does nothing.
+                resp = await sendMessageToBackgroundOrThrow(
+                    { action: ACTION.TTS_SYNTHESIZE, data: { text: clean, lang, service } },
+                    API_REQUEST_TIMEOUT,
+                );
+            } catch (e) {
+                if (runId !== runIdRef.current) return;
+                setPlayingKey(null);
+                reportRequestError(ERROR_SCOPE.TTS, e, { detail: { service, lang } });
+                return;
+            }
             // Superseded while we were fetching.
             if (runId !== runIdRef.current) return;
             const audios: string[] = resp?.audios ?? [];
             if (!audios.length) {
                 setPlayingKey(null);
+                reportRequestError(
+                    ERROR_SCOPE.TTS,
+                    new Error("the speech service returned no audio"),
+                    { detail: { service, lang } },
+                );
                 return;
             }
             const ctx = ctxRef.current ?? (ctxRef.current = new AudioContext());
@@ -88,7 +105,14 @@ export function useTts(): {
                 try { await ctx.resume(); } catch { /* ignore */ }
                 if (runId !== runIdRef.current) return;
             }
-            const fail = () => { if (runId === runIdRef.current) setPlayingKey(null); };
+            // Playback failures are reported too: the audio arrived, so from the
+            // user's side "I pressed play and got silence" is the same symptom
+            // as a failed request and deserves the same explanation.
+            const fail = (e: any) => {
+                if (runId !== runIdRef.current) return;
+                setPlayingKey(null);
+                reportRequestError(ERROR_SCOPE.TTS, e, { detail: { service, lang, phase: "playback" } });
+            };
             let index = 0;
             const playNext = async () => {
                 if (runId !== runIdRef.current) return;
@@ -101,8 +125,8 @@ export function useTts(): {
                 let buffer: AudioBuffer;
                 try {
                     buffer = await ctx.decodeAudioData(dataUrlToArrayBuffer(audios[index++]));
-                } catch {
-                    fail();
+                } catch (e) {
+                    fail(e);
                     return;
                 }
                 if (runId !== runIdRef.current) return;
@@ -111,7 +135,7 @@ export function useTts(): {
                 source.connect(ctx.destination);
                 source.onended = () => { void playNext(); };
                 sourceRef.current = source;
-                try { source.start(); } catch { fail(); }
+                try { source.start(); } catch (e) { fail(e); }
             };
             void playNext();
         })();

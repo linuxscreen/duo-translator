@@ -248,6 +248,12 @@ export enum ACTION {
     // and returns an array of base64 `data:` URLs (one per <=170-char chunk) that
     // the content script plays sequentially through an <audio> element.
     TTS_SYNTHESIZE = 'ttsSynthesize',
+    // Sub-frame → top-frame error bubble. A content script in an iframe reports
+    // a failed request with `data` = an ErrorToastPayload; background forwards
+    // it to frame 0 of the sender's tab, which draws the bubble. Distinct from
+    // RELAY_FRAMES, which broadcasts to EVERY frame — that would echo back to
+    // the reporting frame and duplicate the console line.
+    REPORT_ERROR = 'reportError',
 }
 
 export enum CONFIG_KEY {
