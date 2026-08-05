@@ -111,7 +111,10 @@ export function VideoSubtitlePage() {
   // a bare number box / slider gives no clue what it changes.
   const labelled = (label: string, control: React.ReactNode) => (
     <span className="flex items-center gap-1.5">
-      <span className="text-[11.5px] text-ink-soft">{label}</span>
+      {/* nowrap + shrink-0: the paired control (SelectTrigger) is `w-full`, so
+          flex would otherwise squeeze the caption down to its min-content —
+          one character for CJK text, i.e. a two-line label. */}
+      <span className="shrink-0 whitespace-nowrap text-[11.5px] text-ink-soft">{label}</span>
       {control}
     </span>
   );

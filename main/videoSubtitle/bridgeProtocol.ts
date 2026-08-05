@@ -23,6 +23,16 @@ export interface YtBridgePlayerData {
     videoId: string;
     isLive: boolean;
     captionTracks: YtBridgeCaptionTrack[];
+    /**
+     * The track the player itself is showing right now, i.e. what the user
+     * picked in the CC menu. Null when captions are off or unknown.
+     */
+    selectedTrack: { languageCode: string; kind: string } | null;
+    /**
+     * Index into `captionTracks` of the track YouTube would show by default,
+     * or -1. Used when the user has not chosen anything.
+     */
+    defaultTrackIndex: number;
 }
 
 export interface YtBridgeTrackRequest {

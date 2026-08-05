@@ -188,10 +188,44 @@ export default defineContentScript({
                         label: String(t.name?.simpleText ?? t.name?.runs?.[0]?.text ?? t.languageCode ?? ""),
                     }))
                 : [];
+            // Which track the user is actually watching. `getOption` returns the
+            // active track object ({} when captions are off) and is the ONLY
+            // place a manual CC switch shows up — the player response keeps
+            // listing every track in its original order regardless.
+            let selectedTrack: YtBridgePlayerData["selectedTrack"] = null;
+            try {
+                const active = getPlayer()?.getOption?.("captions", "track");
+                if (active && typeof active.languageCode === "string" && active.languageCode !== "") {
+                    selectedTrack = {
+                        languageCode: String(active.languageCode),
+                        kind: String(active.kind ?? ""),
+                    };
+                }
+            } catch { /* captions module not loaded yet */ }
+
+            // YouTube's own default. Lives on the tracklist renderer, and on
+            // multi-audio videos on the selected audio track instead.
+            const tracklist = pr?.captions?.playerCaptionsTracklistRenderer;
+            const audioTracks: any[] = Array.isArray(tracklist?.audioTracks) ? tracklist.audioTracks : [];
+            // On multi-audio videos the caption default belongs to the selected
+            // audio track; fall back to any audio track that names one.
+            const audioIdx = (audioTracks[tracklist?.defaultAudioTrackIndex]
+                ?? audioTracks.find((a) => typeof a?.defaultCaptionTrackIndex === "number"))
+                ?.defaultCaptionTrackIndex;
+            const rawDefault = typeof tracklist?.defaultCaptionTrackIndex === "number"
+                ? tracklist.defaultCaptionTrackIndex
+                : audioIdx;
+            const defaultTrackIndex =
+                typeof rawDefault === "number" && rawDefault >= 0 && rawDefault < captionTracks.length
+                    ? rawDefault
+                    : -1;
+
             return {
                 videoId: String(videoId),
                 isLive: !!pr?.videoDetails?.isLive,
                 captionTracks,
+                selectedTrack,
+                defaultTrackIndex,
             };
         };
 

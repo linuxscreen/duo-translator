@@ -125,12 +125,54 @@ export class YoutubeAdapter implements VideoSiteAdapter {
     }
 
     /**
-     * Pick the source track: prefer a manual track in the video's spoken
-     * language (the language the ASR track was generated for), then the ASR
-     * track itself, then the first track.
+     * One-shot re-read of the player's current CC selection. Cheap enough to
+     * poll (a single postMessage round-trip); returns null when captions are
+     * off, the RPC times out, or the player has moved on to another video.
+     */
+    async selectedTrack(): Promise<CaptionTrackInfo | null> {
+        const data = await bridgeRpc();
+        if (!data || data.videoId !== currentYoutubeVideoId()) return null;
+        this.lastPlayerData = data;
+        const selected = data.selectedTrack;
+        if (!selected) return null;
+        const tracks = await this.listTracks();
+        return tracks.find(
+            (t) => t.languageCode === selected.languageCode && t.auto === (selected.kind === "asr"),
+        ) ?? tracks.find((t) => t.languageCode === selected.languageCode) ?? null;
+    }
+
+    /**
+     * Pick the source track, in this order:
+     *
+     *  1. What the player is showing — an explicit CC choice by the user beats
+     *     every heuristic we could apply.
+     *  2. YouTube's own default track for this video.
+     *  3. A manual track in the video's spoken language (the language the ASR
+     *     track was generated for), else that ASR track.
+     *  4. The first track.
+     *
+     * 1 and 2 used to be missing, so a video captioned in several languages was
+     * read off `captionTracks[0]` — its order is YouTube's, unrelated to what
+     * is on screen. On a video with Arabic and English tracks the overlay then
+     * showed Arabic even with English selected.
      */
     pickTrack(tracks: CaptionTrackInfo[]): CaptionTrackInfo | null {
         if (tracks.length === 0) return null;
+
+        const selected = this.lastPlayerData?.selectedTrack;
+        if (selected) {
+            const match = tracks.find(
+                (t) => t.languageCode === selected.languageCode && t.auto === (selected.kind === "asr"),
+            )
+                // Same language, either kind — the player reports `kind` for
+                // ASR tracks only in some responses.
+                ?? tracks.find((t) => t.languageCode === selected.languageCode);
+            if (match) return match;
+        }
+
+        const defaultIdx = this.lastPlayerData?.defaultTrackIndex ?? -1;
+        if (defaultIdx >= 0 && defaultIdx < tracks.length) return tracks[defaultIdx];
+
         const asr = tracks.find((t) => t.auto);
         if (asr) {
             const manualSameLang = tracks.find(

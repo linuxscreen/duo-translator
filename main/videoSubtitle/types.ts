@@ -51,6 +51,14 @@ export interface VideoSiteAdapter {
     listTracks(): Promise<CaptionTrackInfo[]>;
     /** Fetch + parse one track into a timed word stream. */
     fetchTrack(track: CaptionTrackInfo): Promise<SubtitleWord[]>;
+    /**
+     * The track the player is showing right now because the USER selected it
+     * (null when the site's captions are off, or the site has no such notion).
+     * Polled at a low rate so switching subtitle language mid-video re-loads
+     * ours too. Deliberately not "the track that would be picked now": that
+     * would flip back and forth as the user toggles captions off and on.
+     */
+    selectedTrack?(): Promise<CaptionTrackInfo | null>;
 }
 
 /** User-configurable overlay style (CONFIG_KEY.VIDEO_SUBTITLE_STYLE). */

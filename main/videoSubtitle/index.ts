@@ -92,6 +92,8 @@ interface VideoSession {
      * still runs — the safe direction).
      */
     sourceLang: string;
+    /** Id of the loaded track, to notice the user switching CC language. */
+    trackId: string;
     /** Whole track, blank words dropped. Empty until the load succeeds. */
     words: SubtitleWord[];
     cues: SubtitleCue[];
@@ -138,6 +140,16 @@ const SEGMENT_AHEAD_MS = 10_000;
 const SEEK_SLACK_MS = 2000;
 /** Consecutive AI failures after which the rest of the track goes rule-based. */
 const MAX_SEGMENT_FAILURES = 2;
+
+/**
+ * How often to ask the site which caption track the user has selected.
+ *
+ * The player response lists every track in a fixed order and says nothing about
+ * the current choice, so switching subtitle language mid-video is invisible
+ * until this poll notices it. One postMessage round-trip per interval, and only
+ * while subtitles are actually on screen.
+ */
+const TRACK_RECHECK_MS = 2000;
 
 export function initVideoSubtitle(): VideoSubtitleController {
     const adapter = new YoutubeAdapter();
@@ -305,6 +317,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
             videoId,
             abort: new AbortController(),
             sourceLang: "",
+            trackId: "",
             words: [],
             cues: [],
             starts: [],
@@ -353,6 +366,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
                     return;
                 }
                 s.sourceLang = normalizeLanguageTag(track.languageCode);
+                s.trackId = track.id;
                 const words = await adapter.fetchTrack(track);
                 if (abort.signal.aborted || session !== s) return;
                 if (words.length === 0) {
@@ -414,6 +428,35 @@ export function initVideoSubtitle(): VideoSubtitleController {
         const next = s.cues[idx + 1];
         const linger = next ? Math.min(LINGER_MS, Math.max(0, next.startMs - cue.endMs)) : LINGER_MS;
         return t <= cue.endMs + linger ? idx : null;
+    };
+
+    // ------------------------------------------------------------------
+    // Following the user's caption-track choice
+    // ------------------------------------------------------------------
+
+    let nextTrackCheckAt = 0;
+    let checkingTrack = false;
+
+    /**
+     * Reload the session when the user picks a different subtitle language in
+     * the player. Only an explicit selection counts — turning captions off
+     * leaves ours alone rather than flipping back to the default track.
+     */
+    const followSelectedTrack = async () => {
+        const s = session;
+        if (!s || s.loadState !== "ready" || checkingTrack) return;
+        if (Date.now() < nextTrackCheckAt || !adapter.selectedTrack) return;
+        checkingTrack = true;
+        try {
+            const selected = await adapter.selectedTrack();
+            nextTrackCheckAt = Date.now() + TRACK_RECHECK_MS;
+            if (session !== s || !selected || selected.id === s.trackId) return;
+            // Same machinery as a video change: abort what is in flight, drop
+            // the cues, and let the tick loop load the new track.
+            startSession(s.videoId);
+        } finally {
+            checkingTrack = false;
+        }
     };
 
     // ------------------------------------------------------------------
@@ -685,9 +728,10 @@ export function initVideoSubtitle(): VideoSubtitleController {
         setNativeCaptionsHidden(true);
         const t = nowMs();
         // AI mode: pull in the next chunk before the playhead reaches the end of
-        // the segmented region. Both schedulers are fire-and-forget — they hold
-        // their own in-flight flags, and the display below must not wait on a
-        // network round-trip.
+        // the segmented region. These are all fire-and-forget — they hold their
+        // own in-flight flags, and the display below must not wait on a network
+        // round-trip.
+        void followSelectedTrack();
         void ensureSegmentedAhead(t);
         const idx = currentCueIndex(t);
         if (idx === null) {
