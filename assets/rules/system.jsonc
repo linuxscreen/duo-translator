@@ -6,7 +6,7 @@
 // Everything else is plain JSON; no unquoted keys, no single quotes.
 {
   "schemaVersion": 1,
-  "name": "DuoTranslator Built-in Rules",
+  "name": "Duo Translator Built-in Rules",
   "updatedAt": "2026-08-03T00:00:00Z",
   "rules": [
     {
@@ -145,7 +145,7 @@
         "community-recommendation .text-neutral-content-weak.line-clamp-2",
         ".i18n-list-item-post-title"
       ],
-      "injectCss": "community-recommendation .text-neutral-content-weak.line-clamp-2, .i18n-list-item-post-title { -webkit-line-clamp: unset !important; }"
+      "injectCss": "community-recommendation .text-neutral-content-weak.line-clamp-2, .i18n-list-item-post-title, .feed-card-text-preview { -webkit-line-clamp: unset !important; }"
     }
   ]
 }

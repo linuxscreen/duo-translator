@@ -99,7 +99,9 @@ export function SiteRulesPage({ onBack }: Props) {
     // ---- import / export ----------------------------------------------------
 
     const onExport = () => {
-        if (!data) return;
+        // Guarded here too, not only by the button's disabled state — a
+        // keyboard/programmatic path must not produce an empty download either.
+        if (!data || data.user.length === 0) return;
         const payload = {
             schemaVersion: SITE_RULE_SCHEMA_VERSION,
             name: 'My rules',
@@ -273,7 +275,15 @@ export function SiteRulesPage({ onBack }: Props) {
                             {t('ruleTabUser', 'My rules')}
                         </div>
                         <div className="flex items-center gap-2">
-                            <Button variant="outline" size="sm" onClick={onExport}>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                // Nothing to export: an empty file is not a
+                                // useful backup, and downloading one reads as
+                                // "the export lost my rules".
+                                disabled={data.user.length === 0}
+                                onClick={onExport}
+                            >
                                 {t('backupExport', 'Export JSON')}
                             </Button>
                             <Button

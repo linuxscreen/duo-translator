@@ -17,6 +17,15 @@ interface DialogProps {
      * undo. ESC and the close button stay available either way.
      */
     dismissOnBackdrop?: boolean;
+    /**
+     * Validation error, pinned between the scrolling body and the footer.
+     *
+     * Errors belong HERE, not at the end of `children`: the body scrolls, so an
+     * error rendered there lands below the fold on any form taller than the
+     * panel — the user is left looking at a disabled Save button with no
+     * explanation anywhere on screen. This strip never scrolls away.
+     */
+    error?: React.ReactNode;
 }
 
 /**
@@ -31,6 +40,7 @@ export function Dialog({
     footer,
     widthClass = 'w-[480px]',
     dismissOnBackdrop = true,
+    error,
 }: DialogProps) {
     useEffect(() => {
         if (!open) return;
@@ -67,6 +77,14 @@ export function Dialog({
                     </button>
                 </div>
                 <div className="flex-1 overflow-y-auto px-4 py-3">{children}</div>
+                {error && (
+                    <div
+                        role="alert"
+                        className="shrink-0 border-t border-danger/40 bg-danger/10 px-4 py-2.5 text-[12px] text-danger"
+                    >
+                        {error}
+                    </div>
+                )}
                 {footer && (
                     <div className="flex items-center justify-end gap-2 border-t border-line bg-surface/80 px-4 py-3">
                         {footer}
