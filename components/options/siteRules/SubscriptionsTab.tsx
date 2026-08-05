@@ -16,9 +16,16 @@ type Props = {
   packages: Record<string, SiteRuleBundle>;
   disabledIds: string[];
   busy: boolean;
+  /** The built-in official package, which is NOT subscribable — see `add`. */
+  officialUrl: string;
   onSave: (next: SiteRuleSubscription[]) => void;
   onRefresh: (url?: string) => void;
-  onToggleRule: (key: string, enabled: boolean) => void;
+  /**
+   * Enable/disable rules by refKey. Takes a list so a batch is ONE write —
+   * calling a single-key setter N times would have each call start from the
+   * same stale `disabledIds` and keep only the last one.
+   */
+  onToggleRules: (keys: string[], enabled: boolean) => void;
   onDetail: (rule: SiteRule) => void;
 };
 
@@ -47,9 +54,10 @@ export function SubscriptionsTab({
   packages,
   disabledIds,
   busy,
+  officialUrl,
   onSave,
   onRefresh,
-  onToggleRule,
+  onToggleRules,
   onDetail,
 }: Props) {
   const { t } = useTranslation();
@@ -57,7 +65,16 @@ export function SubscriptionsTab({
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<SiteRuleSubscription | null>(null);
+  // Multi-select for the rules of the expanded package. Only one package is
+  // ever open, and keys are refKeys (`sub:<url>#<id>`) so they can't collide
+  // across packages — but reset on collapse anyway, so reopening starts clean.
+  const [selection, setSelection] = useState<Set<string>>(new Set());
   const disabled = new Set(disabledIds);
+
+  const expand = (next: string | null) => {
+    setExpanded(next);
+    setSelection(new Set());
+  };
 
   const add = (e: FormEvent) => {
     e.preventDefault();
@@ -65,6 +82,18 @@ export function SubscriptionsTab({
     if (value === '') return;
     if (!/^https?:\/\//i.test(value)) {
       setError(t('subscriptionErrorScheme', 'The subscription URL must start with http:// or https://'));
+      return;
+    }
+    // The official package is not a subscription: it feeds the System tier and
+    // is refreshed from the System tab. `getSubscriptions()` filters it out on
+    // read, so without this the row would be accepted and then silently vanish.
+    if (value === officialUrl) {
+      setError(
+        t(
+          'subscriptionErrorOfficial',
+          'This is the built-in official rule source. It already powers System rules and refreshes automatically — there is nothing to subscribe to.',
+        ),
+      );
       return;
     }
     if (subscriptions.some((s) => s.url === value)) {
@@ -137,7 +166,7 @@ export function SubscriptionsTab({
               <div className="flex items-center gap-3 px-4 py-3">
                 <button
                   type="button"
-                  onClick={() => setExpanded(open ? null : sub.url)}
+                  onClick={() => expand(open ? null : sub.url)}
                   className="text-ink-mute hover:text-ink"
                   aria-label={open ? t('collapse', 'Collapse') : t('browse', 'Browse')}
                 >
@@ -195,8 +224,15 @@ export function SubscriptionsTab({
                     rules={bundle?.rules ?? []}
                     keyOf={(r) => refKey(subSource(sub.url), r.id)}
                     isEnabled={(r) => r.enabled && !disabled.has(refKey(subSource(sub.url), r.id))}
-                    onToggle={(r, v) => onToggleRule(refKey(subSource(sub.url), r.id), v)}
+                    onToggle={(r, v) => onToggleRules([refKey(subSource(sub.url), r.id)], v)}
                     onDetail={onDetail}
+                    selection={selection}
+                    onSelectionChange={setSelection}
+                    // No batch delete: these records belong to the package, not
+                    // to us — disabling by refKey is the only thing we own.
+                    onBatchToggle={(rules, enabled) =>
+                      onToggleRules(rules.map((r) => refKey(subSource(sub.url), r.id)), enabled)
+                    }
                     emptyText={t('subscriptionNotFetched', 'Nothing fetched yet — hit refresh')}
                   />
                 </div>

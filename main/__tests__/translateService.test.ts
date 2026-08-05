@@ -61,6 +61,8 @@ function fetchCalls(prefix: string) {
 }
 
 const MS_TOKEN_HOST = "https://edge.microsoft.com/translate/auth";
+/** Translate AND detect both go here now — detect just pins `to=en`. */
+const MS_TRANSLATE_HOST = "https://edge.microsoft.com/translate/translatetext";
 
 /**
  * Answer the MS auth-token fetch with a valid token and everything else via
@@ -163,7 +165,7 @@ describe("GoogleTranslateService.translateText", () => {
 // MicrosoftTranslateService
 // ---------------------------------------------------------------------------
 describe("MicrosoftTranslateService.translateText", () => {
-    it("sends a bearer token and parses translations + detected language", async () => {
+    it("posts a bare string[] to the edge endpoint and parses translations + detected language", async () => {
         routeFetch(() => reply([
             { translations: [{ text: "你好" }], detectedLanguage: { language: "en", score: 1 } },
         ]));
@@ -172,27 +174,15 @@ describe("MicrosoftTranslateService.translateText", () => {
         expect(out[0].translatedMappedHtmlText).toBe("你好");
         expect(out[0].sourceLang).toBe("en");
 
-        const [[, init]] = fetchCalls("https://api.cognitive.microsofttranslator.com") as any[];
-        expect(init.headers.Authorization).toBe("Bearer ms-token");
-        expect(JSON.parse(init.body)).toEqual([{ text: "hello" }]);
+        const [[url, init]] = fetchCalls(MS_TRANSLATE_HOST) as any[];
+        expect(String(url)).toContain("to=zh-CN");
+        // No Authorization header any more — the endpoint is unauthenticated,
+        // which is also why there is no 401/token-refresh retry left to test.
+        expect(init.headers.Authorization).toBeUndefined();
+        expect(JSON.parse(init.body)).toEqual(["hello"]);
     });
 
-    it("refreshes the token once and retries on 401", async () => {
-        let translateCalls = 0;
-        routeFetch((url) => {
-            if (url.startsWith("https://api.cognitive.microsofttranslator.com")) {
-                translateCalls++;
-                if (translateCalls === 1) return reply(null, 401);
-                return reply([{ translations: [{ text: "你好" }], detectedLanguage: { language: "en", score: 1 } }]);
-            }
-            return reply(null, 500);
-        });
-        const out = await new MicrosoftTranslateService().translateText(["hello"], "zh-CN");
-        expect(out[0].translatedMappedHtmlText).toBe("你好");
-        expect(translateCalls).toBe(2);
-    });
-
-    it("returns [] on a non-200, non-401 response", async () => {
+    it("returns [] on a non-200 response", async () => {
         routeFetch(() => reply(null, 500));
         expect(await new MicrosoftTranslateService().translateText(["x"], "zh-CN")).toEqual([]);
     });
@@ -201,10 +191,10 @@ describe("MicrosoftTranslateService.translateText", () => {
 describe("MicrosoftTranslateService.translateBatchText", () => {
     it("returns one result per input across chunk boundaries", async () => {
         routeFetch((url, init) => {
-            if (!url.startsWith("https://api.cognitive.microsofttranslator.com")) return reply(null, 500);
-            const items = JSON.parse(init.body) as { text: string }[];
-            return reply(items.map((i) => ({
-                translations: [{ text: `译:${i.text}` }],
+            if (!url.startsWith(MS_TRANSLATE_HOST)) return reply(null, 500);
+            const texts = JSON.parse(init.body) as string[];
+            return reply(texts.map((text) => ({
+                translations: [{ text: `译:${text}` }],
                 detectedLanguage: { language: "en", score: 1 },
             })));
         });
@@ -214,10 +204,16 @@ describe("MicrosoftTranslateService.translateBatchText", () => {
 });
 
 describe("MicrosoftTranslateService.detectLanguage", () => {
+    // Detection reuses the translate endpoint (pinned to `to=en`) and reads the
+    // detectedLanguage field off the translation response — there is no longer
+    // a separate detect host.
     it("returns the dominant detected language", async () => {
         routeFetch((url) => {
-            if (url.startsWith("https://api-edge.cognitive.microsofttranslator.com")) {
-                return reply([{ language: "en", score: 1 }, { language: "en", score: 1 }]);
+            if (url.startsWith(MS_TRANSLATE_HOST)) {
+                return reply([
+                    { translations: [{ text: "a" }], detectedLanguage: { language: "en", score: 1 } },
+                    { translations: [{ text: "b" }], detectedLanguage: { language: "en", score: 1 } },
+                ]);
             }
             return reply(null, 500);
         });

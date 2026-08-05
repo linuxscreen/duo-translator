@@ -149,7 +149,7 @@ export function RuleTable({
         {selectable && (
           <Checkbox checked={allSelected} onChange={toggleAll} aria-label={t('selectAll', 'Select all')} />
         )}
-        <span>{t('ruleName', 'Rule')}</span>
+        <span>{t('name', 'Name')}</span>
         <span>{t('ruleMatchUrls', 'Matches')}</span>
         <span className="justify-self-end">{t('status', 'Status')}</span>
       </div>

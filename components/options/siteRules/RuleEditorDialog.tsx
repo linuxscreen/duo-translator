@@ -143,7 +143,7 @@ export function RuleEditorDialog({ open, rule, onClose, onSave }: Props) {
       }
     >
       <div className="flex flex-col gap-3.5">
-        <FormField label={t('ruleName', 'Rule')} value={name} onChange={setName} placeholder="GitHub" />
+        <FormField label={t('name', 'Name')} value={name} onChange={setName} placeholder="GitHub" />
         <FormField
           label={t('ruleDescription', 'Description')}
           value={description}

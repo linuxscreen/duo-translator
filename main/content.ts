@@ -992,11 +992,11 @@ export async function content() {
             if (window.location.href !== currentUrl) {
                 currentUrl = window.location.href;
                 await refreshSiteRules(currentUrl);
-            } else if (siteRulesConditional && refreshCompiledSiteRules() && translateStatus) {
+            } else if (siteRulesConditional && refreshCompiledSiteRules()) {
                 // A page-identity marker changed without the URL changing
                 // (hydration, a client-side view swap). Re-probing costs one
                 // querySelector per conditional rule, once per scan cycle.
-                applySiteRuleCss();
+                syncSiteRuleCss();
             }
             // console.log("processPendingMutations ", pendingMarkRoots.size);
             // Drain in waves: roots added during our async work get picked up
@@ -1182,7 +1182,7 @@ export async function content() {
             // updateTranslateStatus returns early when the status is already
             // true (a tab restored mid-session), so the CSS needs applying here
             // as well. Idempotent.
-            applySiteRuleCss()
+            syncSiteRuleCss(true)
             // Push the decision to sub-frames as an explicit TRANSLATE instead
             // of relying on them winning the session-storage race: a sub-frame
             // whose catch-up read (above) ran BEFORE we persisted the status
@@ -1272,13 +1272,29 @@ export async function content() {
     }
 
     /**
-     * Apply the matched rules' `injectCss`.
+     * Apply or drop the matched rules' `injectCss` according to whether this
+     * frame currently shows any translation at all.
      *
-     * Called when the page actually starts translating and undone on restore:
-     * these declarations exist to make room for a translation (lifting a
-     * `-webkit-line-clamp`, say), so changing an untranslated page's appearance
-     * would be us overreaching.
+     * The condition is deliberately NOT "the page translate switch is on": a
+     * per-paragraph translate (double-tap modifier, context menu) writes a
+     * translation without ever flipping that switch, and the whole reason
+     * these declarations exist is to make room for a translation — lifting a
+     * `-webkit-line-clamp`, undoing an `overflow:hidden`. So the CSS follows
+     * the translations, and the page switch is merely one way to get some.
+     *
+     * The opposite extreme — injecting at page load — was rejected: this is
+     * arbitrary CSS restyling the host page, it can come from a third-party
+     * subscription, and it would then apply to pages the user never asked to
+     * translate (including ones the domain strategy says NEVER to translate).
      */
+    function syncSiteRuleCss(pageTranslated: boolean = translateStatus) {
+        if (pageTranslated || duoTranslatedElementMap.size > 0 || translatedElementMap.size > 0) {
+            applySiteRuleCss()
+        } else {
+            removeSiteRuleCss()
+        }
+    }
+
     function applySiteRuleCss() {
         const css = siteRules.injectCss
         if (!css) {
@@ -1362,7 +1378,7 @@ export async function content() {
         siteRuleCandidates = await fetchSiteRuleCandidates(url)
         siteRulesConditional = hasConditionalRules(siteRuleCandidates)
         refreshCompiledSiteRules()
-        if (translateStatus) applySiteRuleCss()
+        syncSiteRuleCss()
     }
 
     async function removeCSS() {
@@ -1451,12 +1467,14 @@ export async function content() {
         if (translateStatus === status) {
             return
         }
-        // The rules' injectCss follows the translate status exactly, and this is
-        // the one place every entry point funnels through (popup, shortcut,
-        // float ball, context menu, auto-translate, sub-frame relays). Placed
-        // above the isTopFrame gate on purpose: a sub-frame's own document
-        // needs its rule CSS too.
-        if (status) applySiteRuleCss(); else removeSiteRuleCss()
+        // This is the one place every page-level entry point funnels through
+        // (popup, shortcut, float ball, context menu, auto-translate, sub-frame
+        // relays). Placed above the isTopFrame gate on purpose: a sub-frame's
+        // own document needs its rule CSS too. `status` is passed explicitly
+        // because `translateStatus` is only assigned further down — and turning
+        // the page off does NOT drop the CSS while per-paragraph translations
+        // are still standing; the restore paths sync it once they are gone.
+        syncSiteRuleCss(status)
         // Sub-frames mirror the status locally only — the tab-level session
         // record, the float ball, and the popup/badge broadcast are owned by
         // the top frame. If sub-frames wrote/broadcast too, they'd clobber the
@@ -1635,6 +1653,9 @@ export async function content() {
             } else {
                 duoTranslatedElementMap.delete(element)
             }
+            // Inside the microtask: the map delete above is what makes the last
+            // translation "gone", so this has to run after it.
+            syncSiteRuleCss()
         })
     }
 
@@ -1660,6 +1681,7 @@ export async function content() {
             } else {
                 translatedElementMap.delete(element)
             }
+            syncSiteRuleCss()
         })
     }
 
@@ -1716,6 +1738,7 @@ export async function content() {
                     }))
                 })
                 translatedElementMap.clear()
+                syncSiteRuleCss()
             })
         }
         if (pure) {
@@ -2132,6 +2155,13 @@ export async function content() {
         if (units.length === 0) {
             return
         }
+        // Every translation this frame writes passes through here, including the
+        // per-paragraph gesture that never touches the page translate switch —
+        // so this is where the rules' injectCss earns its keep. Done before the
+        // provider call rather than after the insert: the declarations exist to
+        // make room, and applying them first means one reflow instead of a
+        // visible clip-then-unclip.
+        syncSiteRuleCss(true)
         let ignoreElements: Node[] = []
         try {
             // Guard the containers, deduplicated — several units may share one.

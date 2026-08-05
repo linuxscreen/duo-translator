@@ -1,0 +1,151 @@
+// Bundled baseline of website translation rules.
+//
+// JSONC: `//` and `/* */` comments and trailing commas are allowed here (see
+// main/siteRules/jsonc.ts) — annotate a selector with where it came from and
+// what it covers, that context is what makes these rules maintainable.
+// Everything else is plain JSON; no unquoted keys, no single quotes.
+{
+  "schemaVersion": 1,
+  "name": "DuoTranslator Built-in Rules",
+  "updatedAt": "2026-08-03T00:00:00Z",
+  "rules": [
+    {
+      "id": "github-general",
+      "name": "Github General",
+      "includeUrls": "github.com/*",
+      "excludeSelectors": [
+        "header",
+        "footer"
+      ]
+    },
+    {
+      "id": "github-readme",
+      "name": "Github Readme",
+      "includeUrls": "github.com/*/*",
+      "matchSelectors": [
+        "meta[name=\"route-pattern\"][content$=\"/:user_id/:repository\"]" // home of repository
+      ],
+      "includeSelectors": [
+        ".SidebarAbout-module__description__xTkIP",
+        ".markdown-body"
+      ]
+    },
+    {
+      "id": "github-issues",
+      "name": "Github Issues",
+      "includeUrls": "github.com/*/*/issues",
+      "includeSelectors": [
+        ".IssuePullRequestTitle-module__ListItemTitle_0__CBNvC .prc-Text-Text-9mHv3",
+        ".tmp-p-4"
+      ]
+    },
+    {
+      "id": "github-pulls",
+      "name": "Github Pulls",
+      "includeUrls": "github.com/*/*/pulls",
+      "includeSelectors": [
+        ".js-issue-row .h4",
+        ".js-notice p,h4"
+      ]
+    },
+    {
+      "id": "github-actions",
+      "name": "Github Actions",
+      "includeUrls": "github.com/*/*/actions",
+      "includeSelectors": [
+        ".markdown-title"
+      ]
+    },
+    {
+      "id": "github-releases",
+      "name": "Github Releases",
+      "includeUrls": "github.com/*/*/releases*",
+      "includeSelectors": [
+        ".markdown-body"
+      ]
+    },
+    {
+      "id": "hackernews-meta",
+      "name": "Hacker News",
+      "description": "Skip the score/age/comment-count lines, the top navigation and the footer.",
+      "includeUrls": "news.ycombinator.com/*",
+      "excludeSelectors": [
+        ".subtext",
+        ".pagetop", // header
+        ".comhead",
+        ".reply", // reply button
+        "#hnmain > tbody > tr:nth-child(4)" // footer
+      ]
+    },
+    {
+      "id": "wikipedia-wiki",
+      "name": "Wikipedia",
+      "description": "Retain the article body but remove external links.",
+      "includeUrls": "*wikipedia.org/wiki/*",
+      "includeSelectors": [
+        ".mw-content-ltr",
+        "#mw-panel-toc-list"
+      ],
+      "excludeSelectors": [
+        "[aria-labelledby~=\"External_links\"]"
+      ]
+    },
+    {
+      "id": "youtube",
+      "name": "YouTube",
+      "description": "",
+      "includeUrls": "www.youtube.com/*",
+      "excludeUrls": "www.youtube.com/account*",
+      "includeSelectors": [
+        "yt-attributed-string#content-text.ytd-comment-view-model", // user comment
+        ".ytLockupMetadataViewModelTitle", // title of recommended videos
+        "#description-inline-expander #expanded", // video description
+        // ".macro-markers" // title of chapters
+        "a#video-title",
+        "#description-text",
+        ".shortsLockupViewModelHostOutsideMetadataTitle"
+      ],
+      "injectCss": ".ytLockupMetadataViewModelTitle, .shortsLockupViewModelHostOutsideMetadataTitle, #description-text { -webkit-line-clamp: unset !important; max-height: none !important; }"
+    },
+    {
+      "id": "google-account",
+      "name": "Google Account",
+      "includeUrls": "ogs.google.*/u/*/widget/account*",
+      "excludeSelectors": [
+        ".google-symbols[aria-hidden~=\"true\"]"
+      ]
+    },
+    {
+      "id": "google-search",
+      "name": "Google Search",
+      "includeUrls": "www.google.*/search?q=*",
+      "excludeSelectors": [
+        "#sfooter", // footer
+        ".DHTy1e" // previous and next button
+      ],
+      "injectCss": "div[style*=\"-webkit-line-clamp:\"] { -webkit-line-clamp: unset !important; }"
+    },
+    {
+      "id": "twitter",
+      "name": "Twitter",
+      "includeUrls": "x.com",
+      "includeSelectors": [
+        "[data-testid=\"tweetText\"]"
+      ]
+    },
+    {
+      "id": "reddit",
+      "name": "Reddit",
+      "includeUrls": "www.reddit.com",
+      "includeSelectors": [
+        "[slot=comment]",
+        "[slot=title]",
+        ".text-neutral-content[slot=text-body]",
+        "shreddit-post [slot=\"full-post-link\"]",
+        "community-recommendation .text-neutral-content-weak.line-clamp-2",
+        ".i18n-list-item-post-title"
+      ],
+      "injectCss": "community-recommendation .text-neutral-content-weak.line-clamp-2, .i18n-list-item-post-title { -webkit-line-clamp: unset !important; }"
+    }
+  ]
+}

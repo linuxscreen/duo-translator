@@ -32,11 +32,15 @@ import {
 } from '@/main/constants';
 import { configRepo } from '@/main/storage/configStore';
 import { handleAsync } from '@/main/messageBridge';
-import baselineJson from '@/assets/rules/system.json';
+// ?raw, not a JSON import: the baseline is JSONC (see jsonc.ts), which Vite's
+// JSON loader would refuse to parse.
+import baselineJsonc from '@/assets/rules/system.jsonc?raw';
+import { parseJsonc } from './jsonc';
 import { bundleTime, normalizeBundle } from './normalize';
 import { selectCandidates } from './resolve';
 import {
     EMPTY_CANDIDATES,
+    SITE_RULE_SCHEMA_VERSION,
     subSource,
     type RuleGroup,
     type SiteRule,
@@ -54,9 +58,26 @@ const MAX_PACKAGE_BYTES = 2 * 1024 * 1024;
 
 type PackageCache = Record<string, SiteRuleBundle>;
 
-// The bundled baseline. Normalized once at module load — it ships with the
-// extension, so a parse failure here is a build error, not a runtime condition.
-const BASELINE: SiteRuleBundle = normalizeBundle(baselineJson).bundle;
+// The bundled baseline, parsed and normalized once at module load. It ships
+// with the extension, so a malformed file is a development mistake — but since
+// the ?raw import hands us text, that mistake surfaces at runtime, during
+// background's initial script evaluation. Throwing there would take the entire
+// service worker down (no messaging, no translation at all), so degrade to an
+// empty system tier and shout in the console instead.
+const BASELINE: SiteRuleBundle = loadBaseline();
+
+function loadBaseline(): SiteRuleBundle {
+    try {
+        const { bundle, warnings } = normalizeBundle(parseJsonc(baselineJsonc));
+        if (warnings.length > 0) {
+            console.warn(APP_NAME_WITH_SUFFIX, 'bundled site rules:', warnings);
+        }
+        return bundle;
+    } catch (e) {
+        console.error(APP_NAME_WITH_SUFFIX, 'bundled site rules failed to parse', e);
+        return { schemaVersion: SITE_RULE_SCHEMA_VERSION, name: '', updatedAt: '', rules: [] };
+    }
+}
 
 // ------------------------------ cache --------------------------------------
 
@@ -178,7 +199,8 @@ async function fetchSubscription(sub: SiteRuleSubscription): Promise<SiteRuleSub
         if (text.length > MAX_PACKAGE_BYTES) {
             throw new Error(`Package too large (${Math.round(text.length / 1024)} KB)`);
         }
-        const { bundle, warnings } = normalizeBundle(JSON.parse(text));
+        // JSONC: a published package is hand-maintained, same as the baseline.
+        const { bundle, warnings } = normalizeBundle(parseJsonc(text));
         if (warnings.length > 0) {
             console.warn(APP_NAME_WITH_SUFFIX, `site rules from ${sub.url}:`, warnings);
         }

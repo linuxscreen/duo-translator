@@ -16,6 +16,7 @@ import { APP_NAME_KEBAB_CASE, CONFIG_KEY, SITE_RULE_ACTION } from '@/main/consta
 import { sendMessageToBackground } from '@/utils/message';
 import { setConfig } from '@/utils/db';
 import { normalizeBundle } from '@/main/siteRules/normalize';
+import { parseJsonc } from '@/main/siteRules/jsonc';
 import {
     refKey,
     SITE_RULE_SCHEMA_VERSION,
@@ -121,7 +122,7 @@ export function SiteRulesPage({ onBack }: Props) {
         e.target.value = ''; // allows re-picking the same file
         if (!file || !data) return;
         try {
-            const { bundle, warnings } = normalizeBundle(JSON.parse(await file.text()));
+            const { bundle, warnings } = normalizeBundle(parseJsonc(await file.text()));
             // Merge by id: an imported rule replaces the local one with the same
             // id, everything else is kept. Nothing is ever deleted by an import.
             const merged = [...data.user];
@@ -255,11 +256,12 @@ export function SiteRulesPage({ onBack }: Props) {
                     packages={data.packages}
                     disabledIds={data.disabledIds}
                     busy={busy}
+                    officialUrl={data.officialUrl}
                     onSave={(next: SiteRuleSubscription[]) =>
                         void write(CONFIG_KEY.SITE_RULE_SUBSCRIPTIONS, next)
                     }
                     onRefresh={(url) => void refreshSubscriptions(url)}
-                    onToggleRule={setDisabled}
+                    onToggleRules={setDisabledMany}
                     onDetail={setDetail}
                 />
             )}
@@ -284,7 +286,7 @@ export function SiteRulesPage({ onBack }: Props) {
                             <input
                                 ref={fileInputRef}
                                 type="file"
-                                accept="application/json,.json"
+                                accept="application/json,.json,.jsonc"
                                 onChange={onImportFile}
                                 className="hidden"
                             />

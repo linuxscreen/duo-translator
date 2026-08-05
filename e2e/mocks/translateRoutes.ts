@@ -30,20 +30,25 @@ export async function mockTranslateProviders(context: BrowserContext): Promise<v
         });
     });
 
-    // --- Microsoft: translate + detect (only hit when service=microsoft) ----
-    await context.route('**/api.cognitive.microsofttranslator.com/**', async (route) => {
-        const items = (route.request().postDataJSON() as { text: string }[]) ?? [];
-        const body = items.map((it) => ({
-            translations: [{ text: it.text.replace(/(^|>)([^<>]+)/g, (_, sep, text) => `${sep}${ZH}${text}`) }],
+    // --- Microsoft: POST edge.microsoft.com/translate/translatetext ---------
+    // One handler covers BOTH translate and detect: detection now goes to the
+    // same endpoint (pinned to `to=en`) and reads `detectedLanguage` off the
+    // translation response, so the old separate api-edge detect host is gone.
+    // Request body is a bare `string[]`; response shape consumed by
+    // MicrosoftTranslateService: [{ translations: [{text}], detectedLanguage }]
+    await context.route('**/edge.microsoft.com/translate/translatetext*', async (route) => {
+        const texts = (route.request().postDataJSON() as string[]) ?? [];
+        const body = texts.map((text) => ({
+            translations: [{ text: text.replace(/(^|>)([^<>]+)/g, (_, sep, inner) => `${sep}${ZH}${inner}`) }],
             detectedLanguage: { language: 'en', score: 1 },
-        })
-        );
+        }));
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
     });
 
-    await context.route('**/api-edge.cognitive.microsofttranslator.com/**', async (route) => {
-        const items = (route.request().postDataJSON() as { text: string }[]) ?? [];
-        const body = items.map(() => ({ language: 'en', score: 1 }));
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    // The auth endpoint returns a bare token string. `translatetext` no longer
+    // sends the header, but getMicrosoftToken can still be reached — answering
+    // it offline keeps the mocked run off the network entirely.
+    await context.route('**/edge.microsoft.com/translate/auth', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'text/plain', body: 'e2e-token' });
     });
 }

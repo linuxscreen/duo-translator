@@ -439,13 +439,13 @@ export const DEFAULT_VALUE = {
 
 /**
  * The official rule package, offered as a built-in subscription that cannot be
- * removed (only disabled). The bundled baseline in assets/rules/system.json
+ * removed (only disabled). The bundled baseline in assets/rules/system.jsonc
  * keeps the feature working offline and on first install; a successful fetch of
  * a NEWER package replaces the baseline wholesale, so "System rules" always
  * shows exactly one package rather than a merge of two.
  */
 export const SITE_RULE_OFFICIAL_URL =
-    'https://raw.githubusercontent.com/linuxscreen/duo-translator-rules/main/rules.json';
+    'https://raw.githubusercontent.com/linuxscreen/duo-translator-rules/main/rules.jsonc';
 
 /** How often background refreshes every enabled subscription. */
 export const SITE_RULE_REFRESH_MINUTES = 24 * 60;
