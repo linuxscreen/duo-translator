@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-08-06
+
+### Added
+
+- Video Subtitles (YouTube bilingual subtitles)
+- Website translation rules (Per-site translate areas, no-translate areas and custom CSS)
+- Translation module architecture refactor
+
+### Fixed
+
+- Microsoft Translator API failure
+- Introduced logical paragraphs to improve the reading experience
+- Implemented bilingual highlighting with a new API to avoid intrusive modifications
+
 ## [2.0.1] - 2026-07-17
 
 ### Added

@@ -181,7 +181,7 @@ export function VideoSubtitlePage() {
       {/* Basic switches */}
       <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
         <SettingRow
-          label={t('videoSubtitleGlobalSwitch', 'Enable video bilingual subtitles')}
+          label={t('enable', 'Enable')}
           hint={t('videoSubtitleGlobalSwitchHint', 'Master switch for the whole feature')}
           control={
             <Switch

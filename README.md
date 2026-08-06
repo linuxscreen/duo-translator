@@ -16,8 +16,10 @@ An AI-powered translation and writing assistant. Supports webpage translation, s
 - AI Writing
   - Correct grammar, polish, translate, and more directly in input box
   - AI workbench to edit long-form text
+- Video Subtitles (YouTube bilingual subtitles)
 - Multiple Translation and AI Service Integrations
-- Sync & Backup Config
+- Sync (WebDAV) & Backup Config
+- Website translation rules (Per-site translate areas, no-translate areas and custom CSS)
 
 ## Installation
 Add to your browser:
