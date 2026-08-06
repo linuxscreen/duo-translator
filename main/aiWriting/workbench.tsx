@@ -14,6 +14,7 @@ import type { AiProvider } from "@/main/aiProvider";
 import { startAiChatStream } from "@/main/aiClient";
 import { buildServiceOptions, getAiTranslateService } from "@/utils/service";
 import { getConfig, setConfig } from "@/utils/db";
+import { notifyBackground } from "@/utils/message";
 import { applyTextToTarget, canApplyToTarget } from "./applyText";
 import { DiffView } from "./DiffView";
 import {
@@ -414,9 +415,7 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                             <NoProviderNotice
                                 hasConfigured={hasConfiguredProviders}
                                 onConfigure={() =>
-                                    browser.runtime
-                                        .sendMessage({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: "services" } })
-                                        .catch(() => { })
+                                    notifyBackground({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: "services" } })
                                 }
                             />
                         )

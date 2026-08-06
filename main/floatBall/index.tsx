@@ -4,7 +4,7 @@ import { Settings as SettingsIcon } from "lucide-react";
 import { browser } from "wxt/browser";
 import { ACTION, CONFIG_KEY, DB_ACTION } from "@/main/constants";
 import { setConfig } from "@/utils/db";
-import { sendMessageToBackground } from "@/utils/message";
+import { notifyBackground, sendMessageToBackground } from "@/utils/message";
 import { loadTailwindIntoShadow } from "@/main/aiWriting/shadowStyle";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
 import { bindThemeToElement } from "@/utils/theme";
@@ -244,7 +244,7 @@ function FloatBallApp({
         // Open the toolbar action popup anchored to the extension icon — same
         // surface/position as clicking the icon. Background calls
         // chrome.action.openPopup() (must run there, not in the content script).
-        browser.runtime.sendMessage({ action: ACTION.OPEN_POPUP }).catch(() => { });
+        notifyBackground({ action: ACTION.OPEN_POPUP });
         setExpanded(false);
     };
 

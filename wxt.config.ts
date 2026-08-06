@@ -129,6 +129,15 @@ export default defineConfig({
             global: 'globalThis',
         },
         build: {
+            // No `<link rel="modulepreload">` in popup.html / options.html.
+            // Chrome (>= 152, seen on 153 dev) refuses to match a modulepreload
+            // against the later real import of the same chunk on an extension
+            // page — "A preload for '…/chunks/service-*.js' is found, but is not
+            // used because it is a cross-world extension resource mismatch" —
+            // so the chunk is fetched twice and two warnings land in
+            // chrome://extensions › Errors. Every asset here is a local file in
+            // the packaged extension, so the preload hint buys nothing anyway.
+            modulePreload: false,
             minify: process.env.NODE_ENV !== 'production' ? false : 'terser',
             sourcemap: process.env.NODE_ENV !== 'production' && 'inline',
             terserOptions: {

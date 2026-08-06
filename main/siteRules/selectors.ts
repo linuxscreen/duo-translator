@@ -31,7 +31,7 @@ export function compileSelectorList(selectors: string[], label: string): string 
             document.querySelector(selector);
             valid.push(selector);
         } catch {
-            console.warn(APP_NAME_WITH_SUFFIX, `ignoring malformed ${label} selector:`, selector);
+            console.log(APP_NAME_WITH_SUFFIX, `ignoring malformed ${label} selector:`, selector);
         }
     }
     return valid.join(',');
@@ -56,7 +56,7 @@ export function pageMatchesCondition(matchSelectors: string[]): boolean {
         try {
             if (document.querySelector(selector)) return true;
         } catch {
-            console.warn(APP_NAME_WITH_SUFFIX, 'ignoring malformed matchSelectors entry:', selector);
+            console.log(APP_NAME_WITH_SUFFIX, 'ignoring malformed matchSelectors entry:', selector);
         }
     }
     return false;

@@ -147,11 +147,8 @@ export function reportRequestError(scope: ErrorScope, error: any, options?: Repo
         const scopeLabel = ERROR_SCOPE_FALLBACK[scope] || scope;
         const reason = reasonOf(error);
 
-        // (1) The page console. One `console.error` per failure, carrying
-        // everything known about it — this is the "完整的报错信息" the bubble
-        // deliberately does not have room for.
         const bg = error instanceof BackgroundRequestError ? error : null;
-        console.error(
+        console.log(
             `${APP_NAME_WITH_SUFFIX}${scopeLabel} failed: ${reason}`,
             {
                 scope: scopeLabel,
@@ -185,6 +182,6 @@ export function reportRequestError(scope: ErrorScope, error: any, options?: Repo
     } catch (e) {
         // Reporting must never become the failure. Nothing else to do here — if
         // even this line throws we have no channel left.
-        console.error(APP_NAME_WITH_SUFFIX, "error reporting itself failed:", e);
+        console.log(APP_NAME_WITH_SUFFIX, "error reporting itself failed:", e);
     }
 }

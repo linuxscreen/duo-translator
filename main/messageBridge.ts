@@ -51,7 +51,7 @@ function scopeTable(scope: string): Map<string, AbortController> {
  * `scope` so the page-side report can name the operation, not just the reason.
  */
 function failResponse(sendResponse: SendResponse, label: string, e: any): void {
-    console.error(APP_NAME_WITH_SUFFIX, `${label} failed:`, e);
+    console.log(APP_NAME_WITH_SUFFIX, `${label} failed:`, e);
     sendResponse({
         status: STATUS_FAIL,
         data: {

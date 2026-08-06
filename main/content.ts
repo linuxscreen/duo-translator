@@ -1,7 +1,7 @@
 import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
 import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage } from "./constants";
 import { restore, translateParams, getTranslateResult, translate, TranslateResult } from "./translateClient";
-import { sendMessageToBackground } from "../utils/message";
+import { notifyBackground, runtimeSendMessage, sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
 import { mountFloatBall, type FloatBallController } from "./floatBall";
 import { mountAiWritingDot } from "./aiWriting/floatingDot";
@@ -549,24 +549,24 @@ export async function content() {
     function notifyParaContextMenuUpdate(lastX: number, lastY: number) {
         const target = resolveUnitTargetAtPoint(lastX, lastY)
         if (target) {
-            browser.runtime.sendMessage({
+            runtimeSendMessage({
                 action: ACTION.SHOW_TRANSLATE_RESTORE_PARA_MENU,
                 // "unit" is the only untranslated kind, so the menu title
                 // follows the state of the unit under the pointer, not of the
                 // whole container.
                 data: { translated: target.kind !== "unit" },
-            }).then((msg) => {
-                if (msg.status === STATUS_SUCCESS) {
+            }).then((msg: any) => {
+                if (msg?.status === STATUS_SUCCESS) {
                     lastContextMenuTarget = target
                 }
-            });
+            }).catch(() => { });
 
         } else {
-            browser.runtime.sendMessage({ action: ACTION.HIDE_TRANSLATE_RESTORE_PARA_MENU }).then((msg) => {
-                if (msg.status === STATUS_SUCCESS) {
+            runtimeSendMessage({ action: ACTION.HIDE_TRANSLATE_RESTORE_PARA_MENU }).then((msg: any) => {
+                if (msg?.status === STATUS_SUCCESS) {
                     lastContextMenuTarget = null
                 }
-            });
+            }).catch(() => { });
         }
     }
 
@@ -1242,14 +1242,14 @@ export async function content() {
         if (!includeSelector && !conditional) return
         const check = () => {
             if (includeSelector && !document.querySelector(includeSelector)) {
-                console.warn(
+                console.log(
                     APP_NAME_WITH_SUFFIX,
                     `website rule includeSelectors matched no element — nothing on this page will be translated.`,
                     { selector: includeSelector, rules: siteRules.matchedIds },
                 )
             }
             for (const rule of unmatchedConditions(siteRuleCandidates)) {
-                console.warn(
+                console.log(
                     APP_NAME_WITH_SUFFIX,
                     `website rule "${rule.key}" is inactive: none of its matchSelectors matched this page.`,
                     { matchSelectors: rule.matchSelectors },
@@ -1291,7 +1291,7 @@ export async function content() {
         try {
             return el.matches(selector)
         } catch (e) {
-            console.warn(APP_NAME_WITH_SUFFIX, "selector match failed", selector, e)
+            console.log(APP_NAME_WITH_SUFFIX, "selector match failed", selector, e)
             return false
         }
     }
@@ -1514,8 +1514,10 @@ export async function content() {
         }
         translateStatus = status
         setFloatBallSwitchStatus(status)
-        // notify the popup and background to set translate status
-        browser.runtime.sendMessage({
+        // notify the popup and background to set translate status. Fire-and-
+        // forget: an orphaned content script (extension reloaded under a live
+        // page) has no background to reach, and there is nothing to retry.
+        notifyBackground({
             action: TRANSLATE_ACTION.TRANSLATE_STATUS_CHANGED,
             data: {
                 tabId: tabId,

@@ -10,6 +10,39 @@ type Message = {
 }
 
 /**
+ * `browser.runtime.sendMessage` does not always return a promise: from an
+ * orphaned context — a content script whose extension was reloaded or updated
+ * while its page stayed open — it throws *synchronously* ("Extension context
+ * invalidated.", and on some paths "Could not establish connection. Receiving
+ * end does not exist."). A `.catch()` chained onto the call is then never
+ * attached, and because both wrappers below issue the call inside a `new
+ * Promise` executor the throw is converted into a rejection of that promise —
+ * which every fire-and-forget caller (`void sendMessageToBackground(…)`)
+ * reports as "Uncaught (in promise)".
+ *
+ * So the call has to be made inside a try/catch, and the failure normalized to
+ * the same shape as an async rejection.
+ */
+export function runtimeSendMessage(message: Message): Promise<any> {
+    try {
+        return browser.runtime.sendMessage(message)
+    } catch (e) {
+        return Promise.reject(e)
+    }
+}
+
+/**
+ * Fire-and-forget notification to the background: never throws, never rejects,
+ * returns nothing. Use it instead of a bare
+ * `browser.runtime.sendMessage(…).catch(() => {})` — that idiom is repeated all
+ * over the UI surfaces and, as {@link runtimeSendMessage} explains, it does not
+ * actually cover the synchronous-throw case it was written for.
+ */
+export function notifyBackground(message: Message): void {
+    runtimeSendMessage(message).catch(() => { })
+}
+
+/**
  * Sends a message to the background script.
  *
  * @param {Message} message The message to send.
@@ -21,7 +54,7 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
     let timeoutId: NodeJS.Timeout;
     return Promise.race([
         new Promise((resolve) => {
-            browser.runtime.sendMessage(message).then((response) => {
+            runtimeSendMessage(message).then((response) => {
                 console.log("sendMessageToBackground response:", response, message);
                 clearTimeout(timeoutId)
                 if (!response) {
@@ -32,7 +65,7 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
                     resolve(response.data);
                 } else {
                     resolve(undefined)
-                    console.warn(APP_NAME_WITH_SUFFIX, `sendMessageToBackground ${message.action} ${response.data}`);
+                    console.log(APP_NAME_WITH_SUFFIX, `sendMessageToBackground ${message.action} ${response.data}`);
                 }
             }).catch((e) => {
                 // A rejection here (e.g. "Could not establish connection / receiving
@@ -41,13 +74,13 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
                 // fast instead of waiting out the full timeout.
                 clearTimeout(timeoutId)
                 resolve(undefined)
-                console.warn(APP_NAME_WITH_SUFFIX, `sendMessageToBackground ${message.action} error`, e)
+                console.log(APP_NAME_WITH_SUFFIX, `sendMessageToBackground ${message.action} error`, e)
             });
         }),
         new Promise((resolve) => {
             timeoutId = setTimeout(() => {
                 resolve(undefined)
-                console.warn(APP_NAME_WITH_SUFFIX, `sendMessageToBackground ${message.action} Request timeout`)
+                console.log(APP_NAME_WITH_SUFFIX, `sendMessageToBackground ${message.action} Request timeout`)
             }, timeout)
         })
     ]);
@@ -115,7 +148,7 @@ export function sendMessageToBackgroundOrThrow(message: Message, timeout: number
     let timeoutId: NodeJS.Timeout;
     return Promise.race([
         new Promise((resolve, reject) => {
-            browser.runtime.sendMessage(message).then((response) => {
+            runtimeSendMessage(message).then((response) => {
                 clearTimeout(timeoutId)
                 // An empty response is the MV3 service-worker cold-start race
                 // ("Could not establish connection"). Resolving undefined here
@@ -144,23 +177,51 @@ export function sendMessageToBackgroundOrThrow(message: Message, timeout: number
 }
 
 /**
+ * Deliver a message to one tab, treating "nobody is listening" as a normal
+ * outcome rather than an error.
+ *
+ * `tabs.sendMessage` rejects with "Could not establish connection. Receiving end
+ * does not exist." whenever the target tab has no live content script. A URL
+ * check cannot rule that out: reloading or updating the extension orphans the
+ * content script of every already-open tab (the page keeps its old http URL but
+ * the script is gone), and injection also fails on the PDF viewer, the Chrome
+ * Web Store and any page that was open before install. Every caller here is
+ * fire-and-forget with nothing to retry, so the rejection has no consumer — left
+ * unhandled it surfaces as "Uncaught (in promise) Error: Could not establish
+ * connection" in the popup and lands in chrome://extensions › Errors. Worse, in
+ * `App.tsx` it skipped the `.then(() => window.close())` after a translate
+ * toggle, leaving the popup stuck open.
+ *
+ * Real errors (a throwing content handler) are still logged.
+ */
+function sendToTabQuietly(tabId: number, message: Message): Promise<any> {
+    return browser.tabs.sendMessage(tabId, message).catch((e) => {
+        const reason = e instanceof Error ? e.message : String(e)
+        if (!reason.includes('Receiving end does not exist') &&
+            !reason.includes('Could not establish connection')) {
+            console.log(APP_NAME_WITH_SUFFIX, `sendMessageToTab ${message.action} error`, e)
+        }
+        return null
+    })
+}
+
+/**
  * Sends a message to the currently active and valid tab.
  *
  * @param message The message to send.
- * @returns A promise that resolves with the response data.
+ * @returns A promise that resolves with the response data, or null when the tab
+ *          has no content script to receive it.
  */
 export async function sendMessageToTab(message: Message) {
     let tabs = await browser.tabs.query({ active: true, currentWindow: true })
     if (tabs.length === 0) {
-        return Promise.resolve(null)
+        return null
     }
-    console.log("sendMessageToTab:", tabs[0]?.id, tabs[0]?.url, tabs?.[0].id);
-    if (tabs?.[0].url?.startsWith('http')) {
-        return browser.tabs.sendMessage(Number(tabs?.[0].id), message)
-    } else {
-        return Promise.resolve(null)
+    console.log("sendMessageToTab:", tabs[0]?.id, tabs[0]?.url);
+    if (!tabs[0].id || !tabs[0].url?.startsWith('http')) {
+        return null
     }
-
+    return sendToTabQuietly(tabs[0].id, message)
 }
 
 /**
@@ -181,17 +242,22 @@ export async function sendMessageToAllTabs(message: Message, sendActiveFlag: boo
         activeTab = activeTabs[0]
     }
     let resp: any
-    await Promise.all(tabs.map(tab => {
-        if (!tab.url?.startsWith('http')) {
+    // Deliberately NOT awaited: the content-side onMessage listener is `async`,
+    // so its reply only arrives once the handler finishes — for TRANSLATE that
+    // is a whole page translation. Awaiting every tab would stall the caller
+    // (and the popup) for seconds. Only the delivery failure is handled, via
+    // sendToTabQuietly.
+    tabs.forEach(tab => {
+        if (!tab.id || !tab.url?.startsWith('http')) {
             return
         }
         if (tab.id == activeTab?.id) {
             let messageCopy = structuredClone(message)
             messageCopy.active = true
-            resp = browser.tabs.sendMessage(Number(tab.id), messageCopy)
+            resp = sendToTabQuietly(tab.id, messageCopy)
             return;
         }
-        browser.tabs.sendMessage(Number(tab.id), message)
-    }))
+        sendToTabQuietly(tab.id, message)
+    })
     return resp
 }

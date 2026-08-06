@@ -19,7 +19,7 @@ import {
     DEFAULT_VALUE,
     LANGUAGES,
 } from "@/main/constants";
-import { sendMessageToBackground } from "@/utils/message";
+import { notifyBackground, sendMessageToBackground } from "@/utils/message";
 import type { AiProvider } from "@/main/aiProvider";
 import { startAiChatStream } from "@/main/aiClient";
 import { buildAiTranslateService, buildServiceOptions, type ServiceOption } from "@/utils/service";
@@ -497,7 +497,7 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
     };
 
     const openOptions = (tab: string) => {
-        browser.runtime.sendMessage({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: tab } }).catch(() => { });
+        notifyBackground({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: tab } });
     };
 
     // ---- Settings popover change handlers ----------------------------------

@@ -137,7 +137,7 @@ export function SiteRulesPage({ onBack }: Props) {
             toast(
                 t('rulesImported', { count: bundle.rules.length, defaultValue: 'Imported {{count}} rules' }),
             );
-            if (warnings.length > 0) console.warn(warnings);
+            if (warnings.length > 0) console.log(warnings);
         } catch (err: any) {
             toast(err?.message || String(err), 'error');
         }

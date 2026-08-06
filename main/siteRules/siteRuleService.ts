@@ -70,7 +70,7 @@ function loadBaseline(): SiteRuleBundle {
     try {
         const { bundle, warnings } = normalizeBundle(parseJsonc(baselineJsonc));
         if (warnings.length > 0) {
-            console.warn(APP_NAME_WITH_SUFFIX, 'bundled site rules:', warnings);
+            console.log(APP_NAME_WITH_SUFFIX, 'bundled site rules:', warnings);
         }
         return bundle;
     } catch (e) {
@@ -202,7 +202,7 @@ async function fetchSubscription(sub: SiteRuleSubscription): Promise<SiteRuleSub
         // JSONC: a published package is hand-maintained, same as the baseline.
         const { bundle, warnings } = normalizeBundle(parseJsonc(text));
         if (warnings.length > 0) {
-            console.warn(APP_NAME_WITH_SUFFIX, `site rules from ${sub.url}:`, warnings);
+            console.log(APP_NAME_WITH_SUFFIX, `site rules from ${sub.url}:`, warnings);
         }
         const cache = await readCache();
         cache[sub.url] = bundle;
@@ -212,7 +212,7 @@ async function fetchSubscription(sub: SiteRuleSubscription): Promise<SiteRuleSub
         next.lastError = undefined;
     } catch (e: any) {
         next.lastError = e?.message || String(e);
-        console.warn(APP_NAME_WITH_SUFFIX, `site rule subscription failed: ${sub.url}`, e);
+        console.log(APP_NAME_WITH_SUFFIX, `site rule subscription failed: ${sub.url}`, e);
     }
     return next;
 }

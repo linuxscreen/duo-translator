@@ -10,6 +10,7 @@ import {
     VIDEO_SUBTITLE_DISPLAY_MODE,
 } from "@/main/constants";
 import { setConfig } from "@/utils/db";
+import { notifyBackground } from "@/utils/message";
 import { useConfig } from "@/utils/reactiveConfig";
 import { buildAiTranslateService, buildServiceOptions } from "@/utils/service";
 import { loadTailwindIntoShadow } from "@/main/aiWriting/shadowStyle";
@@ -349,9 +350,7 @@ function SubtitleMenuApp({
                 type="button"
                 onClick={() => {
                     setOpen(false);
-                    browser.runtime
-                        .sendMessage({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: "videoSubtitle" } })
-                        .catch(() => { });
+                    notifyBackground({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: "videoSubtitle" } });
                 }}
                 className={`${rowCls} w-full text-left hover:bg-hover-2 text-ink`}
             >

@@ -394,25 +394,22 @@ export async function background() {
                 const lang = normalizeInterfaceLang(message.data)
                 if (lang) {
                     currentInterfaceLang = lang
-                    // Refresh the context menu title if it exists. update()
-                    // silently fails (logs lastError) when the item is absent.
-                    try {
-                        if (paraContextMenuShowStatus) {
-                            browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PARA, {
-                                title: paraContextMenuShowStatus
-                                    ? getMsg(CONTEXT_MENU_RESTORE_PARA_TITLE)
-                                    : getMsg(CONTEXT_MENU_TRANSLATE_PARA_TITLE)
-                            })
-                        } else {
-                            browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {
-                                title: translateStatus
-                                    ? getMsg(CONTEXT_MENU_RESTORE_TITLE)
-                                    : getMsg(CONTEXT_MENU_TRANSLATE_TITLE)
-                            })
-                        }
-                        browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_INPUT_BOX, { title: getMsg(CONTEXT_MENU_TRANSLATE_INPUT_BOX_TITLE) })
-                        browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_SELECTION, { title: getMsg(CONTEXT_MENU_TRANSLATE_SELECTION_TITLE) })
-                    } catch { }
+                    // Refresh the context menu title if it exists.
+                    if (paraContextMenuShowStatus) {
+                        updateMenuQuietly(CONTEXT_MENU.TRANSLATE_RESTORE_PARA, {
+                            title: paraContextMenuShowStatus
+                                ? getMsg(CONTEXT_MENU_RESTORE_PARA_TITLE)
+                                : getMsg(CONTEXT_MENU_TRANSLATE_PARA_TITLE)
+                        })
+                    } else {
+                        updateMenuQuietly(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {
+                            title: translateStatus
+                                ? getMsg(CONTEXT_MENU_RESTORE_TITLE)
+                                : getMsg(CONTEXT_MENU_TRANSLATE_TITLE)
+                        })
+                    }
+                    updateMenuQuietly(CONTEXT_MENU.TRANSLATE_INPUT_BOX, { title: getMsg(CONTEXT_MENU_TRANSLATE_INPUT_BOX_TITLE) })
+                    updateMenuQuietly(CONTEXT_MENU.TRANSLATE_SELECTION, { title: getMsg(CONTEXT_MENU_TRANSLATE_SELECTION_TITLE) })
                 }
                 sendResponse({ status: STATUS_SUCCESS, data: null })
                 break
@@ -609,24 +606,28 @@ export async function background() {
         if (!tab || !tab.id) {
             return
         }
+        // `.catch` on every send: the tab may have no live content script (the
+        // extension was reloaded/updated after the tab was opened, or it is a
+        // page we never inject into). That rejection has no consumer here and
+        // would only show up as an unhandled error in chrome://extensions.
         switch (info.menuItemId) {
             case CONTEXT_MENU.TRANSLATE_RESTORE_PAGE:
                 if (!translateStatus) {
-                    browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE });
+                    browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE }).catch(() => { });
                 } else {
-                    browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.SHOW_ORIGINAL });
+                    browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.SHOW_ORIGINAL }).catch(() => { });
                 }
                 break
             case CONTEXT_MENU.TRANSLATE_INPUT_BOX:
-                browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_INPUT_BOX });
+                browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_INPUT_BOX }).catch(() => { });
                 break
             case CONTEXT_MENU.TRANSLATE_RESTORE_PARA:
                 console.log('translatePara', info, tab)
                 let act = paraTranslateStatus ? TRANSLATE_ACTION.SHOW_ORIGINAL_PARA : TRANSLATE_ACTION.TRANSLATE_PARA
-                browser.tabs.sendMessage(tab.id, { action: act });
+                browser.tabs.sendMessage(tab.id, { action: act }).catch(() => { });
                 break
             case CONTEXT_MENU.TRANSLATE_SELECTION:
-                browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_SELECTION, data: info.selectionText });
+                browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_SELECTION, data: info.selectionText }).catch(() => { });
                 break
         }
 
@@ -709,11 +710,31 @@ export async function background() {
         });
     }
 
+    /**
+     * `contextMenus.update` / `.remove` REJECT when the item does not exist
+     * ("Cannot find menu item with id …"), and that is routine here: the
+     * page/paragraph items swap in and out as the pointer moves, and the whole
+     * set is torn down when the global switch goes off. No caller can act on
+     * it, so the rejection only ever surfaced as an unhandled error in
+     * chrome://extensions. Note a surrounding `try/catch` does NOT cover this —
+     * these are async rejections, not synchronous throws.
+     */
+    function updateMenuQuietly(id: string, props: Parameters<typeof browser.contextMenus.update>[1]) {
+        return browser.contextMenus.update(id, props).catch(() => { })
+    }
+
+    function removeMenuQuietly(id: string) {
+        return browser.contextMenus.remove(id).catch(() => { })
+    }
+
     function removeContextMenu() {
-        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
-        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
-        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_SELECTION)
-        browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_INPUT_BOX)
+        removeMenuQuietly(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
+        // Was a duplicated TRANSLATE_RESTORE_PAGE — the paragraph item is the
+        // one that also needs removing, and it is created dynamically, so the
+        // duplicate was guaranteed to reject while the para item leaked.
+        removeMenuQuietly(CONTEXT_MENU.TRANSLATE_RESTORE_PARA)
+        removeMenuQuietly(CONTEXT_MENU.TRANSLATE_SELECTION)
+        removeMenuQuietly(CONTEXT_MENU.TRANSLATE_INPUT_BOX)
         browser.contextMenus.onClicked.removeListener(contextMenuClickLister)
         browser.tabs.onActivated.removeListener(tabsActivatedListener)
     }
@@ -754,7 +775,9 @@ export async function background() {
             if (!tab.id) {
                 return
             }
-            browser.tabs.sendMessage(tab.id, { action: action });
+            // Same as the context-menu path: a shortcut can fire on a tab whose
+            // content script no longer exists (extension reloaded/updated).
+            browser.tabs.sendMessage(tab.id, { action: action }).catch(() => { });
         });
     }
 
@@ -762,7 +785,7 @@ export async function background() {
         console.log('updateContextMenu', status)
         if (paraContextMenuShowStatus) return
 
-        browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {
+        updateMenuQuietly(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {
             title: translateStatus ? getMsg(CONTEXT_MENU_RESTORE_TITLE) : getMsg(CONTEXT_MENU_TRANSLATE_TITLE),
         })
     }
