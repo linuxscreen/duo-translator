@@ -478,7 +478,7 @@ export async function background() {
                         try {
                             await browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PARA, { title: msg })
                         } catch (e) {
-                            console.error('Error updating context menu:', e);
+                            console.log('Error updating context menu:', e);
                             sendResponse({ status: STATUS_FAIL });
                             return
                         }
@@ -492,7 +492,7 @@ export async function background() {
                     try {
                         await browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
                     } catch (e) {
-                        console.error('Error removing context menu:', e);
+                        console.log('Error removing context menu:', e);
                         sendResponse({ status: STATUS_FAIL });
                         return
                     }
@@ -502,7 +502,7 @@ export async function background() {
                         contexts: ["page", "link"] //"selection"
                     }, () => {
                         if (browser.runtime.lastError) {
-                            console.error('Error creating context menu:', browser.runtime.lastError.message);
+                            console.log('Error creating context menu:', browser.runtime.lastError.message);
                             sendResponse({ status: STATUS_FAIL });
                             return
                         }
@@ -524,7 +524,7 @@ export async function background() {
                     try {
                         await browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PARA)
                     } catch (e) {
-                        console.error('Error removing context menu:', e);
+                        console.log('Error removing context menu:', e);
                         sendResponse({ status: STATUS_FAIL });
                         return
                     }
@@ -536,7 +536,7 @@ export async function background() {
                         contexts: ["page"] //"selection"
                     }, () => {
                         if (browser.runtime.lastError) {
-                            console.error('Error creating context menu:', browser.runtime.lastError.message);
+                            console.log('Error creating context menu:', browser.runtime.lastError.message);
                             sendResponse({ status: STATUS_FAIL });
                             return
                         }

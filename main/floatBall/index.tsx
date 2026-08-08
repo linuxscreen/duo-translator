@@ -9,6 +9,7 @@ import { loadTailwindIntoShadow } from "@/main/aiWriting/shadowStyle";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
 import { bindThemeToElement } from "@/utils/theme";
 import { t, useLang } from "@/main/aiWriting/i18n";
+import { guardExtensionAlive } from "@/main/extensionDisabledNotice";
 import { getViewportSize } from "@/utils/dom";
 import { useDraggable } from "./useDraggable";
 import { useFullscreen } from "./useFullscreen";
@@ -250,6 +251,10 @@ function FloatBallApp({
     const onToggle = () => {
         // A drag ends with a synthetic click — ignore it.
         if (movedRef.current) return;
+        // The ball outlives the extension being disabled/updated (the content
+        // script is never unloaded), so every action has to re-check before it
+        // reaches anything backed by chrome.*.
+        if (!guardExtensionAlive()) return;
         if (active) deps.onRestore();
         else deps.onTranslate();
         if (isDockedStyle) {
@@ -270,6 +275,7 @@ function FloatBallApp({
     };
 
     const onSettingsClick = () => {
+        if (!guardExtensionAlive()) return;
         // Open the toolbar action popup anchored to the extension icon — same
         // surface/position as clicking the icon. Background calls
         // chrome.action.openPopup() (must run there, not in the content script).
@@ -277,7 +283,13 @@ function FloatBallApp({
         setExpanded(false);
     };
 
-    const onCloseClick = () => setCloseMenuOpen((v) => !v);
+    const onCloseClick = () => {
+        // Don't offer a menu whose choices cannot be saved — go straight to the
+        // notice. Closing an already-open menu is local state, so it is always
+        // allowed (the menu can have been opened while the extension was alive).
+        if (!closeMenuOpen && !guardExtensionAlive()) return;
+        setCloseMenuOpen((v) => !v);
+    };
 
     const onMenuClose = () => {
         setCloseMenuOpen(false);
@@ -287,6 +299,9 @@ function FloatBallApp({
 
     const handleCloseChoice = async (choice: CloseChoice) => {
         setCloseMenuOpen(false);
+        // "Hide until reload" is pure local state, so it keeps working; the two
+        // persisted choices need storage and must report instead of failing mute.
+        if (choice !== "session" && !guardExtensionAlive()) return;
         if (choice === "session") {
             setSessionHidden(true);
         } else if (choice === "site") {

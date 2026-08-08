@@ -1,5 +1,5 @@
 import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
-import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE } from "./constants";
+import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE, EXTENSION_INVALID_CONTEXT_MSG } from "./constants";
 import { restore, translateParams, getTranslateResult, translate, TranslateResult } from "./translateClient";
 import { notifyBackground, runtimeSendMessage, sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
@@ -57,6 +57,23 @@ import { initVideoSubtitle, type VideoSubtitleController } from "@/main/videoSub
 export async function content() {
     //#region main
     console.log('content script loaded');
+
+    window.addEventListener("error", (e) => {
+        if (e.message.includes(EXTENSION_INVALID_CONTEXT_MSG)) {
+            e.preventDefault()
+            console.log(APP_NAME_WITH_SUFFIX, "Extension invalid: ", e)
+        }
+    });
+
+    window.addEventListener(
+        "unhandledrejection",
+        (e) => {
+            if (e?.reason?.message?.includes(EXTENSION_INVALID_CONTEXT_MSG)) {
+                e.preventDefault()
+                console.log(APP_NAME_WITH_SUFFIX, "Extension invalid (Promise): ", e)
+            }
+        }
+    );
 
     // The script runs in all frames. The translation pipeline runs in every
     // frame (so iframe content gets translated too), but a few concerns are
@@ -374,7 +391,7 @@ export async function content() {
                 if (ignoreMutationElements.has(target)) continue
                 // return
                 // if (target.length <= 5) continue // for debug
-                console.log('characterData', mutation);
+                // console.debug('characterData', mutation);
                 let p = closestNeedsTranslate(target.parentElement)
                 if (!p) continue
                 if (isIgnoreMutationElement(p)) continue

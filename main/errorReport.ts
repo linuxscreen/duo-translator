@@ -37,9 +37,20 @@ import type { ErrorToastPayload } from "@/main/errorToast";
  * unit suite from having to stand up a whole browser-i18n environment just to
  * test a translation call.
  */
-async function toast(payload: ErrorToastPayload): Promise<void> {
-    const { showErrorToast } = await import("@/main/errorToast");
-    showErrorToast(payload);
+function toast(payload: ErrorToastPayload): void {
+    // NOT `void toast(...)` at the call sites any more: this used to be an
+    // `async` function, so anything it threw became a REJECTION, which the
+    // synchronous try/catch in reportRequestError below cannot catch and `void`
+    // then discarded — an "Uncaught (in promise)" from the error reporter
+    // itself. (Seen for real: on a page whose extension had been disabled,
+    // showErrorToast → ensureMounted → bindThemeToElement → storage.watch threw
+    // "Extension context invalidated.") Keeping the catch inside makes the
+    // "reporting never becomes the failure" promise true for callers.
+    import("@/main/errorToast")
+        .then(({ showErrorToast }) => showErrorToast(payload))
+        .catch((e) => {
+            console.log(APP_NAME_WITH_SUFFIX, "error bubble failed to render:", e);
+        });
 }
 
 /**
@@ -49,7 +60,7 @@ async function toast(payload: ErrorToastPayload): Promise<void> {
  */
 export function showRelayedError(payload: ErrorToastPayload): void {
     if (!payload?.reason) return;
-    void toast(payload);
+    toast(payload);
 }
 
 /**
@@ -172,7 +183,7 @@ export function reportRequestError(scope: ErrorScope, error: any, options?: Repo
         // (2) The bubble.
         const payload: ErrorToastPayload = { scopeKey: scope, scopeLabel, reason };
         if (isTopFrame()) {
-            void toast(payload);
+            toast(payload);
         } else {
             // A sub-frame has no business drawing a page-level bubble (it would
             // be clipped to the iframe's box, and cross-origin frames often have

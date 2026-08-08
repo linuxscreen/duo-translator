@@ -12,7 +12,7 @@ export function getDomainWithPortFromUrl(url: string) {
         }
         return parsedUrl.hostname; // only get the domain name
     } catch (error) {
-        console.error(APP_NAME_WITH_SUFFIX, 'Invalid URL:', error);
+        console.log(APP_NAME_WITH_SUFFIX, 'Invalid URL:', error);
         return "";
     }
 }

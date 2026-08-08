@@ -40,9 +40,18 @@ const setLang = (next: unknown) => {
 void getConfig(CONFIG_KEY.INTERFACE_LANGUAGE).then((stored) => setLang(stored));
 
 // Live updates broadcast from the options page when the user changes language.
-browser.runtime.onMessage.addListener((msg: any) => {
-    if (msg?.action === ACTION.INTERFACE_LANGUAGE_CHANGED) setLang(msg.data);
-});
+// Wrapped because this runs at MODULE EVALUATION: the module is pulled in by a
+// dynamic import (the error bubble, the disabled notice), which can first
+// happen on a page whose extension has already been disabled/updated. There
+// `browser.runtime` is undefined and this line throws "Cannot read properties
+// of undefined (reading 'onMessage')" — taking the whole chunk down before any
+// of its UI can render. Without live language updates the dictionary is
+// whatever it hydrated to, which is the right degradation.
+try {
+    browser.runtime.onMessage.addListener((msg: any) => {
+        if (msg?.action === ACTION.INTERFACE_LANGUAGE_CHANGED) setLang(msg.data);
+    });
+} catch { /* extension context gone — keep the language we have */ }
 
 /**
  * Pure string lookup against the current language, with an English

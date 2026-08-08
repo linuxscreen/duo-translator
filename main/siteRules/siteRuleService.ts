@@ -74,7 +74,7 @@ function loadBaseline(): SiteRuleBundle {
         }
         return bundle;
     } catch (e) {
-        console.error(APP_NAME_WITH_SUFFIX, 'bundled site rules failed to parse', e);
+        console.log(APP_NAME_WITH_SUFFIX, 'bundled site rules failed to parse', e);
         return { schemaVersion: SITE_RULE_SCHEMA_VERSION, name: '', updatedAt: '', rules: [] };
     }
 }

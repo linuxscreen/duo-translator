@@ -45,6 +45,14 @@ function notify(key: string) {
     subscribers.get(key)?.forEach((cb) => cb());
 }
 
+// Both storage calls are guarded: in a content script the extension can be
+// disabled/updated while the page stays open, after which every `chrome.storage`
+// call throws "Extension context invalidated." — `storage.watch` synchronously,
+// `storage.getItem` as a rejection. Neither failure is actionable here (config
+// simply stops being readable), and letting either escape would take down the
+// caller: `readConfig`/`useConfig` are reached from click handlers and React
+// renders. Falling back to the shipped default keeps the UI able to render and
+// say what happened. See utils/extensionContext.ts.
 function ensureWatching(key: CONFIG_KEY) {
     if (watching.has(key)) return;
     watching.add(key);
@@ -53,12 +61,17 @@ function ensureWatching(key: CONFIG_KEY) {
     hydration.set(key, storage.getItem(sk).then((v) => {
         cache.set(key, v ?? undefined);
         notify(key);
+    }).catch(() => {
+        cache.set(key, undefined);
+        notify(key);
     }));
     // React to every future write from any context.
-    storage.watch(sk, (newValue) => {
-        cache.set(key, newValue ?? undefined);
-        notify(key);
-    });
+    try {
+        storage.watch(sk, (newValue) => {
+            cache.set(key, newValue ?? undefined);
+            notify(key);
+        });
+    } catch { /* extension context gone — the cache above is all we get */ }
 }
 
 function subscribe(key: CONFIG_KEY, cb: () => void): () => void {

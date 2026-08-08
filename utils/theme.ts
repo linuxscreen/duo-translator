@@ -63,14 +63,30 @@ export function watchResolvedTheme(cb: (theme: ResolvedTheme) => void): () => vo
     };
     // Older WebViews lack addEventListener on MediaQueryList; ignore if so.
     try { mq.addEventListener("change", onMq); } catch { /* noop */ }
+    // Both storage calls below are guarded because this runs in content scripts
+    // too, where the extension can be disabled/updated out from under a live
+    // page: `chrome.runtime` then vanishes and every `chrome.storage` call
+    // throws "Extension context invalidated.". `storage.watch` throws
+    // SYNCHRONOUSLY, which used to take down whichever Shadow DOM surface was
+    // mounting (bindThemeToElement runs before createRoot) — including the
+    // error-bubble surface, so the reporter died reporting. `storage.getItem`
+    // is async, so it needs its own .catch or it becomes an unhandled
+    // rejection. Degrading here means the theme is whatever it currently is and
+    // stops following changes, which is exactly right for a page whose
+    // extension is gone: the surface still renders and can say so.
     void storage.getItem(THEME_STORAGE_KEY).then((v) => {
         setting = normalize(v);
         emit();
-    });
-    const unwatch = storage.watch(THEME_STORAGE_KEY, (v) => {
-        setting = normalize(v);
-        emit();
-    });
+    }).catch(() => { /* extension context gone — keep the default */ });
+    let unwatch: () => void;
+    try {
+        unwatch = storage.watch(THEME_STORAGE_KEY, (v) => {
+            setting = normalize(v);
+            emit();
+        });
+    } catch {
+        unwatch = () => { /* never subscribed */ };
+    }
     return () => {
         try { mq.removeEventListener("change", onMq); } catch { /* noop */ }
         unwatch();

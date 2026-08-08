@@ -41,6 +41,8 @@ export const AI_REQUEST_TIMEOUT = 120_000;
 export const API_REQUEST_TIMEOUT = 30_000;
 export const IS_FIREFOX = import.meta.env.FIREFOX;
 
+export const EXTENSION_INVALID_CONTEXT_MSG = "Extension context invalidated"
+
 export enum DB_ACTION {
     RULE_ADD = 'addRule',
     RULE_DEL = 'deleteRule',

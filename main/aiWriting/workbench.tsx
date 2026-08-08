@@ -15,6 +15,7 @@ import { startAiChatStream } from "@/main/aiClient";
 import { buildServiceOptions, getAiTranslateService } from "@/utils/service";
 import { getConfig, setConfig } from "@/utils/db";
 import { notifyBackground } from "@/utils/message";
+import { guardExtensionAlive } from "@/main/extensionDisabledNotice";
 import { applyTextToTarget, canApplyToTarget } from "./applyText";
 import { DiffView } from "./DiffView";
 import {
@@ -210,6 +211,10 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
     };
 
     const run = async () => {
+        // The workbench outlives the extension being disabled/updated — the
+        // content script is never unloaded — so Run re-checks before it opens a
+        // port to a background that no longer exists.
+        if (!guardExtensionAlive()) return;
         if (!input.trim() || running) return;
         // Translate ignores `view`; enhance defaults to Diff.
         setView(task === AI_TASK.TRANSLATE ? "text" : "diff");
@@ -274,11 +279,13 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
 
     // Persist + apply service selection (mirrors the floating dot).
     const onPickTranslateService = (key: string) => {
+        if (!guardExtensionAlive()) return;
         const c = parseTranslateServiceKey(key);
         setTranslateChoice(c);
         setConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE, buildTranslateServiceKey(c));
     };
     const onPickEnhanceProvider = (id: string) => {
+        if (!guardExtensionAlive()) return;
         setEnhanceProviderId(id);
         setConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID, id);
     };
@@ -415,6 +422,7 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                             <NoProviderNotice
                                 hasConfigured={hasConfiguredProviders}
                                 onConfigure={() =>
+                                    guardExtensionAlive() &&
                                     notifyBackground({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: "services" } })
                                 }
                             />

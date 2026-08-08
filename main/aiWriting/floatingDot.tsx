@@ -20,6 +20,7 @@ import {
     LANGUAGES,
 } from "@/main/constants";
 import { notifyBackground, sendMessageToBackground } from "@/utils/message";
+import { guardExtensionAlive } from "@/main/extensionDisabledNotice";
 import type { AiProvider } from "@/main/aiProvider";
 import { startAiChatStream } from "@/main/aiClient";
 import { buildAiTranslateService, buildServiceOptions, type ServiceOption } from "@/utils/service";
@@ -405,6 +406,10 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
 
     // ---- Run a task --------------------------------------------------------
     const runTranslate = async (overrideChoice?: TranslateServiceChoice, overrideLang?: string) => {
+        // The dot outlives the extension being disabled/updated — the content
+        // script is never unloaded — so every action re-checks before it touches
+        // anything backed by chrome.*.
+        if (!guardExtensionAlive()) return;
         const original = getText();
         if (!original.trim()) return;
         const choice = overrideChoice ?? translateChoice;
@@ -442,6 +447,7 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
     };
 
     const runEnhance = async (mode: AI_TASK, overrideProviderId?: string) => {
+        if (!guardExtensionAlive()) return;
         const original = getText();
         if (!original.trim()) return;
         const providerId = overrideProviderId ?? enhanceProviderId;
@@ -491,17 +497,20 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
     };
 
     const onWorkbench = () => {
+        if (!guardExtensionAlive()) return;
         const el = lastTargetRef.get() ?? target;
         openWorkbench({ text: getText(), targetEl: el });
         setExpanded(false);
     };
 
     const openOptions = (tab: string) => {
+        if (!guardExtensionAlive()) return;
         notifyBackground({ action: ACTION.OPEN_OPTIONS_PAGE, data: { tab: tab } });
     };
 
     // ---- Settings popover change handlers ----------------------------------
     const onPickTranslateService = async (key: string) => {
+        if (!guardExtensionAlive()) return;
         const c = parseTranslateServiceKey(key);
         await persistTranslateChoice(c);
         // If a translate result is currently shown, re-run with the new choice
@@ -511,6 +520,7 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
         }
     };
     const onPickEnhanceProvider = async (id: string) => {
+        if (!guardExtensionAlive()) return;
         await persistEnhanceProvider(id);
         // Mirror translate behavior: if an enhance result is open, re-run.
         if (result && result.task !== AI_TASK.TRANSLATE) {
@@ -518,10 +528,25 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
         }
     };
     const onPickTargetLang = async (lang: string) => {
+        if (!guardExtensionAlive()) return;
         await persistTargetLang(lang);
         if (result?.task === AI_TASK.TRANSLATE) {
             await runTranslate(undefined, lang);
         }
+    };
+
+    // ---- Popover / menu toggles --------------------------------------------
+    // Neither menu is worth opening once the extension is gone: every choice
+    // they offer needs storage. Go straight to the notice instead. Closing an
+    // already-open one is local state, so it stays allowed — the menu can have
+    // been opened while the extension was still alive.
+    const onCloseMenuToggle = () => {
+        if (!closeMenuOpen && !guardExtensionAlive()) return;
+        setCloseMenuOpen((v) => !v);
+    };
+    const onSettingsToggle = () => {
+        if (!settingsOpen && !guardExtensionAlive()) return;
+        setSettingsOpen((v) => !v);
     };
 
     // ---- Close menu --------------------------------------------------------
@@ -529,6 +554,9 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
         setCloseMenuOpen(false);
         setExpanded(false);
         setVisible(false);
+        // "Hide until reload" is pure local state, so it keeps working; the two
+        // persisted choices need storage and must report instead of failing mute.
+        if (choice !== "session" && !guardExtensionAlive()) return;
         if (choice === "session") {
             setSessionHidden(true);
         } else if (choice === "site") {
@@ -626,7 +654,7 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
                             <div className="relative">
                                 <ToolBtn
                                     label={t("aiClose", "Close")}
-                                    onClick={() => setCloseMenuOpen((v) => !v)}
+                                    onClick={onCloseMenuToggle}
                                     icon={<X className="h-3.5 w-3.5" />}
                                 />
                                 {closeMenuOpen && (
@@ -643,7 +671,7 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
                             <div className="relative">
                                 <ToolBtn
                                     label={t("aiSettings", "Settings")}
-                                    onClick={() => setSettingsOpen((v) => !v)}
+                                    onClick={onSettingsToggle}
                                     icon={<SettingsIcon className="h-3.5 w-3.5" />}
                                 />
                                 {settingsOpen && (
