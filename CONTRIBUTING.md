@@ -19,6 +19,20 @@ When reporting a bug, include:
 
 Open an issue describing the feature, the problem it solves, and how you imagine it working. Discussing the idea first helps avoid wasted effort before you start writing code.
 
+## Pull Requests
+
+Every pull request runs the CI workflow ([.github/workflows/ci.yaml](.github/workflows/ci.yaml)), and it must be green before the PR can be merged:
+
+| Check | Command | What it covers |
+| --- | --- | --- |
+| i18n key parity | `pnpm i18n:check` | `assets/locales/` and `public/_locales/` stay in sync across languages |
+| Typecheck | `pnpm compile` | `tsc --noEmit` over the whole repo, `e2e/` included |
+| Unit tests | `pnpm test` | Vitest suite |
+| Build | `pnpm build` / `pnpm build:firefox` | Production builds for both targets |
+| E2E | `pnpm e2e:build` then `pnpm e2e:no-real` | Playwright against the real built extension, with mocked providers |
+
+You can run all of them locally before pushing. The `@real` e2e smoke test (`pnpm e2e:real`) hits a live translation API and is deliberately **not** part of CI.
+
 ## Translations
 
 Improvements to existing translations and new locales are welcome. UI strings live in `assets/locales/` (i18next JSON) and `public/_locales/` (Chrome manifest messages).

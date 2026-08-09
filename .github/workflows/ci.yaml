@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  merge_group:
+  workflow_dispatch:
+
+# A new push to the same PR supersedes the previous run.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Typecheck & unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      # Both locale pairs must stay in sync — a key present in only one language
+      # renders as a raw key (i18next) or breaks the manifest (__MSG_*__).
+      - name: i18n key parity
+        run: pnpm i18n:check
+
+      # `tsc --noEmit` over the whole repo — the root tsconfig extends the
+      # generated .wxt/tsconfig.json, whose `include: ../**/*` covers e2e/ too.
+      # Kept in a build-free job on purpose: `wxt build` rewrites that generated
+      # tsconfig's `exclude` to whatever WXT_OUTDIR it was given, so a build in
+      # the same job would silently change what gets type-checked.
+      - name: Typecheck
+        run: pnpm compile
+
+      - name: Unit tests
+        run: pnpm test
+
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: chrome
+            script: build
+          - target: firefox
+            script: build:firefox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      # Production build — stricter than `pnpm dev`; fails on broken imports.
+      - name: Build
+        run: pnpm ${{ matrix.script }}
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # Only the browser binary is cached; the apt system libs are reinstalled
+      # every run by --with-deps below (they live outside the cached path).
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
+
+      # The e2e fixture launches with `channel: 'chromium'` + `--headless=new`
+      # (MV3 service workers do not load under old headless).
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build extension for e2e
+        run: pnpm e2e:build
+
+      # Skips the @real live-network smoke — no API keys, no flaky upstream.
+      - name: Run e2e
+        run: pnpm e2e:no-real
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Single required status check: stays green/red correctly even as the jobs
+  # above are added or renamed, so branch protection never needs re-pointing.
+  ci-ok:
+    name: All checks passed
+    if: ${{ always() }}
+    needs: [check, build, e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all jobs succeeded
+        run: |
+          echo "check=${{ needs.check.result }} build=${{ needs.build.result }} e2e=${{ needs.e2e.result }}"
+          [ "${{ needs.check.result }}" = "success" ] \
+            && [ "${{ needs.build.result }}" = "success" ] \
+            && [ "${{ needs.e2e.result }}" = "success" ]

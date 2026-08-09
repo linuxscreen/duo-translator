@@ -13,6 +13,7 @@
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox --mv3",
     "compile": "tsc --noEmit",
+    "i18n:check": "node scripts/checkI18n.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e:build": "cross-env WXT_OUTDIR=.output/e2e-build wxt build --mode development",
