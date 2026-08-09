@@ -306,15 +306,29 @@ export async function applyMergedToLocal(merged: Snapshot): Promise<void> {
  * keys are kept, nothing is deleted" — the imported values are clocked to now so
  * they propagate on the next sync. (A backup restore should override current
  * settings, regardless of the file's own clocks.)
+ *
+ * Secrets are the one thing the file does NOT get to overwrite with nothing.
+ * The export button redacts by default (the "include API keys" toggle starts
+ * off), so a typical backup carries `apiKey: ''` on every provider record and
+ * an empty string for the pure-secret keys — writing that verbatim would wipe
+ * the keys this device still holds. Same hazard applyMergedToLocal guards
+ * against on the sync path, same fix: re-attach local keys, and skip a
+ * pure-secret key whose incoming value is empty. A backup exported WITH secrets
+ * still overwrites, because then the incoming values are real.
  */
 export async function applyImportedSnapshot(snap: Snapshot): Promise<void> {
     if (!isValidSnapshot(snap)) {
         throw new Error('Invalid snapshot envelope');
     }
+    const current = await storage.snapshot('local');
     const sets: { key: StorageItemKey; value: unknown }[] = [];
     const touched: string[] = [];
-    for (const [k, v] of Object.entries(snap.data)) {
+    for (const [k, rawValue] of Object.entries(snap.data)) {
         if (ALWAYS_EXCLUDED.includes(k)) continue;
+        // Redacted pure secret: keep whatever this device has, and leave its
+        // clock alone — nothing changed locally, so there is nothing to push.
+        if (PURE_SECRET_KEYS.includes(k) && !rawValue) continue;
+        const v = k === AI_PROVIDERS_KEY ? reattachApiKeys(rawValue, current[k]) : rawValue;
         sets.push({ key: `local:${k}` as StorageItemKey, value: v });
         touched.push(k);
     }
