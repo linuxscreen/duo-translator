@@ -316,7 +316,7 @@ function FloatBallApp({
     // Shared style for secondary actions. They remain compact, but their hit
     // areas are large enough for touch and imprecise pointer input.
     const auxBtnClass = isDockedStyle
-        ? "h-11 w-11 inline-flex items-center justify-center rounded-full bg-transparent text-ink-soft transition-[color,opacity,transform] duration-200 hover:text-ink hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#107CF3] active:scale-[0.94] motion-reduce:transition-none"
+        ? "h-11 w-11 inline-flex items-center justify-center rounded-full bg-transparent text-ink-soft transition-[color,opacity,transform] duration-200 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#107CF3] active:scale-[0.94] motion-reduce:transition-none"
         : "h-[18px] w-[18px] inline-flex items-center justify-center rounded-full text-[#BFBFBF] transition-colors";
 
     return (
