@@ -18,7 +18,15 @@ export default defineConfig({
     fullyParallel: false,
     timeout: 60_000,
     expect: { timeout: 15_000 },
-    reporter: [['list']],
+    // One retry in CI, for infrastructure hiccups only (browser launch, fixture
+    // server). Deliberately NOT higher: the startup races this suite used to hit
+    // were a real product bug, and a generous retry budget is exactly what would
+    // hide the next one. Playwright still reports a retried test as "flaky" even
+    // when the run goes green — treat that as a defect report, not as noise.
+    retries: process.env.CI ? 1 : 0,
+    // The HTML report is what gets uploaded as a CI artifact; `list` stays for
+    // readable step logs in both places.
+    reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list']],
     use: {
         baseURL: FIXTURE_ORIGIN,
         trace: 'retain-on-failure',

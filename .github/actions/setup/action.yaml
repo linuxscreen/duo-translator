@@ -1,0 +1,29 @@
+name: Setup
+description: Checkout-independent toolchain setup — pnpm, Node, a secret-free .env and installed dependencies.
+
+runs:
+  using: composite
+  steps:
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 11
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: pnpm
+
+    # CI must be runnable from a fork PR, where secrets are unavailable. The
+    # VITE_* values only feed UI strings and the (debug-only) Google OAuth
+    # client, so the committed example file is enough to produce a real build.
+    - name: Generate .env
+      shell: bash
+      run: cp .env.example .env
+
+    # `postinstall` runs `wxt prepare`, which generates .wxt/tsconfig.json —
+    # required before `tsc --noEmit`.
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
