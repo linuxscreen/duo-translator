@@ -199,7 +199,7 @@ export function useDraggable(
             }
 
             // Animate the snap glide; cleared so the next drag tracks instantly.
-            if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+            if (nextDock && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
                 el.style.transition = SNAP_TRANSITION;
                 window.setTimeout(() => {
                     if (ref.current) ref.current.style.transition = "";

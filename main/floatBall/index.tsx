@@ -188,7 +188,7 @@ function FloatBallApp({
     //  - buttons flipped above (near bottom) → tooltip above the stack
     //  - near top (tooltipBelow) → below the stack
     //  - otherwise → just above the switch
-    const actionExtent = isDockedStyle ? 105 : 55;
+    const actionExtent = isDockedStyle ? 105 : 30;
     const tooltipVert: React.CSSProperties =
         buttonsAbove ? { bottom: `calc(100% + ${actionExtent}px)` }
             : tooltipBelow ? { top: `calc(100% + ${actionExtent}px)` }
@@ -210,13 +210,15 @@ function FloatBallApp({
             setSwitchHover(false);
         }, delay);
     };
-    retractAfterDragRef.current = () => scheduleCollapse(AUTO_RETRACT_DELAY_MS);
+    retractAfterDragRef.current = () => {
+        if (isDockedStyle) scheduleCollapse(AUTO_RETRACT_DELAY_MS);
+    };
 
     const expandBall = () => {
         cancelCollapse();
         const el = ballRef.current;
         const vh = getViewportSize().height;
-        const actionsHeight = isDockedStyle ? 104 : 55;
+        const actionsHeight = isDockedStyle ? 104 : 30;
         setButtonsAbove(!!el && vh - el.getBoundingClientRect().bottom < actionsHeight);
         setExpanded(true);
     };
@@ -250,8 +252,10 @@ function FloatBallApp({
         if (movedRef.current) return;
         if (active) deps.onRestore();
         else deps.onTranslate();
-        onSwitchLeave();
-        scheduleCollapse(AUTO_RETRACT_DELAY_MS);
+        if (isDockedStyle) {
+            onSwitchLeave();
+            scheduleCollapse(AUTO_RETRACT_DELAY_MS);
+        }
     };
 
     const onPointerEnter = () => {
@@ -311,8 +315,9 @@ function FloatBallApp({
 
     // Shared style for secondary actions. They remain compact, but their hit
     // areas are large enough for touch and imprecise pointer input.
-    const auxBtnClass =
-        "h-11 w-11 inline-flex items-center justify-center rounded-full bg-transparent text-ink-soft transition-[color,opacity,transform] duration-200 hover:text-ink hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#107CF3] active:scale-[0.94] motion-reduce:transition-none";
+    const auxBtnClass = isDockedStyle
+        ? "h-11 w-11 inline-flex items-center justify-center rounded-full bg-transparent text-ink-soft transition-[color,opacity,transform] duration-200 hover:text-ink hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#107CF3] active:scale-[0.94] motion-reduce:transition-none"
+        : "h-[18px] w-[18px] inline-flex items-center justify-center rounded-full text-[#BFBFBF] transition-colors";
 
     return (
         <div
@@ -328,16 +333,22 @@ function FloatBallApp({
                 pointerEvents: ready && !fullscreen ? "auto" : "none",
                 visibility: fullscreen ? "hidden" : "visible",
             }}
-            className={`${isDockedStyle ? "h-11 w-11" : "h-[25px] w-[42px]"} select-none transition-opacity duration-200 ease-out motion-reduce:transition-none`}
+            className={isDockedStyle
+                ? "h-11 w-11 select-none transition-opacity duration-200 ease-out motion-reduce:transition-none"
+                : "select-none"}
             data-dock={dock ?? "free"}
             data-retracted={retracted ? "true" : "false"}
-            onMouseDown={(event) => {
-                expandBall();
-                onMouseDown(event);
-            }}
+            onMouseDown={isDockedStyle
+                ? (event) => {
+                    expandBall();
+                    onMouseDown(event);
+                }
+                : onMouseDown}
         >
             <div
-                className={`${isDockedStyle ? "h-11 w-11" : "h-[25px] w-[42px]"} relative flex flex-col items-center justify-center transition-transform duration-200 ease-out motion-reduce:transition-none`}
+                className={isDockedStyle
+                    ? "relative flex h-11 w-11 flex-col items-center justify-center transition-transform duration-200 ease-out motion-reduce:transition-none"
+                    : "relative flex flex-col items-center"}
                 style={{ transform: isDockedStyle ? `translateX(${edgeOffset}px)` : undefined }}
                 onMouseEnter={onPointerEnter}
                 onMouseLeave={onPointerLeave}
@@ -367,10 +378,10 @@ function FloatBallApp({
                             position: "absolute",
                             // Extend over the stacked secondary actions so the
                             // pointer can move between the ball and actions.
-                            top: buttonsAbove ? `${isDockedStyle ? -104 : -55}px` : 0,
-                            bottom: buttonsAbove ? 0 : `${isDockedStyle ? -104 : -55}px`,
-                            left: isDockedStyle ? "-8px" : "-30px",
-                            right: isDockedStyle ? "-8px" : "-30px",
+                            top: buttonsAbove ? `${isDockedStyle ? -104 : -30}px` : 0,
+                            bottom: buttonsAbove ? 0 : `${isDockedStyle ? -104 : -30}px`,
+                            left: isDockedStyle ? "-8px" : "-12px",
+                            right: isDockedStyle ? "-8px" : "-12px",
                         }}
                     />
                 )}
@@ -433,7 +444,7 @@ function FloatBallApp({
                         onMouseEnter={onSwitchEnter}
                         onMouseLeave={onSwitchLeave}
                         className={[
-                            "relative flex h-[25px] w-[42px] cursor-pointer rounded-full p-0.5 transition-[background,opacity] duration-300 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#107CF3] motion-reduce:transition-none",
+                            "relative flex w-[42px] h-[25px] rounded-full transition-[background,opacity] duration-300 hover:opacity-100 p-0.5",
                             active ? "bg-[#23C965]" : "bg-[#ED6C35]",
                             expanded ? "opacity-100" : "opacity-[0.35]",
                         ].join(" ")}
@@ -446,6 +457,7 @@ function FloatBallApp({
                                 left: 2,
                                 transform: `translate(${active ? 18 : 0}px, -50%)`,
                                 transition: "transform 0.2s ease",
+                                willChange: "transform",
                             }}
                         />
                     </button>
@@ -458,7 +470,7 @@ function FloatBallApp({
                         className={isDockedStyle ? "flex flex-col items-center gap-0.5" : "flex flex-row items-center gap-1.5"}
                         style={{
                             position: "absolute",
-                            ...horizPlace,
+                            ...(isDockedStyle ? horizPlace : {}),
                             ...(buttonsAbove
                                 ? { bottom: isDockedStyle ? "calc(100% + 11px)" : "calc(100% + 5px)" }
                                 : { top: isDockedStyle ? "calc(100% - 1px)" : "calc(100% + 5px)" }),
@@ -483,7 +495,13 @@ function FloatBallApp({
                             onMouseDown={(e) => e.stopPropagation()}
                             className={`${auxBtnClass} ${isDockedStyle ? "-mt-4" : ""}`}
                         >
-                            <CircleSlash2 aria-hidden="true" className="h-4 w-4" />
+                            {isDockedStyle ? (
+                                <CircleSlash2 aria-hidden="true" className="h-4 w-4" />
+                            ) : (
+                                <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 18 18" fill="none">
+                                    <path d="M15.5051 4.58459L14.764 5.32621C15.6138 6.64036 15.9873 8.20617 15.8222 9.76241C15.6571 11.3187 14.9634 12.7712 13.8567 13.8778C12.7501 14.9844 11.2975 15.678 9.74122 15.8431C8.18497 16.0081 6.61919 15.6345 5.30508 14.7846L4.56399 15.5256C5.87389 16.4274 7.42728 16.909 9.01758 16.9065C13.3632 16.9065 16.8861 13.3837 16.8861 9.03818C16.8886 7.44788 16.4069 5.89449 15.5051 4.58459ZM15.3134 1.77385L14.076 3.01135C12.6603 1.81939 10.8683 1.16698 9.01758 1.16969C4.67192 1.16969 1.14909 4.6934 1.14909 9.03818C1.14638 10.8889 1.79879 12.6809 2.99075 14.0966L1.65815 15.4292L2.57081 16.3419L16.2262 2.68668L15.3134 1.77385ZM2.71442 11.7002C2.11848 10.2924 2.01131 8.72559 2.41003 7.24978C2.80875 5.77397 3.69037 4.47426 4.91417 3.55812C6.13796 2.64198 7.63339 2.16221 9.16176 2.19539C10.6901 2.22857 12.1633 2.77279 13.3462 3.74119L3.72059 13.3666C3.30705 12.8623 2.96819 12.301 2.71442 11.7002Z" fill="currentColor" />
+                                </svg>
+                            )}
                         </button>
                     </div>
                 )}
