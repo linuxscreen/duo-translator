@@ -30,18 +30,6 @@ export default defineConfig({
         // origin via `browser.permissions.request` on connect. <all_urls> here
         // is what we ask for at runtime, not granted at install time.
         optional_host_permissions: ['<all_urls>'],
-        content_scripts: [
-            {
-                matches: ['https://*/*', 'http://*/*'],
-                // Inject into sub-frames too — the AI Writing dot must live
-                // inside the iframe whose input is focused (focus events don't
-                // cross frame boundaries; fixed-positioning is per-frame). The
-                // script self-gates: page translation / float ball stay
-                // top-frame only (see main/content.ts).
-                all_frames: true,
-                css: ['assets/style.css']
-            }
-        ],
         commands: {
             "shortcut-translate-restore-page": {
                 "suggested_key": {
