@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { Check, CircleSlash2, Settings as SettingsIcon, X } from "lucide-react";
-import { ACTION, CONFIG_KEY, DB_ACTION } from "@/main/constants";
+import { ACTION, CONFIG_KEY, DB_ACTION, FLOAT_BALL_STYLE } from "@/main/constants";
 import { setConfig } from "@/utils/db";
 import { notifyBackground, sendMessageToBackground } from "@/utils/message";
 import { loadTailwindIntoShadow } from "@/main/aiWriting/shadowStyle";
@@ -24,6 +24,8 @@ import { DUO_LOGO_SVG } from "./logo";
  * dot). The legacy vanilla implementation lived in `main/floatBall.ts`.
  */
 export interface FloatBallDeps {
+    /** Selected visual variant from Options. */
+    style: FLOAT_BALL_STYLE;
     /** Hostname (with port) of the current page — used by the per-site "Disable
      *  on this site" close option. */
     domain: string;
@@ -157,7 +159,12 @@ function FloatBallApp({
     const hoveredRef = useRef(false);
 
     const fullscreen = useFullscreen();
-    const { ready, dock, onMouseDown, movedRef } = useDraggable(ballRef, () => retractAfterDragRef.current());
+    const isDockedStyle = deps.style === FLOAT_BALL_STYLE.DOCKED;
+    const { ready, dock, onMouseDown, movedRef } = useDraggable(
+        ballRef,
+        () => retractAfterDragRef.current(),
+        deps.style,
+    );
 
     // Align the expanded toolbar away from a docked edge so its wider row never
     // clips off-screen; centered when migrating an old free-floating position.
@@ -181,9 +188,10 @@ function FloatBallApp({
     //  - buttons flipped above (near bottom) → tooltip above the stack
     //  - near top (tooltipBelow) → below the stack
     //  - otherwise → just above the switch
+    const actionExtent = isDockedStyle ? 105 : 55;
     const tooltipVert: React.CSSProperties =
-        buttonsAbove ? { bottom: "calc(100% + 105px)" }
-            : tooltipBelow ? { top: "calc(100% + 105px)" }
+        buttonsAbove ? { bottom: `calc(100% + ${actionExtent}px)` }
+            : tooltipBelow ? { top: `calc(100% + ${actionExtent}px)` }
                 : { bottom: "calc(100% + 6px)" };
 
     // Let the content script push translate-on/off state in.
@@ -208,9 +216,8 @@ function FloatBallApp({
         cancelCollapse();
         const el = ballRef.current;
         const vh = getViewportSize().height;
-        // The secondary actions are stacked vertically (two 44px hit areas
-        // plus a small gap), so flip the whole stack before it clips.
-        setButtonsAbove(!!el && vh - el.getBoundingClientRect().bottom < 104);
+        const actionsHeight = isDockedStyle ? 104 : 55;
+        setButtonsAbove(!!el && vh - el.getBoundingClientRect().bottom < actionsHeight);
         setExpanded(true);
     };
 
@@ -299,7 +306,7 @@ function FloatBallApp({
 
     if (sessionHidden) return null;
 
-    const retracted = !expanded && !closeMenuOpen && dock !== null;
+    const retracted = isDockedStyle && !expanded && !closeMenuOpen && dock !== null;
     const edgeOffset = retracted ? (dock === "left" ? -22 : 22) : 0;
 
     // Shared style for secondary actions. They remain compact, but their hit
@@ -321,7 +328,7 @@ function FloatBallApp({
                 pointerEvents: ready && !fullscreen ? "auto" : "none",
                 visibility: fullscreen ? "hidden" : "visible",
             }}
-            className="h-11 w-11 select-none transition-opacity duration-200 ease-out motion-reduce:transition-none"
+            className={`${isDockedStyle ? "h-11 w-11" : "h-[25px] w-[42px]"} select-none transition-opacity duration-200 ease-out motion-reduce:transition-none`}
             data-dock={dock ?? "free"}
             data-retracted={retracted ? "true" : "false"}
             onMouseDown={(event) => {
@@ -330,8 +337,8 @@ function FloatBallApp({
             }}
         >
             <div
-                className="relative flex h-11 w-11 flex-col items-center justify-center transition-transform duration-200 ease-out motion-reduce:transition-none"
-                style={{ transform: `translateX(${edgeOffset}px)` }}
+                className={`${isDockedStyle ? "h-11 w-11" : "h-[25px] w-[42px]"} relative flex flex-col items-center justify-center transition-transform duration-200 ease-out motion-reduce:transition-none`}
+                style={{ transform: isDockedStyle ? `translateX(${edgeOffset}px)` : undefined }}
                 onMouseEnter={onPointerEnter}
                 onMouseLeave={onPointerLeave}
                 onFocusCapture={() => {
@@ -360,10 +367,10 @@ function FloatBallApp({
                             position: "absolute",
                             // Extend over the stacked secondary actions so the
                             // pointer can move between the ball and actions.
-                            top: buttonsAbove ? "-104px" : 0,
-                            bottom: buttonsAbove ? 0 : "-104px",
-                            left: "-8px",
-                            right: "-8px",
+                            top: buttonsAbove ? `${isDockedStyle ? -104 : -55}px` : 0,
+                            bottom: buttonsAbove ? 0 : `${isDockedStyle ? -104 : -55}px`,
+                            left: isDockedStyle ? "-8px" : "-30px",
+                            right: isDockedStyle ? "-8px" : "-30px",
                         }}
                     />
                 )}
@@ -386,51 +393,75 @@ function FloatBallApp({
                     </div>
                 )}
 
-                <button
-                    type="button"
-                    role="switch"
-                    aria-checked={active}
-                    aria-label={switchLabel}
-                    onClick={onToggle}
-                    onMouseEnter={onSwitchEnter}
-                    onMouseLeave={onSwitchLeave}
-                    className={[
-                        "relative flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border-2 bg-surface p-0 shadow-[0_3px_12px_rgba(0,0,0,0.26)] transition-[border-color,box-shadow,transform] duration-200 hover:shadow-[0_4px_14px_rgba(0,0,0,0.32)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#107CF3] focus-visible:ring-offset-2 focus-visible:ring-offset-surface active:scale-[0.94] motion-reduce:transition-none",
-                        active
-                            ? "border-[#23A455] shadow-[0_3px_13px_rgba(35,164,85,0.28)]"
-                            : "border-line-strong",
-                    ].join(" ")}
-                >
-                    <span
-                        aria-hidden="true"
-                        className="block h-6 w-6"
-                        dangerouslySetInnerHTML={{ __html: DUO_LOGO_SVG }}
-                    />
-                    {active && (
+                {isDockedStyle ? (
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={active}
+                        aria-label={switchLabel}
+                        onClick={onToggle}
+                        onMouseEnter={onSwitchEnter}
+                        onMouseLeave={onSwitchLeave}
+                        className={[
+                            "relative flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border-2 bg-surface p-0 shadow-[0_3px_12px_rgba(0,0,0,0.26)] transition-[border-color,box-shadow,transform] duration-200 hover:shadow-[0_4px_14px_rgba(0,0,0,0.32)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#107CF3] focus-visible:ring-offset-2 focus-visible:ring-offset-surface active:scale-[0.94] motion-reduce:transition-none",
+                            active
+                                ? "border-[#23A455] shadow-[0_3px_13px_rgba(35,164,85,0.28)]"
+                                : "border-line-strong",
+                        ].join(" ")}
+                    >
                         <span
                             aria-hidden="true"
-                            className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2 border-surface bg-[#23A455] text-white shadow-[0_1px_4px_rgba(35,164,85,0.45)]"
-                        >
-                            <Check className="h-2.5 w-2.5 stroke-[3]" />
-                        </span>
-                    )}
-                </button>
+                            className="block h-6 w-6"
+                            dangerouslySetInnerHTML={{ __html: DUO_LOGO_SVG }}
+                        />
+                        {active && (
+                            <span
+                                aria-hidden="true"
+                                className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2 border-surface bg-[#23A455] text-white shadow-[0_1px_4px_rgba(35,164,85,0.45)]"
+                            >
+                                <Check className="h-2.5 w-2.5 stroke-[3]" />
+                            </span>
+                        )}
+                    </button>
+                ) : (
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={active}
+                        aria-label={switchLabel}
+                        onClick={onToggle}
+                        onMouseEnter={onSwitchEnter}
+                        onMouseLeave={onSwitchLeave}
+                        className={[
+                            "relative flex h-[25px] w-[42px] cursor-pointer rounded-full p-0.5 transition-[background,opacity] duration-300 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#107CF3] motion-reduce:transition-none",
+                            active ? "bg-[#23C965]" : "bg-[#ED6C35]",
+                            expanded ? "opacity-100" : "opacity-[0.35]",
+                        ].join(" ")}
+                    >
+                        <span
+                            aria-hidden="true"
+                            className="absolute h-5 w-5 rounded-full border-2 border-white bg-[#ECECEC]"
+                            style={{
+                                top: "50%",
+                                left: 2,
+                                transform: `translate(${active ? 18 : 0}px, -50%)`,
+                                transition: "transform 0.2s ease",
+                            }}
+                        />
+                    </button>
+                )}
 
                 {/* Settings stays above Close in a compact vertical stack,
                     absolutely placed so the switch never shifts on expand. */}
                 {expanded && (
                     <div
-                        className="flex flex-col items-center gap-0.5"
+                        className={isDockedStyle ? "flex flex-col items-center gap-0.5" : "flex flex-row items-center gap-1.5"}
                         style={{
                             position: "absolute",
-                            ...(dock === "left"
-                                ? { left: 0 }
-                                : dock === "right"
-                                    ? { right: 0 }
-                                    : horizPlace),
+                            ...horizPlace,
                             ...(buttonsAbove
-                                ? { bottom: "calc(100% + 11px)" }
-                                : { top: "calc(100% - 1px)" }),
+                                ? { bottom: isDockedStyle ? "calc(100% + 11px)" : "calc(100% + 5px)" }
+                                : { top: isDockedStyle ? "calc(100% - 1px)" : "calc(100% + 5px)" }),
                         }}
                     >
                         <button
@@ -450,7 +481,7 @@ function FloatBallApp({
                             title={t("aiClose", "Close")}
                             onClick={onCloseClick}
                             onMouseDown={(e) => e.stopPropagation()}
-                            className={`${auxBtnClass} -mt-4`}
+                            className={`${auxBtnClass} ${isDockedStyle ? "-mt-4" : ""}`}
                         >
                             <CircleSlash2 aria-hidden="true" className="h-4 w-4" />
                         </button>

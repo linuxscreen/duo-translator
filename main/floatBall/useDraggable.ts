@@ -1,5 +1,5 @@
 import { RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { CONFIG_KEY } from "@/main/constants";
+import { CONFIG_KEY, FLOAT_BALL_STYLE } from "@/main/constants";
 import { getConfig, setConfig } from "@/utils/db";
 import { getViewportSize } from "@/utils/dom";
 
@@ -29,7 +29,11 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), h
  *
  * `movedRef` lets the caller distinguish a click from the tail end of a drag.
  */
-export function useDraggable(ref: RefObject<HTMLElement | null>, onDocked?: () => void) {
+export function useDraggable(
+    ref: RefObject<HTMLElement | null>,
+    onDocked?: () => void,
+    style: FLOAT_BALL_STYLE = FLOAT_BALL_STYLE.DOCKED,
+) {
     // Stays false until the initial position is computed, so the caller can keep
     // the ball at opacity 0 and avoid a top-left flash before placement.
     const [ready, setReady] = useState(false);
@@ -64,7 +68,18 @@ export function useDraggable(ref: RefObject<HTMLElement | null>, onDocked?: () =
         if (!el) return;
         let cancelled = false;
         (async () => {
-            const stored = await getConfig(CONFIG_KEY.FLOAT_BALL_POSITION);
+            const positionKey = style === FLOAT_BALL_STYLE.DOCKED
+                ? CONFIG_KEY.FLOAT_BALL_DOCKED_POSITION
+                : CONFIG_KEY.FLOAT_BALL_POSITION;
+            const ownPosition = await getConfig(positionKey);
+            // Before the style selector existed, the docked implementation
+            // also wrote FLOAT_BALL_POSITION. Seed the new dedicated key from
+            // that value once, without overwriting the classic placement.
+            const stored = ownPosition ?? (
+                style === FLOAT_BALL_STYLE.DOCKED
+                    ? await getConfig(CONFIG_KEY.FLOAT_BALL_POSITION)
+                    : undefined
+            );
             if (cancelled || !ref.current) return;
             const { width: screenW, height: screenH } = getViewportSize();
             const w = el.offsetWidth;
@@ -86,18 +101,22 @@ export function useDraggable(ref: RefObject<HTMLElement | null>, onDocked?: () =
                 if (storedDock === "left") x = 0;
                 else if (storedDock === "right") x = screenW - w;
                 else {
-                    // Migrate legacy free-floating positions into the edge-only
-                    // behavior by choosing whichever edge is closer.
                     const storedX = clamp((s.xPercent * screenW) / 100 - w, 0, screenW - w);
-                    storedDock = storedX + w / 2 <= screenW / 2 ? "left" : "right";
-                    s.dock = storedDock;
-                    x = storedDock === "left" ? 0 : screenW - w;
-                    const nx = Math.round(((x + w) / screenW) * 100);
-                    void setConfig(CONFIG_KEY.FLOAT_BALL_POSITION, {
-                        x: nx,
-                        y: s.yPercent,
-                        dock: storedDock,
-                    });
+                    if (style === FLOAT_BALL_STYLE.DOCKED) {
+                        // Migrate legacy free-floating positions into the
+                        // edge-only behavior by choosing the nearer edge.
+                        storedDock = storedX + w / 2 <= screenW / 2 ? "left" : "right";
+                        s.dock = storedDock;
+                        x = storedDock === "left" ? 0 : screenW - w;
+                        const nx = Math.round(((x + w) / screenW) * 100);
+                        void setConfig(positionKey, {
+                            x: nx,
+                            y: s.yPercent,
+                            dock: storedDock,
+                        });
+                    } else {
+                        x = storedX;
+                    }
                 }
             } else {
                 // Default: docked to the right edge, a bit up from the bottom.
@@ -109,13 +128,20 @@ export function useDraggable(ref: RefObject<HTMLElement | null>, onDocked?: () =
             }
             el.style.left = `${x}px`;
             el.style.top = `${y}px`;
+            if (style === FLOAT_BALL_STYLE.DOCKED && ownPosition == null) {
+                void setConfig(positionKey, {
+                    x: Math.round(((x + w) / screenW) * 100),
+                    y: Math.round(((y + h) / screenH) * 100),
+                    dock: s.dock,
+                });
+            }
             setDockState(s.dock);
             setReady(true);
         })();
         return () => {
             cancelled = true;
         };
-    }, [ref]);
+    }, [ref, style]);
 
     // ---- Window-level drag + resize listeners ------------------------------
     useEffect(() => {
@@ -155,10 +181,22 @@ export function useDraggable(ref: RefObject<HTMLElement | null>, onDocked?: () =
             let x = clamp(parseFloat(el.style.left) || 0, 0, s.screenW - w);
             const y = clamp(parseFloat(el.style.top) || 0, 0, s.screenH - h);
 
-            // Always dock to the nearer side so the resting ball can retract
-            // partly outside the viewport instead of covering page content.
-            const nextDock: Dock = x + w / 2 <= s.screenW / 2 ? "left" : "right";
-            x = nextDock === "left" ? 0 : s.screenW - w;
+            const SNAP_THRESHOLD = 40;
+            // The new ball always docks; the classic control keeps its old
+            // behavior and only snaps when released close to an edge.
+            let nextDock: Dock;
+            if (style === FLOAT_BALL_STYLE.DOCKED) {
+                nextDock = x + w / 2 <= s.screenW / 2 ? "left" : "right";
+                x = nextDock === "left" ? 0 : s.screenW - w;
+            } else if (x <= SNAP_THRESHOLD) {
+                nextDock = "left";
+                x = 0;
+            } else if (x >= s.screenW - w - SNAP_THRESHOLD) {
+                nextDock = "right";
+                x = s.screenW - w;
+            } else {
+                nextDock = null;
+            }
 
             // Animate the snap glide; cleared so the next drag tracks instantly.
             if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -175,7 +213,10 @@ export function useDraggable(ref: RefObject<HTMLElement | null>, onDocked?: () =
             s.xPercent = nx;
             s.yPercent = ny;
             if (nextDock !== s.dock) setDock(nextDock);
-            setConfig(CONFIG_KEY.FLOAT_BALL_POSITION, { x: nx, y: ny, dock: nextDock });
+            const positionKey = style === FLOAT_BALL_STYLE.DOCKED
+                ? CONFIG_KEY.FLOAT_BALL_DOCKED_POSITION
+                : CONFIG_KEY.FLOAT_BALL_POSITION;
+            setConfig(positionKey, { x: nx, y: ny, dock: nextDock });
             onDockedRef.current?.();
         };
 
@@ -213,7 +254,7 @@ export function useDraggable(ref: RefObject<HTMLElement | null>, onDocked?: () =
             window.removeEventListener("resize", onResize);
             ro.disconnect();
         };
-    }, [ref]);
+    }, [ref, style]);
 
     const onMouseDown = (e: React.MouseEvent) => {
         const el = ref.current;

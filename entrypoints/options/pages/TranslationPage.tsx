@@ -10,6 +10,7 @@ import {
   browserTargetLanguage,
   DEFAULT_VALUE,
   DOMAIN_STRATEGY,
+  FLOAT_BALL_STYLE,
   HIGHLIGHT_COLORS,
   LANGUAGES,
   TAB_ACTION,
@@ -89,6 +90,9 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     String(DEFAULT_VALUE.TRANSLATION_LINE_BREAK_MIN_CHARS),
   );
   const [floatBall, setFloatBall] = useState(true);
+  const [floatBallStyle, setFloatBallStyle] = useState<FLOAT_BALL_STYLE>(
+    DEFAULT_VALUE.FLOAT_BALL_STYLE,
+  );
   const [translationCache, setTranslationCache] = useState(true);
   const [ttsService, setTtsService] = useState<string>(DEFAULT_VALUE.TTS_SERVICE);
   // Transient "cleared" state for the clear-cache button (resets after ~1.5s).
@@ -160,12 +164,13 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     let cancelled = false;
     (async () => {
       const [
-        bh, fb, vs, tl, ts, ds, ms, lb, tc, tts,
+        bh, fb, fbs, vs, tl, ts, ds, ms, lb, tc, tts,
         styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg,
         hbCfg, hbIdxCfg, hfCfg, hfIdxCfg, hsCfg, hbcCfg, hbcIdxCfg,
       ] = await Promise.all([
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
         getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
+        getConfig(CONFIG_KEY.FLOAT_BALL_STYLE),
         getConfig(CONFIG_KEY.VIEW_STRATEGY),
         getConfig(CONFIG_KEY.TARGET_LANGUAGE),
         getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
@@ -202,6 +207,11 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
           : Number(DEFAULT_VALUE.TRANSLATION_LINE_BREAK_MIN_CHARS);
       setLineBreakInput(String(initialLb));
       setFloatBall(fb === undefined ? true : fb);
+      setFloatBallStyle(
+        Object.values(FLOAT_BALL_STYLE).includes(fbs as FLOAT_BALL_STYLE)
+          ? fbs as FLOAT_BALL_STYLE
+          : DEFAULT_VALUE.FLOAT_BALL_STYLE,
+      );
       setTranslationCache(tc === undefined ? true : tc);
       setTtsService(typeof tts === 'string' && tts ? tts : DEFAULT_VALUE.TTS_SERVICE);
       setViewStrategy(vs === undefined ? DEFAULT_VALUE.VIEW_STRATEGY : vs);
@@ -315,6 +325,17 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     setFloatBall(v);
     void setConfig(CONFIG_KEY.FLOAT_BALL_SWITCH, v);
     void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.FLOAT_BALL_SWITCH]: v } });
+  };
+
+  const onFloatBallStyle = (v: string) => {
+    if (!Object.values(FLOAT_BALL_STYLE).includes(v as FLOAT_BALL_STYLE)) return;
+    const next = v as FLOAT_BALL_STYLE;
+    setFloatBallStyle(next);
+    void setConfig(CONFIG_KEY.FLOAT_BALL_STYLE, next);
+    void sendMessageToAllTabs({
+      action: ACTION.CONFIG_CHANGED,
+      data: { [CONFIG_KEY.FLOAT_BALL_STYLE]: next },
+    });
   };
 
   const onViewStrategy = (v: string) => {
@@ -504,6 +525,24 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         <SettingRow
           label={t('floatBall', 'Floating ball')}
           control={<Switch checked={floatBall} onCheckedChange={onFloatBall} />}
+        />
+        <SettingRow
+          label={t('floatBallStyle', 'Floating ball style')}
+          control={
+            <Select value={floatBallStyle} onValueChange={onFloatBallStyle}>
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={FLOAT_BALL_STYLE.DOCKED}>
+                  {t('floatBallStyleDocked', 'Docked ball')}
+                </SelectItem>
+                <SelectItem value={FLOAT_BALL_STYLE.CLASSIC}>
+                  {t('floatBallStyleClassic', 'Classic switch')}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          }
         />
         <SettingRow
           label={t('displayMode', 'Display mode')}

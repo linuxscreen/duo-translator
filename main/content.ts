@@ -1,5 +1,5 @@
 import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
-import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage } from "./constants";
+import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE } from "./constants";
 import { restore, translateParams, getTranslateResult, translate, TranslateResult } from "./translateClient";
 import { notifyBackground, runtimeSendMessage, sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
@@ -300,9 +300,9 @@ export async function content() {
     const siteRuleCandidatesPromise = fetchSiteRuleCandidates(currentUrl)
     // get all config from storage
     let [rules, viewStrategy, targetLanguageConfig, translateServiceConfig, globalSwitch, defaultStrategy,
-        rawDomainStrategy, floatBallSwitch, bilingualHighlightingSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey,
+        rawDomainStrategy, floatBallSwitch, floatBallStyleConfig, bilingualHighlightingSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey,
         aiTargetLanguageConfig, contextMenuSwitch, translateStatusConfig]
-        : [string[], VIEW_STRATEGY, string | undefined, string | undefined, boolean, string, any, boolean, boolean, number,
+        : [string[], VIEW_STRATEGY, string | undefined, string | undefined, boolean, string, any, boolean, string, boolean, number,
             number, string | undefined, string, boolean, boolean]
         = await Promise.all(
             [
@@ -314,6 +314,7 @@ export async function content() {
                 getConfig(CONFIG_KEY.DEFAULT_STRATEGY),
                 sendMessageToBackground({ action: DB_ACTION.DOMAIN_GET, data: { domain: domainWithPort } }),
                 getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
+                getConfig(CONFIG_KEY.FLOAT_BALL_STYLE),
                 getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
                 getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES),
                 getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS),
@@ -345,6 +346,9 @@ export async function content() {
     shareConfig.aiTranslateServiceChoice = parsedAiTranslateService
     let targetLanguage = targetLanguageConfig || browserTargetLanguage()
     let domainStrategy = (rawDomainStrategy?.strategy || DOMAIN_STRATEGY.AUTO) as string
+    let floatBallStyle = Object.values(FLOAT_BALL_STYLE).includes(floatBallStyleConfig as FLOAT_BALL_STYLE)
+        ? floatBallStyleConfig as FLOAT_BALL_STYLE
+        : DEFAULT_VALUE.FLOAT_BALL_STYLE
     // The unit the context menu was opened over (see resolveUnitTargetAtPoint).
     let lastContextMenuTarget: UnitTarget | null = null
     let lastEditableElement: HTMLElement | null = null
@@ -709,6 +713,15 @@ export async function content() {
                     await initFloatBall()
                 } else {
                     await removeFloatBall()
+                }
+                break
+            case CONFIG_KEY.FLOAT_BALL_STYLE:
+                if (!Object.values(FLOAT_BALL_STYLE).includes(value as FLOAT_BALL_STYLE)) return
+                if (floatBallStyle === value) return
+                floatBallStyle = value as FLOAT_BALL_STYLE
+                if (floatBallSwitch) {
+                    await removeFloatBall()
+                    await initFloatBall()
                 }
                 break
             case CONFIG_KEY.CONTEXT_MENU_SWITCH:
@@ -1537,6 +1550,7 @@ export async function content() {
         if (floatBall) return
         floatBall = await mountFloatBall({
             domain: domainWithPort,
+            style: floatBallStyle,
             initiallyActive: translateStatus,
             onTranslate: () => { translateAction(); relayToSubframes(TRANSLATE_ACTION.TRANSLATE) },
             onRestore: () => { restoreOriginalAction(); relayToSubframes(TRANSLATE_ACTION.SHOW_ORIGINAL) },

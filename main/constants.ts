@@ -299,7 +299,14 @@ export enum CONFIG_KEY {
     TRANSLATE_SERVICE = 'translateService',
     MICROSOFT_TOKEN = 'microsoftToken',
     FLOAT_BALL_POSITION = 'floatBallPosition',
+    // The docked variant keeps its own position so switching styles does not
+    // overwrite the classic control's free-floating placement.
+    FLOAT_BALL_DOCKED_POSITION = 'floatBallDockedPosition',
     FLOAT_BALL_SWITCH = 'floatBallSwitch',
+    // Visual/interaction variant for the page floating control.
+    // 'docked' is the compact Duo-logo ball that retracts into the nearest
+    // edge; 'classic' preserves the original orange/green toggle style.
+    FLOAT_BALL_STYLE = 'floatBallStyle',
     CONTEXT_MENU_SWITCH = 'contextMenuSwitch',
     DISABLED_TRANSLATE_SERVICES = 'disabledTranslateServices',
     // When true, the one-time hint shown on entering "Set no-translate area"
@@ -394,10 +401,17 @@ export enum CONFIG_KEY {
     SITE_RULE_SUBSCRIPTIONS = 'siteRuleSubscriptions',
 }
 
+/** Visual variants for the page floating translation control. */
+export enum FLOAT_BALL_STYLE {
+    DOCKED = 'docked',
+    CLASSIC = 'classic',
+}
+
 export const DEFAULT_VALUE = {
     GLOBAL_SWITCH: true,
     BILINGUAL_HIGHLIGHTING_SWITCH: true,
     FLOAT_BALL_SWITCH: true,
+    FLOAT_BALL_STYLE: FLOAT_BALL_STYLE.DOCKED,
     CONTEXT_MENU_SWITCH: true,
     VIEW_STRATEGY: 'double',
     DEFAULT_STRATEGY: 'auto',
