@@ -67,6 +67,112 @@ export async function content() {
     // even across origins (no property access).
     const isTopFrame = window.top === window.self;
 
+    //#region event listeners
+    //
+    // These are registered in content()'s FIRST SYNCHRONOUS PASS, before
+    // anything is awaited. Everything below this block awaits — the tab id, then
+    // ~15 config reads, then init()'s marking scan — and each of those can wake
+    // a suspended MV3 service worker, so on a loaded machine the total is
+    // routinely hundreds of milliseconds and can reach seconds.
+    //
+    // A listener registered after those awaits does not exist while the user is
+    // already looking at a rendered page. These gestures are one-shot and
+    // nothing retries them, so a double-tap right after load was swallowed
+    // without a trace. Moving one await out of the way (as the website-rules
+    // request did) only shortens the window; it does not close it.
+    //
+    // So the LISTENER is early and the ACTION is what waits: `startupReady`
+    // resolves once the first marking scan has run, which is exactly the state
+    // the pointer gestures need. Handlers must not touch anything declared
+    // below this block until after awaiting it — those bindings are in their
+    // temporal dead zone until the awaits above them have resolved.
+    let startupAborted = false
+    let markStartupReady: () => void = () => { }
+    const startupReady = new Promise<void>((resolve) => { markStartupReady = resolve })
+
+    // Accept messages from the popup, the shortcut dispatcher and the context
+    // menu. Registered here rather than next to its body for the same reason as
+    // the gestures below — the popup's translate button can be clicked the
+    // instant the page renders, and a listener that does not exist yet drops
+    // the message with no error on either side. This mirrors the rule the
+    // background already follows for its own onMessage.
+    browser.runtime.onMessage.addListener(async (message) => {
+        if (!message) return
+        await startupReady
+        if (startupAborted) return
+        return handleRuntimeMessage(message)
+    });
+
+    let lastX = 0, lastY = 0
+    document.addEventListener('mousemove', e => { lastX = e.clientX; lastY = e.clientY; }, { passive: true });
+
+    // Double-tap shortcut: pressing the configured modifier (Ctrl/Alt) twice in
+    // quick succession, with no other key in between, runs a quick action. The
+    // toggles are read live on trigger so the latest settings apply.
+    const DOUBLE_TAP_INTERVAL_MS = 400;
+    let lastModifierTapTime = 0;
+    document.addEventListener('keydown', async (e) => {
+        // Ignore auto-repeat while the key is held.
+        if (e.repeat) return;
+        // Nothing before this point touches the event synchronously (no
+        // preventDefault/stopPropagation), so awaiting here is safe.
+        const modifier = await readConfig<string>(CONFIG_KEY.DOUBLE_TAP_MODIFIER);
+        const expectedKey = modifier === 'alt' ? 'Alt' : 'Control';
+        if (e.key !== expectedKey) {
+            // Any non-modifier key (or the wrong modifier) breaks the tap sequence,
+            // so real combos like Ctrl+C never trigger a double-tap.
+            lastModifierTapTime = 0;
+            return;
+        }
+        const now = Date.now();
+        if (now - lastModifierTapTime <= DOUBLE_TAP_INTERVAL_MS) {
+            lastModifierTapTime = 0;
+            // The tap pair is recognized immediately; only the action waits for
+            // the pipeline. Tapping on a page that is still initializing now
+            // translates as soon as it can instead of doing nothing.
+            await startupReady;
+            if (startupAborted) return;
+            void handleDoubleTapModifier();
+        } else {
+            lastModifierTapTime = now;
+        }
+    }, true);
+
+    // add 'Translate/Restore this paragraph' menu when mouse is over the text of
+    // a paragraph element and right mouse clicked
+    // Due to chrome limitations, currently context menu of 'Translate/Restore this paragraph' can only be implemented in this way.
+    // chrome known issue: The context menu that is not triggered by the right mouse button may be abnormal.
+    if (!IS_FIREFOX) {
+        document.addEventListener("mousedown", (e) => {
+            if (e.button !== 2) return // ignore non right click
+            // Read the position synchronously — the pointer may have moved by
+            // the time the pipeline is ready.
+            const x = e.clientX, y = e.clientY
+            void (async () => {
+                await startupReady
+                if (startupAborted || !contextMenuSwitch) return
+                notifyParaContextMenuUpdate(x, y)
+            })()
+        }, true);
+    }
+
+
+    document.addEventListener("contextmenu", (e) => {
+        const target = e.target as HTMLElement | null;
+        void (async () => {
+            await startupReady
+            if (startupAborted || !contextMenuSwitch) return
+            if (target && IsEditableElement(target)) {
+                // console.log("isContentEditable", target);
+                lastEditableElement = target
+            }
+            if (IS_FIREFOX) {
+                notifyParaContextMenuUpdate(lastX, lastY)
+            }
+        })()
+    })
+    //#endregion
+
     // Constructable Stylesheet for translation + bilingual highlighting CSS.
     // - Lives in document.adoptedStyleSheets, not the DOM, so it doesn't
     //   trigger our own MutationObserver and can't be removed by hostile pages.
@@ -98,6 +204,10 @@ export async function content() {
     let pageLanguage: string | undefined = undefined
     let tabId = await sendMessageToBackground({ action: TAB_ACTION.ID_GET })
     if (!tabId) {
+        // Bailing out leaves the already-registered gesture listeners in place,
+        // so mark the pipeline unusable and release anything waiting on it.
+        startupAborted = true
+        markStartupReady()
         return
     }
     let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + tabId
@@ -107,6 +217,8 @@ export async function content() {
     let currentUrl = window.location.href;
     const domainWithPort = isTopFrame ? getDomainWithPortFromUrl(currentUrl) : getTopFrameDomain();
     if (domainWithPort === "") {
+        startupAborted = true
+        markStartupReady()
         return
     }
     const ruleMode: RuleModeController = createRuleMode(domainWithPort)
@@ -233,7 +345,6 @@ export async function content() {
     shareConfig.aiTranslateServiceChoice = parsedAiTranslateService
     let targetLanguage = targetLanguageConfig || browserTargetLanguage()
     let domainStrategy = (rawDomainStrategy?.strategy || DOMAIN_STRATEGY.AUTO) as string
-    let lastX = 0, lastY = 0
     // The unit the context menu was opened over (see resolveUnitTargetAtPoint).
     let lastContextMenuTarget: UnitTarget | null = null
     let lastEditableElement: HTMLElement | null = null
@@ -354,9 +465,10 @@ export async function content() {
     //     globalSwitch, "defaultStrategy: ", defaultStrategy, "domainStrategy: ", domainStrategy)
 
     //#region message listener
-    // Accept messages from popups, process the task
-    browser.runtime.onMessage.addListener(async (message, sender, sendResponse: (t: any) => void) => {
-        if (!message) return
+    // Body of the runtime.onMessage listener, which is registered at the top of
+    // content() instead of here — see the note there. A function declaration so
+    // the registration above can reference it before this point.
+    async function handleRuntimeMessage(message: any) {
         console.log('content script receive message:', message)
         switch (message.action) {
             case TRANSLATE_ACTION.TRANSLATE:
@@ -478,72 +590,21 @@ export async function content() {
             default:
                 break
         }
-    });
+    }
     //#endregion
 
-    if (globalSwitch) {
-        await init()
+    // The gesture listeners at the top of content() have been queueing on
+    // `startupReady` this whole time. Release them even if init() throws —
+    // otherwise every later gesture waits on a promise that never settles.
+    // (initTranslate resolves it earlier, right after the first marking scan;
+    // this is the backstop for the global-switch-off and failure paths.)
+    try {
+        if (globalSwitch) {
+            await init()
+        }
+    } finally {
+        markStartupReady()
     }
-
-    //#region event listeners
-    document.addEventListener('mousemove', e => { lastX = e.clientX; lastY = e.clientY; }, { passive: true });
-
-    // Double-tap shortcut: pressing the configured modifier (Ctrl/Alt) twice in
-    // quick succession, with no other key in between, runs a quick action. The
-    // toggles are read live on trigger so the latest settings apply.
-    const DOUBLE_TAP_INTERVAL_MS = 400;
-    let lastModifierTapTime = 0;
-    document.addEventListener('keydown', async (e) => {
-        // Ignore auto-repeat while the key is held.
-        if (e.repeat) return;
-        // Nothing before this point touches the event synchronously (no
-        // preventDefault/stopPropagation), so awaiting here is safe.
-        const modifier = await readConfig<string>(CONFIG_KEY.DOUBLE_TAP_MODIFIER);
-        const expectedKey = modifier === 'alt' ? 'Alt' : 'Control';
-        if (e.key !== expectedKey) {
-            // Any non-modifier key (or the wrong modifier) breaks the tap sequence,
-            // so real combos like Ctrl+C never trigger a double-tap.
-            lastModifierTapTime = 0;
-            return;
-        }
-        const now = Date.now();
-        if (now - lastModifierTapTime <= DOUBLE_TAP_INTERVAL_MS) {
-            lastModifierTapTime = 0;
-            void handleDoubleTapModifier();
-        } else {
-            lastModifierTapTime = now;
-        }
-    }, true);
-
-    // add 'Translate/Restore this paragraph' menu when mouse is over the text of
-    // a paragraph element and right mouse clicked
-    // Due to chrome limitations, currently context menu of 'Translate/Restore this paragraph' can only be implemented in this way.
-    // chrome known issue: The context menu that is not triggered by the right mouse button may be abnormal.
-    if (!IS_FIREFOX) {
-        document.addEventListener("mousedown", (e) => {
-            // return
-            if (e.button !== 2 || !contextMenuSwitch) { // ignore non right click
-                return
-            }
-            notifyParaContextMenuUpdate(e.clientX, e.clientY)
-        }, true);
-    }
-
-
-    document.addEventListener("contextmenu", (e) => {
-        if (!contextMenuSwitch) {
-            return
-        }
-        const target = e.target as HTMLElement | null;
-        if (target && IsEditableElement(target)) {
-            // console.log("isContentEditable", target);
-            lastEditableElement = target
-        }
-        if (IS_FIREFOX) {
-            notifyParaContextMenuUpdate(lastX, lastY)
-        }
-    })
-    //#endregion
 
     //#region functions
     function notifyParaContextMenuUpdate(lastX: number, lastY: number) {
@@ -1178,6 +1239,11 @@ export async function content() {
         await awaitSiteRules()
         startObserveDom()
         let htmlElements = await markParagraphElement(document.body);
+        // Paragraph marks now exist, which is everything the pointer gestures
+        // need — release them here rather than at the end of init(), so a
+        // double-tap does not have to wait behind a full auto-translation of
+        // the page below.
+        markStartupReady()
         let shouldTranslate = false
         if (isTopFrame) {
             let needs = needsTranslate()
