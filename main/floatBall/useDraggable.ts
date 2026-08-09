@@ -5,10 +5,6 @@ import { getViewportSize } from "@/utils/dom";
 
 const DRAG_THRESHOLD = 5;
 const MIN_MARGIN = 5;
-// On release, if the ball's near edge is within this many px of the viewport's
-// left/right edge, it snaps flush to that edge ("docked"). Drop it anywhere
-// further in and it stays free-floating.
-const SNAP_THRESHOLD = 40;
 const SNAP_TRANSITION = "left 0.18s ease, top 0.18s ease";
 
 /** Which vertical edge the ball is docked to (null = free-floating). */
@@ -17,7 +13,7 @@ export type Dock = "left" | "right" | null;
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
 /**
- * Drag + edge-snapping + viewport-relative position persistence for the float
+ * Drag + edge-docking + viewport-relative position persistence for the float
  * ball.
  *
  * The element is `position: fixed` and positioned via inline `left`/`top` that
@@ -27,19 +23,19 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), h
  * so the ball lands sensibly after a resize / on a different screen, and `dock`
  * records which edge it snapped to.
  *
- * Edge snapping: on release the ball snaps flush to the nearest left/right edge
- * when dropped within {@link SNAP_THRESHOLD}px of it; otherwise it stays where
- * dropped. Vertical position is always preserved (no top/bottom snapping). The
- * returned `dock` lets the caller expand its toolbar away from the edge.
+ * On release the ball docks to the nearest left/right edge. Vertical position
+ * is preserved. The returned `dock` lets the caller retract partly past that
+ * edge and expand its toolbar back toward the viewport.
  *
  * `movedRef` lets the caller distinguish a click from the tail end of a drag.
  */
-export function useDraggable(ref: RefObject<HTMLElement | null>) {
+export function useDraggable(ref: RefObject<HTMLElement | null>, onDocked?: () => void) {
     // Stays false until the initial position is computed, so the caller can keep
     // the ball at opacity 0 and avoid a top-left flash before placement.
     const [ready, setReady] = useState(false);
     const [dock, setDockState] = useState<Dock>(null);
     const movedRef = useRef(false);
+    const onDockedRef = useRef(onDocked);
     const stateRef = useRef({
         dragging: false,
         startX: 0,
@@ -58,6 +54,10 @@ export function useDraggable(ref: RefObject<HTMLElement | null>) {
         setDockState(d);
     };
 
+    useEffect(() => {
+        onDockedRef.current = onDocked;
+    }, [onDocked]);
+
     // ---- Initial placement (config or default docked bottom-right) ---------
     useLayoutEffect(() => {
         const el = ref.current;
@@ -73,7 +73,7 @@ export function useDraggable(ref: RefObject<HTMLElement | null>) {
             s.screenW = screenW;
             s.screenH = screenH;
 
-            const storedDock: Dock =
+            let storedDock: Dock =
                 stored?.dock === "left" || stored?.dock === "right" ? stored.dock : null;
 
             let x: number;
@@ -85,7 +85,20 @@ export function useDraggable(ref: RefObject<HTMLElement | null>) {
                 y = clamp((s.yPercent * screenH) / 100 - h, 0, screenH - h);
                 if (storedDock === "left") x = 0;
                 else if (storedDock === "right") x = screenW - w;
-                else x = clamp((s.xPercent * screenW) / 100 - w, 0, screenW - w);
+                else {
+                    // Migrate legacy free-floating positions into the edge-only
+                    // behavior by choosing whichever edge is closer.
+                    const storedX = clamp((s.xPercent * screenW) / 100 - w, 0, screenW - w);
+                    storedDock = storedX + w / 2 <= screenW / 2 ? "left" : "right";
+                    s.dock = storedDock;
+                    x = storedDock === "left" ? 0 : screenW - w;
+                    const nx = Math.round(((x + w) / screenW) * 100);
+                    void setConfig(CONFIG_KEY.FLOAT_BALL_POSITION, {
+                        x: nx,
+                        y: s.yPercent,
+                        dock: storedDock,
+                    });
+                }
             } else {
                 // Default: docked to the right edge, a bit up from the bottom.
                 x = screenW - w;
@@ -142,18 +155,13 @@ export function useDraggable(ref: RefObject<HTMLElement | null>) {
             let x = clamp(parseFloat(el.style.left) || 0, 0, s.screenW - w);
             const y = clamp(parseFloat(el.style.top) || 0, 0, s.screenH - h);
 
-            // Decide docking by proximity to the left/right edge.
-            let nextDock: Dock = null;
-            if (x <= SNAP_THRESHOLD) {
-                nextDock = "left";
-                x = 0;
-            } else if (x >= s.screenW - w - SNAP_THRESHOLD) {
-                nextDock = "right";
-                x = s.screenW - w;
-            }
+            // Always dock to the nearer side so the resting ball can retract
+            // partly outside the viewport instead of covering page content.
+            const nextDock: Dock = x + w / 2 <= s.screenW / 2 ? "left" : "right";
+            x = nextDock === "left" ? 0 : s.screenW - w;
 
             // Animate the snap glide; cleared so the next drag tracks instantly.
-            if (nextDock) {
+            if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
                 el.style.transition = SNAP_TRANSITION;
                 window.setTimeout(() => {
                     if (ref.current) ref.current.style.transition = "";
@@ -168,6 +176,7 @@ export function useDraggable(ref: RefObject<HTMLElement | null>) {
             s.yPercent = ny;
             if (nextDock !== s.dock) setDock(nextDock);
             setConfig(CONFIG_KEY.FLOAT_BALL_POSITION, { x: nx, y: ny, dock: nextDock });
+            onDockedRef.current?.();
         };
 
         const onResize = () => {

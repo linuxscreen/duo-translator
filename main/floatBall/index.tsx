@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { Settings as SettingsIcon } from "lucide-react";
-import { browser } from "wxt/browser";
+import { Check, CircleSlash2, Settings as SettingsIcon, X } from "lucide-react";
 import { ACTION, CONFIG_KEY, DB_ACTION } from "@/main/constants";
 import { setConfig } from "@/utils/db";
 import { notifyBackground, sendMessageToBackground } from "@/utils/message";
@@ -52,6 +52,10 @@ const HOST_ID = "duo-float-ball-host";
 // Grace period before collapsing the expanded toolbar after the pointer leaves —
 // tolerates brief excursions (e.g. to the close menu) without flicker.
 const COLLAPSE_DELAY_MS = 150;
+const TOOLTIP_DELAY_MS = 350;
+// Keep the result visible long enough to register, then get the control back out
+// of the page's way even when the pointer has not moved after a click.
+const AUTO_RETRACT_DELAY_MS = 700;
 
 export async function mountFloatBall(deps: FloatBallDeps): Promise<FloatBallController> {
     // Defensive: never mount twice.
@@ -88,6 +92,7 @@ export async function mountFloatBall(deps: FloatBallDeps): Promise<FloatBallCont
     root.render(
         <FloatBallApp
             deps={deps}
+            overlayRoot={mount}
             register={(fn) => {
                 api.setActive = fn;
                 registered = true;
@@ -117,15 +122,17 @@ type CloseChoice = "session" | "site" | "forever";
 
 function FloatBallApp({
     deps,
+    overlayRoot,
     register,
 }: {
     deps: FloatBallDeps;
+    overlayRoot: HTMLElement;
     register: (fn: (v: boolean) => void) => void;
 }) {
     useLang();
     const [active, setActive] = useState(deps.initiallyActive);
-    // Hover-to-expand: collapsed shows only the switch; expanded reveals the
-    // vertical toolbar (app icon · switch · settings · close).
+    // A docked ball rests partly outside the viewport. Revealing it brings the
+    // full control and its secondary actions into view.
     const [expanded, setExpanded] = useState(false);
     // Settings/close row normally renders below the switch; flips above when the
     // ball sits too near the bottom edge for the row to fit underneath.
@@ -143,19 +150,18 @@ function FloatBallApp({
     const ballRef = useRef<HTMLDivElement>(null);
     const closeBtnRef = useRef<HTMLButtonElement>(null);
     const collapseTimer = useRef<number | null>(null);
+    const retractAfterDragRef = useRef<() => void>(() => { });
     // Tracks whether the pointer is currently over the ball, so menu-close can
     // decide whether to collapse (the close menu lives outside the ball, so a
     // plain mouseleave already fired by the time it closes).
     const hoveredRef = useRef(false);
 
     const fullscreen = useFullscreen();
-    const { ready, dock, onMouseDown, movedRef } = useDraggable(ballRef);
+    const { ready, dock, onMouseDown, movedRef } = useDraggable(ballRef, () => retractAfterDragRef.current());
 
-    // Align the expanded toolbar (icon above / buttons below) away from a docked
-    // edge so its wider rows never clip off-screen; centered when free-floating.
-    // A small inset keeps the edge-side button (e.g. Close when docked right)
-    // off the viewport boundary instead of flush against it.
-    // not use
+    // Align the expanded toolbar away from a docked edge so its wider row never
+    // clips off-screen; centered when migrating an old free-floating position.
+    // A small inset keeps edge-side buttons off the viewport boundary.
     const EDGE_INSET = 1;
     const horizPlace: React.CSSProperties =
         dock === "left" ? { left: EDGE_INSET }
@@ -170,13 +176,14 @@ function FloatBallApp({
             : dock === "right" ? { right: 0 }
                 : { left: "50%", transform: "translateX(-50%)" };
 
-    // Tooltip vertical placement, kept clear of the settings/close row:
-    //  - buttons flipped above (near bottom) → tooltip above the buttons
-    //  - near top (tooltipBelow) → below the buttons-below row
+    // Tooltip vertical placement, kept clear of the stacked settings/close
+    // actions:
+    //  - buttons flipped above (near bottom) → tooltip above the stack
+    //  - near top (tooltipBelow) → below the stack
     //  - otherwise → just above the switch
     const tooltipVert: React.CSSProperties =
-        buttonsAbove ? { bottom: "calc(100% + 30px)" }
-            : tooltipBelow ? { top: "calc(100% + 30px)" }
+        buttonsAbove ? { bottom: "calc(100% + 105px)" }
+            : tooltipBelow ? { top: "calc(100% + 105px)" }
                 : { bottom: "calc(100% + 6px)" };
 
     // Let the content script push translate-on/off state in.
@@ -188,14 +195,29 @@ function FloatBallApp({
             collapseTimer.current = null;
         }
     };
-    const scheduleCollapse = () => {
+    const scheduleCollapse = (delay = COLLAPSE_DELAY_MS) => {
         cancelCollapse();
-        collapseTimer.current = window.setTimeout(() => setExpanded(false), COLLAPSE_DELAY_MS);
+        collapseTimer.current = window.setTimeout(() => {
+            setExpanded(false);
+            setSwitchHover(false);
+        }, delay);
+    };
+    retractAfterDragRef.current = () => scheduleCollapse(AUTO_RETRACT_DELAY_MS);
+
+    const expandBall = () => {
+        cancelCollapse();
+        const el = ballRef.current;
+        const vh = getViewportSize().height;
+        // The secondary actions are stacked vertically (two 44px hit areas
+        // plus a small gap), so flip the whole stack before it clips.
+        setButtonsAbove(!!el && vh - el.getBoundingClientRect().bottom < 104);
+        setExpanded(true);
     };
 
-    // Clean up the pending tooltip timer on unmount.
+    // Clean up timers on unmount.
     useEffect(() => () => {
         if (tooltipTimer.current !== null) clearTimeout(tooltipTimer.current);
+        if (collapseTimer.current !== null) clearTimeout(collapseTimer.current);
     }, []);
 
     const onSwitchEnter = () => {
@@ -206,7 +228,7 @@ function FloatBallApp({
             const el = ballRef.current;
             setTooltipBelow(!!el && el.getBoundingClientRect().top < 40);
             setSwitchHover(true);
-        }, 1000);
+        }, TOOLTIP_DELAY_MS);
     };
     const onSwitchLeave = () => {
         if (tooltipTimer.current !== null) {
@@ -221,17 +243,13 @@ function FloatBallApp({
         if (movedRef.current) return;
         if (active) deps.onRestore();
         else deps.onTranslate();
+        onSwitchLeave();
+        scheduleCollapse(AUTO_RETRACT_DELAY_MS);
     };
 
     const onPointerEnter = () => {
         hoveredRef.current = true;
-        cancelCollapse();
-        // Flip the settings/close row above the switch when there isn't enough
-        // room below (ball near the bottom edge). Row ≈ 5px gap + ~18px tall.
-        const el = ballRef.current;
-        const vh = getViewportSize().height;
-        setButtonsAbove(!!el && vh - el.getBoundingClientRect().bottom < 30);
-        setExpanded(true);
+        expandBall();
     };
     const onPointerLeave = () => {
         hoveredRef.current = false;
@@ -281,9 +299,13 @@ function FloatBallApp({
 
     if (sessionHidden) return null;
 
-    // Shared style for the icon-sized auxiliary buttons (settings / close).
+    const retracted = !expanded && !closeMenuOpen && dock !== null;
+    const edgeOffset = retracted ? (dock === "left" ? -22 : 22) : 0;
+
+    // Shared style for secondary actions. They remain compact, but their hit
+    // areas are large enough for touch and imprecise pointer input.
     const auxBtnClass =
-        "h-[18px] w-[18px] inline-flex items-center justify-center rounded-full text-[#BFBFBF] transition-colors";
+        "h-11 w-11 inline-flex items-center justify-center rounded-full bg-transparent text-ink-soft transition-[color,opacity,transform] duration-200 hover:text-ink hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#107CF3] active:scale-[0.94] motion-reduce:transition-none";
 
     return (
         <div
@@ -293,19 +315,33 @@ function FloatBallApp({
                 left: 0,
                 top: 0,
                 zIndex: 2147483000,
-                opacity: ready && !fullscreen ? 1 : 0,
+                opacity: ready && !fullscreen ? (retracted ? 0.62 : 1) : 0,
                 // Keep the layout box (for offsetWidth measurement) but make the
                 // ball non-interactive while hidden (fullscreen video / pre-place).
                 pointerEvents: ready && !fullscreen ? "auto" : "none",
                 visibility: fullscreen ? "hidden" : "visible",
             }}
-            className="select-none"
-            onMouseDown={onMouseDown}
+            className="h-11 w-11 select-none transition-opacity duration-200 ease-out motion-reduce:transition-none"
+            data-dock={dock ?? "free"}
+            data-retracted={retracted ? "true" : "false"}
+            onMouseDown={(event) => {
+                expandBall();
+                onMouseDown(event);
+            }}
         >
             <div
-                className="relative flex flex-col items-center"
+                className="relative flex h-11 w-11 flex-col items-center justify-center transition-transform duration-200 ease-out motion-reduce:transition-none"
+                style={{ transform: `translateX(${edgeOffset}px)` }}
                 onMouseEnter={onPointerEnter}
                 onMouseLeave={onPointerLeave}
+                onFocusCapture={() => {
+                    expandBall();
+                }}
+                onBlurCapture={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        scheduleCollapse();
+                    }
+                }}
             >
                 {/* Transparent hover bridge. The buttons row is absolutely
                     positioned BELOW the switch, so the gap between it and the
@@ -322,28 +358,15 @@ function FloatBallApp({
                         aria-hidden="true"
                         style={{
                             position: "absolute",
-                            // Extend toward whichever side the buttons row sits on
-                            // (and never the other, to avoid a hover dead zone).
-                            top: buttonsAbove ? "-30px" : 0,
-                            bottom: buttonsAbove ? 0 : "-30px",
-                            left: "-12px",
-                            right: "-12px",
+                            // Extend over the stacked secondary actions so the
+                            // pointer can move between the ball and actions.
+                            top: buttonsAbove ? "-104px" : 0,
+                            bottom: buttonsAbove ? 0 : "-104px",
+                            left: "-8px",
+                            right: "-8px",
                         }}
                     />
                 )}
-
-                {/* app logo */}
-                {/* App icon — absolutely placed ABOVE the switch so the switch
-                    itself never shifts when the toolbar expands. Branding only
-                    (no click); the small gap keeps it tied to the switch. */}
-                {/* {expanded && (
-                    <div
-                        className="h-[36px] w-[36px]"
-                        aria-hidden="true"
-                        style={{ position: "absolute", bottom: "calc(100% + 2px)", ...horizPlace }}
-                        dangerouslySetInnerHTML={{ __html: DUO_LOGO_SVG }}
-                    />
-                )} */}
 
                 {/* Custom tooltip ABOVE the switch (left/right-aligned per dock)
                     so it never overlaps the settings/close row below. */}
@@ -372,39 +395,42 @@ function FloatBallApp({
                     onMouseEnter={onSwitchEnter}
                     onMouseLeave={onSwitchLeave}
                     className={[
-                        "relative flex w-[42px] h-[25px] rounded-full transition-[background,opacity] duration-300 hover:opacity-100 p-0.5",
-                        active ? "bg-[#23C965]" : "bg-[#ED6C35]",
-                        expanded ? "opacity-100" : "opacity-[0.35]",
+                        "relative flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border-2 bg-surface p-0 shadow-[0_3px_12px_rgba(0,0,0,0.26)] transition-[border-color,box-shadow,transform] duration-200 hover:shadow-[0_4px_14px_rgba(0,0,0,0.32)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#107CF3] focus-visible:ring-offset-2 focus-visible:ring-offset-surface active:scale-[0.94] motion-reduce:transition-none",
+                        active
+                            ? "border-[#23A455] shadow-[0_3px_13px_rgba(35,164,85,0.28)]"
+                            : "border-line-strong",
                     ].join(" ")}
                 >
                     <span
-                        className="absolute w-[20px] h-[20px] rounded-full bg-[#ECECEC] border-2 border-white"
-                        style={{
-                            top: "50%",
-                            // Slide via a single GPU-composited transform (left is
-                            // static). Animating `left` is a main-thread layout
-                            // property and stutters on the cold first toggle after
-                            // page load; transform stays smooth from frame one.
-                            // 18px(travel) = 42px(track, button width) − 20px(knob, self width) − 2px * 2(inset each side)
-                            left: "2px",
-                            transform: `translate(${active ? 18 : 0}px, -50%)`,
-                            transition: "transform 0.2s ease",
-                            willChange: "transform",
-                        }}
+                        aria-hidden="true"
+                        className="block h-6 w-6"
+                        dangerouslySetInnerHTML={{ __html: DUO_LOGO_SVG }}
                     />
+                    {active && (
+                        <span
+                            aria-hidden="true"
+                            className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full border-2 border-surface bg-[#23A455] text-white shadow-[0_1px_4px_rgba(35,164,85,0.45)]"
+                        >
+                            <Check className="h-2.5 w-2.5 stroke-[3]" />
+                        </span>
+                    )}
                 </button>
 
-                {/* Settings + Close share a single row, absolutely placed below
-                    the switch (or above when the ball is near the bottom edge) —
-                    so the switch never shifts on expand. */}
+                {/* Settings stays above Close in a compact vertical stack,
+                    absolutely placed so the switch never shifts on expand. */}
                 {expanded && (
                     <div
-                        className="flex flex-row items-center gap-1.5"
+                        className="flex flex-col items-center gap-0.5"
                         style={{
                             position: "absolute",
+                            ...(dock === "left"
+                                ? { left: 0 }
+                                : dock === "right"
+                                    ? { right: 0 }
+                                    : horizPlace),
                             ...(buttonsAbove
-                                ? { bottom: "calc(100% + 5px)" }
-                                : { top: "calc(100% + 5px)" }),
+                                ? { bottom: "calc(100% + 11px)" }
+                                : { top: "calc(100% - 1px)" }),
                         }}
                     >
                         <button
@@ -415,7 +441,7 @@ function FloatBallApp({
                             onMouseDown={(e) => e.stopPropagation()}
                             className={auxBtnClass}
                         >
-                            <SettingsIcon className="h-4 w-4" />
+                            <SettingsIcon aria-hidden="true" className="h-4 w-4" />
                         </button>
                         <button
                             ref={closeBtnRef}
@@ -424,21 +450,20 @@ function FloatBallApp({
                             title={t("aiClose", "Close")}
                             onClick={onCloseClick}
                             onMouseDown={(e) => e.stopPropagation()}
-                            className={auxBtnClass}
+                            className={`${auxBtnClass} -mt-4`}
                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 18 18" fill="none">
-                                <path d="M15.5051 4.58459L14.764 5.32621C15.6138 6.64036 15.9873 8.20617 15.8222 9.76241C15.6571 11.3187 14.9634 12.7712 13.8567 13.8778C12.7501 14.9844 11.2975 15.678 9.74122 15.8431C8.18497 16.0081 6.61919 15.6345 5.30508 14.7846L4.56399 15.5256C5.87389 16.4274 7.42728 16.909 9.01758 16.9065C13.3632 16.9065 16.8861 13.3837 16.8861 9.03818C16.8886 7.44788 16.4069 5.89449 15.5051 4.58459ZM15.3134 1.77385L14.076 3.01135C12.6603 1.81939 10.8683 1.16698 9.01758 1.16969C4.67192 1.16969 1.14909 4.6934 1.14909 9.03818C1.14638 10.8889 1.79879 12.6809 2.99075 14.0966L1.65815 15.4292L2.57081 16.3419L16.2262 2.68668L15.3134 1.77385ZM2.71442 11.7002C2.11848 10.2924 2.01131 8.72559 2.41003 7.24978C2.80875 5.77397 3.69037 4.47426 4.91417 3.55812C6.13796 2.64198 7.63339 2.16221 9.16176 2.19539C10.6901 2.22857 12.1633 2.77279 13.3462 3.74119L3.72059 13.3666C3.30705 12.8623 2.96819 12.301 2.71442 11.7002Z" fill="currentColor" />
-                            </svg>
+                            <CircleSlash2 aria-hidden="true" className="h-4 w-4" />
                         </button>
                     </div>
                 )}
 
-                {closeMenuOpen && (
+                {closeMenuOpen && createPortal(
                     <CloseMenu
                         anchorRef={closeBtnRef}
                         onPick={handleCloseChoice}
                         onClose={onMenuClose}
-                    />
+                    />,
+                    overlayRoot,
                 )}
             </div>
         </div>
@@ -542,9 +567,7 @@ function CloseMenu({
                     aria-label={t("aiClose", "Close")}
                     className="h-5 w-5 inline-flex items-center justify-center rounded text-ink-soft hover:bg-hover-2"
                 >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                        <path d="M18 6 6 18M6 6l12 12" />
-                    </svg>
+                    <X aria-hidden="true" className="h-3 w-3" strokeWidth={2.5} />
                 </button>
             </div>
             <MenuItem onClick={() => onPick("session")} label={t("aiCloseTemporary", "Hide until reload")} />
