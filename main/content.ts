@@ -44,6 +44,9 @@ import {
     resetNoTranslateMarks,
 } from "@/main/dom/paragraphMarks";
 import { isSegmentBoundary, segmentParagraph, type TranslationUnit, type UnitRange } from "@/main/dom/segments";
+// Type-only + one const: the progress bar surface itself is loaded lazily (see
+// onBuiltinAiDownloadProgress), so this adds no weight to the content bundle.
+import { BUILTIN_AI_MODEL_DOWNLOADING, type BuiltinAiDownloadProgress } from "@/main/builtinAi/types";
 import { directChildOf, nodesInRange, rangeContains, resolveCandidateAtPoint, unitRangeOf } from "@/main/dom/unitHit";
 import {
     buildSentenceRanges,
@@ -251,6 +254,24 @@ export async function content() {
     // return
     // set translate status to false when the page is loaded
     let translateStatus = false
+    // This frame has paragraphs waiting on an on-device model download. Set when
+    // a batch bails out with BUILTIN_AI_MODEL_DOWNLOADING, cleared when the
+    // download finishes. Gates both the progress bar and the automatic
+    // re-translation, because background broadcasts progress to every frame of
+    // every tab and only the waiting ones should react.
+    let builtinAiAwaitingModel = false
+    // Counts batches that bailed out waiting for the model. The retry loop uses
+    // it as a liveness signal: an interval with no new bail means translation is
+    // working again, which is how the polling knows to stop.
+    let builtinAiBailSeq = 0
+    let builtinAiSeqAtLastRetry = -1
+    let builtinAiRetryTimer: ReturnType<typeof setTimeout> | null = null
+    let builtinAiRetryDelay = 0
+    let builtinAiRetryDeadline = 0
+    const BUILTIN_AI_RETRY_MIN_MS = 4_000
+    const BUILTIN_AI_RETRY_MAX_MS = 30_000
+    /** Stop polling eventually — a download that never lands must not poll forever. */
+    const BUILTIN_AI_RETRY_GIVE_UP_MS = 15 * 60_000
     let manualTrigger = false // @deprecated
     const ignoreMutationElements = new WeakSet();
     const paragraphElementMap = new Map<HTMLElement, ELEMENT_STATUS>();
@@ -507,6 +528,11 @@ export async function content() {
                 // out of phase with the tab.
                 if (!isTopFrame) break
                 toggleTranslateStatus()
+                break
+            case ACTION.BUILTIN_AI_DOWNLOAD_PROGRESS:
+                // Broadcast to EVERY frame: the top frame draws the bar, and
+                // each frame re-runs its own paragraphs once the model lands.
+                onBuiltinAiDownloadProgress(message.data)
                 break
             case ACTION.REPORT_ERROR:
                 // A sub-frame's request failed and background forwarded it here
@@ -1623,6 +1649,154 @@ export async function content() {
         });
     }
 
+    /**
+     * Re-drive translation over every needs-translate paragraph.
+     *
+     * Split out of `translateAction` because the built-in AI model download has
+     * to re-run the page WITHOUT going through it: by then the page is already
+     * "on" (auto-translate switched it on, then the model turned out to be
+     * missing), and `translateAction` early-returns while `translateStatus` is
+     * true. The caller owns `controller`, so the ordering in `translateAction`
+     * — new controller before `updateTranslateStatus` — is unchanged.
+     */
+    async function retranslateNeedsTranslateParagraphs() {
+        // some elements probably have been translated
+        await restoreOriginalPage(false)
+        needsTranslateParagraphs().forEach((ele) => {
+            paragraphElementMap.set(ele, ELEMENT_STATUS.ORIGINAL)
+            // console.log("translateAction observe element");
+            // unobserve FIRST. `observe()` on an element the observer is already
+            // watching is a silent no-op — no fresh callback is delivered — and
+            // elements only leave the observer on a SUCCESSFUL translation
+            // (see the unobserve in translateUnits). So after a batch fails,
+            // its paragraphs are still observed, and re-observing them queues
+            // absolutely nothing: the page stays in its original language with
+            // no error anywhere. That is what made the built-in AI model
+            // download look broken — the model arrived, the retry ran, and
+            // every retry was a no-op.
+            //
+            // `translateAction` never hit this because the only way to reach it
+            // is with translation OFF, and `restoreOriginalAction` disconnects
+            // the whole observer on the way there. `restoreOriginalPage` — the
+            // one called here — does NOT disconnect.
+            intersectionObserver.unobserve(ele)
+            intersectionObserver.observe(ele)
+        })
+    }
+
+    /**
+     * Swallow the "the on-device model is still downloading" signal.
+     *
+     * This is NOT a failure and must not raise an error bubble: background has
+     * already started the download by itself (a service worker needs no user
+     * gesture for it), and the page will re-translate when the progress
+     * broadcast reports `done`. Returns true when it took ownership.
+     *
+     * The progress bar itself is drawn by the broadcast handler, not here — a
+     * batch can fail this way many times over while one download runs.
+     */
+    function isBuiltinAiModelDownloading(e: any): boolean {
+        if (e?.originalName !== BUILTIN_AI_MODEL_DOWNLOADING) return false
+        // Remember that THIS frame has paragraphs waiting on the model. The
+        // progress broadcast goes to every frame of every tab (background has
+        // no idea who is waiting), so without this flag an unrelated tab would
+        // draw a progress bar for someone else's download and — worse —
+        // re-translate itself from scratch when it finished.
+        builtinAiBailSeq++
+        if (!builtinAiAwaitingModel) {
+            builtinAiAwaitingModel = true
+            builtinAiRetryDelay = BUILTIN_AI_RETRY_MIN_MS
+            builtinAiRetryDeadline = Date.now() + BUILTIN_AI_RETRY_GIVE_UP_MS
+        }
+        scheduleBuiltinAiRetry()
+        return true
+    }
+
+    function stopBuiltinAiWait(): void {
+        builtinAiAwaitingModel = false
+        if (builtinAiRetryTimer) {
+            clearTimeout(builtinAiRetryTimer)
+            builtinAiRetryTimer = null
+        }
+    }
+
+    /**
+     * Poll for the model instead of trusting the "download finished" broadcast.
+     *
+     * That broadcast is a nice-to-have fast path, NOT something recovery can
+     * depend on: a first-time model download takes minutes, and an MV3 service
+     * worker is terminated after ~30s idle — which destroys the pending
+     * `create()` promise, its progress monitor and the final broadcast, while
+     * the browser goes on fetching the model anyway. The page was then stuck in
+     * its original language forever, because a failed batch leaves its
+     * paragraphs in ELEMENT_STATUS.PENDING and the IntersectionObserver only
+     * ever picks up ORIGINAL ones. Nothing retried, nothing said so.
+     *
+     * Each poll costs background one `availability()` check, so the backoff can
+     * stay short at the start and still be cheap.
+     */
+    function scheduleBuiltinAiRetry(): void {
+        if (builtinAiRetryTimer || !builtinAiAwaitingModel) return
+        builtinAiRetryTimer = setTimeout(() => {
+            builtinAiRetryTimer = null
+            if (!builtinAiAwaitingModel) return
+            // Nothing bailed out since the previous retry actually ran, so the
+            // model landed and translation is proceeding normally. Stop.
+            if (builtinAiBailSeq === builtinAiSeqAtLastRetry) {
+                stopBuiltinAiWait()
+                return
+            }
+            if (Date.now() > builtinAiRetryDeadline) {
+                console.log(APP_NAME_WITH_SUFFIX, "built-in AI: gave up waiting for the on-device model")
+                stopBuiltinAiWait()
+                return
+            }
+            builtinAiSeqAtLastRetry = builtinAiBailSeq
+            builtinAiRetryDelay = Math.min(builtinAiRetryDelay * 2, BUILTIN_AI_RETRY_MAX_MS)
+            if (translateStatus) {
+                controller = new AbortController()
+                void retranslateNeedsTranslateParagraphs()
+            }
+            scheduleBuiltinAiRetry()
+        }, builtinAiRetryDelay)
+    }
+
+    /**
+     * Render download progress, and re-run translation once the model lands.
+     *
+     * Every frame re-translates (each owns its own paragraphs); only the top
+     * frame draws the bar, since a sub-frame's would be clipped to its box.
+     */
+    function onBuiltinAiDownloadProgress(progress: BuiltinAiDownloadProgress): void {
+        // Only frames actually blocked on this model care. Everyone else gets
+        // the broadcast too and must ignore it completely.
+        if (!builtinAiAwaitingModel) return
+        if (isTopFrame) {
+            // Lazy — same reasoning as the error bubble in main/errorReport.ts:
+            // this pulls in React, i18n and the Tailwind sheet, which every page
+            // would otherwise pay for to show a bar it will rarely need.
+            void import("@/main/builtinAi/modelDownloadPrompt")
+                .then(({ showBuiltinAiDownloadProgress }) => showBuiltinAiDownloadProgress(progress))
+                .catch((err) => {
+                    console.log(APP_NAME_WITH_SUFFIX, "built-in AI progress bar failed to render:", err)
+                })
+        }
+        if (!progress.done) return
+        // Fast path only. The retry loop above is what actually guarantees
+        // recovery; this just avoids waiting for the next poll when background
+        // did survive long enough to tell us.
+        stopBuiltinAiWait()
+        // The user stopped it. Re-translating now would ask for the very model
+        // they just declined — and background would refuse anyway, since a
+        // cancel latches the pair until asked again explicitly.
+        if (progress.cancelled) return
+        if (progress.error) return
+        // Model is on disk — the batches that bailed out earlier can now run.
+        if (!translateStatus) return
+        controller = new AbortController()
+        void retranslateNeedsTranslateParagraphs()
+    }
+
     async function translateAction() {
         if (translateTask) {
             return
@@ -1636,14 +1810,16 @@ export async function content() {
             }
             controller = new AbortController()
             manualTrigger = true
+            // Asking for a translation by hand overrides an earlier "stop
+            // downloading": background latches a cancelled model so that
+            // scrolling cannot silently restart it, and this is the click that
+            // says otherwise. Fire-and-forget — if it does not land, the worst
+            // case is the pre-existing "download was cancelled" message.
+            if (translateService === TRANSLATE_SERVICE.BUILTIN) {
+                void sendMessageToBackground({ action: ACTION.BUILTIN_AI_RESUME_DOWNLOAD })
+            }
             await updateTranslateStatus(true)
-            // some elements probably have been translated
-            await restoreOriginalPage(false)
-            needsTranslateParagraphs().forEach((ele) => {
-                paragraphElementMap.set(ele, ELEMENT_STATUS.ORIGINAL)
-                // console.log("translateAction observe element");
-                intersectionObserver.observe(ele)
-            })
+            await retranslateNeedsTranslateParagraphs()
         }
         translateTask = action()
         translateTask.finally(() => {
@@ -2487,9 +2663,16 @@ export async function content() {
             //
             // `reportRequestError` filters aborts itself, so a user cancelling
             // mid-translation still raises nothing.
-            reportRequestError(errorScope, e, {
-                detail: { service: translateService, targetLanguage, units: units.length },
-            })
+            //
+            // One case is not a failure at all: the built-in AI model for this
+            // language pair is still downloading. Background started it on its
+            // own and the page re-translates when it lands, so a bubble here
+            // would be alarming and wrong — the progress bar already says it.
+            if (!isBuiltinAiModelDownloading(e)) {
+                reportRequestError(errorScope, e, {
+                    detail: { service: translateService, targetLanguage, units: units.length },
+                })
+            }
         }
         finally {
             Promise.resolve().then(() => {

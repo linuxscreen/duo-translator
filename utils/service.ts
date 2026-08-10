@@ -1,5 +1,6 @@
 import { AiProvider, normalizeProvider } from "@/main/aiProvider";
-import { ACTION, AI_PREFIX, CONFIG_KEY, TRANSLATE_SERVICE, TRANSLATE_SERVICES, TranslateServiceMeta } from "@/main/constants";
+import { ACTION, AI_PREFIX, CONFIG_KEY, IS_FIREFOX, TRANSLATE_SERVICE, TRANSLATE_SERVICES, TranslateServiceMeta } from "@/main/constants";
+import { builtinAiApiAvailable } from "@/main/builtinAi/capability";
 import { getConfig } from "./db";
 import { parseTranslateServiceKey } from "@/main/aiWriting/translateRunner";
 import { sendMessageToAllTabs } from "./message";
@@ -143,9 +144,41 @@ export async function getAiTranslateService(configValue: string | undefined): Pr
     return buildAiTranslateService(configValue, aiProviders, disabledTranslateServices);
 }
 
+/**
+ * Every translate service this browser can actually run, in display order.
+ *
+ * The single place that knows a service can be browser-specific. Built-in AI
+ * needs the on-device `Translator` API, which Firefox has no implementation of
+ * (nor the offscreen document it runs in), so on Firefox the entry must not
+ * reach any picker — nor the Options service table, which builds its rows
+ * straight from TRANSLATE_SERVICES rather than going through the filter below.
+ * Both call this so neither can drift.
+ *
+ * `IS_FIREFOX` is a compile-time constant, so the branch tree-shakes away.
+ */
+export function listTranslateServices(): TranslateServiceMeta[] {
+    const all = Array.from(TRANSLATE_SERVICES.values());
+    return IS_FIREFOX ? all.filter((s) => s.value !== TRANSLATE_SERVICE.BUILTIN) : all;
+}
+
+/**
+ * Whether a service may be offered right now.
+ *
+ * Built-in AI answers to capability rather than to the stored default: present
+ * API → on unless the user turned it off; absent API → off, always. That is
+ * what makes "enabled by default when it works" expressible at all, since the
+ * one build artifact ships to browsers that have the on-device model and to
+ * browsers that don't.
+ */
+function isServiceUsable(value: string, disabledSet: Set<string>): boolean {
+    if (disabledSet.has(value)) return false;
+    if (value === TRANSLATE_SERVICE.BUILTIN) return builtinAiApiAvailable();
+    return true;
+}
+
 function filterEnabledTranslateServices(disabled: string[] | undefined): TranslateServiceMeta[] {
     const disabledSet = new Set(Array.isArray(disabled) ? disabled : []);
-    return Array.from(TRANSLATE_SERVICES.values()).filter((s) => !disabledSet.has(s.value));
+    return listTranslateServices().filter((s) => isServiceUsable(s.value, disabledSet));
 }
 
 export async function getActiveTranslateService() {

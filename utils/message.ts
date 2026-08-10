@@ -120,6 +120,13 @@ export class BackgroundRequestError extends Error {
     readonly originalName?: string
     /** `error.stack` as thrown in background. */
     readonly backgroundStack?: string
+    /**
+     * Structured payload attached by the thrower, for failures the caller can
+     * act on instead of only display (see `failResponse` in
+     * main/messageBridge.ts). Pair this with {@link originalName} to know what
+     * shape to expect.
+     */
+    readonly detail?: Record<string, any>
 
     constructor(action: string, data: any) {
         super(failureMessage(action, data))
@@ -129,6 +136,7 @@ export class BackgroundRequestError extends Error {
             this.scope = typeof data.scope === 'string' ? data.scope : undefined
             this.originalName = typeof data.name === 'string' ? data.name : undefined
             this.backgroundStack = typeof data.stack === 'string' ? data.stack : undefined
+            this.detail = data.detail && typeof data.detail === 'object' ? data.detail : undefined
         }
     }
 }

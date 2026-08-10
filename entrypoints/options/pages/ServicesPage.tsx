@@ -1,16 +1,23 @@
 import { Pencil, Loader2, FlaskConical } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { browser } from 'wxt/browser';
-import { ACTION, CONFIG_KEY, STATUS_SUCCESS, TRANSLATE_SERVICE, TRANSLATE_SERVICES } from '@/main/constants';
+import { ACTION, CONFIG_KEY, STATUS_SUCCESS, TRANSLATE_SERVICE } from '@/main/constants';
 import { getConfig, setConfig } from '@/utils/db';
+import { BuiltinAiModelDialog } from '@/components/options/BuiltinAiModelDialog';
+import { builtinAiApiAvailable } from '@/main/builtinAi/capability';
+import {
+    BUILTIN_AI_MODEL_DOWNLOADING,
+    type BuiltinAiDownloadProgress,
+    type BuiltinAiModelDownloadingDetail,
+} from '@/main/builtinAi/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Dialog } from '@/components/ui/dialog';
 import { TestResultBadge } from '@/components/ui/test-result-badge';
 import { AiProvidersCard } from './AiProvidersCard';
-import { notifyUpdateActiveTranslateService } from '@/utils/service';
+import { listTranslateServices, notifyUpdateActiveTranslateService } from '@/utils/service';
 
 type Row = {
     value: string;
@@ -23,6 +30,13 @@ type Row = {
 type TestState =
     | { kind: 'idle' }
     | { kind: 'pending' }
+    // Built-in AI only: the model for this pair is not on disk yet. Background
+    // has already started fetching it, so this is a wait, not a failure.
+    //
+    // The pair rides along because "Downloading 34%" alone says nothing about
+    // what is being downloaded — and these models are per language pair and
+    // large enough that the answer matters before deciding to let it run.
+    | { kind: 'downloading'; percent: number; sourceLang: string; targetLang: string; detector?: boolean }
     | { kind: 'ok' }
     | { kind: 'fail'; message: string };
 
@@ -42,24 +56,39 @@ export function ServicesPage() {
     const [deeplKeyDraft, setDeeplKeyDraft] = useState('');
     const [dialogTest, setDialogTest] = useState<TestState>({ kind: 'idle' });
 
+    // Built-in AI model dialog (status + download).
+    const [builtinDialogOpen, setBuiltinDialogOpen] = useState(false);
+    const [targetLang, setTargetLang] = useState('en');
+
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const [ds, dpKey] = await Promise.all([
+            const [ds, dpKey, tl] = await Promise.all([
                 getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES),
                 getConfig(CONFIG_KEY.DEEPL_API_KEY),
+                getConfig(CONFIG_KEY.TARGET_LANGUAGE),
             ]);
             if (cancelled) return;
             const set = new Set(Array.isArray(ds) ? ds : []);
             setDisabled(set);
             setDeeplApiKey(typeof dpKey === 'string' ? dpKey : '');
+            if (typeof tl === 'string' && tl) setTargetLang(tl);
             setRows(
-                Array.from(TRANSLATE_SERVICES.values()).map((svc) => ({
+                // listTranslateServices() rather than TRANSLATE_SERVICES directly:
+                // Built-in AI must not appear on Firefox, and this is the shared
+                // filter the pickers use, so the two cannot drift apart.
+                listTranslateServices().map((svc) => ({
                     value: svc.value,
                     name: t(svc.name, svc.name),
                     description: t(svc.description, svc.description),
                     editable: svc.editable,
-                    enabled: !set.has(svc.value),
+                    // Built-in AI is on by default (it needs no key and costs
+                    // nothing) but only where the browser actually has the
+                    // on-device API — which is a runtime fact, so it cannot
+                    // live in DEFAULT_VALUE. Mirrors `isServiceUsable` in
+                    // utils/service.ts, which gates the pickers the same way.
+                    enabled: !set.has(svc.value)
+                        && (svc.value !== TRANSLATE_SERVICE.BUILTIN || builtinAiApiAvailable()),
                 })),
             );
             setReady(true);
@@ -69,29 +98,145 @@ export function ServicesPage() {
         };
     }, [t]);
 
+    /**
+     * True while the Built-in AI ROW is waiting on a model download it started.
+     *
+     * A ref rather than state because the message listener below is registered
+     * once and must not go stale — and because the answer gates an action (the
+     * automatic re-test), not a render. Downloads can also be kicked off by the
+     * model dialog or by any page, and those broadcasts must not make the row
+     * re-test something nobody asked it to.
+     */
+    const builtinWaitingRef = useRef(false);
+
     // Test a built-in translation service through the background bridge.
-    const runTest = async (value: string) => {
+    const runTest = useCallback(async (value: string) => {
         setTestStates((s) => ({ ...s, [value]: { kind: 'pending' } }));
         try {
             const resp: any = await browser.runtime.sendMessage({
                 action: ACTION.TRANSLATE_SERVICE_TEST,
-                data: { service: value, targetLang: 'zh-CN' },
+                // Built-in AI translates with an on-device model per language
+                // PAIR, so the test language is not cosmetic here the way it is
+                // for the cloud providers: probing a hardcoded zh-CN would fetch
+                // a model the user may never translate into. Test the pair they
+                // will actually use.
+                data: {
+                    service: value,
+                    targetLang: value === TRANSLATE_SERVICE.BUILTIN ? targetLang : 'zh-CN',
+                },
             });
             if (resp?.status === STATUS_SUCCESS) {
                 setTestStates((s) => ({ ...s, [value]: { kind: 'ok' } }));
+            } else if (resp?.data?.name === BUILTIN_AI_MODEL_DOWNLOADING) {
+                // Not a failure: the model just isn't downloaded yet, and asking
+                // for it is what started the download. Show progress like the
+                // page does and re-test when it lands (see the listener below),
+                // instead of reporting an error the user can do nothing about.
+                //
+                // `detail` carries the pair background resolved (the SOURCE was
+                // detected from the sample, so this side could not have named
+                // it), which is what makes the row able to say *which* model.
+                const detail = (resp.data.detail || {}) as BuiltinAiModelDownloadingDetail;
+                builtinWaitingRef.current = true;
+                setTestStates((s) => ({
+                    ...s,
+                    [value]: {
+                        kind: 'downloading',
+                        percent: 0,
+                        sourceLang: detail.sourceLang || '',
+                        targetLang: detail.targetLang || '',
+                        // No pair at all means it is the shared detector model,
+                        // which background needs before it can detect anything.
+                        detector: !detail.targetLang,
+                    },
+                }));
             } else {
                 setTestStates((s) => ({ ...s, [value]: { kind: 'fail', message: resp?.data?.message || 'Failed' } }));
             }
         } catch (e: any) {
             setTestStates((s) => ({ ...s, [value]: { kind: 'fail', message: e?.message || String(e) } }));
         }
+    }, [targetLang]);
+
+    // Keep the latest runTest reachable from the message listener without
+    // re-subscribing on every render.
+    const runTestRef = useRef(runTest);
+    runTestRef.current = runTest;
+
+    // Background broadcasts model-download progress to extension pages too, so
+    // the row can show the same bar the page shows — and re-run the test itself
+    // once the model is ready.
+    useEffect(() => {
+        const onMessage = (message: any) => {
+            if (message?.action !== ACTION.BUILTIN_AI_DOWNLOAD_PROGRESS) return;
+            // Only the row's own wait is ours to report on.
+            if (!builtinWaitingRef.current) return;
+            const p = message.data as BuiltinAiDownloadProgress;
+            if (!p.done) {
+                // Re-label from the broadcast rather than keeping the pair from
+                // the initial reply: the detector can download first and the
+                // translator second, and the bar must name whichever is running.
+                setTestStates((s) => ({
+                    ...s,
+                    [TRANSLATE_SERVICE.BUILTIN]: {
+                        kind: 'downloading',
+                        percent: p.percent,
+                        sourceLang: p.sourceLang,
+                        targetLang: p.targetLang,
+                        detector: p.kind === 'detector',
+                    },
+                }));
+                return;
+            }
+            builtinWaitingRef.current = false;
+            if (p.cancelled) {
+                // The user's own stop. Back to a blank row — reporting it as a
+                // result would be telling them what they just did.
+                setTestStates((s) => ({ ...s, [TRANSLATE_SERVICE.BUILTIN]: { kind: 'idle' } }));
+                return;
+            }
+            if (p.error) {
+                setTestStates((s) => ({ ...s, [TRANSLATE_SERVICE.BUILTIN]: { kind: 'fail', message: p.error! } }));
+                return;
+            }
+            // Model is on disk — now the test can actually mean something.
+            void runTestRef.current(TRANSLATE_SERVICE.BUILTIN);
+        };
+        browser.runtime.onMessage.addListener(onMessage);
+        return () => browser.runtime.onMessage.removeListener(onMessage);
+    }, []);
+
+    /**
+     * Stop the download this row is waiting on.
+     *
+     * Drops the row's claim on the broadcast FIRST: background confirms with a
+     * `cancelled` message, but a progress event already in flight could land
+     * before it and put the bar straight back.
+     */
+    const cancelBuiltinDownload = (ts: Extract<TestState, { kind: 'downloading' }>) => {
+        builtinWaitingRef.current = false;
+        setTestStates((s) => ({ ...s, [TRANSLATE_SERVICE.BUILTIN]: { kind: 'idle' } }));
+        void browser.runtime.sendMessage({
+            action: ACTION.BUILTIN_AI_CANCEL_DOWNLOAD,
+            data: {
+                kind: ts.detector ? 'detector' : 'translator',
+                sourceLang: ts.sourceLang,
+                targetLang: ts.targetLang,
+            },
+        });
     };
 
+    // Each editable service owns its own dialog — dispatch, don't early-return.
     const openEdit = (value: string) => {
-        if (value !== TRANSLATE_SERVICE.DEEPL) return;
-        setDeeplKeyDraft(deeplApiKey);
-        setDialogTest({ kind: 'idle' });
-        setDeeplDialogOpen(true);
+        if (value === TRANSLATE_SERVICE.DEEPL) {
+            setDeeplKeyDraft(deeplApiKey);
+            setDialogTest({ kind: 'idle' });
+            setDeeplDialogOpen(true);
+            return;
+        }
+        if (value === TRANSLATE_SERVICE.BUILTIN) {
+            setBuiltinDialogOpen(true);
+        }
     };
 
     // Test the key currently in the dialog draft (not yet persisted).
@@ -133,6 +278,13 @@ export function ServicesPage() {
             openEdit(TRANSLATE_SERVICE.DEEPL);
             return;
         }
+        // Built-in AI needs no key — only the browser API. Turning it on when
+        // the model for this pair isn't downloaded is NOT an error case: the
+        // test below starts the download and the row shows progress.
+        if (next && row.value === TRANSLATE_SERVICE.BUILTIN && !builtinAiApiAvailable()) {
+            alert(t('builtinAiUnsupported', 'This browser has no built-in AI translator. Chrome 138+ or Edge 148+ on desktop is required.'));
+            return;
+        }
         if (!next) {
             const enabledCount = rows.filter((r) => r.enabled).length;
             if (enabledCount <= 1) {
@@ -155,6 +307,15 @@ export function ServicesPage() {
         setRows((prev) => prev.map((r) => (r.value === row.value ? { ...r, enabled: next } : r)));
         await setConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES, Array.from(nextDisabled));
         await notifyUpdateActiveTranslateService();
+
+        // Enabling Built-in AI immediately proves it works — and, when the
+        // model for this pair isn't on disk, that probe is what triggers the
+        // download, which the row then reports as progress rather than as a
+        // failure. Turning it off clears any stale result.
+        if (row.value === TRANSLATE_SERVICE.BUILTIN) {
+            if (next) void runTest(row.value);
+            else setTestStates((s) => ({ ...s, [row.value]: { kind: 'idle' } }));
+        }
     };
 
     if (!ready) {
@@ -219,6 +380,37 @@ export function ServicesPage() {
                                     {ts.kind === 'fail' && (
                                         <TestResultBadge kind="fail" message={ts.message} />
                                     )}
+                                    {ts.kind === 'downloading' && (
+                                        // A wait, not a result — so it gets a progress bar rather
+                                        // than the red/green badge the other states use.
+                                        <span className="inline-flex w-full max-w-[300px] flex-col gap-1 text-[11px] text-ink-mute">
+                                            <span className="inline-flex items-center gap-1.5">
+                                                <Loader2 className="h-3 w-3 shrink-0 animate-spin" strokeWidth={1.8} />
+                                                <span className="truncate">
+                                                    {t('builtinAiDownloading', 'Downloading')}{' '}
+                                                    {ts.detector
+                                                        ? t('builtinAiDetectorStatus', 'Language detector')
+                                                        : `${ts.sourceLang} → ${ts.targetLang}`}
+                                                </span>
+                                            </span>
+                                            <span className="inline-flex items-center gap-1.5">
+                                                <span className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-line">
+                                                    <span
+                                                        className="block h-full rounded-full bg-accent transition-[width] duration-200"
+                                                        style={{ width: `${ts.percent}%` }}
+                                                    />
+                                                </span>
+                                                <span className="shrink-0 tabular-nums">{ts.percent}%</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => cancelBuiltinDownload(ts)}
+                                                    className="shrink-0 rounded border border-line px-1.5 py-px text-[10.5px] text-ink-soft hover:bg-hover hover:text-ink"
+                                                >
+                                                    {t('builtinAiCancelDownload', 'Stop')}
+                                                </button>
+                                            </span>
+                                        </span>
+                                    )}
                                 </div>
                                 <div className="text-[12.5px] text-ink-soft">{row.description}</div>
                                 <div className="flex w-[260px] items-center justify-end gap-2">
@@ -231,10 +423,10 @@ export function ServicesPage() {
                                         size="sm"
                                         variant="outline"
                                         onClick={() => void runTest(row.value)}
-                                        disabled={ts.kind === 'pending'}
+                                        disabled={ts.kind === 'pending' || ts.kind === 'downloading'}
                                     >
                                         <FlaskConical className="h-3 w-3" strokeWidth={2} />
-                                        {ts.kind === 'pending' ? (
+                                        {ts.kind === 'pending' || ts.kind === 'downloading' ? (
                                             <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
                                         ) : (
                                             t('translateServiceTest', 'Test')
@@ -314,6 +506,12 @@ export function ServicesPage() {
                     )}
                 </div>
             </Dialog>
+
+            <BuiltinAiModelDialog
+                open={builtinDialogOpen}
+                onClose={() => setBuiltinDialogOpen(false)}
+                targetLang={targetLang}
+            />
         </div>
     );
 }

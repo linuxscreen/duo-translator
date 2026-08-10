@@ -35,6 +35,7 @@ import {
     googleTranslationService,
     microsoftTranslationService,
     deeplTranslationService,
+    builtinAiTranslationService,
     translateTextsWithCache,
 } from "@/main/translateService";
 import { TRANSLATE_SERVICE, AI_PREFIX, CONFIG_KEY } from "@/main/constants";
@@ -318,10 +319,11 @@ describe("AiTranslateService.translateText", () => {
 // resolveTranslateService + registry
 // ---------------------------------------------------------------------------
 describe("resolveTranslateService", () => {
-    it("resolves the three built-ins to the shared singletons", () => {
+    it("resolves the built-ins to the shared singletons", () => {
         expect(resolveTranslateService(TRANSLATE_SERVICE.GOOGLE)).toBe(googleTranslationService);
         expect(resolveTranslateService(TRANSLATE_SERVICE.MICROSOFT)).toBe(microsoftTranslationService);
         expect(resolveTranslateService(TRANSLATE_SERVICE.DEEPL)).toBe(deeplTranslationService);
+        expect(resolveTranslateService(TRANSLATE_SERVICE.BUILTIN)).toBe(builtinAiTranslationService);
     });
 
     it("builds an AiTranslateService for an ai: prefixed id", () => {
@@ -334,9 +336,10 @@ describe("resolveTranslateService", () => {
         expect(resolveTranslateService("nope")).toBeUndefined();
     });
 
-    it("registers all three built-ins in translationServices", () => {
+    it("registers every built-in in translationServices", () => {
         expect(translationServices.get(TRANSLATE_SERVICE.GOOGLE)).toBe(googleTranslationService);
-        expect(translationServices.size).toBeGreaterThanOrEqual(3);
+        expect(translationServices.get(TRANSLATE_SERVICE.BUILTIN)).toBe(builtinAiTranslationService);
+        expect(translationServices.size).toBeGreaterThanOrEqual(4);
     });
 });
 

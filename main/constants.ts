@@ -148,6 +148,11 @@ export enum COMMON {
 export enum TRANSLATE_SERVICE {
     MICROSOFT = 'microsoft',
     GOOGLE = 'google',
+    // Browser built-in, on-device translation model (Chrome 138+ / Edge 148+)
+    // reached through the `Translator` / `LanguageDetector` globals. Unlike
+    // every other provider it issues no network request at all — see
+    // main/builtinAi/ for why it cannot live in the background worker.
+    BUILTIN = 'builtin',
     DEEPL = 'deepl',
 }
 
@@ -165,6 +170,11 @@ export const TTS_SERVICE_OPTIONS: { value: TTS_SERVICE; label: string }[] = [
 export const TRANSLATE_SERVICES: Map<string, TranslateServiceMeta> = new Map([
     ["microsoft", new TranslateServiceMeta("Microsoft", "microsoft", "microsoftTranslator", "MicrosoftTranslateDescription", false)],
     ["google", new TranslateServiceMeta("Google", "google", "googleTranslate", "GoogleTranslateDescription", false)],
+    // Insertion order IS the display order of every service picker and of the
+    // Options service table — there is no sort key anywhere. Built-in AI sits
+    // above DeepL by request. `editable: true` so the row's Edit button opens
+    // the model-status / download dialog (BuiltinAiModelDialog).
+    ["builtin", new TranslateServiceMeta("Built-in AI", "builtin", "builtinAiTranslate", "BuiltinAiTranslateDescription", true)],
     ["deepl", new TranslateServiceMeta("DeepL", "deepl", "deepl", "DeeplTranslateDescription", true)],
 ]);
 
@@ -256,6 +266,32 @@ export enum ACTION {
     // RELAY_FRAMES, which broadcasts to EVERY frame — that would echo back to
     // the reporting frame and duplicate the console line.
     REPORT_ERROR = 'reportError',
+    // --- Built-in AI (on-device translation model) -----------------------
+    // The provider itself lives in background like every other one — the
+    // `Translator` / `LanguageDetector` globals ARE exposed in an MV3 extension
+    // service worker (measured; the docs' "not available in Web Workers" is
+    // about `new Worker()`, not about extension workers). So there is no
+    // special transport here; these two actions are only about the one thing
+    // that is genuinely asynchronous and user-visible: the model download.
+    //
+    // background → every frame, while a model downloads. Content draws a
+    // progress bar and re-runs its translation when `done` arrives. The
+    // download itself is automatic and needs no gesture, so there is no
+    // "start download" action from the page.
+    BUILTIN_AI_DOWNLOAD_PROGRESS = 'builtinAiDownloadProgress',
+    // Options → background: capability + per-pair availability for the model
+    // dialog, and (optionally) kick off the download for a pair.
+    BUILTIN_AI_SELF_CHECK = 'builtinAiSelfCheck',
+    BUILTIN_AI_ENSURE_MODEL = 'builtinAiEnsureModel',
+    // any surface → background: stop the download the user is looking at.
+    // Aborts the in-flight `create()` AND latches the pair, because otherwise
+    // the next paragraph batch to scroll into view would start it right back up
+    // — the download is automatic, so cancelling has to say "not this one" to
+    // the thing that automates it, not just to the request in flight.
+    BUILTIN_AI_CANCEL_DOWNLOAD = 'builtinAiCancelDownload',
+    // The counterpart: an explicit "yes, do want it" that lifts the latch.
+    // Sent when the user manually triggers a translation after cancelling.
+    BUILTIN_AI_RESUME_DOWNLOAD = 'builtinAiResumeDownload',
 }
 
 export enum CONFIG_KEY {
@@ -430,6 +466,14 @@ export const DEFAULT_VALUE = {
     HIGHLIGHT_STYLE: 'underLine',
     HIGHLIGHT_BORDER_COLOR: '#df5f47',
     HIGHLIGHT_BORDER_COLOR_INDEX: 1,
+    // DeepL needs an API key before it can translate anything, so it starts off.
+    //
+    // Built-in AI is deliberately NOT listed here: its default is a runtime
+    // question, not a static one. A browser with the on-device API gets it
+    // enabled by default (it costs nothing and needs no key), and a browser
+    // without it has the service force-disabled by `builtinAiApiAvailable()` in
+    // utils/service.ts — which no static default could express, since the same
+    // build ships to browsers that do and don't have it.
     DISABLED_TRANSLATE_SERVICES: ['deepl'],
     AI_TARGET_LANGUAGE: 'en',
     THEME: 'dark',

@@ -21,10 +21,23 @@ import {
     AI_PREFIX,
     APP_NAME_WITH_SUFFIX,
     CONFIG_KEY,
+    STATUS_SUCCESS,
     TRANSLATE_SERVICE,
 } from "@/main/constants";
 import { TranslateResult } from "@/main/translateClient";
 import { aiPageTranslate } from "@/main/aiService";
+import {
+    builtinAiSupported,
+    builtinAiTranslateTexts,
+    cancelDownload,
+    clearDownloadCancel,
+    detectBatchLanguage,
+    detectorAvailability,
+    ensureModel,
+    translatorAvailability,
+} from "@/main/builtinAi/builtinAiService";
+import { toModelLang } from "@/main/builtinAi/placeholders";
+import type { BuiltinAiCancelDownloadRequest, BuiltinAiPingResponse } from "@/main/builtinAi/types";
 import { configRepo } from "@/main/storage/configStore";
 import * as translationCache from "@/main/storage/translationCache";
 import { isTraditionalChinese } from "@/utils/language";
@@ -543,6 +556,58 @@ export class DeepLTranslateService extends TranslateService {
 
 }
 
+// ---------------------------------------------------------------------------
+// Built-in AI (on-device model, Chrome 138+ / Edge 148+)
+// ---------------------------------------------------------------------------
+
+/**
+ * The browser's own translation model. The only provider here that issues no
+ * network request at all — everything runs on-device, offline, for free.
+ *
+ * Runs in background exactly like the others: the `Translator` /
+ * `LanguageDetector` globals ARE exposed in an MV3 extension service worker.
+ * (Chrome's "not available in Web Workers" note is about `new Worker()`; an
+ * extension worker is not that. Measured — see main/builtinAi/builtinAiService.ts.)
+ *
+ * The one asynchronous wrinkle is the first-use model download. Background
+ * starts it automatically — no user gesture is required from a service worker —
+ * and bails out of this batch with BUILTIN_AI_MODEL_DOWNLOADING so the request
+ * cannot time out waiting. The page shows progress and re-translates when the
+ * broadcast says the model is ready.
+ */
+export class BuiltinAiTranslateService extends TranslateService {
+    readonly name = TRANSLATE_SERVICE.BUILTIN;
+
+    async translateText(
+        texts: string[],
+        targetLang: string,
+        signal?: AbortSignal | null,
+        sourceLang?: string,
+        _options?: TranslateRequestOptions,
+    ): Promise<TranslateResult[]> {
+        if (texts.length === 0) return [];
+
+        const result = await builtinAiTranslateTexts(texts, targetLang, sourceLang);
+        if (!Array.isArray(result?.texts) || result.texts.length !== texts.length) {
+            throw new Error("Built-in AI returned a mismatched translation batch");
+        }
+        if (result.plainTextFallback) {
+            // Not an error — the text is translated, just without its inline
+            // markup. Logged so the cause is discoverable if a page looks flat.
+            console.log(
+                APP_NAME_WITH_SUFFIX,
+                "built-in AI: model dropped inline placeholders, fell back to plain text for part of this batch",
+            );
+        }
+        const source = transferLanguageCode(result.sourceLang || "");
+        return result.texts.map((t: string) => new TranslateResult(String(t ?? ""), source, 1));
+    }
+
+    async detectLanguage(texts: string[]): Promise<string> {
+        return transferLanguageCode(await detectBatchLanguage(texts) || "");
+    }
+}
+
 /**
  * Routes page-translation requests to a configured AI provider. The actual
  * HTTP call lives in background (ACTION.AI_TRANSLATE_TEXT) — both for CORS
@@ -593,11 +658,13 @@ export class AiTranslateService extends TranslateService {
 export const googleTranslationService: TranslateService = new GoogleTranslateService();
 export const microsoftTranslationService: TranslateService = new MicrosoftTranslateService();
 export const deeplTranslationService: TranslateService = new DeepLTranslateService();
+export const builtinAiTranslationService: TranslateService = new BuiltinAiTranslateService();
 
 // TODO: support user-defined custom keys / endpoints (Yandex, Youdao, …).
 export const translationServices = new Map<string, TranslateService>([
     [googleTranslationService.name, googleTranslationService],
     [microsoftTranslationService.name, microsoftTranslationService],
+    [builtinAiTranslationService.name, builtinAiTranslationService],
     [deeplTranslationService.name, deeplTranslationService],
 ]);
 
@@ -750,6 +817,31 @@ export async function translateTextsWithCache(
 // Message handlers
 // ---------------------------------------------------------------------------
 
+/**
+ * Provider-backed language detection.
+ *
+ * Microsoft's detect endpoint is the default, but when Built-in AI is the
+ * active translator the on-device LanguageDetector answers instead: it is
+ * already downloaded on any machine that has the translator, and it removes the
+ * one remaining network round-trip from an otherwise fully offline path.
+ *
+ * Falls back to Microsoft when the on-device detector fails or is inconclusive
+ * — this is the tie-breaker for local franc detection, so an empty answer costs
+ * the user nothing, but a working answer is strictly better than none.
+ */
+async function detectDominantLanguage(texts: string[]): Promise<string> {
+    const active = await configRepo.get(CONFIG_KEY.TRANSLATE_SERVICE);
+    if (active === TRANSLATE_SERVICE.BUILTIN) {
+        try {
+            const lang = await builtinAiTranslationService.detectLanguage(texts);
+            if (lang) return lang;
+        } catch (e: any) {
+            console.log(APP_NAME_WITH_SUFFIX, 'built-in AI detect failed, falling back to Microsoft:', e?.message || e);
+        }
+    }
+    return await microsoftTranslationService.detectLanguage(texts);
+}
+
 type MessageHandler = (message: any, sendResponse: (r: any) => void) => boolean | void;
 
 /** Translate actions handled in background, keyed by ACTION. Consumed by background.ts. */
@@ -774,12 +866,68 @@ export const translateMessageHandlers: Record<string, MessageHandler> = {
     [ACTION.DETECT_LANGUAGE]: (message, sendResponse) =>
         handleAsync('Detect language', sendResponse, async () => {
             const texts: string[] = message.data?.texts ?? [];
-            const lang = await microsoftTranslationService.detectLanguage(texts);
-            return { lang };
+            return { lang: await detectDominantLanguage(texts) };
         }),
 
     [ACTION.TRANSLATE_SERVICE_TEST]: (message, sendResponse) =>
         handleAsync('Translate service test', sendResponse, () => testTranslateService(message.data)),
+
+    // Options-only: what does BACKGROUND see? The dialog can check `Translator`
+    // in its own window, but that says nothing about the worker that actually
+    // translates — and the two genuinely differ (a page needs a user gesture to
+    // download a model, a service worker does not), so this asks the side whose
+    // answer matters.
+    [ACTION.BUILTIN_AI_SELF_CHECK]: (message, sendResponse) =>
+        handleAsync('Built-in AI self-check', sendResponse, async (): Promise<BuiltinAiPingResponse> => {
+            const supported = builtinAiSupported();
+            if (!supported) return { supported, detector: null, translator: null };
+            const { sourceLang, targetLang } = (message.data || {}) as { sourceLang?: string; targetLang?: string };
+            return {
+                supported,
+                detector: await detectorAvailability(),
+                translator: sourceLang && targetLang
+                    ? await translatorAvailability(toModelLang(sourceLang), toModelLang(targetLang))
+                    : null,
+            };
+        }),
+
+    // Options-only: pre-download a pair the user picked, rather than waiting for
+    // the first page that needs it. Resolves when the model is on disk; progress
+    // arrives separately via BUILTIN_AI_DOWNLOAD_PROGRESS.
+    [ACTION.BUILTIN_AI_ENSURE_MODEL]: (message, sendResponse) =>
+        handleAsync('Built-in AI model download', sendResponse, async () => {
+            const { sourceLang, targetLang } = (message.data || {}) as { sourceLang: string; targetLang: string };
+            if (!sourceLang || !targetLang) throw new Error('Missing language pair');
+            await ensureModel(toModelLang(sourceLang), toModelLang(targetLang));
+            return { ok: true };
+        }),
+
+    // Any surface → background. Synchronous: aborting is local bookkeeping, and
+    // the caller does not wait on it — the outcome arrives as a broadcast, the
+    // same channel every other download state uses.
+    [ACTION.BUILTIN_AI_CANCEL_DOWNLOAD]: (message, sendResponse) => {
+        const { kind, sourceLang, targetLang } = (message.data || {}) as BuiltinAiCancelDownloadRequest;
+        cancelDownload({
+            kind: kind === 'detector' ? 'detector' : 'translator',
+            // Normalized because the two callers speak different dialects: the
+            // page echoes back a progress broadcast (already model form), while
+            // the Options dialog may name its own pair in config form (zh-CN).
+            // `toModelLang` is idempotent, so one call covers both — and getting
+            // this wrong would miss the abort key and silently not cancel.
+            sourceLang: sourceLang ? toModelLang(sourceLang) : sourceLang,
+            targetLang: targetLang ? toModelLang(targetLang) : targetLang,
+        });
+        sendResponse({ status: STATUS_SUCCESS });
+    },
+
+    // The user asking for a translation by hand is an explicit "yes I do want
+    // this", so it lifts a cancel. Without it, cancelling once would make the
+    // built-in translator look broken for the rest of the worker's life, with
+    // the only way back buried in Options.
+    [ACTION.BUILTIN_AI_RESUME_DOWNLOAD]: (_message, sendResponse) => {
+        clearDownloadCancel();
+        sendResponse({ status: STATUS_SUCCESS });
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -805,6 +953,11 @@ async function testTranslateService(
         ? new DeepLTranslateService(data.apiKey)
         : resolveTranslateService(svc);
     if (!service) throw new Error(`Unknown service: ${svc}`);
+
+    // Pressing Test is the user asking for this service to work, so it lifts a
+    // cancel — otherwise cancelling from the Options row would leave the very
+    // button next to it permanently answering "you cancelled this".
+    if (svc === TRANSLATE_SERVICE.BUILTIN) clearDownloadCancel();
 
     const results = await service.translateText(['Hello, world.'], targetLang);
     const reply = results[0]?.translatedMappedHtmlText;

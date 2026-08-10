@@ -31,6 +31,10 @@ test.describe('@bundle background/content separation', () => {
             'api.deepl.com', 'api-free.deepl.com',
             // Credentials
             'DeepL-Auth-Key', 'x-goog-api-key',
+            // Built-in AI has no endpoint and no credential, so nothing else
+            // here would catch it leaking. Both the translation AND the model
+            // download run in background, so the page never touches the model.
+            'Translator.create', 'LanguageDetector.create',
         ];
         for (const marker of forbidden) {
             expect(content, `content.js must not contain "${marker}"`).not.toContain(marker);
@@ -49,5 +53,18 @@ test.describe('@bundle background/content separation', () => {
         ]) {
             expect(background, `background.js must contain "${marker}"`).toContain(marker);
         }
+    });
+
+    test('built-in AI runs in background, model download included', () => {
+        // Counter-intuitive but measured: the `Translator` / `LanguageDetector`
+        // globals ARE exposed in an MV3 extension service worker (the docs'
+        // "not available in Web Workers" is about `new Worker()`), and
+        // `Translator.create()` there downloads a model with NO user gesture —
+        // which a web page cannot do. That combination is the whole reason the
+        // download is silent and automatic, so pin it: if this ever moves back
+        // into a page or an offscreen document, the download stops being
+        // gesture-free and the feature quietly regresses.
+        const background = readFileSync(`${OUT}/background.js`, 'utf8');
+        expect(background, 'background must own the on-device model').toContain('Translator.create');
     });
 });

@@ -547,8 +547,16 @@ export async function translateTexts(
         abortAction: ACTION.TRANSLATE_TEXTS_ABORT,
         data: { service, texts, targetLang },
         signal,
-        // Only AI services wait on a model; machine translators get the shorter budget.
-        timeout: service.startsWith(AI_PREFIX) ? AI_REQUEST_TIMEOUT : API_REQUEST_TIMEOUT,
+        // Anything that waits on a MODEL gets the long budget; plain machine
+        // translators get the shorter one. Built-in AI counts even though it
+        // issues no network request: running on-device makes it slower than a
+        // round-trip, not faster — `translate()` takes one string at a time
+        // (there is no batch API), so a paragraph batch is N sequential-ish
+        // inferences, and the first call for a language pair also has to load
+        // the model into memory.
+        timeout: service.startsWith(AI_PREFIX) || service === TRANSLATE_SERVICE.BUILTIN
+            ? AI_REQUEST_TIMEOUT
+            : API_REQUEST_TIMEOUT,
     });
     if (!raw) return undefined;
     // sendMessage structured-clones the reply, so the TranslateResult prototype

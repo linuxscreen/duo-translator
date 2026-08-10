@@ -59,6 +59,11 @@ function failResponse(sendResponse: SendResponse, label: string, e: any): void {
             name: e?.name,
             stack: e?.stack,
             scope: label,
+            // Structured payload for failures the caller can ACT on rather than
+            // merely display — currently "the built-in AI model for this
+            // language pair is not downloaded", where the page needs the pair
+            // to offer the download. Plain objects only; this is serialized.
+            detail: e?.detail,
         },
     });
 }
