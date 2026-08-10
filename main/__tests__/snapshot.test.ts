@@ -68,8 +68,8 @@ function snapshot(data: Record<string, unknown>): Snapshot {
 /** The device already has two providers with live keys plus a DeepL key. */
 function seedLocalKeys() {
     store[AI_PROVIDERS_KEY] = [
-        { id: "p1", name: "OpenAI", baseURL: "https://api.openai.com", apiKey: "sk-local-1" },
-        { id: "p2", name: "Claude", baseURL: "https://api.anthropic.com", apiKey: "sk-local-2" },
+        { id: "p1", name: "OpenAI", url: "https://api.openai.com", apiKey: "sk-local-1" },
+        { id: "p2", name: "Claude", url: "https://api.anthropic.com", apiKey: "sk-local-2" },
     ];
     store[DEEPL_KEY] = "deepl-local-key";
 }
@@ -87,8 +87,8 @@ describe("applyImportedSnapshot — secrets", () => {
         const exported = redactSecrets(
             snapshot({
                 [AI_PROVIDERS_KEY]: [
-                    { id: "p1", name: "OpenAI", baseURL: "https://api.openai.com", apiKey: "sk-local-1" },
-                    { id: "p2", name: "Claude", baseURL: "https://api.anthropic.com", apiKey: "sk-local-2" },
+                    { id: "p1", name: "OpenAI", url: "https://api.openai.com", apiKey: "sk-local-1" },
+                    { id: "p2", name: "Claude", url: "https://api.anthropic.com", apiKey: "sk-local-2" },
                 ],
                 [DEEPL_KEY]: "deepl-local-key",
             }),
@@ -110,7 +110,7 @@ describe("applyImportedSnapshot — secrets", () => {
         await applyImportedSnapshot(
             snapshot({
                 [AI_PROVIDERS_KEY]: [
-                    { id: "p1", name: "OpenAI renamed", baseURL: "https://proxy.example.com", apiKey: "" },
+                    { id: "p1", name: "OpenAI renamed", url: "https://proxy.example.com", apiKey: "" },
                 ],
                 [TARGET_LANG_KEY]: "ja",
             }),
@@ -118,7 +118,7 @@ describe("applyImportedSnapshot — secrets", () => {
 
         const providers = store[AI_PROVIDERS_KEY] as any[];
         expect(providers[0].name).toBe("OpenAI renamed");
-        expect(providers[0].baseURL).toBe("https://proxy.example.com");
+        expect(providers[0].url).toBe("https://proxy.example.com");
         expect(providers[0].apiKey).toBe("sk-local-1");
         expect(store[TARGET_LANG_KEY]).toBe("ja");
     });
