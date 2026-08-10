@@ -49,8 +49,22 @@ function normalizeBasePath(p: string | undefined): string {
     return p.replace(/^\/+/, '').replace(/\/+$/, '');
 }
 
-function basicAuth(username: string, password: string): string {
-    return 'Basic ' + btoa(`${username}:${password}`);
+/**
+ * RFC 7617 Basic credentials.
+ *
+ * Exported as a test seam — the UTF-8 step below is the kind of thing a later
+ * "simplify" pass folds back into a bare `btoa(user + ':' + pass)`, which throws
+ * InvalidCharacterError on any character outside Latin-1 (a CJK password, an
+ * accented username). Every WebDAV request routes through here, so that throw
+ * takes the whole provider down and surfaces as an unreadable
+ * "Failed to execute 'btoa'" in the sync status. Encode to UTF-8 bytes first,
+ * which is what servers expect from a modern client anyway.
+ */
+export function basicAuth(username: string, password: string): string {
+    const bytes = new TextEncoder().encode(`${username}:${password}`);
+    let binary = '';
+    for (const b of bytes) binary += String.fromCharCode(b);
+    return 'Basic ' + btoa(binary);
 }
 
 function buildFileUrl(creds: WebDavCredentials): string {

@@ -5,9 +5,10 @@
 // Why this is a separate step from normalization: `el.matches(a, b, c)` throws
 // for the whole string if any one selector is malformed, and the marking scan
 // catches that exception and moves on — so one typo in one subscription rule
-// silently disables every rule on the page. That bug is live today in the
-// legacy per-host path (main/content.ts, `el.matches(rules.join(","))`). Here we
-// validate each selector once, drop the bad ones, and join what is left.
+// silently disables every rule on the page. The legacy per-host path used to
+// have that bug too (`el.matches(rules.join(","))`); it now routes through
+// compileSelectorList as well. Here we validate each selector once, drop the
+// bad ones, and join what is left.
 // ---------------------------------------------------------------------------
 
 import { APP_NAME_WITH_SUFFIX } from '@/main/constants';

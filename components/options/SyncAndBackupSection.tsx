@@ -346,7 +346,7 @@ export function SyncAndBackupSection() {
             const parsed = JSON.parse(text);
             await sendMessageToBackground({
                 action: DB_ACTION.BACKUP_IMPORT,
-                data: { snapshot: parsed, mode: 'merge' },
+                data: { snapshot: parsed },
             });
             toast(t('backupImported', 'Backup imported'));
             await refreshStatus();
