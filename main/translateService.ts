@@ -40,7 +40,7 @@ import { toModelLang } from "@/main/builtinAi/placeholders";
 import type { BuiltinAiCancelDownloadRequest, BuiltinAiPingResponse } from "@/main/builtinAi/types";
 import { configRepo } from "@/main/storage/configStore";
 import * as translationCache from "@/main/storage/translationCache";
-import { isTraditionalChinese } from "@/utils/language";
+import { isTraditionalChinese, toSimplified, toTraditional } from "@/utils/language";
 import { utf8Length } from "@/utils/text";
 import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
 
@@ -51,7 +51,8 @@ import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/m
 interface ProviderFetchInit {
     method: string;
     headers: Record<string, string>;
-    body: string;
+    /** Omitted for GET requests — `fetch` rejects a GET that carries a body. */
+    body?: string;
 }
 
 interface ProviderResponse {
@@ -273,6 +274,8 @@ const MS_TRANSLATE_URL = "https://edge.microsoft.com/translate/translatetext?isE
 const MS_DETECT_URL = `${MS_TRANSLATE_URL}to=en`
 const DEEPL_FREE_URL = "https://api-free.deepl.com/v2/translate";
 const DEEPL_PRO_URL = "https://api.deepl.com/v2/translate";
+const YANDEX_TRANSLATE_URL = "https://browser.translate.yandex.net/api/v1/tr.json/translate";
+const YANDEX_DETECT_URL = "https://browser.translate.yandex.net/api/v1/tr.json/detect";
 
 /**
  * Pick the DeepL endpoint implied by the key. Free-tier keys carry a `:fx`
@@ -479,6 +482,304 @@ export class MicrosoftTranslateService extends TranslateService {
 }
 
 // ---------------------------------------------------------------------------
+// Yandex
+// ---------------------------------------------------------------------------
+
+/**
+ * Session id for the translate endpoint: `<hex ms timestamp><5 hex digits>-0-0`.
+ * The middle field is the translation-batch counter; the endpoint accepts a
+ * fixed 0, so we don't track one.
+ *
+ * The endpoint rejects a stale id outright (HTTP 403 `Session is invalid`), so
+ * the id is re-minted on a timer rather than reused forever.
+ */
+const YANDEX_SESSION_TTL = 60 * 60 * 1000;
+/** The detect endpoint authenticates with a `ucid` (a dashless UUID) instead. */
+const YANDEX_UCID_TTL = 6 * 60 * 1000;
+
+/**
+ * Batch limits. Far below what the endpoint actually accepts (a 54 KB body with
+ * 200 items answers in ~2 s) — sized so one slow or failed chunk costs little,
+ * matching how the Microsoft provider splits.
+ */
+const YANDEX_BATCH_CHAR_LIMIT = 10000;
+const YANDEX_BATCH_ITEM_LIMIT = 100;
+
+/**
+ * The detect endpoint is GET-only and the host caps a URL at ~2 KB, so the
+ * sample has to be trimmed by its *encoded* length (one CJK character costs 9
+ * bytes once percent-encoded). Leaves room for the fixed query parameters.
+ */
+const YANDEX_DETECT_ENCODED_LIMIT = 1500;
+
+/** Random lowercase hex of `length` digits, from the platform CSPRNG. */
+function randomHex(length: number): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(Math.ceil(length / 2)));
+    let out = "";
+    for (const b of bytes) out += b.toString(16).padStart(2, "0");
+    return out.slice(0, length);
+}
+
+/**
+ * Longest prefix of `text` whose percent-encoding fits in `maxEncoded` bytes.
+ * Iterates by code point (`for…of`) so a trim can never split a surrogate pair
+ * into a lone surrogate, which `encodeURIComponent` would then throw on.
+ */
+function trimToEncodedLength(text: string, maxEncoded: number): string {
+    let out = "";
+    let used = 0;
+    for (const ch of text) {
+        let cost: number;
+        try {
+            cost = encodeURIComponent(ch).length;
+        } catch {
+            continue; // lone surrogate in the source — skip it
+        }
+        if (used + cost > maxEncoded) break;
+        out += ch;
+        used += cost;
+    }
+    return out;
+}
+
+/**
+ * Yandex's browser-translate endpoint. Keyless, and it round-trips the same
+ * `<bN>` inline placeholders Microsoft does, so the DOM layer needs no special
+ * case for it.
+ *
+ * Two shape notes, both measured against the live endpoint:
+ * - **Translate is POST, detect is GET**, and the two take different
+ *   credentials (`id` vs `ucid`). The documented translate example is a GET,
+ *   but the host caps a URL at ~2 KB — barely one paragraph of percent-encoded
+ *   CJK — so GET cannot carry a real page batch. `srv=android` accepts the same
+ *   request as a form-encoded POST with no size problem; `srv=yabrowser`
+ *   answers 405 to POST. Detect has no POST form at all, hence the trimming.
+ * - **Failures arrive as an HTTP error carrying a JSON body** (e.g. 400 with
+ *   `{"code":501,"message":"The specified translation direction is not
+ *   supported"}` for an unsupported target). `providerHttpError` already quotes
+ *   the body, so that reason reaches the page; the extra `code` check below is
+ *   for the case where the transport says 200 and the payload disagrees.
+ */
+export class YandexTranslateService extends TranslateService {
+    readonly name = TRANSLATE_SERVICE.YANDEX;
+
+    private session = { value: "", expireTime: 0 };
+    private ucid = { value: "", expireTime: 0 };
+
+    private sessionId(): string {
+        const now = Date.now();
+        if (!this.session.value || this.session.expireTime <= now) {
+            this.session = {
+                value: `${now.toString(16)}${randomHex(5)}-0-0`,
+                expireTime: now + YANDEX_SESSION_TTL,
+            };
+        }
+        return this.session.value;
+    }
+
+    private detectUcid(): string {
+        const now = Date.now();
+        if (!this.ucid.value || this.ucid.expireTime <= now) {
+            this.ucid = {
+                value: crypto.randomUUID().replace(/-/g, "").toLowerCase(),
+                expireTime: now + YANDEX_UCID_TTL,
+            };
+        }
+        return this.ucid.value;
+    }
+
+    /**
+     * `lang` is `<source>-<target>`, or just `<target>` to let Yandex detect.
+     * Codes are the bare tags we already use, with the exceptions in
+     * {@link toYandexLangCode}.
+     */
+    private langParam(targetLang: string, sourceLang?: string): string {
+        const target = toYandexLangCode(targetLang);
+        const source = sourceLang ? toYandexLangCode(sourceLang) : "";
+        return source && source !== target ? `${source}-${target}` : target;
+    }
+
+    /**
+     * Chunked because the batch this receives is whatever the viewport happened
+     * to reveal — `translateText` is the only entry point content ever reaches
+     * (`translateBatchText` has no caller), so the split has to happen here or
+     * not at all. Both limits are generous enough that an ordinary page batch
+     * stays one request.
+     */
+    async translateText(
+        texts: string[],
+        targetLang: string,
+        signal?: AbortSignal | null,
+        sourceLang?: string,
+        _options?: TranslateRequestOptions,
+    ): Promise<TranslateResult[]> {
+        if (texts.length === 0) return [];
+
+        const chunks: string[][] = [[]];
+        let charCount = 0;
+        for (const text of texts) {
+            const current = chunks[chunks.length - 1];
+            // A single oversized text still has to go somewhere — it gets a
+            // chunk of its own rather than being truncated.
+            if (current.length > 0 && (charCount + text.length > YANDEX_BATCH_CHAR_LIMIT
+                || current.length >= YANDEX_BATCH_ITEM_LIMIT)) {
+                chunks.push([]);
+                charCount = 0;
+            }
+            chunks[chunks.length - 1].push(text);
+            charCount += text.length;
+        }
+        const results = chunks.length === 1
+            ? await this.requestChunk(texts, targetLang, signal, sourceLang)
+            // Dispatched concurrently; `Promise.all` preserves chunk order, and
+            // each chunk answers 1:1, so the flattened array stays aligned with
+            // `texts`.
+            : (await Promise.all(
+                chunks.map((chunk) => this.requestChunk(chunk, targetLang, signal, sourceLang)),
+            )).flat();
+
+        return this.applyChineseVariant(results, targetLang);
+    }
+
+    /**
+     * Yandex has one Chinese, `zh`, so the variant is ours to produce — OpenCC
+     * converts the whole batch on the way out.
+     *
+     * Applied **unconditionally** for a Chinese target, with no attempt to ask
+     * whether the source was Chinese, because the provider cannot know: the
+     * `sourceLang` parameter on `translateText` is never filled by any caller
+     * (`getTranslateResult` → `translateTexts` sends only `{service, texts,
+     * targetLang}`). Unconditional is safe precisely because each direction is
+     * a no-op on text that is already in the target variant — Simplified is a
+     * fixed point of t→cn — so this costs a trie walk (~1 ms per 9000 chars)
+     * and changes nothing when there was nothing to change.
+     *
+     * It also repairs a case that otherwise renders as *nothing at all*, which
+     * is the real reason this is not optional. Yandex echoes Chinese input back
+     * byte-identical (zh→zh is not a conversion for it), and
+     * `getTranslateResult` drops a translation equal to its source — so before
+     * this, a Simplified page with a zh-TW target produced no output whatsoever,
+     * and a Traditional page with a zh-CN target likewise.
+     */
+    private applyChineseVariant(results: TranslateResult[], targetLang: string): TranslateResult[] {
+        const convert = targetLang === "zh-TW" ? toTraditional
+            : targetLang === "zh-CN" ? toSimplified
+                : null;
+        if (!convert) return results;
+        for (const result of results) {
+            result.translatedMappedHtmlText = convert(result.translatedMappedHtmlText);
+        }
+        return results;
+    }
+
+    private async requestChunk(
+        texts: string[],
+        targetLang: string,
+        signal?: AbortSignal | null,
+        sourceLang?: string,
+    ): Promise<TranslateResult[]> {
+        const query = new URLSearchParams({
+            translateMode: "auto",
+            id: this.sessionId(),
+            srv: "android",
+            lang: this.langParam(targetLang, sourceLang),
+            format: "html",
+            options: "2",
+            version: "14.1",
+        });
+        const url = `${YANDEX_TRANSLATE_URL}?${query.toString()}`;
+
+        // The endpoint is batch-native: one repeated `text` field per snippet,
+        // answered by a `text` array in the same order.
+        const body = new URLSearchParams();
+        for (const text of texts) body.append("text", text);
+
+        const response = await providerFetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                Accept: "*/*",
+            },
+            body: body.toString(),
+        }, signal);
+
+        if (response.status !== 200) throw providerHttpError("Yandex Translate", url, response);
+
+        const data: { code?: number; message?: string; lang?: string; text?: string[] } =
+            await response.json();
+        if (data?.code !== undefined && data.code !== 200) {
+            throw new Error(`Yandex Translate error ${data.code}${data.message ? ": " + data.message : ""}`);
+        }
+        if (!Array.isArray(data?.text)) {
+            throw new Error("Yandex Translate returned an unrecognized response shape");
+        }
+
+        // `lang` echoes the resolved direction ("en-zh"); its first field is the
+        // detected source language.
+        const detected = (data.lang || "").split("-")[0];
+        return data.text.map(
+            (t, i) => new TranslateResult(String(t ?? ""), fromYandexLangCode(detected, texts[i]), 1),
+        );
+    }
+
+    async detectLanguage(texts: string[]): Promise<string> {
+        // Unlike Microsoft's detect, this endpoint answers with ONE language for
+        // the whole request and does not aggregate repeated `text` fields (it
+        // reports the last one). So the vote is taken by content instead: join
+        // the samples into a single probe, which weights each text by how much
+        // of the probe it occupies — the same intent as Microsoft's
+        // length-weighted tally.
+        const sample = trimToEncodedLength(texts.join("\n").trim(), YANDEX_DETECT_ENCODED_LIMIT);
+        if (!sample) return "";
+
+        const query = new URLSearchParams({
+            srv: "android",
+            text: sample,
+            format: "html",
+            ucid: this.detectUcid(),
+        });
+        const url = `${YANDEX_DETECT_URL}?${query.toString()}`;
+
+        const response = await providerFetch(url, { method: "GET", headers: { Accept: "*/*" } });
+        // Throws like every other provider call; detectTextsLanguage degrades to
+        // local franc detection — see the note on Microsoft's detect.
+        if (response.status !== 200) throw providerHttpError("Yandex Detect", url, response);
+
+        const data: { code?: number; message?: string; lang?: string } = await response.json();
+        if (data?.code !== undefined && data.code !== 200) {
+            throw new Error(`Yandex Detect error ${data.code}${data.message ? ": " + data.message : ""}`);
+        }
+        return fromYandexLangCode(data?.lang || "", sample);
+    }
+}
+
+/**
+ * Our language tag → Yandex's.
+ *
+ * Deliberately a short exception table, not a full re-mapping: Yandex takes the
+ * bare tags we already use for everything else, and an unsupported pair fails
+ * loudly (HTTP 400 + "The specified translation direction is not supported"),
+ * which is a better outcome than a silent guess. Verified against the endpoint:
+ * - **Yandex has no Traditional Chinese**: `zh-TW` is rejected, so both Chinese
+ *   variants map to `zh`. The variant the user asked for is restored afterwards
+ *   by `applyChineseVariant` — this mapping is only how we get a reply at all.
+ * - `fil` is rejected; Yandex spells Filipino `tl`.
+ * (`he`, `jv`, `no` all work as-is — the `iw` / `nb` legacy spellings do not.)
+ */
+export function toYandexLangCode(language: string): string {
+    if (!language) return "";
+    if (language === "zh-CN" || language === "zh-TW") return "zh";
+    if (language === "fil") return "tl";
+    return language;
+}
+
+/** Yandex's language tag → ours. `zh` covers both variants, so sniff the text. */
+export function fromYandexLangCode(language: string, text?: string): string {
+    if (language === "zh") return transferLanguageCode("ZH", text);
+    return transferLanguageCode(language, text);
+}
+
+// ---------------------------------------------------------------------------
 // DeepL (extension example — uses the official API)
 // ---------------------------------------------------------------------------
 
@@ -657,13 +958,15 @@ export class AiTranslateService extends TranslateService {
 
 export const googleTranslationService: TranslateService = new GoogleTranslateService();
 export const microsoftTranslationService: TranslateService = new MicrosoftTranslateService();
+export const yandexTranslationService: TranslateService = new YandexTranslateService();
 export const deeplTranslationService: TranslateService = new DeepLTranslateService();
 export const builtinAiTranslationService: TranslateService = new BuiltinAiTranslateService();
 
-// TODO: support user-defined custom keys / endpoints (Yandex, Youdao, …).
+// TODO: support user-defined custom keys / endpoints (Youdao, …).
 export const translationServices = new Map<string, TranslateService>([
     [googleTranslationService.name, googleTranslationService],
     [microsoftTranslationService.name, microsoftTranslationService],
+    [yandexTranslationService.name, yandexTranslationService],
     [builtinAiTranslationService.name, builtinAiTranslationService],
     [deeplTranslationService.name, deeplTranslationService],
 ]);
@@ -820,23 +1123,28 @@ export async function translateTextsWithCache(
 /**
  * Provider-backed language detection.
  *
- * Microsoft's detect endpoint is the default, but when Built-in AI is the
- * active translator the on-device LanguageDetector answers instead: it is
- * already downloaded on any machine that has the translator, and it removes the
- * one remaining network round-trip from an otherwise fully offline path.
+ * Microsoft's detect endpoint is the default, but a provider that has its own
+ * detector answers for itself when it is the active translator:
+ * - Built-in AI — the on-device LanguageDetector is already downloaded on any
+ *   machine that has the translator, and using it removes the one remaining
+ *   network round-trip from an otherwise fully offline path.
+ * - Yandex — no reason to call a second vendor when the user picked this one.
  *
- * Falls back to Microsoft when the on-device detector fails or is inconclusive
- * — this is the tie-breaker for local franc detection, so an empty answer costs
+ * Falls back to Microsoft whenever that detector fails or is inconclusive —
+ * this is the tie-breaker for local franc detection, so an empty answer costs
  * the user nothing, but a working answer is strictly better than none.
  */
 async function detectDominantLanguage(texts: string[]): Promise<string> {
     const active = await configRepo.get(CONFIG_KEY.TRANSLATE_SERVICE);
-    if (active === TRANSLATE_SERVICE.BUILTIN) {
+    const own = active === TRANSLATE_SERVICE.BUILTIN ? builtinAiTranslationService
+        : active === TRANSLATE_SERVICE.YANDEX ? yandexTranslationService
+            : null;
+    if (own) {
         try {
-            const lang = await builtinAiTranslationService.detectLanguage(texts);
+            const lang = await own.detectLanguage(texts);
             if (lang) return lang;
         } catch (e: any) {
-            console.log(APP_NAME_WITH_SUFFIX, 'built-in AI detect failed, falling back to Microsoft:', e?.message || e);
+            console.log(APP_NAME_WITH_SUFFIX, `${active} detect failed, falling back to Microsoft:`, e?.message || e);
         }
     }
     return await microsoftTranslationService.detectLanguage(texts);

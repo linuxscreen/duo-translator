@@ -45,6 +45,32 @@ export async function mockTranslateProviders(context: BrowserContext): Promise<v
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
     });
 
+    // --- Yandex: POST browser.translate.yandex.net/api/v1/tr.json/translate --
+    // Batch-native: the body repeats a `text` field per snippet and the reply
+    // carries a `text` array in the same order. Detect is a separate GET on the
+    // same host answering `{code, lang}` — matched by the same glob.
+    await context.route('**/browser.translate.yandex.net/api/v1/tr.json/*', async (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname.endsWith('/detect')) {
+            await route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ code: 200, lang: 'en' }),
+            });
+            return;
+        }
+        const texts = new URLSearchParams(route.request().postData() ?? '').getAll('text');
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                code: 200,
+                lang: `en-${url.searchParams.get('lang') ?? 'zh'}`,
+                text: texts.map((t) => t.replace(/(^|>)([^<>]+)/g, (_, sep, inner) => `${sep}${ZH}${inner}`)),
+            }),
+        });
+    });
+
     // The auth endpoint returns a bare token string. `translatetext` no longer
     // sends the header, but getMicrosoftToken can still be reached — answering
     // it offline keeps the mocked run off the network entirely.

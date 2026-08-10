@@ -15,7 +15,13 @@ vi.mock("@/main/storage/translationCache", () => ({
     putMany: vi.fn(async () => { }),
 }));
 vi.mock("@/main/aiService", () => ({ aiPageTranslate: vi.fn() }));
-vi.mock("@/utils/language", () => ({ isTraditionalChinese: vi.fn(() => false) }));
+// Only the detection is stubbed. The two OpenCC converters stay REAL: the
+// Yandex provider produces the Chinese variant with them, so mocking them out
+// would leave nothing to assert.
+vi.mock("@/utils/language", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("@/utils/language")>()),
+    isTraditionalChinese: vi.fn(() => false),
+}));
 vi.mock("@/main/messageBridge", () => ({
     ABORT_SCOPE: { TRANSLATE: "translate" },
     handleAbort: vi.fn(),
@@ -28,6 +34,7 @@ import {
     transferLanguageCode,
     GoogleTranslateService,
     MicrosoftTranslateService,
+    YandexTranslateService,
     DeepLTranslateService,
     AiTranslateService,
     resolveTranslateService,
@@ -237,6 +244,205 @@ describe("MicrosoftTranslateService.detectLanguage", () => {
         await expect(
             new MicrosoftTranslateService().detectLanguage(["x"]),
         ).rejects.toThrow(/Microsoft Detect HTTP 500/);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// YandexTranslateService
+// ---------------------------------------------------------------------------
+const YANDEX_TRANSLATE_HOST = "https://browser.translate.yandex.net/api/v1/tr.json/translate";
+const YANDEX_DETECT_HOST = "https://browser.translate.yandex.net/api/v1/tr.json/detect";
+
+/** Answer a Yandex translate POST by echoing every `text` field back prefixed. */
+function yandexEcho(url: string, init: any, lang = "en-zh") {
+    if (!url.startsWith(YANDEX_TRANSLATE_HOST)) return reply(null, 500);
+    const texts = new URLSearchParams(init.body).getAll("text");
+    return reply({ code: 200, lang, text: texts.map((t) => `译:${t}`) });
+}
+
+describe("YandexTranslateService.translateText", () => {
+    it("posts form-encoded texts and reads the batch back in order", async () => {
+        routeFetch((url, init) => yandexEcho(url, init));
+        const out = await new YandexTranslateService().translateText(["hello", "world"], "zh-CN");
+
+        expect(out.map((r) => r.translatedMappedHtmlText)).toEqual(["译:hello", "译:world"]);
+        // `lang` echoes the resolved direction; its first field is the source.
+        expect(out[0].sourceLang).toBe("en");
+
+        const [[url, init]] = fetchCalls(YANDEX_TRANSLATE_HOST) as any[];
+        // POST, not the documented GET: the host caps a URL at ~2 KB, which one
+        // paragraph of percent-encoded CJK already exceeds.
+        expect(init.method).toBe("POST");
+        expect(init.headers["Content-Type"]).toBe("application/x-www-form-urlencoded");
+        expect(new URLSearchParams(init.body).getAll("text")).toEqual(["hello", "world"]);
+        // srv=android is what makes POST legal here (yabrowser answers 405).
+        expect(new URL(String(url)).searchParams.get("srv")).toBe("android");
+    });
+
+    it("mints a session id of the shape the endpoint accepts", async () => {
+        routeFetch((url, init) => yandexEcho(url, init));
+        await new YandexTranslateService().translateText(["hello"], "zh-CN");
+        const [[url]] = fetchCalls(YANDEX_TRANSLATE_HOST) as any[];
+        // <hex ms timestamp><5 hex digits>-0-0 — a stale id is rejected with
+        // HTTP 403 "Session is invalid", so the shape is load-bearing.
+        expect(new URL(String(url)).searchParams.get("id")).toMatch(/^[0-9a-f]{11,}[0-9a-f]{5}-0-0$/);
+    });
+
+    it("maps both Chinese variants to zh — Yandex has no Traditional Chinese", async () => {
+        routeFetch((url, init) => yandexEcho(url, init, "en-zh"));
+        const svc = new YandexTranslateService();
+        await svc.translateText(["hello"], "zh-CN");
+        await svc.translateText(["hello"], "zh-TW");
+        const langs = (fetchCalls(YANDEX_TRANSLATE_HOST) as any[])
+            .map(([url]) => new URL(String(url)).searchParams.get("lang"));
+        expect(langs).toEqual(["zh", "zh"]);
+    });
+
+    it("sends only the target when the source is unknown, letting Yandex detect", async () => {
+        routeFetch((url, init) => yandexEcho(url, init));
+        await new YandexTranslateService().translateText(["hello"], "fr");
+        const [[url]] = fetchCalls(YANDEX_TRANSLATE_HOST) as any[];
+        expect(new URL(String(url)).searchParams.get("lang")).toBe("fr");
+    });
+
+    it("returns one result per input across chunk boundaries", async () => {
+        routeFetch((url, init) => yandexEcho(url, init));
+        // 12k chars over the 10k chunk budget → two requests, still 1:1 in order.
+        const texts = ["a".repeat(6000), "b".repeat(6000), "c"];
+        const out = await new YandexTranslateService().translateText(texts, "zh-CN");
+        expect(out.map((r) => r.translatedMappedHtmlText)).toEqual(texts.map((t) => `译:${t}`));
+        expect(fetchCalls(YANDEX_TRANSLATE_HOST).length).toBeGreaterThan(1);
+    });
+
+    it("throws on a non-200 response, quoting the provider's reason", async () => {
+        routeFetch(() => reply(
+            { code: 501, message: "The specified translation direction is not supported" }, 400));
+        await expect(
+            new YandexTranslateService().translateText(["x"], "zh-CN"),
+        ).rejects.toThrow(/Yandex Translate HTTP 400.*translation direction is not supported/);
+    });
+
+    it("throws when the transport says 200 but the payload carries an error code", async () => {
+        routeFetch(() => reply({ code: 501, message: "not supported" }));
+        await expect(
+            new YandexTranslateService().translateText(["x"], "zh-CN"),
+        ).rejects.toThrow(/Yandex Translate error 501: not supported/);
+    });
+
+    it("returns [] for empty input without touching the network", async () => {
+        routeFetch(() => reply(null, 500));
+        expect(await new YandexTranslateService().translateText([], "zh-CN")).toEqual([]);
+        expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe("YandexTranslateService Chinese variant", () => {
+    /** Answer with a fixed translation regardless of input. */
+    function yandexReply(text: string, lang = "en-zh") {
+        routeFetch((url) => url.startsWith(YANDEX_TRANSLATE_HOST)
+            ? reply({ code: 200, lang, text: [text] })
+            : reply(null, 500));
+    }
+
+    it("converts a zh-TW batch to Traditional, since Yandex only speaks zh", async () => {
+        yandexReply("计算机软件和鼠标");
+        const out = await new YandexTranslateService().translateText(["x"], "zh-TW");
+        // Taiwan vocabulary, not just Traditional characters — see toTraditional.
+        expect(out[0].translatedMappedHtmlText).toBe("計算機軟體和滑鼠");
+        // The request itself still asks for plain `zh`; zh-TW is rejected.
+        const [[url]] = fetchCalls(YANDEX_TRANSLATE_HOST) as any[];
+        expect(new URL(String(url)).searchParams.get("lang")).toBe("zh");
+    });
+
+    it("preserves <bN> placeholders through the conversion", async () => {
+        yandexReply("Hello <b0>世界</b0>，这是一个测试。");
+        const out = await new YandexTranslateService().translateText(["x"], "zh-TW");
+        expect(out[0].translatedMappedHtmlText).toBe("Hello <b0>世界</b0>，這是一個測試。");
+    });
+
+    // The case that used to render as NOTHING: Yandex echoes Chinese input back
+    // byte-identical, and getTranslateResult drops a translation equal to its
+    // source. Converting the variant is what makes the reply differ from the
+    // input, so the paragraph survives that check.
+    it("makes a Simplified→Traditional page differ from its source", async () => {
+        const source = "这是一个测试";
+        yandexReply(source, "zh-zh");
+        const out = await new YandexTranslateService().translateText([source], "zh-TW");
+        expect(out[0].translatedMappedHtmlText).not.toBe(source);
+        expect(out[0].translatedMappedHtmlText).toBe("這是一個測試");
+    });
+
+    it("converts a zh-CN batch to Simplified, repairing a Traditional echo", async () => {
+        const source = "這是一個測試";
+        yandexReply(source, "zh-zh");
+        const out = await new YandexTranslateService().translateText([source], "zh-CN");
+        expect(out[0].translatedMappedHtmlText).toBe("这是一个测试");
+    });
+
+    // Why the zh-CN conversion can be unconditional: it is a no-op on output
+    // that is already Simplified, so the provider never has to ask what the
+    // source language was (it is never told).
+    it("leaves an already-Simplified zh-CN result untouched", async () => {
+        yandexReply("这是一个测试");
+        const out = await new YandexTranslateService().translateText(["x"], "zh-CN");
+        expect(out[0].translatedMappedHtmlText).toBe("这是一个测试");
+    });
+
+    it("does not touch a non-Chinese target", async () => {
+        yandexReply("Bonjour 软件");
+        const out = await new YandexTranslateService().translateText(["x"], "fr");
+        expect(out[0].translatedMappedHtmlText).toBe("Bonjour 软件");
+    });
+
+    it("converts every item across chunk boundaries", async () => {
+        routeFetch((url, init) => {
+            if (!url.startsWith(YANDEX_TRANSLATE_HOST)) return reply(null, 500);
+            const texts = new URLSearchParams(init.body).getAll("text");
+            return reply({ code: 200, lang: "en-zh", text: texts.map(() => "软件") });
+        });
+        const out = await new YandexTranslateService()
+            .translateText(["a".repeat(6000), "b".repeat(6000), "c"], "zh-TW");
+        expect(fetchCalls(YANDEX_TRANSLATE_HOST).length).toBeGreaterThan(1);
+        expect(out.map((r) => r.translatedMappedHtmlText)).toEqual(["軟體", "軟體", "軟體"]);
+    });
+});
+
+describe("YandexTranslateService.detectLanguage", () => {
+    it("probes the GET detect endpoint with one joined sample and a ucid", async () => {
+        routeFetch((url) => url.startsWith(YANDEX_DETECT_HOST)
+            ? reply({ code: 200, lang: "fr" })
+            : reply(null, 500));
+        expect(await new YandexTranslateService().detectLanguage(["bonjour", "salut"])).toBe("fr");
+
+        const [[url, init]] = fetchCalls(YANDEX_DETECT_HOST) as any[];
+        expect(init.method).toBe("GET");
+        expect(init.body).toBeUndefined();
+        const params = new URL(String(url)).searchParams;
+        // One sample, not repeated `text` fields: the endpoint answers with a
+        // single language and does not aggregate them (it reports the last).
+        expect(params.getAll("text")).toEqual(["bonjour\nsalut"]);
+        expect(params.get("ucid")).toMatch(/^[0-9a-f]{32}$/);
+    });
+
+    it("trims the sample so the GET stays under the host's ~2KB URL cap", async () => {
+        routeFetch(() => reply({ code: 200, lang: "zh" }));
+        // One CJK char costs 9 bytes percent-encoded, so this would blow the cap.
+        await new YandexTranslateService().detectLanguage(["世".repeat(5000)]);
+        const [[url]] = fetchCalls(YANDEX_DETECT_HOST) as any[];
+        expect(String(url).length).toBeLessThan(2048);
+    });
+
+    it("resolves zh against the sample, since Yandex reports both variants as zh", async () => {
+        routeFetch(() => reply({ code: 200, lang: "zh" }));
+        mockIsTraditional.mockReturnValue(true);
+        expect(await new YandexTranslateService().detectLanguage(["繁體"])).toBe("zh-TW");
+    });
+
+    it("throws on a non-200 response", async () => {
+        routeFetch(() => reply(null, 500));
+        await expect(
+            new YandexTranslateService().detectLanguage(["x"]),
+        ).rejects.toThrow(/Yandex Detect HTTP 500/);
     });
 });
 

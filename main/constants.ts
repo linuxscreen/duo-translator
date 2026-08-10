@@ -148,6 +148,10 @@ export enum COMMON {
 export enum TRANSLATE_SERVICE {
     MICROSOFT = 'microsoft',
     GOOGLE = 'google',
+    // Yandex's browser-translate endpoint. Keyless like Google/Microsoft, and
+    // it preserves the same `<bN>` inline placeholders Microsoft does, so it
+    // needs no special handling in the DOM orchestration.
+    YANDEX = 'yandex',
     // Browser built-in, on-device translation model (Chrome 138+ / Edge 148+)
     // reached through the `Translator` / `LanguageDetector` globals. Unlike
     // every other provider it issues no network request at all — see
@@ -170,6 +174,7 @@ export const TTS_SERVICE_OPTIONS: { value: TTS_SERVICE; label: string }[] = [
 export const TRANSLATE_SERVICES: Map<string, TranslateServiceMeta> = new Map([
     ["microsoft", new TranslateServiceMeta("Microsoft", "microsoft", "microsoftTranslator", "MicrosoftTranslateDescription", false)],
     ["google", new TranslateServiceMeta("Google", "google", "googleTranslate", "GoogleTranslateDescription", false)],
+    ["yandex", new TranslateServiceMeta("Yandex", "yandex", "yandexTranslate", "YandexTranslateDescription", false)],
     // Insertion order IS the display order of every service picker and of the
     // Options service table — there is no sort key anywhere. Built-in AI sits
     // above DeepL by request. `editable: true` so the row's Edit button opens

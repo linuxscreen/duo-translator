@@ -29,6 +29,7 @@ test.describe('@bundle background/content separation', () => {
             'translate-pa.googleapis.com', 'cognitive.microsofttranslator.com',
             'edge.microsoft.com/translate/auth',
             'api.deepl.com', 'api-free.deepl.com',
+            'browser.translate.yandex.net',
             // Credentials
             'DeepL-Auth-Key', 'x-goog-api-key',
             // Built-in AI has no endpoint and no credential, so nothing else
@@ -49,6 +50,7 @@ test.describe('@bundle background/content separation', () => {
             'anthropic-version',
             'edge.microsoft.com/translate/auth',
             'translate-pa.googleapis.com',
+            'browser.translate.yandex.net',
             'DeepL-Auth-Key',
         ]) {
             expect(background, `background.js must contain "${marker}"`).toContain(marker);
