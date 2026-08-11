@@ -508,6 +508,8 @@ export const DEFAULT_VALUE = {
     SITE_RULE_SUBSCRIPTIONS: [] as unknown[],
 } as const;
 
+export const IS_PROD = import.meta.env.PROD;
+
 /**
  * The official rule package, offered as a built-in subscription that cannot be
  * removed (only disabled). The bundled baseline in assets/rules/system.jsonc
@@ -515,8 +517,8 @@ export const DEFAULT_VALUE = {
  * a NEWER package replaces the baseline wholesale, so "System rules" always
  * shows exactly one package rather than a merge of two.
  */
-export const SITE_RULE_OFFICIAL_URL =
-    'https://raw.githubusercontent.com/linuxscreen/duo-translator-rules/main/rules.jsonc';
+export const SITE_RULE_OFFICIAL_URL = IS_PROD ? 'https://raw.githubusercontent.com/linuxscreen/duo-translator-rules/main/rules.jsonc'
+    : "http://localhost:8080/duo-translator-rules/rules.jsonc";
 
 /** How often background refreshes every enabled subscription. */
 export const SITE_RULE_REFRESH_MINUTES = 24 * 60;

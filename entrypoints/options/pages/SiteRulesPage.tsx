@@ -185,9 +185,14 @@ export function SiteRulesPage({ onBack }: Props) {
 
             <div className="flex items-start gap-2 rounded-lg border border-line bg-surface-2/50 px-3 py-2 text-[12px] text-ink-soft">
                 <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-mute" strokeWidth={1.8} />
-                <span>
-                    {t('siteRuleReloadNotice', 'Rule changes take effect after the page is reloaded')}
-                </span>
+                <div className="flex flex-col gap-0.5">
+                    <span>
+                        {t('siteRuleReloadNotice', 'Rule changes take effect after the page is reloaded')}
+                    </span>
+                    <span>
+                        {t('siteRulePriorityNotice', 'Priority: my rules > subscriptions > system rules')}
+                    </span>
+                </div>
             </div>
 
             <Tabs items={tabs} value={tab} onChange={setTab} />

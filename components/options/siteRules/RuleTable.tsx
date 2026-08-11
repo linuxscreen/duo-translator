@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Info, Pencil, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -30,6 +30,16 @@ type Props = {
 };
 
 /**
+ * How many rows to render before the "load more" button.
+ *
+ * A rendering budget, NOT a filter: the official package alone is ~440 rules,
+ * and rendering them all makes the page scroll for screens on end. Search still
+ * runs over every rule, and select-all/batch still act on every search match —
+ * only the DOM is capped.
+ */
+const PAGE_SIZE = 50;
+
+/**
  * The rule list shared by all three tiers.
  *
  * One component rather than three: the tiers differ only in which affordances
@@ -53,6 +63,7 @@ export function RuleTable({
 }: Props) {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
+  const [limit, setLimit] = useState(PAGE_SIZE);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -62,10 +73,19 @@ export function RuleTable({
     );
   }, [rules, query]);
 
+  // A new search or a different package starts over — otherwise a slice grown
+  // to 400 rows would carry into the next result set.
+  useEffect(() => setLimit(PAGE_SIZE), [query, rules]);
+
+  const visible = filtered.slice(0, limit);
+  const remaining = filtered.length - visible.length;
+
   const selectable = !!selection && !!onSelectionChange;
   const allSelected = selectable && filtered.length > 0 && filtered.every((r) => selection!.has(keyOf(r)));
-  // Batch actions act on what is selected AND currently visible — acting on
-  // rows hidden by the search filter would be a nasty surprise.
+  // Batch actions act on what is selected AND matches the current search —
+  // acting on rows the search filtered out would be a nasty surprise. Rows
+  // merely beyond the render limit DO count: the counter says "438 selected",
+  // so quietly disabling only the first 50 would be the bigger surprise.
   const selected = selectable ? filtered.filter((r) => selection!.has(keyOf(r))) : [];
 
   const toggleAll = () => {
@@ -160,7 +180,7 @@ export function RuleTable({
         </div>
       )}
 
-      {filtered.map((rule) => {
+      {visible.map((rule) => {
         const key = keyOf(rule);
         const enabled = isEnabled(rule);
         return (
@@ -223,6 +243,24 @@ export function RuleTable({
           </div>
         );
       })}
+
+      {remaining > 0 && (
+        <div className="flex items-center justify-center gap-3 border-t border-line px-4 py-3">
+          <span className="text-[12px] text-ink-soft">
+            {t('showingOfTotal', {
+              shown: visible.length,
+              total: filtered.length,
+              defaultValue: 'Showing {{shown}} of {{total}}',
+            })}
+          </span>
+          <Button variant="outline" size="sm" onClick={() => setLimit((n) => n + PAGE_SIZE)}>
+            {t('loadMore', 'Load more')}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setLimit(filtered.length)}>
+            {t('showAll', 'Show all')}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

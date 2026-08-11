@@ -60,6 +60,14 @@ body {
     radial-gradient(ellipse 60% 40% at 50% 0%, oklch(0.3 0.1 230 / 0.25), transparent 70%),
     radial-gradient(ellipse 80% 50% at 80% 100%, oklch(0.3 0.08 280 / 0.15), transparent 60%),
     #04060a;
+  /* The gradients' percentages resolve against the background positioning
+     area, which for a scrolling body is the whole DOCUMENT, not the viewport.
+     Without this, a long page (Site rules with hundreds of entries) stretches
+     the top ellipse to 40% of several thousand pixels, so the first screen sits
+     entirely inside it and the page reads noticeably more teal than every other
+     tab. `fixed` pins the area to the viewport, which is what the design
+     intends anyway — body::before is already `position: fixed`. */
+  background-attachment: fixed;
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "cv11", "ss01";
@@ -85,6 +93,8 @@ html[data-theme="light"] body {
     radial-gradient(ellipse 60% 40% at 50% 0%, oklch(0.93 0.04 230 / 0.6), transparent 70%),
     radial-gradient(ellipse 80% 50% at 80% 100%, oklch(0.94 0.03 280 / 0.5), transparent 60%),
     #eef0f5;
+  /* Same reason as the dark rule above — the shorthand resets it. */
+  background-attachment: fixed;
 }
 
 html[data-theme="light"] body::before {

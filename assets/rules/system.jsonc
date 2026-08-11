@@ -1,13 +1,11 @@
-// Bundled baseline of website translation rules.
-//
-// JSONC: `//` and `/* */` comments and trailing commas are allowed here (see
-// main/siteRules/jsonc.ts) — annotate a selector with where it came from and
+// JSONC: `//` and `/* */` comments and trailing commas are allowed here
+// annotate a selector with where it came from and
 // what it covers, that context is what makes these rules maintainable.
 // Everything else is plain JSON; no unquoted keys, no single quotes.
 {
   "schemaVersion": 1,
   "name": "Duo Translator Built-in Rules",
-  "updatedAt": "2026-08-03T00:00:00Z",
+  "updatedAt": "2026-08-11T00:00:00Z",
   "rules": [
     {
       "id": "github-general",
@@ -26,8 +24,8 @@
         "meta[name=\"route-pattern\"][content$=\"/:user_id/:repository\"]" // home of repository
       ],
       "includeSelectors": [
-        ".SidebarAbout-module__description__xTkIP",
-        ".markdown-body"
+        ".SidebarAbout-module__description__xTkIP", // About, In the top-right corner
+        ".markdown-body" // readme body text
       ]
     },
     {
@@ -35,8 +33,8 @@
       "name": "Github Issues",
       "includeUrls": "github.com/*/*/issues",
       "includeSelectors": [
-        ".IssuePullRequestTitle-module__ListItemTitle_0__CBNvC .prc-Text-Text-9mHv3",
-        ".tmp-p-4"
+        ".IssuePullRequestTitle-module__ListItemTitle_0__CBNvC .prc-Text-Text-9mHv3", // title
+        ".tmp-p-4" // "If you have a bug or an idea, read the contributing guidelines before opening an issue." below the "All issues"
       ]
     },
     {
@@ -44,8 +42,8 @@
       "name": "Github Pulls",
       "includeUrls": "github.com/*/*/pulls",
       "includeSelectors": [
-        ".js-issue-row .h4",
-        ".js-notice p,h4"
+        ".js-issue-row .h4", // title
+        ".js-notice p,h4" // "First time contributing" message
       ]
     },
     {
@@ -53,7 +51,8 @@
       "name": "Github Actions",
       "includeUrls": "github.com/*/*/actions",
       "includeSelectors": [
-        ".markdown-title"
+        ".markdown-title", // action title
+        ".container-md" // "Workflows aren’t being run on this forked repository"
       ]
     },
     {
@@ -61,7 +60,32 @@
       "name": "Github Releases",
       "includeUrls": "github.com/*/*/releases*",
       "includeSelectors": [
-        ".markdown-body"
+        ".markdown-body" // body text
+      ]
+    },
+    {
+      "id": "github-blob-blame",
+      "name": "Github Blob & Blame",
+      "includeUrls": [
+        "github.com/*/*/blob/*",
+        "github.com/*/*/blame/*"
+      ],
+      "includeSelectors": [
+        ".BlobContent-module__blobContentSectionMarkdown__mPLOK" // readme file preview
+      ]
+    },
+    {
+      "id": "github-profile",
+      "name": "Github Profile",
+      "includeUrls": "github.com/*",
+      "matchSelectors": [
+        "meta[name=\"route-pattern\"][content$=\"/:user_id(.:format)\"]" // user profile
+      ],
+      "includeSelectors": [
+        ".pinned-item-desc", // pinned project description
+        "[itemprop=\"description\"]", // description of repositories and stars
+        ".blankslate", // "Create your first GitHub project"
+        "#package-results" // main content of Packages
       ]
     },
     {
@@ -100,10 +124,10 @@
         "yt-attributed-string#content-text.ytd-comment-view-model", // user comment
         ".ytLockupMetadataViewModelTitle", // title of recommended videos
         "#description-inline-expander #expanded", // video description
-        // ".macro-markers" // title of chapters
         "a#video-title",
         "#description-text",
-        ".shortsLockupViewModelHostOutsideMetadataTitle"
+        ".shortsLockupViewModelHostOutsideMetadataTitle",
+        "#title" // video title
       ],
       "injectCss": ".ytLockupMetadataViewModelTitle, .shortsLockupViewModelHostOutsideMetadataTitle, #description-text { -webkit-line-clamp: unset !important; max-height: none !important; }"
     },
@@ -126,14 +150,6 @@
       "injectCss": "div[style*=\"-webkit-line-clamp:\"] { -webkit-line-clamp: unset !important; }"
     },
     {
-      "id": "twitter",
-      "name": "Twitter",
-      "includeUrls": "x.com",
-      "includeSelectors": [
-        "[data-testid=\"tweetText\"]"
-      ]
-    },
-    {
       "id": "reddit",
       "name": "Reddit",
       "includeUrls": "www.reddit.com",
@@ -146,6 +162,5388 @@
         ".i18n-list-item-post-title"
       ],
       "injectCss": "community-recommendation .text-neutral-content-weak.line-clamp-2, .i18n-list-item-post-title, .feed-card-text-preview { -webkit-line-clamp: unset !important; }"
+    },
+    {
+      "id": "twitter",
+      "name": "Twitter",
+      "description": "",
+      "includeUrls": [
+        "twitter.com",
+        "mobile.twitter.com",
+        "tweetdeck.twitter.com",
+        "pro.twitter.com",
+        "platform.twitter.com/embed*",
+        "x.com",
+        "mobile.x.com",
+        "tweetdeck.x.com",
+        "pro.x.com",
+        "platform.x.com/embed*"
+      ],
+      "excludeUrls": [
+        "twitter.com/i/premium_sign_up",
+        "twitter.com/settings/subscription",
+        "twitter.com/jobs/*",
+        "x.com/i/premium_sign_up",
+        "x.com/settings/subscription",
+        "x.com/settings/account",
+        "x.com/jobs/*",
+        "x.com/*/tos*",
+        "x.com/*/privacy*",
+        "x.com/account/access*",
+        "x.com/i/account_analytics*",
+        "x.com/i/chat*",
+        "x.com/settings*"
+      ],
+      "includeSelectors": [
+        "[data-testid='tweetText']",
+        "[style*='-webkit-line-clamp']",
+        ".tweet-text",
+        "[data-testid='tweet'] [class='css-175oi2r r-13awgt0 r-eqz5dr r-iphfwy r-3o4zer r-ttdzmv']",
+        "[data-testid='tweet'] .css-175oi2r span",
+        ".js-quoted-tweet-text",
+        "[data-testid='card.layoutSmall.detail'] > div:nth-child(2)",
+        "[data-testid='developerBuiltCardContainer'] > div:nth-child(2)",
+        "[data-testid='card.layoutLarge.detail'] > div:nth-child(2)",
+        "[data-testid='cellInnerDiv'] div[data-testid='UserCell'] > div> div:nth-child(2)",
+        "[data-testid='UserDescription']",
+        "[data-testid='HoverCard'] div[dir=auto]",
+        "[data-testid='HoverCard'] span[dir=auto]",
+        "[data-testid='HoverCard'] [role='dialog'] div[dir=ltr]",
+        "[data-testid='birdwatch-pivot'] div[dir=ltr]",
+        "[data-testid='twitterArticleReadView']",
+        "[aria-label='Grok']",
+        "[role=dialog]",
+        "[class='css-175oi2r r-1awozwy r-13awgt0 r-1rnoaur r-13qz1uu']",
+        "[class='css-175oi2r r-kemksi r-1kqtdi0 r-1q9bdsx r-1phboty r-rs99b7 r-1udh08x r-13qz1uu']",
+        "[class='css-175oi2r r-uef6q5 r-dnmrzs r-97e31f r-13qz1uu r-13awgt0 r-dgnwoc r-1me0s30 r-t3sqpr r-1dqxon3']",
+        "[class='css-901oao css-16my406 r-poiln3 r-bcqeeo r-qvutc0']",
+        "[data-testid='inlinePrompt']",
+        "span[class='css-1jxf684 r-bcqeeo r-1ttztb7 r-qvutc0 r-poiln3 r-n6v787 r-1cwl3u0']",
+        "[data-testid=primaryColumn] [class='css-175oi2r r-kzbkwu r-3pj75a'] > div > span[class='css-1jxf684 r-bcqeeo r-1ttztb7 r-qvutc0 r-poiln3']",
+        ".font-chirp.text-body.font-normal"
+      ],
+      "excludeSelectors": [
+        "[aria-describedby][role=button]",
+        "header",
+        "[data-testid='radioGroupplayback_rate'] div",
+        "[data-testid='userFollowIndicator']",
+        "[class='css-901oao r-14j79pv r-37j5jr r-n6v787 r-16dba41 r-1cwl3u0 r-bcqeeo r-qvutc0']",
+        "[class='css-175oi2r r-1wbh5a2 r-dnmrzs']",
+        "[aria-label=Grok] button",
+        "[aria-label=Grok] [style*='rgb(89, 93, 98)']",
+        "[aria-label=Grok] .r-uho16t",
+        "[data-testid=User-Name]",
+        "[data-testid=socialContext]",
+        "[data-testid=tweet-text-show-more-link]",
+        "[aria-label=Grok] [class='css-175oi2r r-1habvwh r-vqp9x9 r-1q9bdsx r-1loqt21 r-9njtsq r-1wtj0ep r-nsbfu8 r-xbdcod r-13c7hvr'] > div:last-child",
+        "[role='tab']",
+        "[data-testid=hoverCardParent] [role=menuitem]",
+        "[data-testid=sidebarColumn]",
+        "h2[role=heading]",
+        "[class='css-175oi2r r-1awozwy r-18u37iz r-1wtj0ep r-6gpygo'],[class='css-175oi2r r-1d09ksm r-18u37iz r-1wbh5a2 r-1471scf'],[class='css-175oi2r r-1kbdv8c r-18u37iz r-1wtj0ep r-1ye8kvj r-1s2bzr4']",
+        ".imt-caption-container *",
+        "[data-testid=videoComponent]"
+      ],
+      "injectCss": [
+        "[data-testid='card.layoutLarge.detail'] > div:nth-child(2) { -webkit-line-clamp: unset!important; }",
+        "[data-testid='card.layoutSmall.detail'] > div:nth-child(2) { -webkit-line-clamp: unset!important; }",
+        "[data-testid='tweetText'],[style*='-webkit-line-clamp'] { -webkit-line-clamp: unset!important; }",
+        "[role=dialog] [style*='webkit-line-clamp'] { -webkit-line-clamp: unset!important; }",
+        ".r-h9hxbl { width:unset !important; }",
+        "[aria-label=Grok] [data-testid=ScrollSnap-SwipeableList] [role=presentation] > div > div { max-height: unset !important; }"
+      ]
+    },
+    {
+      "id": "1688",
+      "name": "1688",
+      "description": "",
+      "includeUrls": "www.1688.com",
+      "injectCss": [
+        "[class^='defaultSubNav'],[class^='loginButton'] { height:unset!important; }",
+        "[data-tracker='category'] > font { white-space:nowrap!important; }"
+      ]
+    },
+    {
+      "id": "1paragraph",
+      "name": "1paragraph",
+      "description": "",
+      "includeUrls": "1paragraph.app",
+      "includeSelectors": [
+        "#book"
+      ]
+    },
+    {
+      "id": "1password",
+      "name": "1password",
+      "description": "",
+      "includeUrls": "*.1password.com",
+      "excludeSelectors": [
+        ".secret-key"
+      ]
+    },
+    {
+      "id": "ac.nowcoder",
+      "name": "Ac.nowcoder",
+      "description": "",
+      "includeUrls": "ac.nowcoder.com",
+      "excludeSelectors": [
+        ".answer-module",
+        ".question-intr",
+        ".language-list",
+        ".question-oi"
+      ]
+    },
+    {
+      "id": "aha",
+      "name": "Aha",
+      "description": "",
+      "includeUrls": "*.ideas.aha.io",
+      "excludeSelectors": [
+        ".comment-header",
+        ".vote-status",
+        ".idea-meta",
+        ".filters-title",
+        ".ideas-showing-count",
+        ".my-ideas-filters-wrapper",
+        ".statuses-filters-wrapper",
+        ".categories-filters-wrapper",
+        "[class^='attachment']",
+        "span[class^='attachment-name']"
+      ]
+    },
+    {
+      "id": "aliexpress",
+      "name": "Aliexpress",
+      "description": "",
+      "includeUrls": "*.aliexpress.*",
+      "excludeSelectors": [
+        "[class*='multi--price']"
+      ],
+      "injectCss": "[class*='multi--title'],.G7dOC { -webkit-line-clamp:unset !important; }"
+    },
+    {
+      "id": "allmyfaves",
+      "name": "Allmyfaves",
+      "description": "",
+      "includeUrls": "https://allmyfaves.com/",
+      "includeSelectors": [
+        "p"
+      ]
+    },
+    {
+      "id": "alphaxiv",
+      "name": "Alphaxiv",
+      "description": "",
+      "includeUrls": "www.alphaxiv.org",
+      "injectCss": "[class*=line-clamp] { -webkit-line-clamp:unset !important; }"
+    },
+    {
+      "id": "amazon",
+      "name": "Amazon",
+      "description": "",
+      "includeUrls": "www.amazon.*",
+      "excludeSelectors": [
+        "#navFooter",
+        ".s-price-instructions-style",
+        "[class*='-star ']",
+        "[data-hook='acr-average-stars-rating-text']",
+        ".a-color-price,.a-price",
+        "[data-testid='price-section']",
+        "[data-component='dui-badge']",
+        "#glow-ingress-block,#nav-link-accountList,#nav-orders,#nav-cart",
+        ".a-profile-content,[data-hook=product-variation-attributes],[data-hook=helpfulVoteWidget],[data-hook=reportAbuseButton],[data-hook=helpful-vote-statement]"
+      ],
+      "injectCss": [
+        ".a-carousel-viewport { height:unset !important; }",
+        "[class*='clamp'] { max-height: unset!important; -webkit-line-clamp: unset!important; }",
+        "[data-rows] { max-height: unset!important; -webkit-line-clamp: unset!important; }",
+        "[data-a-expander-name='review_text_read_more'] { max-height: unset !important; }",
+        ".compact.primaryText.primaryTextOnly { max-height: unset !important; -webkit-line-clamp: unset !important; }",
+        ".format { -webkit-line-clamp: unset !important; }",
+        ".dcl-truncate,[class*='textButton'],span[data-a-max-rows] { max-height:unset!important; -webkit-line-clamp: unset!important; }",
+        ".a-reactive-container-transition,.a-cardui-uninitialized { height:unset!important; max-height:unset!important; }"
+      ]
+    },
+    {
+      "id": "androidpolice",
+      "name": "Androidpolice",
+      "description": "",
+      "includeUrls": "www.androidpolice.com",
+      "excludeSelectors": [
+        ".author",
+        ".w-total-info",
+        ".images-header-menu-list",
+        ".w-display-card-details",
+        ".w-display-card-extra"
+      ],
+      "injectCss": ".display-card-title,.display-card-title * { height:unset!important; -webkit-line-clamp:unset!important; }"
+    },
+    {
+      "id": "angel",
+      "name": "Angel",
+      "description": "",
+      "includeUrls": "www.angel.com",
+      "excludeSelectors": [
+        ".bmpui-subtitle-position-vtt *"
+      ]
+    },
+    {
+      "id": "annasArchive",
+      "name": "Annas Archive",
+      "description": "",
+      "includeUrls": [
+        "*.annas-archive.org",
+        "annas-archive.org"
+      ],
+      "injectCss": [
+        "div[id^='link-index-'] { height: unset !important; max-height: unset !important; }",
+        "main div[class*='h-[125]'] { height:auto !important; }"
+      ]
+    },
+    {
+      "id": "app.element.io",
+      "name": "App.element.io",
+      "description": "",
+      "includeUrls": "app.element.io",
+      "excludeSelectors": [
+        ".mx_DisambiguatedProfile",
+        ".mx_ReplyChain_wrapper",
+        ".mx_ThreadSummary_replies_amount"
+      ]
+    },
+    {
+      "id": "app.rapidlaunch.wtf",
+      "name": "App.rapidlaunch.wtf",
+      "description": "",
+      "includeUrls": "app.rapidlaunch.wtf",
+      "excludeSelectors": [
+        "div.border-b.border-gray-700\\/50.flex",
+        "a.text-blue-400",
+        ".flex.items-center.text-xs.text-gray-400",
+        ".flex.items-center.gap-1\\.5.mb-1"
+      ],
+      "injectCss": [
+        ".max-h-24 { max-height: unset !important; }",
+        ".line-clamp-2 { -webkit-line-clamp: unset !important; }"
+      ]
+    },
+    {
+      "id": "app.schildi.chat",
+      "name": "App.schildi.chat",
+      "description": "",
+      "includeUrls": "app.schildi.chat",
+      "excludeSelectors": [
+        ".mx_DisambiguatedProfile",
+        ".mx_MessageTimestamp",
+        ".mx_EventTile_avatar"
+      ]
+    },
+    {
+      "id": "apple",
+      "name": "Apple",
+      "description": "",
+      "includeUrls": "developer.apple.com",
+      "excludeSelectors": [
+        ".developer-video-player",
+        ".vue-recycle-scroller"
+      ]
+    },
+    {
+      "id": "appleDeveloper",
+      "name": "Apple Developer",
+      "description": "",
+      "includeUrls": "developer.apple.com/documentation/*",
+      "includeSelectors": [
+        ".container",
+        "h3.title",
+        "div.content"
+      ],
+      "excludeSelectors": [
+        ".vue-recycle-scroller"
+      ]
+    },
+    {
+      "id": "appleinsider",
+      "name": "Appleinsider",
+      "description": "",
+      "includeUrls": "appleinsider.com",
+      "excludeSelectors": [
+        "#topic-nav"
+      ]
+    },
+    {
+      "id": "ar5iv",
+      "name": "Ar5iv",
+      "description": "",
+      "includeUrls": "ar5iv.labs.arxiv.org",
+      "excludeSelectors": [
+        ".ltx_bibliography",
+        ".ltx_tag.ltx_tag_item",
+        ".ltx_listing.ltx_lstlisting.ltx_listing",
+        ".ltx_eqn_table"
+      ]
+    },
+    {
+      "id": "arca",
+      "name": "Arca",
+      "description": "",
+      "includeUrls": "arca.live",
+      "excludeSelectors": [
+        "span.user-info"
+      ],
+      "injectCss": [
+        ".vrow.column { height:unset !important; }",
+        ".body .board-article .article-list .list-table .vrow.column .vcol { width:unset !important; }"
+      ]
+    },
+    {
+      "id": "archiveofourown",
+      "name": "Archiveofourown",
+      "description": "",
+      "includeUrls": [
+        "archiveofourown.org",
+        "ao3-cn.top"
+      ],
+      "excludeSelectors": [
+        ".meta,.navigation,.byline,.pagination,.datetime,.stats",
+        "#add_comment",
+        "#footer",
+        ".summary > h3",
+        ".notes > h3"
+      ],
+      "injectCss": "sub { line-height: unset !important; }"
+    },
+    {
+      "id": "archiveToday",
+      "name": "Archive Today",
+      "description": "",
+      "includeUrls": [
+        "archive.today",
+        "archive.ph",
+        "archive.is",
+        "archive.md"
+      ],
+      "excludeSelectors": [
+        "#HEADER"
+      ]
+    },
+    {
+      "id": "ardmediathek",
+      "name": "Ardmediathek",
+      "description": "",
+      "includeUrls": "www.ardmediathek.*",
+      "excludeSelectors": [
+        ".ardplayer-viewport-addon-overlays"
+      ]
+    },
+    {
+      "id": "arena",
+      "name": "Arena",
+      "description": "",
+      "includeUrls": "lmarena.ai",
+      "excludeSelectors": [
+        "table"
+      ]
+    },
+    {
+      "id": "artstationArtwork",
+      "name": "Artstation Artwork",
+      "description": "",
+      "includeUrls": "www.artstation.com/artwork/*",
+      "includeSelectors": [
+        ".project-description",
+        "div.project-comment-text",
+        ".asset-caption"
+      ],
+      "excludeSelectors": [
+        ".project-description a"
+      ]
+    },
+    {
+      "id": "artstationBlog",
+      "name": "Artstation Blog",
+      "description": "",
+      "includeUrls": [
+        "https://www.artstation.com/blogs",
+        "https://www.artstation.com/blogs/*"
+      ],
+      "excludeSelectors": [
+        ".blog-card-thumbnail",
+        ".blog-card-header",
+        ".blog-card-author",
+        ".blog-card-meta",
+        ".blog-view-header",
+        ".blog-grid-title",
+        ".post-meta-header"
+      ]
+    },
+    {
+      "id": "artstationLearning",
+      "name": "Artstation Learning",
+      "description": "",
+      "includeUrls": "www.artstation.com/learning/courses/*",
+      "excludeSelectors": [
+        ".learning-card-meta",
+        ".vjs-text-track-display"
+      ]
+    },
+    {
+      "id": "arxiv",
+      "name": "Arxiv",
+      "description": "",
+      "includeUrls": [
+        "https://browse.arxiv.org",
+        "https://arxiv.org/html/*"
+      ],
+      "excludeSelectors": [
+        ".desktop_header",
+        "[class*='ltx_lst_language_']",
+        "div.package-alerts",
+        ".ltx_toclist",
+        ".ltx_authors",
+        ".ltx_bibliography"
+      ]
+    },
+    {
+      "id": "arxiv-vanity.com",
+      "name": "Arxiv Vanity.com",
+      "description": "",
+      "includeUrls": "www.arxiv-vanity.com",
+      "excludeSelectors": [
+        ".arxiv-vanity-wrapper"
+      ]
+    },
+    {
+      "id": "asu",
+      "name": "Asu",
+      "description": "",
+      "includeUrls": "api.playposit.com",
+      "excludeSelectors": [
+        "#overlay-container"
+      ]
+    },
+    {
+      "id": "auth0Openai",
+      "name": "Auth0 Openai",
+      "description": "",
+      "includeUrls": "auth0.openai.com",
+      "excludeSelectors": [
+        "form",
+        "header > h1"
+      ]
+    },
+    {
+      "id": "autoHeight",
+      "name": "Auto Height",
+      "description": "",
+      "includeUrls": [
+        "*.sooplive.*",
+        "zen-browser.app",
+        "message.alibaba.com",
+        "erp.91miaoshou.com",
+        "jddonline.com",
+        "cis.vemic.com",
+        "scripod.com",
+        "drjoedispenza.com",
+        "www.x-mol.com",
+        "webvpn.bnu.*",
+        "www.connectedpapers.com",
+        "isappscience.org",
+        "www.dtmstation.com",
+        "kalshi.com",
+        "engoo.com",
+        "puchipurabu.com",
+        "www.wildberries.ru",
+        "m.163.com",
+        "discord.com/discovery*",
+        "zhenghedata.com",
+        "yoeshop.ssweet.*",
+        "sinocism.com",
+        "*.z-lib.*",
+        "duckduckgo.com",
+        "www.postype.com",
+        "rebang.today",
+        "appsumo.com",
+        "*.xiapibuy.*",
+        "www.modelhub.com",
+        "www.xvideos.com",
+        "www.tripadvisor.com",
+        "www.afreecatv.com",
+        "getpocket.com",
+        "https://you.com/search",
+        "*.fiverr.com",
+        "https://feeder.co/*",
+        "time.com",
+        "www.cnet.com",
+        "www.nikkei.com",
+        "dolmods.net",
+        "detail.1688.com"
+      ],
+      "injectCss": [
+        ".side_list a,.title a,.tit,.item-title { -webkit-line-clamp:unset!important; height:unset!important; }",
+        "details { height:unset!important; }",
+        ".product-title { height:unset!important; -webkit-line-clamp:unset!important; }",
+        ".plugin-product-comment-content { height:unset!important; -webkit-line-clamp:unset!important; }",
+        "div.jdd-product-info-box { height:unset!important; }",
+        "span.hotData-text { -webkit-line-clamp: unset !important; line-clamp: unset !important; }",
+        "div.line-clamp-4 { -webkit-line-clamp: unset !important; max-height: unset !important; }",
+        "[class*='titleTypography'] { -webkit-line-clamp: unset !important; }",
+        ".div-text-line-three { -webkit-line-clamp: unset !important; max-height: unset !important; }",
+        ".data-title { -webkit-line-clamp: unset!important; max-height: unset!important; }",
+        ".paper-title,.search-result-abstract.folded,.list-group-item-mod h5 { -webkit-line-clamp: unset!important; max-height: unset!important; }",
+        ".kb-advanced-heading-link,.limited-text { -webkit-line-clamp: unset!important; max-height: unset!important; }",
+        ".entry-card-title,.entry-card-snippet { -webkit-line-clamp: unset!important; max-height: unset!important; }",
+        "span.line-clamp-2 { -webkit-line-clamp: unset!important; max-height: unset!important; }",
+        ".css-1yo0yr8 { -webkit-line-clamp: unset!important; max-height: unset!important; }",
+        "[class*='line-clamp-'],[class*='line-clamp-'] font { white-space:unset!important; -webkit-line-clamp: unset!important; max-height: unset!important; }",
+        ".product-card__brand-wrap { white-space:unset !important; }",
+        ".card-recommend-oneImg article h4 { max-height:unset !important; -webkit-line-clamp:unset !important; }",
+        ".description__4cb8a { max-height:unset !important; -webkit-line-clamp:unset !important; }",
+        ".link-container { height:unset!important; -webkit-line-clamp:unset!important; }"
+      ]
+    },
+    {
+      "id": "baiduXueshu",
+      "name": "Baidu Xueshu",
+      "description": "",
+      "includeUrls": "xueshu.baidu.com",
+      "injectCss": ".abstract_wr { height: unset !important; overflow: visible !important; max-height:unset !important; }"
+    },
+    {
+      "id": "bardGoogle",
+      "name": "Bard Google",
+      "description": "",
+      "includeUrls": "bard.google.com",
+      "excludeSelectors": [
+        "mat-sidenav",
+        "div.capabilities-disclaimer",
+        "#cdk-overlay-6",
+        "message-actions button",
+        ".mdc-button__label .ng-star-inserted",
+        ".mdc-list-item__primary-text",
+        "mat-tooltip-component"
+      ]
+    },
+    {
+      "id": "barotem",
+      "name": "Barotem",
+      "description": "",
+      "includeUrls": "www.barotem.com",
+      "injectCss": [
+        ".product_name { -webkit-line-clamp: unset!important; }",
+        ".lists_goods_content > div { height: unset!important; min-height: 76px !important; }"
+      ]
+    },
+    {
+      "id": "batchUnlimitHeight",
+      "name": "Batch Unlimit Height",
+      "description": "",
+      "includeUrls": [
+        "https://www.inven.co.kr/*",
+        "*.grandefratello.mediaset.*"
+      ],
+      "injectCss": [
+        "li { height:unset!important; }",
+        ".big_box,article .text,article .title { height:unset!important; }"
+      ]
+    },
+    {
+      "id": "bbc",
+      "name": "Bbc",
+      "description": "",
+      "includeUrls": "*.bbc.*",
+      "excludeSelectors": [
+        "section.module--languages",
+        ".drop-capped",
+        ".smp-toucan-player",
+        "smp-subtitles",
+        "#subtitle_subtitle2"
+      ]
+    },
+    {
+      "id": "bbc-emp",
+      "name": "Bbc Emp",
+      "description": "",
+      "includeUrls": "https://emp.bbc.*/emp/*",
+      "excludeSelectors": [
+        ".p_accessibleHitArea"
+      ]
+    },
+    {
+      "id": "bbc-iplayer",
+      "name": "Bbc Iplayer",
+      "description": "",
+      "includeUrls": "https://www.bbc.*/iplayer*",
+      "excludeSelectors": [
+        ".player"
+      ]
+    },
+    {
+      "id": "bilibili",
+      "name": "Bilibili",
+      "description": "",
+      "includeUrls": "www.bilibili.com",
+      "excludeSelectors": [
+        ".bpx-player-subtitle-panel-text",
+        ".bili-video-card__info--author, .bili-video-card__info--date",
+        "#pictures,#note,#info,#footer,#expander-footer,.playinfo,.upname,#bilibili-player"
+      ]
+    },
+    {
+      "id": "bing",
+      "name": "Bing",
+      "description": "",
+      "includeUrls": "https://*.bing.com/search*",
+      "excludeSelectors": [
+        ".tptxt"
+      ],
+      "injectCss": [
+        "[class*='lineclamp'],.b_title { -webkit-line-clamp:unset !important; }",
+        ".b_gwaDl,.b_snipwithnsl { height:unset !important; }"
+      ]
+    },
+    {
+      "id": "bingNews",
+      "name": "Bing News",
+      "description": "",
+      "includeUrls": "https://*.bing.com/news/search*",
+      "injectCss": [
+        ".newsitem .title { max-height: none !important; -webkit-line-clamp: 10 !important; }",
+        ".newsitem .snippet { max-height: none !important; -webkit-line-clamp: 10 !important; }"
+      ]
+    },
+    {
+      "id": "bitwarden.com",
+      "name": "Bitwarden.com",
+      "description": "",
+      "includeUrls": "bitwarden.com",
+      "excludeSelectors": [
+        ".status-widget__state"
+      ]
+    },
+    {
+      "id": "bloomberg",
+      "name": "Bloomberg",
+      "description": "",
+      "includeUrls": "www.bloomberg.com",
+      "excludeUrls": "https://www.bloomberg.com/live/*",
+      "excludeSelectors": [
+        ".ticker-bar",
+        "nav",
+        "[aria-label=Banner]",
+        "aside",
+        "[data-component=ticker-bar]",
+        "footer.bb-global-footer",
+        ".vjs-text-track-display"
+      ]
+    },
+    {
+      "id": "bmvrMarseille",
+      "name": "Bmvr Marseille",
+      "description": "",
+      "includeUrls": "www.bmvr.marseille.fr",
+      "injectCss": [
+        "a > div { display:block !important; }",
+        "[style*='358px;'] { width: 33.3333% !important; height: auto !important; padding: 0px !important; position: relative !important; margin: 0px !important; }"
+      ]
+    },
+    {
+      "id": "book-douban",
+      "name": "Book Douban",
+      "description": "",
+      "includeUrls": "book.douban.com",
+      "excludeSelectors": [
+        "a.author-name",
+        "p.user > a",
+        "div#collector > div > div[style^='padding-left'] > a",
+        "div#info a"
+      ]
+    },
+    {
+      "id": "braynzarsoft",
+      "name": "Braynzarsoft",
+      "description": "",
+      "includeUrls": "www.braynzarsoft.net",
+      "excludeSelectors": [
+        "#content-header",
+        ".sidebar-section",
+        ".rating-box",
+        ".tutorial-stat",
+        "#bookmark-btn",
+        ".question-footer",
+        ".adsbygoogle",
+        ".footer",
+        ".type",
+        ".views",
+        ".questioninputcode"
+      ],
+      "injectCss": [
+        ".tutorial-desc { overflow: scroll !important; }",
+        ".question-title { display:inline-flex !important; }"
+      ]
+    },
+    {
+      "id": "brown",
+      "name": "Brown",
+      "description": "",
+      "includeUrls": "cs.brown.edu",
+      "excludeSelectors": [
+        ".SCodeFlow"
+      ]
+    },
+    {
+      "id": "brutalist",
+      "name": "Brutalist",
+      "description": "",
+      "includeUrls": "brutalist.report",
+      "includeSelectors": [
+        "li > a:first-child",
+        "aside",
+        "nav > a",
+        "h1 > a",
+        "h3 > a",
+        "h2 >a"
+      ]
+    },
+    {
+      "id": "bsky.app",
+      "name": "Bsky.app",
+      "description": "",
+      "includeUrls": "https://bsky.app",
+      "excludeSelectors": [
+        "[data-testid^=homeScreenFeedTabs]",
+        "[data-testid^=repostCount]",
+        "[data-testid^=likeCount]",
+        "[data-testid^=quoteCount]",
+        "[data-testid^=replyBtn]",
+        "[aria-label='View profile']"
+      ],
+      "injectCss": [
+        ".r-xoduu5 { display:inline!important; }",
+        "[style*='-webkit-line-clamp'] { -webkit-line-clamp:unset!important; }"
+      ]
+    },
+    {
+      "id": "bugsKde",
+      "name": "Bugs Kde",
+      "description": "",
+      "includeUrls": "bugs.kde.org",
+      "excludeSelectors": [
+        ".bz_first_comment_head",
+        ".bz_comment_head",
+        ".related_actions"
+      ]
+    },
+    {
+      "id": "businessinsider",
+      "name": "Businessinsider",
+      "description": "",
+      "includeUrls": "www.businessinsider.com",
+      "excludeSelectors": [
+        "header",
+        "nav",
+        "section.live-updates-module"
+      ]
+    },
+    {
+      "id": "casino",
+      "name": "Casino",
+      "description": "",
+      "includeUrls": "www.casino.org",
+      "excludeSelectors": [
+        ".material-symbols-outlined"
+      ]
+    },
+    {
+      "id": "cbsnews",
+      "name": "Cbsnews",
+      "description": "",
+      "includeUrls": "www.cbsnews.com",
+      "excludeSelectors": [
+        ".avia-container"
+      ]
+    },
+    {
+      "id": "ccfddl",
+      "name": "Ccfddl",
+      "description": "",
+      "includeUrls": "ccfddl.com",
+      "excludeSelectors": [
+        "div.conf-timer > span[style^='color: black']"
+      ]
+    },
+    {
+      "id": "ceros",
+      "name": "Ceros",
+      "description": "",
+      "includeUrls": "view.ceros.com",
+      "injectCss": ".page-object.group > .page-object.text > p { height: 100% !important; overflow: auto !important; }"
+    },
+    {
+      "id": "championcross.jp",
+      "name": "Championcross.jp",
+      "description": "",
+      "includeUrls": "https://championcross.jp",
+      "injectCss": "[class^='Original_section_title'] { overflow:hidden!important; }"
+    },
+    {
+      "id": "character.ai",
+      "name": "Character.ai",
+      "description": "",
+      "includeUrls": "character.ai",
+      "injectCss": ".swiper,.rah-static,[class*=max-h],.line-clamp-1 { overflow:scroll !important; -webkit-line-clamp:unset !important; }"
+    },
+    {
+      "id": "chatGoogle",
+      "name": "Chat Google",
+      "description": "",
+      "includeUrls": "chat.google.com",
+      "includeSelectors": [
+        "[jsname=bgckF]"
+      ]
+    },
+    {
+      "id": "chatOpenai",
+      "name": "Chat Openai",
+      "description": "",
+      "includeUrls": [
+        "chat.openai.com",
+        "chatgpt.com"
+      ],
+      "excludeSelectors": [
+        "div.absolute.bottom-0.left-0.w-full",
+        "h1",
+        "div#headlessui-portal-root",
+        "nav",
+        "ul[aria-multiselectable]",
+        "div[class='flex flex-col items-start']",
+        "div[class='flex items-center justify-center gap-1 border-b border-black/10 bg-gray-50 p-3 text-gray-500 dark:border-gray-900/50 dark:bg-gray-700 dark:text-gray-300']"
+      ],
+      "injectCss": "[class*='line-clamp'] { max-height:unset !important; -webkit-line-clamp:unset !important; height:unset !important; white-space:unset !important; }"
+    },
+    {
+      "id": "chatpdf",
+      "name": "Chatpdf",
+      "description": "",
+      "includeUrls": "www.chatpdf.com",
+      "excludeSelectors": [
+        ".chat-message-row.ai *",
+        ".pdf-viewer"
+      ]
+    },
+    {
+      "id": "chinadaily",
+      "name": "Chinadaily",
+      "description": "",
+      "includeUrls": "www.chinadaily.com.cn",
+      "excludeSelectors": [
+        ".topNav",
+        ".topNav2_art > span",
+        ".topNav_art2 > .dropdown",
+        ".dibu-three",
+        ".topBar"
+      ],
+      "injectCss": [
+        "a { height: unset !important; }",
+        "li { height: unset !important; }",
+        "div { height: unset !important; }"
+      ]
+    },
+    {
+      "id": "chosun",
+      "name": "Chosun",
+      "description": "",
+      "includeUrls": "www.chosun.com",
+      "injectCss": "body { word-break: unset!important; }"
+    },
+    {
+      "id": "chromium",
+      "name": "Chromium",
+      "description": "",
+      "includeUrls": "*.chromium.org",
+      "excludeSelectors": [
+        "ancestors-breadcrumbs",
+        "depth-finder[role='tree']",
+        "repository-detail",
+        "issue-metadata-sidebar",
+        "nav",
+        ".bv2-event-user",
+        ".b-description-heading",
+        "b-attachment-viewer",
+        "i"
+      ],
+      "injectCss": "font svg { display:none !important; }"
+    },
+    {
+      "id": "claudeAi",
+      "name": "Claude Ai",
+      "description": "",
+      "includeUrls": "claude.ai",
+      "excludeSelectors": [
+        ".contents *",
+        ".code-block__code"
+      ],
+      "injectCss": [
+        "[data-testid='chat-menu-trigger'] br { display:none !important; }",
+        "[data-test-render-count] { overflow: scroll !important; }"
+      ]
+    },
+    {
+      "id": "claudeartifacts",
+      "name": "Claudeartifacts",
+      "description": "",
+      "includeUrls": "claudeartifacts.com",
+      "excludeSelectors": [
+        "h1",
+        "h3 + span.rounded-full",
+        "[class='p-6 pt-0 flex justify-between items-center']",
+        "[class='text-xs text-gray-500']"
+      ],
+      "injectCss": ".line-clamp-3 { -webkit-line-clamp: unset !important; }"
+    },
+    {
+      "id": "cnbc",
+      "name": "Cnbc",
+      "description": "",
+      "includeUrls": "www.cnbc.com",
+      "excludeSelectors": [
+        "#GlobalNavigation",
+        "#GlobalFooter",
+        ".LiveBlogHeader-timestampAndShareBarContainer",
+        ".LiveBlogHeader-liveUpdatesPill",
+        ".QuoteInBody-inlineButton"
+      ],
+      "injectCss": "div.Card-titleContainer > div { -webkit-line-clamp: unset !important; max-height: unset !important; }"
+    },
+    {
+      "id": "cnn",
+      "name": "Cnn",
+      "description": "",
+      "includeUrls": "*.cnn.com",
+      "excludeSelectors": [
+        ".ad-slot-header__wrapper",
+        "#pageFooter"
+      ]
+    },
+    {
+      "id": "codeium",
+      "name": "Codeium",
+      "description": "",
+      "includeUrls": "codeium.com",
+      "excludeSelectors": [
+        "nav a[class*=C]"
+      ]
+    },
+    {
+      "id": "codewithchris",
+      "name": "Codewithchris",
+      "description": "",
+      "includeUrls": [
+        "learn.codewithchris.com",
+        "*.rachelsenglishacademy.com",
+        "www.unrealsenseiacademy.com",
+        "www.comsol.com/video/*",
+        "www.comsol.com/blogs/*"
+      ],
+      "excludeSelectors": [
+        ".w-captions",
+        ".w-captions-line > div > span"
+      ]
+    },
+    {
+      "id": "coindesk",
+      "name": "Coindesk",
+      "description": "",
+      "includeUrls": "www.coindesk.com",
+      "excludeSelectors": [
+        "[data-subtitles-container='true']"
+      ]
+    },
+    {
+      "id": "common-vtt-jw",
+      "name": "Common Vtt Jw",
+      "description": "",
+      "includeUrls": [
+        "*.rottentomatoes.com",
+        "megaplay.buzz",
+        "www.brighttalk.com"
+      ],
+      "excludeSelectors": [
+        ".jw-wrapper"
+      ]
+    },
+    {
+      "id": "construct",
+      "name": "Construct",
+      "description": "",
+      "includeUrls": "www.construct.net",
+      "excludeUrls": [
+        "preview.construct.net",
+        "editor.construct.net"
+      ],
+      "excludeSelectors": [
+        "div.topNav",
+        "div.usernameLink",
+        "ul.authorDetails",
+        "ul.tagViewer",
+        "ul.breadCrumbNav",
+        "ul.subForumForums",
+        "ul.postTools",
+        "li.comment ul.controls",
+        "div.forumTopNavWrap",
+        "div.downloadWrap",
+        "div.articleLeftMenu",
+        "div.usernameTextWrap",
+        "div.favouriteWrap",
+        "div.bannerWrapper",
+        "div.viewAddonRightMenu",
+        "div.extendedMenu.addonsSubMenu",
+        "#BottomLinks.bottomLinks",
+        "div#LeftSide.leftSide",
+        "div#BottomWrap.bottomWrap",
+        "div.courseListWrap div.overview",
+        "div.conversationControls",
+        "div.contentWrapper h1",
+        "td.location a#LocationLink",
+        "#TopLevelComments .topBar",
+        "#TopLevelComments .controls",
+        ".tagViewWrap",
+        ".changeCount",
+        ".otherStats",
+        ".FilterMenu",
+        ".mobileTopicStats",
+        ".forumControlsWrapper",
+        ".forumsBottomNavWrap",
+        ".breadCrumbNav",
+        ".favouriteWrap",
+        ".usernameLink",
+        ".followWrapper",
+        ".blogPostStats",
+        ".manualContent dl dt"
+      ],
+      "injectCss": [
+        "td.location a#LocationLink { padding-top: 4px !important; }",
+        "div.articleMain .tutCourseWrap { align-items: flex-start !important; }"
+      ]
+    },
+    {
+      "id": "cooperativa",
+      "name": "Cooperativa",
+      "description": "",
+      "includeUrls": "cooperativa.cl",
+      "injectCss": "font.notranslate { display:unset!important; }"
+    },
+    {
+      "id": "crunchyroll",
+      "name": "Crunchyroll",
+      "description": "",
+      "includeUrls": "*.crunchyroll.com",
+      "excludeSelectors": [
+        "#vilos",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "csust",
+      "name": "Csust",
+      "description": "",
+      "includeUrls": "tsgvpn2.csust.edu.cn",
+      "injectCss": "h2 { font-size:unset !important; }"
+    },
+    {
+      "id": "curiositystream",
+      "name": "Curiositystream",
+      "description": "",
+      "includeUrls": "curiositystream.com",
+      "excludeSelectors": [
+        "[data-testid=\"video-player\"]"
+      ]
+    },
+    {
+      "id": "curseforge",
+      "name": "Curseforge",
+      "description": "",
+      "includeUrls": "www.curseforge.com",
+      "injectCss": [
+        ".project-card { height:unset !important; grid-template-rows: auto auto auto auto !important; }",
+        ".project-card .description { height:unset !important; -webkit-line-clamp:unset !important; }",
+        "ul.details-list { height:unset !important; }",
+        ".project-card .categories { height:unset !important; }"
+      ]
+    },
+    {
+      "id": "czechvideo",
+      "name": "Czechvideo",
+      "description": "",
+      "includeUrls": "https://czechvideo.co/*",
+      "injectCss": [
+        ".short-story { height:unset !important; }",
+        ".short-title { height:unset !important; }"
+      ]
+    },
+    {
+      "id": "dailyDev",
+      "name": "Daily Dev",
+      "description": "",
+      "includeUrls": "app.daily.dev",
+      "includeSelectors": [
+        "h1",
+        ".typo-body",
+        "article h3",
+        "[class^=markdown_markdown]"
+      ],
+      "injectCss": ".line-clamp-3 { -webkit-line-clamp: unset !important; }"
+    },
+    {
+      "id": "dailymotion",
+      "name": "Dailymotion",
+      "description": "",
+      "includeUrls": "*.dailymotion.com",
+      "excludeSelectors": [
+        ".player"
+      ]
+    },
+    {
+      "id": "datacamp",
+      "name": "Datacamp",
+      "description": "",
+      "includeUrls": "projector.datacamp.com",
+      "excludeSelectors": [
+        ".video"
+      ]
+    },
+    {
+      "id": "datalab.naver",
+      "name": "Datalab.naver",
+      "description": "",
+      "includeUrls": "datalab.naver.com",
+      "injectCss": [
+        ".tab_list_area .list_itm { height: unset !important; }",
+        ".section.main_tab_opt .select { height: unset !important; }"
+      ]
+    },
+    {
+      "id": "dcinside",
+      "name": "Dcinside",
+      "description": "",
+      "includeUrls": "*.dcinside.com",
+      "excludeSelectors": [
+        ".num",
+        ".time"
+      ],
+      "injectCss": [
+        ".time_best .typet_list li a { font-size:unset !important; }",
+        "font { background:unset!important; padding:unset!important; }"
+      ]
+    },
+    {
+      "id": "deeplearning",
+      "name": "Deeplearning",
+      "description": "",
+      "includeUrls": "learn.deeplearning.ai",
+      "excludeSelectors": [
+        "[data-layout=\"video\"]"
+      ]
+    },
+    {
+      "id": "deepwiki",
+      "name": "Deepwiki",
+      "description": "",
+      "includeUrls": "deepwiki.com",
+      "excludeSelectors": [
+        "[class*='flex items-center break-all rounded-l px-2 py-1.5 bg-[#e5e5e5] text-[#333333] dark:bg-[#252525] dark:text-[#e4e4e4] rounded-r']",
+        "[class*='mb-1 mr-1 inline-flex items-stretch font-mono text-xs !no-underline transition-opacity hover:opacity-75']"
+      ]
+    },
+    {
+      "id": "descript",
+      "name": "Descript",
+      "description": "",
+      "includeUrls": "www.descript.com",
+      "excludeSelectors": [
+        "h1.home-hero"
+      ]
+    },
+    {
+      "id": "developerChrome",
+      "name": "Developer Chrome",
+      "description": "",
+      "includeUrls": "developer.chrome.com",
+      "excludeSelectors": [
+        "web-tabs",
+        "ul.code-sections--summary"
+      ]
+    },
+    {
+      "id": "devEpicGames",
+      "name": "Dev Epic Games",
+      "description": "",
+      "includeUrls": "dev.epicgames.com",
+      "excludeSelectors": [
+        ".vjs-poster"
+      ]
+    },
+    {
+      "id": "digitaltrends",
+      "name": "Digitaltrends",
+      "description": "",
+      "includeUrls": "www.digitaltrends.com",
+      "injectCss": [
+        ".b-mem__inner .b-mem-post:first-child h3 { -webkit-line-clamp: 2 !important; }",
+        ".b-mem__inner .b-mem-post:first-child .b-mem-post__excerpt { display:inline !important; }"
+      ]
+    },
+    {
+      "id": "digitimes",
+      "name": "Digitimes",
+      "description": "",
+      "includeUrls": "www.digitimes.com",
+      "excludeSelectors": [
+        ".main-nav-frame",
+        ".sub-header-wrapper",
+        ".footer",
+        ".date"
+      ],
+      "injectCss": "a,.title,.abstract,.display-5,.top { max-height:unset !important; -webkit-line-clamp:unset !important; height:unset !important; white-space:unset !important; }"
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "description": "",
+      "includeUrls": "https://discord.com/channels/*",
+      "includeSelectors": [
+        "li[id^=chat-messages] div[id^=message-content]",
+        "div[class^=headerText]",
+        "section[aria-label='Search Results'] div[id^=message-content]",
+        "div[class^=messagesPopout]",
+        "[class^='embedTitle']",
+        "[class^='embedDescription']",
+        "[class^='promptContent']",
+        "li[class^='container'] > div[class^='header']"
+      ],
+      "excludeSelectors": [
+        "[class*='username']",
+        "[class*='repliedMessage']"
+      ],
+      "injectCss": [
+        "main div[class^=headerText],main div[class^=message],main div[class^=text] { max-height: unset !important; }",
+        "h3[data-text-variant='heading-lg/semibold'] { -webkit-line-clamp: unset !important; line-height: unset !important; }",
+        "[class*='guildDetails'] > [class*='description'] { -webkit-line-clamp: unset !important; }"
+      ]
+    },
+    {
+      "id": "discussions.apple",
+      "name": "Discussions.apple",
+      "description": "",
+      "includeUrls": "discussions.apple.com",
+      "excludeSelectors": [
+        ".page-number"
+      ]
+    },
+    {
+      "id": "disneyplus",
+      "name": "Disneyplus",
+      "description": "",
+      "includeUrls": "www.disneyplus.com",
+      "excludeSelectors": [
+        ".dss-hls-subtitle-overlay"
+      ]
+    },
+    {
+      "id": "doc2x",
+      "name": "Doc2x",
+      "description": "",
+      "includeUrls": [
+        "doc2x.com",
+        "doc2x.noedgeai.com"
+      ],
+      "excludeSelectors": [
+        "#md-scroll-top-dom"
+      ]
+    },
+    {
+      "id": "docs-swift",
+      "name": "Docs Swift",
+      "description": "",
+      "includeUrls": "docs.swift.org",
+      "includeSelectors": [
+        ".content",
+        "#menu"
+      ]
+    },
+    {
+      "id": "domestika",
+      "name": "Domestika",
+      "description": "",
+      "includeUrls": "www.domestika.org",
+      "excludeSelectors": [
+        ".vjs-text-track-display"
+      ]
+    },
+    {
+      "id": "donghuaworld",
+      "name": "Donghuaworld",
+      "description": "",
+      "includeUrls": "dwserver.donghuaworld.com",
+      "excludeSelectors": [
+        ".jw-media"
+      ]
+    },
+    {
+      "id": "doupocangqiong",
+      "name": "Doupocangqiong",
+      "description": "",
+      "includeUrls": "www.doupocangqiong.org",
+      "injectCss": [
+        "#play_0 ul { display: grid !important; grid-template-columns: repeat(3, 1fr) !important; }",
+        "#play_0 ul li { height: unset !important; }"
+      ]
+    },
+    {
+      "id": "dr",
+      "name": "Dr",
+      "description": "",
+      "includeUrls": "*.dr.dk",
+      "excludeSelectors": [
+        ".vjs-text-track-display > div",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "drizzle",
+      "name": "Drizzle",
+      "description": "",
+      "includeUrls": "orm.drizzle.team",
+      "excludeSelectors": [
+        "[class^='codetabs_tab']",
+        ".npm__tab"
+      ]
+    },
+    {
+      "id": "dtmstation",
+      "name": "Dtmstation",
+      "description": "",
+      "includeUrls": "www.dtmstation.com",
+      "injectCss": ".entry-card-title,.entry-card-snippet { -webkit-line-clamp: unset!important; max-height: unset!important; }"
+    },
+    {
+      "id": "dw",
+      "name": "Dw",
+      "description": "",
+      "includeUrls": "www.dw.com",
+      "excludeSelectors": [
+        ".focus-menu-shown"
+      ]
+    },
+    {
+      "id": "dynamic-repets",
+      "name": "Dynamic Repets",
+      "description": "",
+      "includeUrls": "khovar.tj",
+      "excludeSelectors": [
+        ".slide_container [style*='position: absolute']"
+      ]
+    },
+    {
+      "id": "ebay",
+      "name": "Ebay",
+      "description": "",
+      "includeUrls": "www.ebay.com",
+      "excludeSelectors": [
+        "headers",
+        "[itemprop=offers]",
+        ".dne-itemtile-original-price"
+      ],
+      "injectCss": [
+        ".iS4T .zgfQ .uHzw .Ep66 { -webkit-line-clamp: unset !important; max-height: unset !important; }",
+        "[itemprop=name],.merch-item-title { -webkit-line-clamp: unset !important; max-height: unset !important; }"
+      ]
+    },
+    {
+      "id": "economist",
+      "name": "Economist",
+      "description": "",
+      "includeUrls": "www.economist.com",
+      "excludeSelectors": [
+        "footer.ds-footer",
+        ".vjs-text-track-display"
+      ],
+      "injectCss": [
+        "a::before { position:relative!important; }",
+        "[class^=button] span font { white-space:pre-wrap !important; }"
+      ]
+    },
+    {
+      "id": "edclub.com",
+      "name": "Edclub.com",
+      "description": "",
+      "includeUrls": "www.edclub.com",
+      "excludeSelectors": [
+        ".vjs-text-track-display"
+      ]
+    },
+    {
+      "id": "edx",
+      "name": "Edx",
+      "description": "",
+      "includeUrls": [
+        "*.edx.org",
+        "courses.mitxonline.mit.edu"
+      ],
+      "excludeSelectors": [
+        ".closed-captions",
+        ".wrapper-video-bottom-section",
+        ".secondary-controls"
+      ]
+    },
+    {
+      "id": "eightfold",
+      "name": "Eightfold",
+      "description": "",
+      "includeUrls": "*.eightfold.ai",
+      "injectCss": ".flexbox { width:100% !important; }"
+    },
+    {
+      "id": "epam",
+      "name": "Epam",
+      "description": "",
+      "includeUrls": "*.epam.com",
+      "excludeSelectors": [
+        "#blog-page-sidebar-wrapper"
+      ],
+      "injectCss": "[class*='ContentAnchorLinkList'] { word-break:unset !important; }"
+    },
+    {
+      "id": "epubReader",
+      "name": "Epub Reader",
+      "description": "",
+      "includeUrls": "epub-reader.online",
+      "injectCss": "span.slide-contents-item-label { overflow:visible !important; max-height:unset !important; white-space:normal !important; }"
+    },
+    {
+      "id": "espn",
+      "name": "Espn",
+      "description": "",
+      "includeUrls": "*.espn.com",
+      "excludeSelectors": [
+        "#fittPageContainer"
+      ]
+    },
+    {
+      "id": "explainpaper",
+      "name": "Explainpaper",
+      "description": "",
+      "includeUrls": "https://www.explainpaper.com/reader*",
+      "includeSelectors": [
+        ".leading-relaxed",
+        ".chat-messages p",
+        ".text-sm"
+      ]
+    },
+    {
+      "id": "explainshell",
+      "name": "Explainshell",
+      "description": "",
+      "includeUrls": "explainshell.com",
+      "includeSelectors": [
+        "[class='help-box']"
+      ]
+    },
+    {
+      "id": "f1tv",
+      "name": "F1tv",
+      "description": "",
+      "includeUrls": "f1tv.formula1.com",
+      "excludeSelectors": [
+        "#main-embeddedPlayer"
+      ]
+    },
+    {
+      "id": "f95zone",
+      "name": "F95zone",
+      "description": "",
+      "includeUrls": "f95zone.to",
+      "excludeSelectors": [
+        ".pageNavWrapper",
+        ".message-userExtras",
+        ".message-name"
+      ]
+    },
+    {
+      "id": "facebook",
+      "name": "Facebook",
+      "description": "",
+      "includeUrls": "*.facebook.com",
+      "excludeUrls": [
+        "www.facebook.com/business/*",
+        "business.facebook.com/*",
+        "www.facebook.com/help*",
+        "www.facebook.com/settings*",
+        "www.facebook.com/ads/library/*",
+        "developers.facebook.com/*",
+        "www.facebook.com/v20.0/plugins/*",
+        "www.facebook.com/support*",
+        "www.facebook.com/terms*",
+        "www.facebook.com/privacy*"
+      ],
+      "includeSelectors": [
+        "div[dir=auto][style]",
+        "div[dir=auto][class]",
+        "span[lang]",
+        "[data-pagelet=BizInboxMessengerMessageListContainer] span",
+        "[data-pagelet=BizInboxContextCardDetail] span",
+        ".xod5an3",
+        "[class='x1i10hfl xjbqb8w x1ejq31n xd10rxx x1sy0etr x17r0tee x972fbf xcfux6l x1qhh985 xm0m39n x9f619 x1ypdohk xt0psk2 xe8uvvx xdj266r x11i5rnm xat24cr x1mh8g0r xexx8yu x4uap5 x18d9i69 xkhd6sd x16tdsg8 x1hl2dhg xggy1nq x1a2a7pz x1sur9pj xkrqix3 xzsf02u x1pd3egz']",
+        "#PNG_EXPORT",
+        ".fb_content.clearfix",
+        "[role='main']",
+        "[role='region']",
+        "[role='presentation']",
+        "form#platformDialogForm"
+      ],
+      "excludeSelectors": [
+        "[data-ad-comet-preview=message] [role=button]",
+        "object[type='nested/pressable']",
+        "[data-ad-rendering-role=profile_name]"
+      ],
+      "injectCss": "._4ik4._4ik5 { max-height:unset!important; }"
+    },
+    {
+      "id": "fandom",
+      "name": "Fandom",
+      "description": "",
+      "includeUrls": "*.fandom.com",
+      "excludeSelectors": [
+        "header.fandom-community-header",
+        "div.ph-registration-buttons"
+      ],
+      "injectCss": "#mw-content-text > div > div:nth-child(1) { height:100% !important; }"
+    },
+    {
+      "id": "fautv",
+      "name": "Fautv",
+      "description": "",
+      "includeUrls": "www.fau.tv",
+      "excludeSelectors": [
+        ".jw-wrapper"
+      ]
+    },
+    {
+      "id": "feedly",
+      "name": "Feedly",
+      "description": "",
+      "includeUrls": "feedly.com",
+      "excludeSelectors": [
+        ".Leftnav"
+      ],
+      "injectCss": [
+        ".TitleOnlyLayout,.SelectedEntryScroller > div { height:unset !important; }",
+        ".EntrySummary--u4,.EntrySummary--u5 { -webkit-line-clamp: unset !important; max-height:unset !important; }",
+        ".EntryTitleLink { -webkit-line-clamp: unset !important; }",
+        ".SelectedEntryScroller > div :nth-child(2) :last-child { -webkit-line-clamp: unset !important; }"
+      ]
+    },
+    {
+      "id": "feishu",
+      "name": "Feishu",
+      "description": "",
+      "includeUrls": [
+        "*.feishu.cn",
+        "*.larkoffice.com",
+        "*.larksuite.com"
+      ],
+      "excludeSelectors": [
+        ".catalogue__list"
+      ]
+    },
+    {
+      "id": "feynmanlectures",
+      "name": "Feynmanlectures",
+      "description": "",
+      "includeUrls": "www.feynmanlectures.caltech.edu",
+      "excludeSelectors": [
+        ".videoview",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "ffmpeg",
+      "name": "Ffmpeg",
+      "description": "",
+      "includeUrls": "ffmpeg.org",
+      "excludeSelectors": [
+        ".memproto",
+        ".memtitle"
+      ]
+    },
+    {
+      "id": "figmaCommunity",
+      "name": "Figma Community",
+      "description": "",
+      "includeUrls": "www.figma.com/community/*",
+      "excludeSelectors": [
+        "div[class*='metadataRight']",
+        "div[class*='commentMetaAndOptions']"
+      ],
+      "injectCss": "div[class*='mini_cardBottomRowSizing'] { height: 3em !important; }"
+    },
+    {
+      "id": "fiverr",
+      "name": "Fiverr",
+      "description": "",
+      "includeUrls": "https://www.fiverr.com/inbox/*",
+      "includeSelectors": [
+        ".message-body",
+        "article[data-testid=index-container]"
+      ],
+      "excludeSelectors": [
+        "[data-testid=basic-message-header]",
+        "[data-testid=message-header-timestamp]",
+        "time",
+        ".user-name",
+        ".user-info",
+        ".header"
+      ]
+    },
+    {
+      "id": "fix-header",
+      "name": "Fix Header",
+      "description": "",
+      "includeUrls": [
+        "societyforpsychotherapy.org",
+        "cbtm.manifestlao.com",
+        "notefolio.net"
+      ],
+      "excludeSelectors": [
+        ".site-header"
+      ],
+      "injectCss": "[class*='line-clamp-'] { -webkit-line-clamp: unset!important; max-height: unset!important; }"
+    },
+    {
+      "id": "flutterDev",
+      "name": "Flutter Dev",
+      "description": "",
+      "includeUrls": [
+        "docs.flutter.dev",
+        "docs.flutter.cn"
+      ],
+      "excludeSelectors": [
+        "span.expander.material-symbols",
+        "span.material-symbols"
+      ]
+    },
+    {
+      "id": "fmoviesz",
+      "name": "Fmoviesz",
+      "description": "",
+      "includeUrls": [
+        "fmovies24.to",
+        "*.fmovies.co",
+        "vidplay.online",
+        "c8365730d4.nl",
+        "kerapoxy.cc",
+        "vid41c.site",
+        "https://*/*sub.info=*fmovies24.to*",
+        "https://*/*sub.info=*bflixhd.to*",
+        "mcloud.vvid30c.site",
+        "rabbitstream.net",
+        "kerolaunochan.*",
+        "megacloud.*",
+        "netusa.xyz",
+        "cdnstreame.net",
+        "9animetv.to",
+        "hianime.to",
+        "videostr.net",
+        "anthropic.skilljar.com",
+        "streameeeeee.site"
+      ],
+      "excludeSelectors": [
+        ".jw-wrapper",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "followis",
+      "name": "Followis",
+      "description": "",
+      "includeUrls": "https://app.follow.is/feeds/*",
+      "excludeSelectors": [
+        ".bg-native",
+        "main > div > div.h-full:first-child span"
+      ],
+      "injectCss": "[class*='line-clamp'] { -webkit-line-clamp:unset !important; }"
+    },
+    {
+      "id": "folo",
+      "name": "Folo",
+      "description": "",
+      "includeUrls": "app.folo.is",
+      "excludeSelectors": [
+        "[role=button]"
+      ]
+    },
+    {
+      "id": "fontFmaily",
+      "name": "Font Fmaily",
+      "description": "",
+      "includeUrls": [
+        "skyvipservices.com",
+        "book.novelpia.com"
+      ],
+      "injectCss": [
+        "font { display:block !important; }",
+        "#book-box font { font-family:unset!important; }"
+      ]
+    },
+    {
+      "id": "forum.unity",
+      "name": "Forum.unity",
+      "description": "",
+      "includeUrls": "forum.unity.com",
+      "excludeSelectors": [
+        ".bbCodeCode"
+      ]
+    },
+    {
+      "id": "forums.zotero",
+      "name": "Forums.zotero",
+      "description": "",
+      "includeUrls": "forums.zotero.org",
+      "includeSelectors": [
+        ".page-sidebar",
+        ".page-content"
+      ]
+    },
+    {
+      "id": "foxnews",
+      "name": "Foxnews",
+      "description": "",
+      "includeUrls": "www.foxnews.com",
+      "excludeSelectors": [
+        ".site-footer",
+        ".components-MessageDetails-index__message-details-wrapper",
+        "div[class^=SlideDown__container]",
+        ".components-MessageActions-index__messageActionsWrapper",
+        "span[data-openweb-allow-amp]",
+        "div.spcv_typing-users",
+        "text",
+        "img",
+        "sub",
+        "sup",
+        "code",
+        "tt",
+        "aside"
+      ]
+    },
+    {
+      "id": "foxnews-video",
+      "name": "Foxnews Video",
+      "description": "",
+      "includeUrls": "https://static.foxnews.com/static/orion/html/video/iframe/vod.html*",
+      "excludeSelectors": [
+        "#player"
+      ]
+    },
+    {
+      "id": "freecodecamp",
+      "name": "Freecodecamp",
+      "description": "",
+      "includeUrls": "www.freecodecamp.org",
+      "excludeSelectors": [
+        ".monaco-mouse-cursor-text",
+        ".challenge-preview"
+      ]
+    },
+    {
+      "id": "frontendmasters",
+      "name": "Frontendmasters",
+      "description": "",
+      "includeUrls": "frontendmasters.com",
+      "excludeSelectors": [
+        ".vjs-text-track-display"
+      ]
+    },
+    {
+      "id": "ft",
+      "name": "Ft",
+      "description": "",
+      "includeUrls": "www.ft.com",
+      "excludeSelectors": [
+        "footer",
+        "[aria-labelledby=cookie-banner-aria-label]"
+      ]
+    },
+    {
+      "id": "futuretools",
+      "name": "Futuretools",
+      "description": "",
+      "includeUrls": "www.futuretools.io",
+      "injectCss": ".collection-item-6 { height: unset !important; }"
+    },
+    {
+      "id": "gagaoolala",
+      "name": "Gagaoolala",
+      "description": "",
+      "includeUrls": "www.gagaoolala.com",
+      "excludeSelectors": [
+        "#gl-id-video-container"
+      ]
+    },
+    {
+      "id": "gaia",
+      "name": "Gaia",
+      "description": "",
+      "includeUrls": "www.gaia.com",
+      "excludeSelectors": [
+        "video-js"
+      ]
+    },
+    {
+      "id": "ganjingworld",
+      "name": "Ganjingworld",
+      "description": "",
+      "includeUrls": "www.ganjingworld.com",
+      "excludeSelectors": [
+        ".vidPlayerWrap"
+      ]
+    },
+    {
+      "id": "gemini.google",
+      "name": "Gemini.google",
+      "description": "",
+      "includeUrls": "gemini.google.com",
+      "injectCss": "[data-test-id=conversation] { height: unset!important; }"
+    },
+    {
+      "id": "genuine",
+      "name": "Genuine",
+      "description": "",
+      "includeUrls": "blog.genuine.com",
+      "excludeSelectors": [
+        "div.enlighter"
+      ]
+    },
+    {
+      "id": "github-blog",
+      "name": "Github Blog",
+      "description": "",
+      "includeUrls": "github.blog",
+      "injectCss": "font { word-break: break-all !important; }"
+    },
+    {
+      "id": "githubBlog",
+      "name": "Github Blog",
+      "description": "",
+      "includeUrls": "github.blog",
+      "injectCss": ".font-mktg { word-break:normal !important; }"
+    },
+    {
+      "id": "githubGist",
+      "name": "Github Gist",
+      "description": "",
+      "includeUrls": "gist.github.com",
+      "includeSelectors": [
+        ".markdown-body",
+        ".readme"
+      ]
+    },
+    {
+      "id": "githubNotebook",
+      "name": "Github Notebook",
+      "description": "",
+      "includeUrls": "notebooks.githubusercontent.com",
+      "excludeSelectors": [
+        "div.jp-CodeCell"
+      ]
+    },
+    {
+      "id": "gitlab",
+      "name": "Gitlab",
+      "description": "",
+      "includeUrls": "gitlab.com",
+      "excludeSelectors": [
+        ".tree-content-holder",
+        "nav",
+        ".home-panel-metadata",
+        "div[data-testid=project_topic_list]",
+        ".commit"
+      ]
+    },
+    {
+      "id": "gitpod",
+      "name": "Gitpod",
+      "description": "",
+      "includeUrls": "www.gitpod.io/docs/*",
+      "includeSelectors": [
+        ".content-docs"
+      ]
+    },
+    {
+      "id": "glasp",
+      "name": "Glasp",
+      "description": "",
+      "includeUrls": "glasp.co",
+      "excludeSelectors": [
+        ".home_overview_list_content_wrapper"
+      ]
+    },
+    {
+      "id": "goodreads",
+      "name": "Goodreads",
+      "description": "",
+      "includeUrls": "www.goodreads.com",
+      "excludeSelectors": [
+        ".badgeYear",
+        ".gr-mediaBox__desc",
+        ".bookVotedRow",
+        ".minirating",
+        "div[itemprop='aggregateRating']",
+        ".wtrButtonContainer",
+        ".RatingsHistogram__labelTitle",
+        ".FollowButton",
+        ".siteHeader__topLevelLink",
+        "#books > thead",
+        "td[class*='rating']",
+        "td[class*='shelves']",
+        "td[class*='date_read']",
+        "td[class*='date_added']",
+        "td[class*='actions']"
+      ]
+    },
+    {
+      "id": "googleIndex",
+      "name": "Google Index",
+      "description": "",
+      "includeUrls": [
+        "https://www.google.com/",
+        "https://www.google.com.hk/"
+      ],
+      "excludeSelectors": [
+        "#gb",
+        "#SIvCob"
+      ]
+    },
+    {
+      "id": "googleMail",
+      "name": "Google Mail",
+      "description": "",
+      "includeUrls": "mail.google.com",
+      "injectCss": "[role='listitem'] > div { height:auto!important; white-space:unset!important; }"
+    },
+    {
+      "id": "googleMeet",
+      "name": "Google Meet",
+      "description": "",
+      "includeUrls": "meet.google.com",
+      "excludeSelectors": [
+        ".iOzk7[jsname='dsyhDe']",
+        ".ygicle.VbkSUe"
+      ]
+    },
+    {
+      "id": "googleNews",
+      "name": "Google News",
+      "description": "",
+      "includeUrls": "news.google.com",
+      "excludeSelectors": [
+        ".EyERq",
+        ".AOl7G.eejsDc",
+        "[aria-label='Home']",
+        "[aria-label='For you']",
+        "[aria-label='Following']",
+        "[aria-label='World']",
+        "[aria-label='Local']",
+        ".gb_Fc",
+        ".wBQf7b",
+        ".yPI8Rb",
+        ".jKHa4e",
+        ".u43Gd",
+        ".Zgjpyb",
+        "[role='button']",
+        "[jsname='rymPhb']",
+        ".cbz1ld",
+        ".VfPpkd-P5QLlc",
+        ".XvhY1d",
+        "time",
+        ".bInasb"
+      ],
+      "injectCss": [
+        ".oovtQ,.MCAGUe,.To2ZZb.DbQnIe { height: unset !important; }",
+        "h4,.IBr9hb,.gPFEn { -webkit-line-clamp: unset!important; }",
+        ".cp7Yvc > h2 { display: block !important; }"
+      ]
+    },
+    {
+      "id": "googlePlay",
+      "name": "Google Play",
+      "description": "",
+      "includeUrls": "play.google.com",
+      "excludeSelectors": [
+        ".vlGucd",
+        ".ubGTjb",
+        ".page-nums"
+      ],
+      "injectCss": [
+        ".Epkrse { -webkit-line-clamp:unset !important; }",
+        "div[data-g-id='description'] { -webkit-line-clamp:unset !important; max-height:unset !important; }"
+      ]
+    },
+    {
+      "id": "googleScholar",
+      "name": "Google Scholar",
+      "description": "",
+      "includeUrls": [
+        "scholar.google.*/*",
+        "scholar.google.com.*/*",
+        "scholar.google.co.*/*"
+      ],
+      "includeSelectors": [
+        "h3 a[data-clk]",
+        "div.gs_rs",
+        "td a.gsc_a_at",
+        "td div.gs_gray:last-of-type",
+        "div.gsc_oci_value",
+        "#gs_opinion",
+        ".gs_rt",
+        ".gsh_csp",
+        ".gs_fma_wpr",
+        "#gs_as_hp_main"
+      ]
+    },
+    {
+      "id": "gradioappdocs",
+      "name": "Gradioappdocs",
+      "description": "",
+      "includeUrls": "www.gradio.app/docs/*",
+      "includeSelectors": [
+        "div.obj"
+      ],
+      "excludeSelectors": [
+        "div#examples"
+      ]
+    },
+    {
+      "id": "graphcore",
+      "name": "Graphcore",
+      "description": "",
+      "includeUrls": "www.graphcore.ai",
+      "excludeSelectors": [
+        ".morph"
+      ]
+    },
+    {
+      "id": "graphpad",
+      "name": "Graphpad",
+      "description": "",
+      "includeUrls": "www.graphpad.com",
+      "excludeSelectors": [
+        "div[data-handle='captions']",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "ground",
+      "name": "Ground",
+      "description": "",
+      "includeUrls": "ground.news",
+      "injectCss": ".line-clamp-3 { -webkit-line-clamp: unset !important; }"
+    },
+    {
+      "id": "gta5-mods",
+      "name": "Gta5 Mods",
+      "description": "",
+      "includeUrls": "www.gta5-mods.com",
+      "excludeSelectors": [
+        "#main-nav"
+      ]
+    },
+    {
+      "id": "hadoop.apache.org",
+      "name": "Hadoop.apache.org",
+      "description": "",
+      "includeUrls": "hadoop.apache.org",
+      "excludeSelectors": [
+        ".xleft",
+        ".xright",
+        "#navcolumn"
+      ]
+    },
+    {
+      "id": "hbomax",
+      "name": "Hbomax",
+      "description": "",
+      "includeUrls": [
+        "play.max.com",
+        "play.hbomax.com"
+      ],
+      "excludeSelectors": [
+        "[data-testid='playerContainer']",
+        "[data-testid='CueBoxContainer']"
+      ]
+    },
+    {
+      "id": "healthline",
+      "name": "Healthline",
+      "description": "",
+      "includeUrls": "www.healthline.com",
+      "excludeSelectors": [
+        ".icon-hl-trusted-source-after"
+      ]
+    },
+    {
+      "id": "help.maxon.net",
+      "name": "Help.maxon.net",
+      "description": "",
+      "includeUrls": "help.maxon.net",
+      "excludeSelectors": [
+        "#contentBody"
+      ]
+    },
+    {
+      "id": "hikaritv",
+      "name": "Hikaritv",
+      "description": "",
+      "includeUrls": "boosterx.stream",
+      "excludeSelectors": [
+        ".jw-wrapper"
+      ]
+    },
+    {
+      "id": "hltv",
+      "name": "Hltv",
+      "description": "",
+      "includeUrls": [
+        "hltv.org",
+        "*.hltv.org"
+      ],
+      "excludeSelectors": [
+        ".navbar",
+        "[data-nav-item]",
+        "[data-nav-extras]",
+        "[data-navbar-main-menu-item-container]",
+        "[data-navbar-extra-items-container]",
+        ".forum-topbar",
+        ".forum-bottombar"
+      ]
+    },
+    {
+      "id": "hnAlgolia",
+      "name": "Hn Algolia",
+      "description": "",
+      "includeUrls": "hn.algolia.com",
+      "includeSelectors": [
+        ".Story_title > a:first-child",
+        ".Story_comment > span"
+      ]
+    },
+    {
+      "id": "hoyolab",
+      "name": "Hoyolab",
+      "description": "",
+      "includeUrls": "www.hoyolab.com",
+      "excludeSelectors": [
+        ".reply-card__nickname",
+        ".mhy-user-card__name",
+        ".mhy-account-title__name"
+      ]
+    },
+    {
+      "id": "hstream",
+      "name": "Hstream",
+      "description": "",
+      "includeUrls": "hstream.moe",
+      "excludeSelectors": [
+        ".video-container"
+      ]
+    },
+    {
+      "id": "hub.logseq",
+      "name": "Hub.logseq",
+      "description": "",
+      "includeUrls": "hub.logseq.com",
+      "injectCss": "[class*=':h-['] { height:unset !important; }"
+    },
+    {
+      "id": "huggingface",
+      "name": "Huggingface",
+      "description": "",
+      "includeUrls": "huggingface.co",
+      "excludeSelectors": [
+        "thead",
+        "ul.text-base",
+        "a.group > div.flex-1",
+        "div.absolute.truncate",
+        "nav",
+        "ul[class*='dark:border-gray-800']",
+        "div[class*='from-gray-100-to-white']"
+      ],
+      "injectCss": ".line-clamp-2 { -webkit-line-clamp:unset !important; max-height:unset !important; }"
+    },
+    {
+      "id": "hulu",
+      "name": "Hulu",
+      "description": "",
+      "includeUrls": [
+        "https://*.hulu.com",
+        "https://*.hulu.*"
+      ],
+      "excludeSelectors": [
+        ".PlayerMetadata__subTitle",
+        ".CaptionBox"
+      ]
+    },
+    {
+      "id": "iaabcfoundation",
+      "name": "Iaabcfoundation",
+      "description": "",
+      "includeUrls": "learning.iaabcfoundation.org",
+      "excludeSelectors": [
+        "[data-testid=\"video-player\"]"
+      ]
+    },
+    {
+      "id": "iflix",
+      "name": "Iflix",
+      "description": "",
+      "includeUrls": [
+        "www.iflix.com",
+        "wetv.vip"
+      ],
+      "excludeSelectors": [
+        ".text-track"
+      ]
+    },
+    {
+      "id": "imdb",
+      "name": "Imdb",
+      "description": "",
+      "includeUrls": [
+        "www.imdb.com",
+        "m.imdb.com"
+      ],
+      "excludeSelectors": [
+        ".jw-text-track-container"
+      ],
+      "injectCss": "[class*=overflow] { max-height:unset!important; }"
+    },
+    {
+      "id": "imigresen-online",
+      "name": "Imigresen Online",
+      "description": "",
+      "includeUrls": "imigresen-online.imi.gov.my",
+      "excludeSelectors": [
+        "#clock"
+      ]
+    },
+    {
+      "id": "indeed",
+      "name": "Indeed",
+      "description": "",
+      "includeUrls": "*.indeed.com",
+      "injectCss": "span,.css-19rjr9w.e1wnkr790 { max-height:unset !important; -webkit-line-clamp:unset !important; height:unset !important; white-space:unset !important; }"
+    },
+    {
+      "id": "indiehackers",
+      "name": "Indiehackers",
+      "description": "",
+      "includeUrls": "www.indiehackers.com",
+      "excludeSelectors": [
+        ".portal-entry__date",
+        ".portal-entry__byline",
+        ".firestore-post__header-metadata",
+        ".story__counts",
+        ".story__time-ago",
+        ".story__byline",
+        ".partnerships__age",
+        ".job__pay",
+        ".author-bio__name-link",
+        ".comment__footer"
+      ],
+      "injectCss": ".meetups__meetup-name,.partnerships__title { -webkit-line-clamp: unset!important; max-height: unset!important; }"
+    },
+    {
+      "id": "inoreader",
+      "name": "Inoreader",
+      "description": "",
+      "includeUrls": [
+        "www.inoreader.com",
+        "*.inoreader.com"
+      ],
+      "excludeUrls": [
+        "https://www.inoreader.com/features*",
+        "https://www.inoreader.com/blog*",
+        "https://www.inoreader.com/discover*",
+        "https://www.inoreader.com/contact*",
+        "https://www.inoreader.com/pricing*",
+        "https://www.inoreader.com/enterprise*"
+      ],
+      "includeSelectors": [
+        ".article_header_title",
+        ".article_title_link",
+        ".article_content",
+        ".article_magazine_title_link",
+        ".blog-post-page",
+        "#welcome_center",
+        ".gad_overview_articles_wrapper",
+        ".library_article_text h4",
+        ".header_name",
+        ".blog-content"
+      ],
+      "injectCss": [
+        ".article_title_link,.library_article_text h4,.gadget_overview_article_title,.article_magazine_title_link,.reader_pane_view_style_2 .column_view_title { -webkit-line-clamp: unset!important; max-height: unset!important; }",
+        ".article_tile_content_wraper,div.article_tile { overflow:auto !important; }",
+        ".article_header_title { white-space:normal !important; max-height: unset!important; }",
+        ".article_header_title span { display:flex !important; flex-direction: column !important; }",
+        ".ar.article_no_thumbnail,[data-type=article] { height:unset!important; }",
+        ".view_style_2 #reader_pane .ar .article_header_text .column_view_info { position:relative!important; }"
+      ]
+    },
+    {
+      "id": "instagramMessage",
+      "name": "Instagram Message",
+      "description": "",
+      "includeUrls": "https://www.instagram.com/direct/*",
+      "includeSelectors": [
+        "div[dir=auto].html-div"
+      ]
+    },
+    {
+      "id": "instagramPost",
+      "name": "Instagram Post",
+      "description": "",
+      "includeUrls": [
+        "https://www.instagram.com/p/*",
+        "https://www.instagram.com/reels/*"
+      ],
+      "includeSelectors": [
+        "h1",
+        "ul li h3+div span[dir=auto]",
+        "hr+div span[dir=auto][style]",
+        "div > div[dir=auto]",
+        "div:not([class]) > div > div:nth-child(2)"
+      ],
+      "excludeSelectors": [
+        "hr+div span[dir=auto][style] > span"
+      ],
+      "injectCss": "article ._aagw { position:unset !important; }"
+    },
+    {
+      "id": "internetfundamentals",
+      "name": "Internetfundamentals",
+      "description": "",
+      "includeUrls": "internetfundamentals.com",
+      "excludeSelectors": [
+        "#vjs_video_3",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "ipinfo",
+      "name": "Ipinfo",
+      "description": "",
+      "includeUrls": "ipinfo.io",
+      "injectCss": ".text-bali-hai-primary:last-child { display:none!important; }"
+    },
+    {
+      "id": "iview",
+      "name": "Iview",
+      "description": "",
+      "includeUrls": "iview.abc.net.au",
+      "excludeSelectors": [
+        ".jwplayer"
+      ]
+    },
+    {
+      "id": "jable",
+      "name": "Jable",
+      "description": "",
+      "includeUrls": "https://jable.tv/*",
+      "injectCss": [
+        ".title { white-space:unset !important; max-height:unset !important; }",
+        ".img-box > a { position:relative !important; }"
+      ]
+    },
+    {
+      "id": "janitorai",
+      "name": "Janitorai",
+      "description": "",
+      "includeUrls": "https://janitorai.com",
+      "excludeSelectors": [
+        "[data-testid=virtuoso-scroller] .css-104fsj *"
+      ]
+    },
+    {
+      "id": "javbus",
+      "name": "Javbus",
+      "description": "",
+      "includeUrls": "https://www.javbus.com/*",
+      "excludeSelectors": [
+        ".item-tag",
+        "date"
+      ],
+      "injectCss": ".photo-info { height:unset !important; }"
+    },
+    {
+      "id": "javdb",
+      "name": "Javdb",
+      "description": "",
+      "includeUrls": "https://javdb*.com/*",
+      "excludeSelectors": [
+        ".video-number",
+        ".score",
+        ".has-addons"
+      ],
+      "injectCss": ".video-title { white-space:unset !important; }"
+    },
+    {
+      "id": "jddonline.com",
+      "name": "Jddonline.com",
+      "description": "",
+      "includeUrls": "jddonline.com",
+      "injectCss": ".article-body { column-count:unset !important; -webkit-column-count:unset !important; -moz-column-count:unset !important; }"
+    },
+    {
+      "id": "jetbrains",
+      "name": "Jetbrains",
+      "description": "",
+      "includeUrls": "https://*.jetbrains.com",
+      "excludeSelectors": [
+        ".toolbar__ee8",
+        "[data-test=\"left-sidebar\"]",
+        ".comment__info",
+        ".symbol.monospace"
+      ],
+      "injectCss": ".card p,.card h4 { -webkit-line-clamp:unset !important; }"
+    },
+    {
+      "id": "jira",
+      "name": "Jira",
+      "description": "",
+      "includeUrls": [
+        "jira.*.com/browse/*",
+        "jira.*.com/projects/*"
+      ],
+      "includeSelectors": [
+        "[id=descriptionmodule]",
+        "[id=summary-val]",
+        "div.action-body",
+        "td.stsummary"
+      ]
+    },
+    {
+      "id": "jscires",
+      "name": "Jscires",
+      "description": "",
+      "includeUrls": "jscires.org",
+      "excludeSelectors": [
+        ".jatsa_contrib_info"
+      ]
+    },
+    {
+      "id": "jstor",
+      "name": "Jstor",
+      "description": "",
+      "includeUrls": "www.jstor.org",
+      "excludeUrls": "www.jstor.org/stable/pdf*",
+      "excludeSelectors": [
+        ".audio-duration",
+        "[data-qa='card-item-count']"
+      ],
+      "injectCss": [
+        ".card__heading { -webkit-line-clamp:unset !important; }",
+        "search-results-vue-pharos-image-card,search-ui-pharos-image-card { display:flex !important; }",
+        "search-results-vue-pharos-link { display:inline !important; }"
+      ]
+    },
+    {
+      "id": "jwxs",
+      "name": "Jwxs",
+      "description": "",
+      "includeUrls": "www.jwxs.org/book/*",
+      "injectCss": [
+        "#list dd { height: 5rem !important; line-height: unset !important; }",
+        ".readbtn .chapterlist { margin: unset !important; }"
+      ]
+    },
+    {
+      "id": "kadaza",
+      "name": "Kadaza",
+      "description": "",
+      "includeUrls": "https://www.kadaza.com/",
+      "includeSelectors": [
+        ".header span.title",
+        ".custom-content-footer"
+      ]
+    },
+    {
+      "id": "kaggle",
+      "name": "Kaggle",
+      "description": "",
+      "includeUrls": "www.kaggle.com",
+      "excludeSelectors": [
+        ".sc-kHItYk.kCjSZT",
+        ".sc-hagvSa.guBIfV",
+        ".sc-jhZTHU.btgPPn",
+        "#editor-sidebar-scroll-container"
+      ],
+      "injectCss": [
+        ".km-listitem--large { height:unset !important; }",
+        ".km-listitem--large .jWyUHl { height:unset !important; }",
+        "[role=listitem] { overflow:scroll !important; }",
+        "[role=listitem] div { -webkit-line-clamp:unset !important; }",
+        "[class*='km-listitem--medium'] { height:unset !important; }",
+        ".MuiListItem-root a > div :nth-child(2) { height:unset !important; }"
+      ]
+    },
+    {
+      "id": "kanopy",
+      "name": "Kanopy",
+      "description": "",
+      "includeUrls": "*.kanopy.com",
+      "excludeSelectors": [
+        ".vjs-text-track-display"
+      ]
+    },
+    {
+      "id": "khflix",
+      "name": "Khflix",
+      "description": "",
+      "includeUrls": [
+        "khflix.com",
+        "watch.globaltv.com"
+      ],
+      "excludeSelectors": [
+        "#video-playlist"
+      ]
+    },
+    {
+      "id": "klibs",
+      "name": "Klibs",
+      "description": "",
+      "includeUrls": "klibs.io",
+      "excludeSelectors": [
+        "[class*='styles_footerWrapper']",
+        "[class*='styles_searchFilterContainerWrapper']",
+        "[class*='styles_headingWrapper']",
+        "[class*='styles_navigation']",
+        "[class*='styles_rightSideColumnWrapper']",
+        ".breadcrumb"
+      ],
+      "injectCss": "[class*='styles_card'] { height:unset!important; -webkit-line-clamp:unset!important; max-height:unset!important; }"
+    },
+    {
+      "id": "law.mit.edu",
+      "name": "Law.mit.edu",
+      "description": "",
+      "includeUrls": "law.mit.edu",
+      "injectCss": "@media screen and (min-width: 768px) { .pub-header-theme-light { top:-80% !important; } }"
+    },
+    {
+      "id": "learningSap",
+      "name": "Learning Sap",
+      "description": "",
+      "includeUrls": "learning.sap.com",
+      "excludeSelectors": [
+        ".playkit-subtitles",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "learnopengl",
+      "name": "Learnopengl",
+      "description": "",
+      "includeUrls": "learnopengl.com",
+      "injectCss": "function { position:relative !important; z-index:1000 !important; }"
+    },
+    {
+      "id": "lecturio",
+      "name": "Lecturio",
+      "description": "",
+      "includeUrls": "app.lecturio.com",
+      "excludeSelectors": [
+        "#vjs_video_3"
+      ]
+    },
+    {
+      "id": "lesswrong",
+      "name": "Lesswrong",
+      "description": "",
+      "includeUrls": "www.lesswrong.com",
+      "excludeSelectors": [
+        ".PostsPagePostHeader-authorAndSecondaryInfo",
+        ".Answer-answerHeader",
+        "time",
+        ".CommentsItemMeta-root",
+        ".CommentsListMeta-root",
+        ".CommentsTableOfContents-tocPostedAt",
+        ".CommentsTableOfContents-commentAuthor",
+        ".CommentBottom-bottom"
+      ]
+    },
+    {
+      "id": "letsjelly",
+      "name": "Letsjelly",
+      "description": "",
+      "includeUrls": "app.letsjelly.com",
+      "includeSelectors": [
+        ".message-content",
+        ".h1-subject-button",
+        ".cil-subject",
+        ".cil-body-wrapper",
+        ".text-body"
+      ]
+    },
+    {
+      "id": "libreddit",
+      "name": "Libreddit",
+      "description": "",
+      "includeUrls": "libreddit.de",
+      "includeSelectors": [
+        "h2.post_title",
+        ".comment_body > .md"
+      ]
+    },
+    {
+      "id": "linkedin",
+      "name": "Linkedin",
+      "description": "",
+      "includeUrls": "*.linkedin.com",
+      "excludeSelectors": [
+        "#global-nav",
+        ".global-footer-compact",
+        ".ad-banner-container",
+        ".scaffold-layout__sidebar",
+        ".update-components-actor__meta > a:not(.update-components-actor__meta-link)",
+        ".update-components-actor__title"
+      ],
+      "injectCss": [
+        ".feed-shared-inline-show-more-text,.comments-comment-item__inline-show-more-text { max-height: none !important; }",
+        ".update-components-actor__description,.comments-comment-meta__description-subtitle { white-space: normal !important; text-overflow: clip !important; overflow: visible !important; height: auto !important; }"
+      ]
+    },
+    {
+      "id": "linkin",
+      "name": "Linkin",
+      "description": "",
+      "includeUrls": "*.linkedin.com",
+      "excludeSelectors": [
+        ".vjs-text-track-display"
+      ],
+      "injectCss": ".linked-area * { max-height: unset !important; }"
+    },
+    {
+      "id": "liquipedia",
+      "name": "Liquipedia",
+      "description": "",
+      "includeUrls": "liquipedia.net",
+      "excludeSelectors": [
+        ".carousel-item"
+      ]
+    },
+    {
+      "id": "lobste",
+      "name": "Lobste",
+      "description": "",
+      "includeUrls": "lobste.rs",
+      "excludeUrls": [
+        "https://lobste.rs/about",
+        "https://lobste.rs/chat"
+      ],
+      "includeSelectors": [
+        ".u-repost-of",
+        ".comment_text",
+        ".story_text"
+      ]
+    },
+    {
+      "id": "lookintobitcoin",
+      "name": "Lookintobitcoin",
+      "description": "",
+      "includeUrls": "https://www.lookintobitcoin.com/charts/*",
+      "excludeSelectors": [
+        "svg"
+      ]
+    },
+    {
+      "id": "lowendtalk",
+      "name": "Lowendtalk",
+      "description": "",
+      "includeUrls": "lowendtalk.com",
+      "includeSelectors": [
+        "[role=heading]",
+        "h1",
+        ".userContent",
+        ".DismissMessage",
+        ".PanelColumn",
+        ".Meta-Discussion"
+      ],
+      "excludeSelectors": [
+        ".ClearFix .Count"
+      ]
+    },
+    {
+      "id": "lowstresshandling",
+      "name": "Lowstresshandling",
+      "description": "",
+      "includeUrls": "university.lowstresshandling.com",
+      "excludeSelectors": [
+        "div[data-vjs-player]"
+      ]
+    },
+    {
+      "id": "luminousfox",
+      "name": "Luminousfox",
+      "description": "",
+      "includeUrls": "www.luminousfox.com/book/*",
+      "injectCss": "#detail_chapter .box_content ul li { height: unset !important; overflow: visible !important; }"
+    },
+    {
+      "id": "mailSites",
+      "name": "Mail Sites",
+      "description": "",
+      "includeUrls": "mail.126.com",
+      "excludeSelectors": [
+        ".mail-list-time",
+        ".mail-list-frome"
+      ],
+      "injectCss": ".mail-list-frome { display:none !important; }"
+    },
+    {
+      "id": "mangaplus-shueisha",
+      "name": "Mangaplus Shueisha",
+      "description": "",
+      "includeUrls": "mangaplus.shueisha.*",
+      "excludeSelectors": [
+        ".zao-surface"
+      ]
+    },
+    {
+      "id": "marketsurge",
+      "name": "Marketsurge",
+      "description": "",
+      "includeUrls": "marketsurge.investors.com",
+      "excludeSelectors": [
+        ".jwplayer"
+      ]
+    },
+    {
+      "id": "marquee-gs",
+      "name": "Marquee Gs",
+      "description": "",
+      "includeUrls": "marquee.gs.com",
+      "excludeSelectors": [
+        "[class*='article-header-sub-header']",
+        "[role=img]"
+      ]
+    },
+    {
+      "id": "masterclass",
+      "name": "Masterclass",
+      "description": "",
+      "includeUrls": [
+        "www.masterclass.com",
+        "learn.microsoft.com"
+      ],
+      "excludeSelectors": [
+        ".mc-video--text-track"
+      ]
+    },
+    {
+      "id": "mastodon",
+      "name": "Mastodon",
+      "description": "",
+      "includeUrls": [
+        "mastodon.social",
+        "mastodon.online",
+        "kolektiva.social",
+        "indieweb.social",
+        "mastodon.world",
+        "infosec.exchange"
+      ],
+      "includeSelectors": [
+        "div.status__content__text",
+        ".about__section__body",
+        ".content",
+        ".form-container",
+        ".account__header__extra"
+      ]
+    },
+    {
+      "id": "maxroll",
+      "name": "Maxroll",
+      "description": "",
+      "includeUrls": "maxroll.gg",
+      "excludeSelectors": [
+        "span[class^='text-opac'] + span[class^='text-']"
+      ],
+      "injectCss": [
+        "font { font-family: sans-serif !important; }",
+        ".d4t-sprite-icon { display: unset !important; }"
+      ]
+    },
+    {
+      "id": "medbridge",
+      "name": "Medbridge",
+      "description": "",
+      "includeUrls": "www.medbridge.com",
+      "excludeSelectors": [
+        "#player-video"
+      ]
+    },
+    {
+      "id": "mediadelivery",
+      "name": "Mediadelivery",
+      "description": "",
+      "includeUrls": "iframe.mediadelivery.net",
+      "excludeSelectors": [
+        ".plyr__captions",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "mediaspace",
+      "name": "Mediaspace",
+      "description": "",
+      "includeUrls": "mediaspace.illinois.edu",
+      "excludeSelectors": [
+        ".playkit-overlay-action"
+      ]
+    },
+    {
+      "id": "medici",
+      "name": "Medici",
+      "description": "",
+      "includeUrls": "www.medici.tv",
+      "excludeSelectors": [
+        "#player-movie-page"
+      ]
+    },
+    {
+      "id": "medium",
+      "name": "Medium",
+      "description": "",
+      "includeUrls": [
+        "medium.com",
+        "*.medium.com"
+      ],
+      "excludeSelectors": [
+        "[aria-label='Post Preview Reading Time']",
+        ".speechify-ignore",
+        "article pre",
+        "pre > span"
+      ],
+      "injectCss": [
+        ".u-lineClamp4,.u-lineClamp3,.u-lineClamp2 { -webkit-line-clamp:unset!important; max-height:unset!important; }",
+        "h2,h3 { -webkit-line-clamp: unset !important; max-height:unset !important; }",
+        "article p { -webkit-line-clamp: unset !important; max-height:unset !important; }"
+      ]
+    },
+    {
+      "id": "mfacebook",
+      "name": "Mfacebook",
+      "description": "",
+      "includeUrls": "m.facebook.com",
+      "includeSelectors": [
+        "div[dir=auto][style]",
+        "div[dir=auto][class]",
+        "span[lang]",
+        "[data-pagelet=BizInboxMessengerMessageListContainer] span",
+        "[data-pagelet=BizInboxContextCardDetail] span",
+        "[data-type=container][data-mcomponent=MContainer][class='m displayed'] .native-text",
+        "[data-mcomponent=ServerTextArea] .native-text"
+      ],
+      "excludeSelectors": [
+        "[data-ad-comet-preview=message] [role=button]",
+        "[role=button]"
+      ],
+      "injectCss": ".native-text.rslh { line-height:unset!important; }"
+    },
+    {
+      "id": "microsoft",
+      "name": "Microsoft",
+      "description": "",
+      "includeUrls": [
+        "https://apps.microsoft.com/store/detail/*",
+        "https://apps.microsoft.com/detail/*"
+      ],
+      "injectCss": ".line-clamp { -webkit-line-clamp:unset !important; max-height:unset !important; }"
+    },
+    {
+      "id": "migadu",
+      "name": "Migadu",
+      "description": "",
+      "includeUrls": "webmail.migadu.com",
+      "includeSelectors": [
+        ".bodyText"
+      ]
+    },
+    {
+      "id": "mindvalley",
+      "name": "Mindvalley",
+      "description": "",
+      "includeUrls": "home.mindvalley.com",
+      "excludeSelectors": [
+        ".vjs-text-track-display"
+      ]
+    },
+    {
+      "id": "missav",
+      "name": "Missav",
+      "description": "",
+      "includeUrls": "https://missav.*/*",
+      "excludeSelectors": [
+        ".leading-normal",
+        "[class='absolute bottom-1 right-1 rounded-lg px-2 py-1 text-xs text-nord5 bg-gray-800 bg-opacity-75']",
+        "[class='absolute bottom-1 left-1 rounded-lg px-2 py-1 text-xs text-nord5 bg-blue-800 bg-opacity-75']"
+      ],
+      "injectCss": [
+        ".truncate { white-space:unset !important; }",
+        ".overflow-y-hidden { max-height:unset !important; overflow-y:unset !important; }"
+      ]
+    },
+    {
+      "id": "mitre",
+      "name": "Mitre",
+      "description": "",
+      "includeUrls": "cwe.mitre.org",
+      "injectCss": "span.list_entry { height: unset !important; }"
+    },
+    {
+      "id": "ml4vis",
+      "name": "Ml4vis",
+      "description": "",
+      "includeUrls": "ml4vis.github.io",
+      "excludeSelectors": [
+        ".jss45"
+      ],
+      "injectCss": [
+        ".jss42 { height:unset !important; }",
+        ".jss44 { max-height:unset !important; }"
+      ]
+    },
+    {
+      "id": "moltbook",
+      "name": "Moltbook",
+      "description": "",
+      "includeUrls": "www.moltbook.com",
+      "excludeSelectors": [
+        "[class='flex items-center gap-1 sm:gap-2 text-[10px] sm:text-xs text-[#7c7c7c] mb-1.5 sm:mb-2 flex-wrap']",
+        "[class='flex items-center gap-2 sm:gap-4 text-[10px] sm:text-xs text-[#7c7c7c]']",
+        "[class='flex items-center gap-2 p-2 rounded-lg transition-all duration-200 group animate-fadeIn bg-gradient-to-r from-[#ffd700]/10 to-transparent hover:from-[#ffd700]/20']",
+        "[class='flex flex-col items-center gap-0.5 sm:gap-1 text-center min-w-[32px] sm:min-w-[40px]']",
+        "[class='bg-white border border-[#e0e0e0] rounded-lg overflow-hidden'] .p-2",
+        "[class='text-xs text-[#818384] mb-2']",
+        "[class='w-12 bg-[#161617] rounded-l-lg flex flex-col items-center py-3 text-sm']",
+        "[class='bg-[#1a1a1b] px-4 py-3 flex items-center justify-between sticky top-[52px] z-40 rounded-t-lg border border-[#333] shadow-md']",
+        "[class='flex items-center gap-3 text-xs text-[#818384]']",
+        "a[class='text-[#d7dadc] font-medium hover:underline']"
+      ],
+      "injectCss": "[class*='line-clamp'] { -webkit-line-clamp:unset !important; }"
+    },
+    {
+      "id": "monmouthcoffee",
+      "name": "Monmouthcoffee",
+      "description": "",
+      "includeUrls": "www.monmouthcoffee.*",
+      "excludeSelectors": [
+        "#basket"
+      ]
+    },
+    {
+      "id": "motrix.app",
+      "name": "Motrix.app",
+      "description": "",
+      "includeUrls": "motrix.app",
+      "excludeSelectors": [
+        ".download-section__right .el-tabs__nav"
+      ]
+    },
+    {
+      "id": "movie-web",
+      "name": "Movie Web",
+      "description": "",
+      "includeUrls": [
+        "movie-web.app/media*",
+        "movie-web-me.vercel.app/media*",
+        "*.vidbinge.com",
+        "vidsrc.xyz"
+      ],
+      "excludeSelectors": [
+        "#root"
+      ]
+    },
+    {
+      "id": "msn",
+      "name": "Msn",
+      "description": "",
+      "includeUrls": "www.msn.com",
+      "excludeSelectors": [
+        ".attribution",
+        ".super-nav-container",
+        "#follow-button",
+        ".media-info-container",
+        ".ad-label",
+        ".provider-name",
+        ".weather-container",
+        ".money-info-content",
+        "casual-games-card",
+        ".match-data",
+        ".me-stripe-container"
+      ],
+      "injectCss": [
+        ".root { overflow-y: scroll!important; }",
+        ".heading { -webkit-line-clamp: unset!important; }",
+        ".content .text { overflow-y: scroll !important; }"
+      ]
+    },
+    {
+      "id": "murlok",
+      "name": "Murlok",
+      "description": "",
+      "includeUrls": "murlok.io",
+      "injectCss": ".vi-media-object { display:flex !important; }"
+    },
+    {
+      "id": "nature",
+      "name": "Nature",
+      "description": "",
+      "includeUrls": "https://www.nature.com/articles/*",
+      "excludeUrls": "https://www.nature.com/articles/*.pdf",
+      "excludeSelectors": [
+        ".c-header",
+        ".c-recommendations-header",
+        ".c-recommendations-list-container",
+        ".c-article-references__links",
+        ".c-article-identifiers",
+        ".c-article-author-list",
+        ".c-article-metrics-bar__wrapper",
+        ".c-article__pill-button",
+        "#author-information-content",
+        "#article-info-section",
+        ".pdf-content"
+      ]
+    },
+    {
+      "id": "nbcnews",
+      "name": "Nbcnews",
+      "description": "",
+      "includeUrls": "www.nbcnews.com",
+      "excludeSelectors": [
+        ".jw-wrapper.jw-reset"
+      ]
+    },
+    {
+      "id": "nebula",
+      "name": "Nebula",
+      "description": "",
+      "includeUrls": "nebula.tv",
+      "excludeSelectors": [
+        "[data-subtitles-container='true']"
+      ]
+    },
+    {
+      "id": "nebula.starbreeze",
+      "name": "Nebula.starbreeze",
+      "description": "",
+      "includeUrls": "https://nebula.starbreeze.com/support",
+      "injectCss": [
+        "main section>div { overflow-y:scroll !important; }",
+        "main section>div::-webkit-scrollbar { display: none !important; width: 0px !important; background: transparent !important; }"
+      ]
+    },
+    {
+      "id": "netflav",
+      "name": "Netflav",
+      "description": "",
+      "includeUrls": "https://netflav*.com/*",
+      "injectCss": ".grid_title { max-height:unset !important; }"
+    },
+    {
+      "id": "netflix",
+      "name": "Netflix",
+      "description": "",
+      "includeUrls": "www.netflix.com",
+      "excludeSelectors": [
+        ".player-timedtext",
+        ".source-cue"
+      ]
+    },
+    {
+      "id": "newyorker",
+      "name": "Newyorker",
+      "description": "",
+      "includeUrls": "www.newyorker.com",
+      "excludeSelectors": [
+        "[data-testid=PersistentTop]",
+        "[data-testid=StackedNavigationHeader]"
+      ]
+    },
+    {
+      "id": "nexusmods",
+      "name": "Nexusmods",
+      "description": "",
+      "includeUrls": "www.nexusmods.com",
+      "excludeUrls": "https://www.nexusmods.com/games/*",
+      "injectCss": "[class*='line-clamp-'] { -webkit-line-clamp: unset!important; max-height: unset!important; }"
+    },
+    {
+      "id": "nicovideo",
+      "name": "Nicovideo",
+      "description": "",
+      "includeUrls": "seiga.nicovideo.*/watch/mg*",
+      "excludeSelectors": [
+        ".page"
+      ]
+    },
+    {
+      "id": "nmaart",
+      "name": "Nmaart",
+      "description": "",
+      "includeUrls": "www.nma.art",
+      "excludeSelectors": [
+        ".video-container"
+      ]
+    },
+    {
+      "id": "noon",
+      "name": "Noon",
+      "description": "",
+      "includeUrls": "www.noon.com",
+      "excludeSelectors": [
+        "[class*='priceContainer']",
+        "[class*='ProductImageFooter']",
+        "[class*='Nudges_nudges']"
+      ],
+      "injectCss": [
+        "[class*='ProductDetailsSection'] { -webkit-line-clamp:unset!important; }",
+        "[class*='title'] { -webkit-line-clamp:unset!important; }"
+      ]
+    },
+    {
+      "id": "notionSite",
+      "name": "Notion Site",
+      "description": "",
+      "includeUrls": [
+        "notion.site",
+        "*.notion.site"
+      ],
+      "excludeSelectors": [
+        ".notion-code-block"
+      ],
+      "injectCss": "[aria-label='Templates'] font br { display:none !important; }"
+    },
+    {
+      "id": "novel-site",
+      "name": "Novel Site",
+      "description": "",
+      "includeUrls": [
+        "www.piaotia.com",
+        "www.zhenhunxiaoshuo.com",
+        "www.hetushu.com"
+      ],
+      "injectCss": [
+        ".centent ul { display: flex !important; }",
+        ".centent ul li { height: unset !important; float: none !important; }",
+        "article.excerpt { white-space: normal !important; overflow: visible !important; }",
+        "#dir dd { white-space: normal !important; overflow: visible !important; }"
+      ]
+    },
+    {
+      "id": "npmjs",
+      "name": "Npmjs",
+      "description": "",
+      "includeUrls": "https://www.npmjs.com/package/*",
+      "includeSelectors": [
+        "#tabpanel-readme > div:first-child"
+      ]
+    },
+    {
+      "id": "nrk",
+      "name": "Nrk",
+      "description": "",
+      "includeUrls": "tv.nrk.no",
+      "excludeSelectors": [
+        "tv-player[data-testid=\"tv-player\"]",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "nytimes",
+      "name": "Nytimes",
+      "description": "",
+      "includeUrls": "www.nytimes.com",
+      "excludeSelectors": [
+        "#in-story-masthead",
+        "[data-testid=user-header]",
+        "[data-testid^='recommend-button']",
+        "[data-testid=copy-link]",
+        ".css-mydst6 > a"
+      ],
+      "injectCss": [
+        "a::after { position:relative!important; }",
+        "footer { line-height: unset!important; }"
+      ]
+    },
+    {
+      "id": "ocrtraining",
+      "name": "Ocrtraining",
+      "description": "",
+      "includeUrls": [
+        "ocrtraining.cit.nih.gov",
+        "videocast.nih.gov"
+      ],
+      "excludeSelectors": [
+        "#videocastPlayer"
+      ]
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "description": "",
+      "includeUrls": "ollama.com",
+      "excludeSelectors": [
+        "#file-explorer",
+        "span[x-test-search-response-title]",
+        "a[x-test-model-name]",
+        "span[x-test-size]",
+        "span[x-test-capability]"
+      ]
+    },
+    {
+      "id": "openaiDocs",
+      "name": "Openai Docs",
+      "description": "",
+      "includeUrls": "https://platform.openai.com/docs*",
+      "excludeSelectors": [
+        ".pheader"
+      ]
+    },
+    {
+      "id": "opennet",
+      "name": "Opennet",
+      "description": "",
+      "includeUrls": "opennet.ru",
+      "excludeSelectors": [
+        "label",
+        "img",
+        "sub",
+        "sup",
+        "code",
+        "tt"
+      ]
+    },
+    {
+      "id": "openrouter",
+      "name": "Openrouter",
+      "description": "",
+      "includeUrls": "openrouter.ai",
+      "excludeSelectors": [
+        ".line-clamp-1.text-lg",
+        ".text-muted-foreground.text-sm.col-span-4.text-right",
+        "div[title='Tokens this week']",
+        ".text-green-600.font-medium",
+        ".text-xl.text-slate-11",
+        "button[role='tab']",
+        "[data-badge-type=http-method]",
+        "div[role='region'] > div > ul"
+      ],
+      "injectCss": "button.text-primary-foreground { height: 100% !important; white-space: normal !important; word-wrap: break-word !important; }"
+    },
+    {
+      "id": "orvehogar",
+      "name": "Orvehogar",
+      "description": "",
+      "includeUrls": "www.orvehogar.com",
+      "injectCss": "h3.vtex-product-summary-2-x-productNameContainer { height: unset!important; }"
+    },
+    {
+      "id": "osmosis",
+      "name": "Osmosis",
+      "description": "",
+      "includeUrls": "*.osmosis.org",
+      "excludeSelectors": [
+        "#video-player-container",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "other-chatapps",
+      "name": "Other Chatapps",
+      "description": "",
+      "includeUrls": "app.salesmartly.com",
+      "includeSelectors": [
+        ".chat__inbox_item_text_ordinary",
+        ".ivu-tooltip [title]"
+      ],
+      "injectCss": "._ss_2FLBr4_u { height:unset!important; }"
+    },
+    {
+      "id": "otherGoogle",
+      "name": "Other Google",
+      "description": "",
+      "includeUrls": [
+        "*.google.com",
+        "dart.dev",
+        "*.google",
+        "*.googleapis.com"
+      ],
+      "excludeSelectors": [
+        ".o_35",
+        "[style*='Google Symbols']",
+        "md-icon-button",
+        ".material-symbols-outlined",
+        ".cfc-result-card-table",
+        ".material-symbols",
+        ".gemini-large-text__overlay",
+        "code",
+        "view-line",
+        "#modelSelector",
+        ".leaderboard-content",
+        "#selected-count",
+        "#selected-cat",
+        ".GmuOkf,.d8aLif,.JYW4cc"
+      ],
+      "injectCss": ".scSearchSearch_results_listSearchresultslistsnippet { -webkit-line-clamp:unset !important; }"
+    },
+    {
+      "id": "otherInstagram",
+      "name": "Other Instagram",
+      "description": "",
+      "includeUrls": "https://www.instagram.com/*",
+      "excludeUrls": "https://www.instagram.com/b/*",
+      "includeSelectors": [
+        "h1",
+        "article span[dir=auto] > span[dir=auto]",
+        "._ab1y",
+        "ul li h3+div span[dir=auto]",
+        "hr+div span[dir=auto][style]",
+        "span[dir=auto] > div > span",
+        "div > h1[dir=auto]",
+        ".x1fkh5qu.x1ddbhtg.x1dlrdel",
+        "a[href*='explore/locations/']"
+      ]
+    },
+    {
+      "id": "otherOldReddit",
+      "name": "Other Old Reddit",
+      "description": "",
+      "includeUrls": "old.reddit.com",
+      "includeSelectors": [
+        "p.title > a",
+        "[role=main] .md-container",
+        ".media-gallery .usertext",
+        ".expando .usertext",
+        ".res-expando-box .md"
+      ]
+    },
+    {
+      "id": "outlook",
+      "name": "Outlook",
+      "description": "",
+      "includeUrls": "outlook.live.com",
+      "excludeSelectors": [
+        ".jHAG3.XG5Jd",
+        ".OZZZK",
+        ".lDdSm",
+        ".ZfoST.VlT6S.azUpZ",
+        ".GssDD,.xpAva,.oHwUF,.D1eg_",
+        "[id=CenterRegion]",
+        "[id=RibbonRoot]",
+        "[role=toolbar]",
+        ".qQbyL,.bkYAr,.gpJ9q,.threeColumnCirclePersonaDivWidth",
+        "[class='_rWRU Ejrkd qq2gS D8iyG']"
+      ]
+    },
+    {
+      "id": "overflow-sites",
+      "name": "Overflow Sites",
+      "description": "",
+      "includeUrls": [
+        "www.highfrequencyelectronics.com",
+        "www.uzh.ch",
+        "www-mail.icloud-sandbox.com",
+        "*.cpaaustralia.com.*",
+        "www.8du8.net/*",
+        "ieltscat.xdf.*",
+        "moddota.com",
+        "www.nogizaka46.com"
+      ],
+      "injectCss": [
+        "#main-content { overflow:unset !important; }",
+        ".TextImage--inner { overflow:auto !important; }",
+        "body { overflow-y:scroll!important; }",
+        "li.expanded > div { overflow:scroll !important; }",
+        ".book_list ul li { height: unset !important; overflow: visible !important; }",
+        "#tabs-content-wrap { overflow:scroll !important; }",
+        ".ReactVirtualized__Grid__innerScrollContainer { overflow:scroll!important; }",
+        ".b--wrap { overflow:scroll!important; }"
+      ]
+    },
+    {
+      "id": "panopto",
+      "name": "Panopto",
+      "description": "",
+      "includeUrls": "southampton.cloud.panopto.eu_no_subitle",
+      "excludeSelectors": [
+        ".primaryPlayer"
+      ]
+    },
+    {
+      "id": "paramountplus",
+      "name": "Paramountplus",
+      "description": "",
+      "includeUrls": "*.paramountplus.com",
+      "excludeSelectors": [
+        ".aa-player-skin"
+      ]
+    },
+    {
+      "id": "patreon",
+      "name": "Patreon",
+      "description": "",
+      "includeUrls": "www.patreon.com",
+      "excludeSelectors": [
+        ".video-container"
+      ]
+    },
+    {
+      "id": "paulgraham",
+      "name": "Paulgraham",
+      "description": "",
+      "includeUrls": "paulgraham.com",
+      "includeSelectors": [
+        "font[face=verdana]"
+      ]
+    },
+    {
+      "id": "pbs",
+      "name": "Pbs",
+      "description": "",
+      "includeUrls": "*.pbs.org",
+      "excludeSelectors": [
+        ".wrapper",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "peacocktv",
+      "name": "Peacocktv",
+      "description": "",
+      "includeUrls": "*.peacocktv.com",
+      "injectCss": ".video-player__subtitles__line > font,.video-player__subtitles__line:only-child { display:block !important; }"
+    },
+    {
+      "id": "perplexity",
+      "name": "Perplexity",
+      "description": "",
+      "includeUrls": "https://www.perplexity.ai",
+      "excludeUrls": [
+        "https://www.perplexity.ai/hub/*",
+        "https://www.perplexity.ai/*/hub/*",
+        "https://www.perplexity.ai/onboarding",
+        "https://www.perplexity.ai/enterprise*",
+        "https://www.perplexity.ai/2024recap"
+      ],
+      "excludeSelectors": [
+        "[data-framer-name='Desktop']"
+      ],
+      "injectCss": "[class*=line-clamp] { -webkit-line-clamp: unset !important; }"
+    },
+    {
+      "id": "piAi",
+      "name": "Pi Ai",
+      "description": "",
+      "includeUrls": "pi.ai/talk",
+      "injectCss": "[class*='text-brand-green'] { flex-direction:column !important; }"
+    },
+    {
+      "id": "pinboard",
+      "name": "Pinboard",
+      "description": "",
+      "includeUrls": "pinboard.in",
+      "injectCss": [
+        "div.blurb_box,div.homepage_quad,div.signup_button { height: unset !important; }",
+        "h1.magazine_title { line-height: 1.2 !important; }"
+      ]
+    },
+    {
+      "id": "pixiv",
+      "name": "Pixiv",
+      "description": "",
+      "includeUrls": "www.pixiv.net",
+      "injectCss": "[id*='expandable-paragraph'] { max-height:unset!important; }"
+    },
+    {
+      "id": "pkg",
+      "name": "Pkg",
+      "description": "",
+      "includeUrls": "https://pkg.go.dev/*",
+      "includeSelectors": [
+        "div.UnitDetails",
+        "#_nav_group_README",
+        "p.SearchSnippet-infoLabel",
+        ".go-Container"
+      ]
+    },
+    {
+      "id": "pkgStd",
+      "name": "Pkg Std",
+      "description": "",
+      "includeUrls": "https://pkg.go.dev/std",
+      "includeSelectors": [
+        "td.UnitDirectories-desktopSynopsis"
+      ]
+    },
+    {
+      "id": "plati",
+      "name": "Plati",
+      "description": "",
+      "includeUrls": "plati.market",
+      "injectCss": ".card .custom-link { -webkit-line-clamp: unset !important; }"
+    },
+    {
+      "id": "player.vimeo",
+      "name": "Player.vimeo",
+      "description": "",
+      "includeUrls": [
+        "https://player.vimeo.com/video/*",
+        "www.physeo.com"
+      ],
+      "excludeSelectors": [
+        ".vp-captions-line"
+      ]
+    },
+    {
+      "id": "pluto",
+      "name": "Pluto",
+      "description": "",
+      "includeUrls": "pluto.tv",
+      "excludeSelectors": [
+        ".video-player-layout"
+      ]
+    },
+    {
+      "id": "podcasts",
+      "name": "Podcasts",
+      "description": "",
+      "includeUrls": "podcasts.apple.com",
+      "excludeSelectors": [
+        ".detailed-play-button-wrapper"
+      ],
+      "injectCss": [
+        ".multiline-clamp { display: flex!important; flex-direction: column !important; }",
+        ".headings__title,.powerswoosh__title,[data-testid=truncate-text] { -webkit-line-clamp:unset!important; }",
+        ".show-artwork { height:fit-content!important; }",
+        ".powerswoosh__lockup-details-container,.powerswoosh__chin,[data-testid=amp-review__text] { max-height:unset!important; height:unset!important; }",
+        ".episode-hero__overlay { overflow:auto!important; }",
+        "ul .multiline-clamp { display:unset!important; }"
+      ]
+    },
+    {
+      "id": "poe",
+      "name": "Poe",
+      "description": "",
+      "includeUrls": "https://poe.com/*",
+      "excludeSelectors": [
+        ".Markdown_markdownContainer__Tz3HQ *",
+        ".MarkdownLink_linkifiedLink__KxC9G",
+        "menu",
+        "aside"
+      ],
+      "injectCss": "[class^='BotListItem_botDescription'] { -webkit-line-clamp: unset !important; }"
+    },
+    {
+      "id": "poeditor",
+      "name": "Poeditor",
+      "description": "",
+      "includeUrls": "https://poeditor.com/projects/*",
+      "includeSelectors": [
+        ".comment-body",
+        ".reference_language .source-string"
+      ]
+    },
+    {
+      "id": "polymarket",
+      "name": "Polymarket",
+      "description": "",
+      "includeUrls": "polymarket.com",
+      "excludeSelectors": [
+        "number-flow-react",
+        "button",
+        "a.inline-flex"
+      ],
+      "injectCss": [
+        "div[data-index] p.decoration-2 { -webkit-line-clamp:unset !important; }",
+        "div[data-index] .items-start.relative.gap-2.px-3.flex.w-full { height:unset !important; max-height:unset !important; }",
+        "div[data-index] .absolute.w-full { overflow:scroll !important; }"
+      ]
+    },
+    {
+      "id": "pornhub",
+      "name": "Pornhub",
+      "description": "",
+      "includeUrls": [
+        "*.pornhub.com",
+        "pornhub.com"
+      ],
+      "excludeUrls": [
+        "*.pornhub.com/insights/*",
+        "pornhub.com/insights/*"
+      ],
+      "injectCss": [
+        "span.title { height:unset !important; max-height:unset !important; }",
+        ".detailedInfo { max-height:unset !important; }",
+        ".pcVideoListItem { max-height:unset !important; }",
+        ".wrap { height:unset !important; }",
+        ".entry-header { height:unset !important; }",
+        ".entry-title > a { height:unset !important; -webkit-line-clamp:unset !important; }"
+      ]
+    },
+    {
+      "id": "primevideo",
+      "name": "Primevideo",
+      "description": "",
+      "includeUrls": [
+        "www.primevideo.com",
+        "https://*.amazon.co.*/*video*",
+        "https://*.amazon.com/*video*",
+        "https://*.amazon.*/*video*"
+      ],
+      "excludeSelectors": [
+        "#dv-web-player"
+      ]
+    },
+    {
+      "id": "producthunt",
+      "name": "Producthunt",
+      "description": "",
+      "includeUrls": "www.producthunt.com",
+      "excludeUrls": "https://www.producthunt.com/stories/*",
+      "excludeSelectors": [
+        ".styles_extraInfo__Xs_5Y",
+        "[data-test=\"show-more-shoutouts-button\"]",
+        ".styles_buttons__kKy_S",
+        ".styles_count___6_8F"
+      ],
+      "injectCss": [
+        "h5 + p { height:unset !important; }",
+        ".noOfLines-1,.noOfLines-2,.noOfLines-3,.styles_noOfLines-2__k_Ta_,[data-test=\"post-name-481116\"] { -webkit-line-clamp:unset !important; }"
+      ]
+    },
+    {
+      "id": "proko",
+      "name": "Proko",
+      "description": "",
+      "includeUrls": "www.proko.com",
+      "excludeSelectors": [
+        ".proko-preview-statistic-wrap",
+        ".lesson-instructors-wrap",
+        ".proko-comments-item-title",
+        ".proko-comments-item-vote-wrap",
+        ".course-card__details .border-outline075",
+        ".category-subscribe"
+      ],
+      "injectCss": [
+        ".lesson-video-banner-skip,.lesson-title,.lesson-content,.course-card__details { height:unset!important; overflow:scroll !important; }",
+        "[class*='clamp'],.course-card__description { -webkit-line-clamp:unset!important; overflow:unset !important; }",
+        "proko-button { z-index:1 !important; }",
+        ".truncate { white-space:unset !important; }"
+      ]
+    },
+    {
+      "id": "promptingguide",
+      "name": "Promptingguide",
+      "description": "",
+      "includeUrls": "www.promptingguide.ai",
+      "includeSelectors": [
+        "article",
+        "li"
+      ]
+    },
+    {
+      "id": "pubmed",
+      "name": "Pubmed",
+      "description": "",
+      "includeUrls": [
+        "pubmed.ncbi.nlm.nih.gov",
+        "pubmed*.pubmed*",
+        "*.ncbi.nlm.nih.gov"
+      ],
+      "excludeUrls": [
+        "*.ncbi.nlm.nih.gov/*.pdf",
+        "pubmed*.pubmed*/*.pdf"
+      ],
+      "excludeSelectors": [
+        ".docsum-journal-citation",
+        ".citation-part",
+        ".docsum-authors",
+        ".top-wrapper",
+        ".article-source",
+        ".citation-doi",
+        ".identifiers",
+        ".cite",
+        ".share",
+        ".arrow-link",
+        ".multiple-results-actions",
+        ".sort-dropdown .option-label",
+        ".display-options .button-label",
+        ".actions-buttons.sidebar",
+        ".title-copy",
+        ".search-result-position"
+      ],
+      "injectCss": [
+        "#Scholarscope_HighlightOrigin > p font,#Scholarscope_HighlightContent > p font { display: inline!important; }",
+        "#Scholarscope_HighlightOrigin > p font br,#Scholarscope_HighlightContent > p font br { display: none!important; }",
+        ".title-translate { display:block !important; }"
+      ]
+    },
+    {
+      "id": "pubs.acs.org",
+      "name": "Pubs.acs.org",
+      "description": "",
+      "includeUrls": "pubs.acs.org",
+      "excludeUrls": "pubs.acs.org/doi/pdf*",
+      "excludeSelectors": [
+        ".articleHeaderDropzone2",
+        "header"
+      ]
+    },
+    {
+      "id": "pytorch",
+      "name": "Pytorch",
+      "description": "",
+      "includeUrls": "pytorch.org",
+      "excludeSelectors": [
+        ".with-down-arrow",
+        ".hello-bar",
+        "[data-cta='join']"
+      ]
+    },
+    {
+      "id": "qqMail",
+      "name": "Qq Mail",
+      "description": "",
+      "includeUrls": "*.mail.qq.com",
+      "excludeSelectors": [
+        ".xmail-cmp-account"
+      ],
+      "injectCss": ".mail-list-page-wide-item { height:unset !important; }"
+    },
+    {
+      "id": "quantinsti",
+      "name": "Quantinsti",
+      "description": "",
+      "includeUrls": "quantra.quantinsti.com",
+      "excludeSelectors": [
+        "#vjs_video_3"
+      ]
+    },
+    {
+      "id": "quark",
+      "name": "Quark",
+      "description": "",
+      "includeUrls": "pan.quark.*",
+      "excludeSelectors": [
+        ".video-container"
+      ]
+    },
+    {
+      "id": "queenslibrary.org",
+      "name": "Queenslibrary.org",
+      "description": "",
+      "includeUrls": "queenslibrary.org",
+      "excludeSelectors": [
+        "#Web-QBPL-Menu"
+      ],
+      "injectCss": "font.notranslate { all: unset!important; }"
+    },
+    {
+      "id": "quora",
+      "name": "Quora",
+      "description": "",
+      "includeUrls": [
+        "*.quora.com",
+        "quora.com"
+      ],
+      "excludeSelectors": [
+        ".dom_annotate_multifeed_bundle_AskQuestionPromptBundle",
+        ".dom_annotate_feed_switcher",
+        "[class='q-box qu-py--small qu-color--gray_light']",
+        "[class='q-box spacing_log_answer_header']",
+        "[class='q-box qu-flex--auto']",
+        "[class='q-text qu-dynamicFontSize--small qu-mt--small qu-color--gray_light qu-passColorToLinks']",
+        ".AnswerFooter___StyledFlex-sc-2xbo88-0",
+        "[class='q-box qu-mb--small']",
+        "button.q-click-wrapper",
+        "[class='q-text qu-dynamicFontSize--tiny qu-pb--tiny qu-mt--small qu-color--gray_light qu-passColorToLinks']",
+        "[class='q-text qu-dynamicFontSize--tiny qu-mt--small qu-color--gray_light qu-passColorToLinks']",
+        ".qt_read_more",
+        "[class='q-flex qu-alignItems--flex-start']",
+        "[class='q-box qu-pl--tiny']",
+        ".qu-zIndex--action_bar"
+      ],
+      "injectCss": ".qu-truncateLines--3 { -webkit-line-clamp: unset !important; }"
+    },
+    {
+      "id": "react",
+      "name": "React",
+      "description": "",
+      "includeUrls": "react.dev",
+      "injectCss": "[class*='h-\\[40px\\]'] { height: unset !important; }"
+    },
+    {
+      "id": "read.amazon",
+      "name": "Read.amazon",
+      "description": "",
+      "includeUrls": "read.amazon.com",
+      "injectCss": [
+        "font { color:#333!important; white-space: pre-wrap !important; }",
+        "p > font { position:absolute !important; left:0 !important; right:0 !important; }",
+        ".kg-a11y-rel { background:white!important; }"
+      ]
+    },
+    {
+      "id": "readwise",
+      "name": "Readwise",
+      "description": "",
+      "includeUrls": "read.readwise.io",
+      "includeSelectors": [
+        "div[class^='_titleRow_']",
+        "#document-text-content"
+      ]
+    },
+    {
+      "id": "realpython",
+      "name": "Realpython",
+      "description": "",
+      "includeUrls": "realpython.com",
+      "includeSelectors": [
+        "h1",
+        "h2",
+        ".my-0",
+        ".my-1",
+        ".article-body",
+        "table-of-contents",
+        "#disqus_recommendations"
+      ]
+    },
+    {
+      "id": "researchgate",
+      "name": "Researchgate",
+      "description": "",
+      "includeUrls": "www.researchgate.net",
+      "excludeSelectors": [
+        ".nova-legacy-v-publication-item__meta-data",
+        ".nova-legacy-v-publication-item__person-list",
+        ".js-authors-list"
+      ]
+    },
+    {
+      "id": "reuters",
+      "name": "Reuters",
+      "description": "",
+      "includeUrls": "www.reuters.com",
+      "excludeSelectors": [
+        "[promotext]",
+        "[data-testid=Leaderboard]",
+        "[data-testid=HomeTickerV2]",
+        "[data-testid=SiteFooter]",
+        "[class^=refinitiv-promo-bar__container]",
+        "[data-testid=ResponsiveAdSlot]"
+      ]
+    },
+    {
+      "id": "rfcEditor",
+      "name": "Rfc Editor",
+      "description": "",
+      "includeUrls": [
+        "www.rfc-editor.org",
+        "docs.haproxy.org"
+      ],
+      "excludeSelectors": [
+        "img",
+        "sub",
+        "sup",
+        "code",
+        "tt",
+        "aside",
+        "footer"
+      ]
+    },
+    {
+      "id": "rmit",
+      "name": "Rmit",
+      "description": "",
+      "includeUrls": "www.rmit.edu.au",
+      "injectCss": ".colfeature-content { height:unset!important; }"
+    },
+    {
+      "id": "rtve",
+      "name": "Rtve",
+      "description": "",
+      "includeUrls": "www.rtve.*",
+      "injectCss": ".errorHead * { font-size: 3.2rem!important; }"
+    },
+    {
+      "id": "ru-sites",
+      "name": "Ru Sites",
+      "description": "",
+      "includeUrls": [
+        "www.wildberries.ru",
+        "www.ozon.ru"
+      ],
+      "excludeSelectors": [
+        ".product-card__tip--sale",
+        ".price,[class^=priceWrap]",
+        ".j-big-media-placements-block",
+        "[class^='priceBlock'],[class^='product-card__rating'],[class^=productLinePrice],[class^=sizesList]",
+        ".c35_3_16-a0,.pdp_jb1,.b5_6_3-a3,.tsHeadline600Large,.tsHeadline500Medium"
+      ],
+      "injectCss": [
+        ".product-page,.comment-card,.comment-card__message { block-size:unset!important; }",
+        "[class^=supplierName],[class^=supplierName] * { white-space:unset !important; }",
+        "[class*=categoryLinkNav] { width:min-content !important; }",
+        ".bq03_5_3-a6,.bq03_5_3-a5,.a2p5_6_9-a0 { -webkit-line-clamp:unset!important; height:unset!important; }"
+      ]
+    },
+    {
+      "id": "runoob",
+      "name": "Runoob",
+      "description": "",
+      "includeUrls": "www.runoob.com",
+      "excludeSelectors": [
+        ".example_code"
+      ]
+    },
+    {
+      "id": "scholar.cnki.net",
+      "name": "Scholar.cnki.net",
+      "description": "",
+      "includeUrls": "scholar.cnki.net",
+      "injectCss": ".result .searchItem { height: auto!important; }"
+    },
+    {
+      "id": "science",
+      "name": "Science",
+      "description": "",
+      "includeUrls": "www.science.org",
+      "excludeSelectors": [
+        ".core-self-citation",
+        ".contributors"
+      ]
+    },
+    {
+      "id": "sciencedirect",
+      "name": "Sciencedirect",
+      "description": "",
+      "includeUrls": "www.sciencedirect.com",
+      "excludeUrls": "www.sciencedirect.com/*/pdf/download/*",
+      "excludeSelectors": [
+        ".bibliography",
+        ".author-group"
+      ],
+      "injectCss": [
+        "h2 { font-size:unset !important; }",
+        ".u-clamp-2-lines { -webkit-line-clamp:unset!important; }"
+      ]
+    },
+    {
+      "id": "scmp",
+      "name": "Scmp",
+      "description": "",
+      "includeUrls": "www.scmp.com",
+      "injectCss": [
+        ".topic__article-list { height: unset !important; }",
+        ".adverisers__adveriser { height: unset !important; }",
+        ".advertiser__content { height: unset !important; }",
+        ".content-title__link { display:unset !important; overflow:unset !important; -webkit-line-clamp:unset !important; }",
+        ".title__text { max-height:unset !important; -webkit-line-clamp:unset !important; }",
+        ".news-list-item__news-title { max-height:unset !important; -webkit-line-clamp:unset !important; }",
+        "a[class*='link'] > .link__headline { max-height:unset !important; -webkit-line-clamp:unset !important; }"
+      ]
+    },
+    {
+      "id": "scrimba",
+      "name": "Scrimba",
+      "description": "",
+      "includeUrls": "scrimba.com",
+      "injectCss": [
+        "[class*='trunc'] { -webkit-line-clamp: unset !important; }",
+        ".tile { overflow: scroll !important; }"
+      ]
+    },
+    {
+      "id": "sdk-cooperate",
+      "name": "Sdk Cooperate",
+      "description": "",
+      "includeUrls": "pandaily.com",
+      "excludeSelectors": [
+        "[data-discover]",
+        "header"
+      ]
+    },
+    {
+      "id": "section.blog.naver.com",
+      "name": "Section.blog.naver.com",
+      "description": "",
+      "includeUrls": "section.blog.naver.com",
+      "excludeSelectors": [
+        ".comments",
+        ".time"
+      ],
+      "injectCss": ".text,.title_post,.text_post,p,strong,div { -webkit-line-clamp:unset !important; max-height:unset !important; height:unset !important; }"
+    },
+    {
+      "id": "seekingalpha",
+      "name": "Seekingalpha",
+      "description": "",
+      "includeUrls": [
+        "seekingalpha.com/article/*",
+        "seekingalpha.com/news/*"
+      ],
+      "includeSelectors": [
+        "[data-test-id=card-container]",
+        "[data-test-id=comments-section]"
+      ],
+      "excludeSelectors": [
+        "[data-test-id=post-page-meta]",
+        "header > div:first-child"
+      ]
+    },
+    {
+      "id": "seller-tiktok",
+      "name": "Seller Tiktok",
+      "description": "",
+      "includeUrls": [
+        "seller.tiktok.com",
+        "seller-my.tiktok.com",
+        "affiliate.tiktok*.com",
+        "seller.*.tiktokglobalshop.com",
+        "seller.tiktokshopglobalselling.com"
+      ],
+      "excludeSelectors": [
+        ".chatd-message-userName"
+      ],
+      "injectCss": [
+        "[data-tid=m4b_overflow_text_multiply] { height:unset!important; -webkit-line-clamp:unset!important; }",
+        "[class^=replyText],[class^=productItemInfo],[class^=reviewText] { height:unset!important; -webkit-line-clamp:unset!important; }"
+      ]
+    },
+    {
+      "id": "service-now",
+      "name": "Service Now",
+      "description": "",
+      "includeUrls": "*.service-now.com",
+      "includeSelectors": [
+        "article",
+        ".email-content",
+        "section"
+      ]
+    },
+    {
+      "id": "shangpaAcademy",
+      "name": "Shangpa Academy",
+      "description": "",
+      "includeUrls": "shangpa-academy.mn.co",
+      "excludeSelectors": [
+        ".mighty-video-player-container"
+      ]
+    },
+    {
+      "id": "shonenjumpplus",
+      "name": "Shonenjumpplus",
+      "description": "",
+      "includeUrls": [
+        "shonenjumpplus.com",
+        "viewer.heros-web.com",
+        "comic-days.com",
+        "www.corocoro.jp",
+        "tonarinoyj.jp",
+        "rimacomiplus.jp",
+        "kuragebunch.com",
+        "comic-gardo.com",
+        "ichicomi.com",
+        "rookie.shonenjump.com"
+      ],
+      "injectCss": "[class^='Original_section_title'] { overflow:hidden!important; }"
+    },
+    {
+      "id": "shopee",
+      "name": "Shopee",
+      "description": "",
+      "includeUrls": [
+        "seller.shopee.*",
+        "shopee.*"
+      ],
+      "injectCss": ".WBVL_7,.ellipsis-content { -webkit-line-clamp:unset!important; }"
+    },
+    {
+      "id": "skillshare",
+      "name": "Skillshare",
+      "description": "",
+      "includeUrls": "www.skillshare.com",
+      "excludeSelectors": [
+        ".vjs-text-track-display"
+      ]
+    },
+    {
+      "id": "skinstore",
+      "name": "Skinstore",
+      "description": "",
+      "includeUrls": "www.skinstore.com",
+      "excludeSelectors": [
+        ".responsiveFlyoutMenu_levelOneLink"
+      ]
+    },
+    {
+      "id": "skool",
+      "name": "Skool",
+      "description": "",
+      "includeUrls": "www.skool.com",
+      "excludeSelectors": [
+        "[class^=styled__ShowMore]",
+        "[class^=styled__UserNameText]",
+        "[class^=styled__GroupNameWrapper]",
+        "[class^=styled__ButtonWrapper]",
+        "[class^=styled__LeaderboardsPreviewTitle]",
+        "[class^=styled__ExpandRepliesWrapper]",
+        "[class^=styled__GroupFeedLinkLabel]",
+        "[class^=styled__HeaderLinks]",
+        "[class^=styled__RecentActivityLabel]",
+        "[class^=styled__PostedDate]",
+        "[class^=styled__MemberInfo]",
+        "[class^=styled__UserRoleTag]",
+        "[class^=styled__DateAndLabelWrapper]",
+        "[class^=styled__PinnedOverlay]",
+        "[class^=styled__CommentsCount]",
+        "[class^=styled__LastMessageTime]",
+        "[class^=styled__LikeLabel]",
+        "[class^=styled__TypographyWrapper]",
+        "[class^=styled__MemberPercentage]",
+        "[class^=styled__LevelBlockTitle]"
+      ],
+      "injectCss": ".erGJuk { max-height:unset!important; }"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "description": "",
+      "includeUrls": "*.slack.com",
+      "includeSelectors": [
+        ".p-rich_text_block",
+        ".p-message_pane__foreword",
+        ".c-alert__message",
+        "[data-qa=message_attachment_text]"
+      ]
+    },
+    {
+      "id": "slideslive",
+      "name": "Slideslive",
+      "description": "",
+      "includeUrls": "slideslive.com",
+      "excludeSelectors": [
+        ".slp__video"
+      ]
+    },
+    {
+      "id": "smzdm",
+      "name": "Smzdm",
+      "description": "",
+      "includeUrls": "www.smzdm.com",
+      "excludeSelectors": [
+        ".z-highlight",
+        ".feed-block-info",
+        ".z-feed-foot",
+        ".feed-block-descripe",
+        "#J_column_tab_box",
+        ".crumbs"
+      ],
+      "injectCss": ".feed-block-title { height:unset !important; }"
+    },
+    {
+      "id": "sobqg",
+      "name": "Sobqg",
+      "description": "",
+      "includeUrls": "www.sobqg.com/book/*",
+      "excludeSelectors": [
+        "#hot .g_book > span"
+      ],
+      "injectCss": [
+        "#volumes { display: flex !important; flex-wrap: wrap !important; }",
+        "a.ell { white-space: normal !important; overflow: visible !important; }",
+        "#hot .g_book > a > h3 { white-space: normal !important; overflow: visible !important; max-height: none !important; -webkit-line-clamp: none !important; }",
+        "#hot .g_book { height: 330px !important; }"
+      ]
+    },
+    {
+      "id": "soundcloud",
+      "name": "Soundcloud",
+      "description": "",
+      "includeUrls": "soundcloud.com",
+      "excludeSelectors": [
+        ".searchTitle__textContent",
+        ".searchOptions__container",
+        ".compactTrackListItem__additional",
+        ".soundTitle__tagContainer",
+        ".searchResultGroupHeading",
+        ".sc-ministats-group",
+        ".compactTrackList__moreLink",
+        ".sound__soundActions"
+      ],
+      "injectCss": ".compactTrackListItem { height: unset !important; }"
+    },
+    {
+      "id": "sp-codeSites",
+      "name": "Sp Code Sites",
+      "description": "",
+      "includeUrls": "docs.wxwidgets.org",
+      "excludeSelectors": [
+        ".doxygen-awesome-fragment-wrapper"
+      ],
+      "injectCss": ".textblock p > font { display:flex !important; }"
+    },
+    {
+      "id": "spankbang",
+      "name": "Spankbang",
+      "description": "",
+      "includeUrls": "https://spankbang.com/*",
+      "excludeSelectors": [
+        ".stats",
+        ".thumb"
+      ],
+      "injectCss": ".video-item > a { white-space:unset !important; }"
+    },
+    {
+      "id": "spiedigitallibrary",
+      "name": "Spiedigitallibrary",
+      "description": "",
+      "includeUrls": "www.spiedigitallibrary.org",
+      "excludeSelectors": [
+        "img",
+        "sub",
+        "sup",
+        "code",
+        "tt",
+        "aside",
+        "footer"
+      ]
+    },
+    {
+      "id": "stackoverflow",
+      "name": "Stackoverflow",
+      "description": "",
+      "includeUrls": [
+        "stackoverflow.com",
+        "*.stackexchange.com",
+        "superuser.com",
+        "askubuntu.com",
+        "serverfault.com"
+      ],
+      "excludeSelectors": [
+        ".votecell",
+        "header",
+        "#footer",
+        "#question-header + div",
+        "div.postcell div.mb0",
+        "div[id^=comments-link-]",
+        "#answers-header",
+        ".new-post-login",
+        ".form-submit",
+        "a[href='/questions/ask']",
+        "#left-sidebar",
+        "a.comment-user",
+        "span.comment-date",
+        "div.s-prose.js-post-body + div",
+        ".bottom-notice",
+        "div[data-campaign-name=stk]",
+        ".s-post-summary--stats",
+        ".s-post-summary--meta"
+      ],
+      "injectCss": ".s-post-summary--content-excerpt { -webkit-line-clamp:unset !important; }"
+    },
+    {
+      "id": "startme",
+      "name": "Startme",
+      "description": "",
+      "includeUrls": "start.me",
+      "includeSelectors": [
+        ".rss-article__title",
+        ".rss-articles-list__article-link",
+        ".rss-showcase__title",
+        ".rss-showcase__text"
+      ]
+    },
+    {
+      "id": "starz",
+      "name": "Starz",
+      "description": "",
+      "includeUrls": "www.starz.com",
+      "excludeSelectors": [
+        "starz-player"
+      ]
+    },
+    {
+      "id": "statista",
+      "name": "Statista",
+      "description": "",
+      "includeUrls": "www.statista.com",
+      "injectCss": [
+        ".itemContent__text { height:unset !important; max-height:unset !important; }",
+        ".itemContent__subline { height:unset !important; max-height:unset !important; }"
+      ]
+    },
+    {
+      "id": "steamcommunity",
+      "name": "Steamcommunity",
+      "description": "",
+      "includeUrls": "steamcommunity.com",
+      "excludeSelectors": [
+        ".forum_paging",
+        ".forum_topic_reply_count",
+        ".forum_topic_lastpost",
+        ".forum_topic_award_count",
+        ".discussion_search_pagingcontrols",
+        ".found_helpful,.vote_header,.date_posted,.early_access_review,.apphub_CardContentAuthorBlock",
+        "#footer",
+        "#global_action_menu",
+        ".community_home_sort_options"
+      ],
+      "injectCss": [
+        ".forum_topic,.rightbox_list_option,.appHubShortcut { height: unset !important; }",
+        ".forum_topic_name { white-space:normal !important; line-height: 1.25rem !important; padding: 6px 20px 0 0 !important; }",
+        ".forum_topic_op { clear: left !important; padding: 0 0 6px 2rem !important; }",
+        ".apphub_Card:has(.apphub_CardContentGuideDesc),.apphub_Card:has(.apphub_CardContentGuideDesc) .apphub_CardContentClickable,.apphub_Card:has(.apphub_CardContentGuideDesc) .apphub_CardContentPreviewImageBorder,.apphub_Card:has(.apphub_CardContentGuideDesc) .apphub_CardContentMain { height:auto !important; overflow:visible !important; }",
+        ".apphub_Card:has(.apphub_CardContentGuideDesc) .apphub_CardMetaData,.apphub_Card:has(.apphub_CardContentGuideDesc) .apphub_CardContentAuthorBlock { position:static !important; }",
+        ".apphub_CardContentGuideTitle,.apphub_CardContentGuideDesc { height:auto !important; max-height:none !important; overflow:visible !important; }"
+      ]
+    },
+    {
+      "id": "steampoweredApp",
+      "name": "Steampowered App",
+      "description": "",
+      "includeUrls": "store.steampowered.com/app/*",
+      "excludeSelectors": [
+        "#global_actions",
+        "#store_controls",
+        "#foryou_tab",
+        "[class*=persona]",
+        "a.btn_medium",
+        ".persona_name",
+        ".hours.ellipsis",
+        ".checkcol",
+        ".postedDate",
+        ".dev_row .summary",
+        ".already_in_library",
+        ".game_header_image_ctn .grid_content",
+        ".ds_flag.ds_wishlist_flag",
+        ".early_access_review.tooltip",
+        ".communitylink_achievement_images",
+        ".user_reviews_summary_row.summary",
+        ".review_award_ctn",
+        ".add_to_wishlist_area",
+        ".next_in_queue_content",
+        ".glance_tags.popular_tags",
+        ".game_purchase_action",
+        ".vote_button_ctn",
+        "#VoteUpDownBtnCtn",
+        "#footer",
+        "#ViewAllReviewssummary",
+        ".user_reviews",
+        ".ReviewContentCtn .title",
+        ".author_counts,.control_block,.vote_info"
+      ],
+      "injectCss": [
+        ".game_description_snippet { max-height:unset !important; overflow: scroll !important; }",
+        ".game_purchase_area_friends_want { height: auto !important; padding-bottom: 6px !important; }",
+        ".div.early_access_banner { height: 84px !important; }",
+        ".franchise_notice > * { height: 84px !important; }"
+      ]
+    },
+    {
+      "id": "substack",
+      "name": "Substack",
+      "description": "",
+      "includeUrls": [
+        "*.substack.com",
+        "newsletter.rootsofprogress.org",
+        "www.lennysnewsletter.com"
+      ],
+      "excludeSelectors": [
+        ".publication-footer",
+        ".subscribe-footer",
+        ".main-menu",
+        ".navbar-title-link",
+        "[data-testid='navbar']",
+        ".navbar-title",
+        ".captioned-button-wrap",
+        ".subscription-widget-wrap",
+        ".tweet-header",
+        ".tweet-link-bottom",
+        ".expanded-link",
+        ".meta-subheader",
+        ".comment-meta",
+        ".comment-actions"
+      ],
+      "injectCss": [
+        ".reader2-clamp-lines { max-height: unset !important; -webkit-line-clamp: unset !important; }",
+        "[class*='clamp-'] { max-height: unset !important; -webkit-line-clamp:unset !important; }",
+        ".blurb-text { max-height: unset !important; }",
+        ".comment-body { max-height: unset !important; }",
+        "[class*='_hideSelectio'] { overflow: scroll !important; }"
+      ]
+    },
+    {
+      "id": "svelte",
+      "name": "Svelte",
+      "description": "",
+      "includeUrls": [
+        "svelte.dev/docs/*",
+        "learn.svelte.dev"
+      ],
+      "includeSelectors": [
+        ".text"
+      ]
+    },
+    {
+      "id": "swaycloud",
+      "name": "Swaycloud",
+      "description": "",
+      "includeUrls": "sway.cloud.microsoft",
+      "injectCss": [
+        ".text_wrapper ul li { max-height:unset!important; }",
+        ".container { overflow:scroll !important; }"
+      ]
+    },
+    {
+      "id": "taobao",
+      "name": "Taobao",
+      "description": "",
+      "includeUrls": "*.taobao.com",
+      "excludeSelectors": [
+        ".text-price"
+      ]
+    },
+    {
+      "id": "tass",
+      "name": "Tass",
+      "description": "",
+      "includeUrls": "tass.ru",
+      "injectCss": "#__next { font-size: 19px !important; line-height:28px !important; }"
+    },
+    {
+      "id": "teacherspayteachers",
+      "name": "Teacherspayteachers",
+      "description": "",
+      "includeUrls": "www.teacherspayteachers.com/browse/*",
+      "injectCss": ".ProductRowCard-module__cardTitleLink--YPqiC { display:unset !important; }"
+    },
+    {
+      "id": "team",
+      "name": "Team",
+      "description": "",
+      "includeUrls": [
+        "teams.live.com",
+        "teams.microsoft.com"
+      ],
+      "excludeSelectors": [
+        ".ui-box .ui-box[class='ui-box']",
+        "[data-tid='author']",
+        ".fui-ChatMessageCompact__author"
+      ]
+    },
+    {
+      "id": "ted",
+      "name": "Ted",
+      "description": "",
+      "includeUrls": "www.ted.com",
+      "excludeSelectors": [
+        "#video"
+      ]
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram",
+      "description": "",
+      "includeUrls": [
+        "web.telegram.org/z/*",
+        "web.telegram.org/a/*",
+        "web.telegram.org/k/*",
+        "web.telegram.org/k/"
+      ],
+      "includeSelectors": [
+        ".text-content",
+        ".message",
+        ".reply-markup-button-text",
+        ".bot-commands-list-element-description",
+        "[class*='tabs-tab page-password active']",
+        "#auth-qr-form"
+      ],
+      "excludeSelectors": [
+        ".time",
+        ".peer-title",
+        ".document-wrapper",
+        ".message.spoilers-container custom-emoji-element"
+      ]
+    },
+    {
+      "id": "thaipbs",
+      "name": "Thaipbs",
+      "description": "",
+      "includeUrls": [
+        "www.thaipbs.*",
+        "players.brightcove.net"
+      ],
+      "excludeSelectors": [
+        ".video-container"
+      ]
+    },
+    {
+      "id": "theatlantic",
+      "name": "Theatlantic",
+      "description": "",
+      "includeUrls": [
+        "www.theatlantic.com",
+        "https://mashable.com/*"
+      ],
+      "excludeSelectors": [
+        "footer:last-of-type",
+        "nav",
+        "header div.subtitle-2.w-full"
+      ]
+    },
+    {
+      "id": "thehackernews",
+      "name": "Thehackernews",
+      "description": "",
+      "includeUrls": "thehackernews.com",
+      "excludeSelectors": [
+        "span#blog-pager-older-link",
+        "span.h-datetime"
+      ]
+    },
+    {
+      "id": "thehill",
+      "name": "Thehill",
+      "description": "",
+      "includeUrls": "thehill.com",
+      "excludeSelectors": [
+        "div.featured-cards__byline",
+        "div.list-item__meta",
+        ".tags__item",
+        "div.extended-scroll__header",
+        ".submitted-by",
+        ".site-header--has-alert-banner",
+        ".homepage__container__opinion__item__byline",
+        ".homepage__container__header",
+        ".archive__item__meta"
+      ],
+      "injectCss": [
+        ".most-popular-item { max-height: unset !important; }",
+        ".most-popular-item__link { -webkit-line-clamp: unset !important; }"
+      ]
+    },
+    {
+      "id": "theverge",
+      "name": "Theverge",
+      "description": "",
+      "includeUrls": "www.theverge.com",
+      "excludeSelectors": [
+        ".k8dtcj0",
+        "._2xqpwjf._2xqpwj0"
+      ]
+    },
+    {
+      "id": "threads",
+      "name": "Threads",
+      "description": "",
+      "includeUrls": [
+        "www.threads.net",
+        "www.threads.com"
+      ],
+      "excludeSelectors": [
+        ".x6s0dn4.x40hh3e.xrvj5dj.xxfwaov",
+        ".x6s0dn4.x78zum5",
+        ".xpvyfi4.x1xdureb.x1agbcgv,.xqcrz7y.x1xdureb.x1agbcgv",
+        ".xpvyfi4.x1npkx4u.x1ms6mhf"
+      ],
+      "injectCss": "span,.x569fbc { max-height:unset !important; -webkit-line-clamp:unset !important; height:unset !important; white-space:unset !important; }"
+    },
+    {
+      "id": "threejs-journey",
+      "name": "Threejs Journey",
+      "description": "",
+      "includeUrls": "threejs-journey.com",
+      "excludeSelectors": [
+        ".video-area"
+      ]
+    },
+    {
+      "id": "tiktok",
+      "name": "Tiktok",
+      "description": "",
+      "includeUrls": [
+        "https://www.tiktok.com/*/video/*",
+        "https://www.tiktok.com/*"
+      ],
+      "excludeSelectors": [
+        "[class*='DivInfoPosition']",
+        "[data-e2e*='-count']",
+        "[data-e2e='nav-foryou']",
+        "[data-e2e*='view-more']",
+        "[data-e2e*='comment-reply']",
+        "[data-e2e*='comment-username']",
+        "[class*='DivCommentSubContentSplitWrapper']",
+        "[class*='DivViewRepliesContainer']"
+      ]
+    },
+    {
+      "id": "tinytask",
+      "name": "Tinytask",
+      "description": "",
+      "includeUrls": "https://www.tinytask.net",
+      "injectCss": "table > tbody > tr > td > center > table > tbody > tr > td > ul > li { height: 100% !important; }"
+    },
+    {
+      "id": "toneking",
+      "name": "Toneking",
+      "description": "",
+      "includeUrls": "www.toneking.com",
+      "injectCss": "ul li { text-wrap:unset!important; }"
+    },
+    {
+      "id": "tubitv",
+      "name": "Tubitv",
+      "description": "",
+      "includeUrls": "tubitv.com",
+      "excludeSelectors": [
+        ".vjs-text-track-display"
+      ]
+    },
+    {
+      "id": "tumblr",
+      "name": "Tumblr",
+      "description": "",
+      "includeUrls": "www.tumblr.com",
+      "includeSelectors": [
+        "article h1",
+        "article > header + div",
+        "[data-testid=notes-root] p",
+        "div.k31gt",
+        "p",
+        "article ul",
+        "article h2",
+        "article h3",
+        "article h4",
+        "article h5",
+        "article h6",
+        "article blockquote",
+        "article ol"
+      ],
+      "excludeSelectors": [
+        "div.fAAi8",
+        "div.wvu3V"
+      ]
+    },
+    {
+      "id": "tv.adobe",
+      "name": "Tv.adobe",
+      "description": "",
+      "includeUrls": "https://*.tv.adobe.com",
+      "excludeSelectors": [
+        ".mpc-player"
+      ]
+    },
+    {
+      "id": "tver",
+      "name": "Tver",
+      "description": "",
+      "includeUrls": "tver.jp",
+      "excludeSelectors": [
+        "div[class*=\"player_container\"]",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "twitch",
+      "name": "Twitch",
+      "description": "",
+      "includeUrls": "www.twitch.tv",
+      "excludeSelectors": [
+        ".persistent-player",
+        ".chat-line__username-container",
+        ".chat-line__no-background span[aria-hidden=true]",
+        "[data-a-target=animated-channel-viewers-count],.live-time"
+      ]
+    },
+    {
+      "id": "txt",
+      "name": "Txt",
+      "description": "",
+      "includeUrls": "*://*/*.txt",
+      "excludeSelectors": [
+        ".api-code",
+        "pre.highlight.def"
+      ]
+    },
+    {
+      "id": "typora",
+      "name": "Typora",
+      "description": "",
+      "includeUrls": "typora.io",
+      "excludeSelectors": [
+        ".tab-slider--nav"
+      ]
+    },
+    {
+      "id": "ubuntu",
+      "name": "Ubuntu",
+      "description": "",
+      "includeUrls": "manpages.ubuntu.com",
+      "includeSelectors": [
+        "#manpage-content"
+      ]
+    },
+    {
+      "id": "ucdavis",
+      "name": "Ucdavis",
+      "description": "",
+      "includeUrls": "aggievideo.canvas.ucdavis.edu",
+      "excludeSelectors": [
+        "[data-testid=\"video-player\"]"
+      ]
+    },
+    {
+      "id": "udacity",
+      "name": "Udacity",
+      "description": "",
+      "includeUrls": "*.udacity.com",
+      "excludeSelectors": [
+        ".vjs-text-track-display"
+      ]
+    },
+    {
+      "id": "udemy",
+      "name": "Udemy",
+      "description": "",
+      "includeUrls": "*.udemy.com",
+      "excludeSelectors": [
+        "[data-purpose='captions-cue-text']",
+        ".shaka-text-container"
+      ]
+    },
+    {
+      "id": "ui-community-releases",
+      "name": "Ui Community Releases",
+      "description": "",
+      "includeUrls": "https://community.ui.com/releases/*",
+      "injectCss": "div[style*='flex: 0 0 auto'][style*='position: relative'][style*='visibility: hidden']:has(> div[style*='position: absolute'][style*='visibility: visible']) { visibility: visible !important; }"
+    },
+    {
+      "id": "uni-trier",
+      "name": "Uni Trier",
+      "description": "",
+      "includeUrls": "dblp.uni-trier.de",
+      "includeSelectors": [
+        "h1",
+        "h2",
+        ".title",
+        ".external",
+        "dd p"
+      ],
+      "excludeSelectors": [
+        ".side-column"
+      ]
+    },
+    {
+      "id": "urplay",
+      "name": "Urplay",
+      "description": "",
+      "includeUrls": "urplay.se",
+      "excludeSelectors": [
+        ".jw-media"
+      ]
+    },
+    {
+      "id": "uxtension",
+      "name": "Uxtension",
+      "description": "",
+      "includeUrls": "www.uxento.io",
+      "includeSelectors": [
+        "[class='px-4 pb-4 text-sm leading-relaxed break-words text-white overflow-hidden']",
+        "[class='text-xs leading-relaxed break-words text-[#AAAAB9] mb-2 overflow-hidden']",
+        "[class='px-4 pb-4 text-sm leading-relaxed break-words text-white']",
+        "[class='text-xs leading-relaxed break-words text-[#AAAAB9] mb-2']",
+        "[class='flex min-h-screen flex-col overflow-hidden supports-[overflow:clip]:overflow-clip'] section",
+        "h2",
+        "article",
+        "article h2",
+        "article p"
+      ],
+      "excludeSelectors": [
+        "article div[class='flex justify-between items-center px-3']",
+        "article div[class='flex items-center gap-2 mb-2']",
+        "article div[class='flex justify-between items-center pr-4']",
+        "article div[class='px-3 pb-3 pt-1 grid grid-cols-2 gap-4']",
+        "article div[class='flex flex-wrap gap-1 mt-1']",
+        "article div[class='flex items-center gap-3 pr-12']"
+      ]
+    },
+    {
+      "id": "vaseven",
+      "name": "Vaseven",
+      "description": "",
+      "includeUrls": "www.vaseven.com",
+      "excludeSelectors": [
+        ".et_pb_main_blurb_image"
+      ]
+    },
+    {
+      "id": "vdi-nachrichten",
+      "name": "Vdi Nachrichten",
+      "description": "",
+      "includeUrls": "www.vdi-nachrichten.com",
+      "excludeSelectors": [
+        ".header-menu__item > a",
+        ".linkbar__item",
+        ".header__button-group"
+      ]
+    },
+    {
+      "id": "vercel",
+      "name": "Vercel",
+      "description": "",
+      "includeUrls": "vercel.com",
+      "excludeSelectors": [
+        "[class^=fade-in-words]"
+      ]
+    },
+    {
+      "id": "viki",
+      "name": "Viki",
+      "description": "",
+      "includeUrls": "www.viki.com",
+      "excludeSelectors": [
+        ".vjs-text-track-display"
+      ]
+    },
+    {
+      "id": "vimeo",
+      "name": "Vimeo",
+      "description": "",
+      "includeUrls": [
+        "vimeo.com",
+        "training.leveleffect.com"
+      ],
+      "excludeSelectors": [
+        ".vp-captions"
+      ]
+    },
+    {
+      "id": "visualstudioMarketplace",
+      "name": "Visualstudio Marketplace",
+      "description": "",
+      "includeUrls": "marketplace.visualstudio.com",
+      "excludeSelectors": [
+        ".core-info-second-row",
+        ".core-info-third-row",
+        ".meta-data-list",
+        ".item-title",
+        ".breadcrumb",
+        ".itemDetails-right",
+        ".ux-user-name",
+        ".ux-updated-date",
+        ".ux-item-second-row-wrapper",
+        ".stats-and-offer",
+        ".header-container"
+      ],
+      "injectCss": ".item-details-control-root.ux-item-shortdesc { height: unset !important; overflow: visible !important; max-height:unset !important; }"
+    },
+    {
+      "id": "viu",
+      "name": "Viu",
+      "description": "",
+      "includeUrls": "www.viu.com",
+      "excludeSelectors": [
+        ".bmpui-ui-viu-subtitle-overlay"
+      ]
+    },
+    {
+      "id": "vodtw",
+      "name": "Vodtw",
+      "description": "",
+      "includeUrls": "www.vodtw.com/book/*",
+      "injectCss": [
+        "dl { display: flex !important; flex-wrap: wrap !important; }",
+        "dl dd { white-space: normal !important; overflow: visible !important; }",
+        "#info p { height: unset !important; }"
+      ]
+    },
+    {
+      "id": "wattpad",
+      "name": "Wattpad",
+      "description": "",
+      "includeUrls": "www.wattpad.com",
+      "injectCss": ".story-info .item-description { overflow: scroll !important; }"
+    },
+    {
+      "id": "wayfair",
+      "name": "Wayfair",
+      "description": "",
+      "includeUrls": "www.wayfair.com",
+      "injectCss": "[data-enzyme-id=\"Collapse-Collapsible\"] { height:unset!important; }"
+    },
+    {
+      "id": "webofscience",
+      "name": "Webofscience",
+      "description": "",
+      "includeUrls": [
+        "https://www.webofscience.com/*",
+        "https://webofscience.clarivate.*/*",
+        "www-webofscience-com-*.*",
+        "webofscience-clarivate*.*",
+        "*.ustc.edu.*/*wos*"
+      ],
+      "excludeSelectors": [
+        "app-custom-breadcrumbs",
+        ".summary-left-panel",
+        ".authors",
+        "app-full-record-keywords mark",
+        "mat-sidenav",
+        "[name=pubdate]",
+        "[data-ta^=Summary-]",
+        "app-summary-authors",
+        ".search-text",
+        ".mat-drawer-inner-container",
+        "[class*='sidenav-panel']"
+      ],
+      "injectCss": [
+        ".abstract { height:auto !important; }",
+        ".show-more-lines { height:unset !important; }"
+      ]
+    },
+    {
+      "id": "weibo",
+      "name": "Weibo",
+      "description": "",
+      "includeUrls": [
+        "weibo.com",
+        "*.weibo.*"
+      ],
+      "excludeUrls": "passport.weibo.com/sso/signin*",
+      "includeSelectors": [
+        "div[class^='detail_wbtext']",
+        ".weibo-text",
+        ".m-feed",
+        ".wbpro-feed-content",
+        ".wbpro-list .text"
+      ]
+    },
+    {
+      "id": "weverse",
+      "name": "Weverse",
+      "description": "",
+      "includeUrls": "weverse.io",
+      "excludeSelectors": [
+        ".pzp-pc__video"
+      ]
+    },
+    {
+      "id": "whatsapp",
+      "name": "Whatsapp",
+      "description": "",
+      "includeUrls": "web.whatsapp.com",
+      "includeSelectors": [
+        "._akbu",
+        "[role=list]",
+        ".copyable-text",
+        ".quoted-mention"
+      ],
+      "excludeSelectors": [
+        "[aria-hidden=true]"
+      ]
+    },
+    {
+      "id": "wiley",
+      "name": "Wiley",
+      "description": "",
+      "includeUrls": "*.wiley.com",
+      "excludeUrls": [
+        "onlinelibrary.wiley.com/action/downloadSupplement*",
+        "onlinelibrary.wiley.com/doi/pdf/*",
+        "onlinelibrary.wiley.com/doi/am-pdf/*"
+      ],
+      "excludeSelectors": [
+        ".loa-authors",
+        ".MuiBox-root > .MuiTypography-root.MuiTypography-body2"
+      ]
+    },
+    {
+      "id": "wisdom",
+      "name": "Wisdom",
+      "description": "",
+      "includeUrls": "wisdom.nec.com",
+      "injectCss": "a > font { width: max-content !important; }"
+    },
+    {
+      "id": "wistia",
+      "name": "Wistia",
+      "description": "",
+      "includeUrls": [
+        "ahrefs.com",
+        "*.wistia.net",
+        "*.thinkific.com",
+        "courses.kevinpowell.co",
+        "learn.ni.com",
+        "cgcookie.com",
+        "academy.yoast.com",
+        "courses.mavenanalytics.io",
+        "apclassroom.collegeboard.org"
+      ],
+      "excludeSelectors": [
+        "div[data-handle='captions']",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "wistia-hook",
+      "name": "Wistia Hook",
+      "description": "",
+      "includeUrls": [
+        "agencysupremacy.io",
+        "dynamous.ai",
+        "dynamous.wistia.com"
+      ],
+      "excludeSelectors": [
+        "div[data-handle='captions']"
+      ]
+    },
+    {
+      "id": "wsj",
+      "name": "Wsj",
+      "description": "",
+      "includeUrls": [
+        "www.wsj.com",
+        "cn.wsj.com"
+      ],
+      "excludeSelectors": [
+        "header",
+        "footer",
+        "nav",
+        "[aria-label='Markets summary']"
+      ]
+    },
+    {
+      "id": "www.acrobiosystems.com",
+      "name": "Www.acrobiosystems.com",
+      "description": "",
+      "includeUrls": "www.acrobiosystems.com",
+      "injectCss": [
+        ".productDetialDetail .productLink { overflow: hidden !important; }",
+        ".productDetialDetail .productLink .box a { display: flex !important; justify-content: center !important; white-space: nowrap !important; }"
+      ]
+    },
+    {
+      "id": "www.dgl.ai",
+      "name": "Www.dgl.ai",
+      "description": "",
+      "includeUrls": "www.dgl.ai",
+      "excludeSelectors": [
+        "header"
+      ]
+    },
+    {
+      "id": "www.ey.com",
+      "name": "Www.ey.com",
+      "description": "",
+      "includeUrls": "www.ey.com",
+      "injectCss": ".up-rich-text__container { height: unset!important; }"
+    },
+    {
+      "id": "www.iq.com",
+      "name": "Www.iq.com",
+      "description": "",
+      "includeUrls": "www.iq.com",
+      "excludeSelectors": [
+        ".iqp-subtitle"
+      ]
+    },
+    {
+      "id": "www.metacritic.com",
+      "name": "Www.metacritic.com",
+      "description": "",
+      "includeUrls": "www.metacritic.com",
+      "injectCss": ".c-finderProductCard_info .c-finderProductCard_meta { display: block !important; }"
+    },
+    {
+      "id": "www.sixthtone.com",
+      "name": "Www.sixthtone.com",
+      "description": "",
+      "includeUrls": "www.sixthtone.com",
+      "excludeSelectors": [
+        "#footer",
+        "[class^=index_time]",
+        "[class^=index_anthorList]",
+        "[class^=index_node]",
+        "[class^=index_popupWrapper]"
+      ]
+    },
+    {
+      "id": "xgo",
+      "name": "Xgo",
+      "description": "",
+      "includeUrls": "www.xgo.ing",
+      "injectCss": "[class*='line-clamp'] { -webkit-line-clamp:unset !important; }"
+    },
+    {
+      "id": "xianqihaotianmi",
+      "name": "Xianqihaotianmi",
+      "description": "",
+      "includeUrls": "www.xianqihaotianmi.org",
+      "injectCss": [
+        ".list-charts { display: flex !important; flex-wrap: wrap !important; }",
+        ".list-charts li { white-space: normal !important; overflow: visible !important; }"
+      ]
+    },
+    {
+      "id": "xiaohongshu.com",
+      "name": "Xiaohongshu.com",
+      "description": "",
+      "includeUrls": "www.xiaohongshu.com",
+      "excludeSelectors": [
+        ".author-wrapper",
+        ".info",
+        ".side-bar",
+        ".interactions",
+        ".show-more",
+        ".bottom-container",
+        ".total",
+        ".reds-sticky"
+      ],
+      "injectCss": "a.title { -webkit-line-clamp:3 !important; }"
+    },
+    {
+      "id": "xiaosaas",
+      "name": "Xiaosaas",
+      "description": "",
+      "includeUrls": "*.xiaosaas.com",
+      "excludeSelectors": [
+        "p.marginRight10",
+        "p.marginLeft10"
+      ]
+    },
+    {
+      "id": "yahoo",
+      "name": "Yahoo",
+      "description": "",
+      "includeUrls": "*.yahoo.*",
+      "excludeSelectors": [
+        "._ys_jiqava",
+        "#Col2-5-Rmp-Proxy",
+        ".readmore",
+        ".ticker-item-wrapper",
+        ".ticker-list",
+        ".footer"
+      ],
+      "injectCss": [
+        "[class*='line-clamp'],h3.clamp { -webkit-line-clamp:unset!important; }",
+        "#atomic .Mt\\(20px\\) { margin-top: 100px !important; }",
+        "[class*='LineClamp'] { -webkit-line-clamp:unset !important; max-height:unset !important; }",
+        "a[class*='js-content-viewer']> div[class*='Td\\(n\\)'] { overflow: scroll !important; }",
+        "[class*='_ys_24482e'] { -webkit-line-clamp:unset !important; }",
+        "#Aside > :first-child { overflow:scroll !important; }"
+      ]
+    },
+    {
+      "id": "yandex",
+      "name": "Yandex",
+      "description": "",
+      "includeUrls": "https://yandex.com/video/*",
+      "includeSelectors": [
+        ".serp-item__title",
+        ".serp-item__text",
+        ".Keypoints-ItemTitle",
+        ".bes-epmjnzm-idtktyj",
+        ".OrganicTitle-LinkText",
+        "h1.VideoTitle"
+      ],
+      "injectCss": [
+        ".serp-item__title { -webkit-line-clamp: unset !important; max-height:unset !important; }",
+        ".serp-item__text { -webkit-line-clamp: unset !important; max-height:unset !important; }",
+        ".OrganicTitle-LinkText { -webkit-line-clamp: unset !important; max-height:unset !important; }",
+        "h1.VideoTitle { -webkit-line-clamp: unset !important; max-height:unset !important; }",
+        ".link .serp-item__keypoints { bottom:2px !important; }",
+        ".OrganicTitle { max-height:unset !important; }"
+      ]
+    },
+    {
+      "id": "yandexIndex",
+      "name": "Yandex Index",
+      "description": "",
+      "includeUrls": "https://yandex.com/",
+      "includeSelectors": [
+        ".tabs__item-text"
+      ]
+    },
+    {
+      "id": "yandexSearch",
+      "name": "Yandex Search",
+      "description": "",
+      "includeUrls": "https://yandex.com/search/*",
+      "excludeSelectors": [
+        ".KeyValue-Row",
+        ".EntityFeedbackFooter",
+        ".Organic-Subtitle",
+        ".SerpFooter-Content",
+        ".serp-user",
+        ".Pager"
+      ],
+      "injectCss": ".ExtendedText-Toggle { white-space:normal !important; }"
+    },
+    {
+      "id": "yna",
+      "name": "Yna",
+      "description": "",
+      "includeUrls": "*.yna*",
+      "injectCss": [
+        "font > br { display:none !important; }",
+        "a,strong { max-height:unset !important; -webkit-line-clamp:unset !important; height:unset !important; white-space:unset !important; }",
+        "div,p,li,.item-box01,.news-con { height:unset !important; max-height:unset !important; -webkit-line-clamp:unset !important; }"
+      ]
+    },
+    {
+      "id": "youku.tv",
+      "name": "Youku.tv",
+      "description": "",
+      "includeUrls": "www.youku.tv",
+      "excludeSelectors": [
+        "#subtitle"
+      ]
+    },
+    {
+      "id": "youtube-subtitle",
+      "name": "Youtube Subtitle",
+      "description": "",
+      "includeUrls": [
+        "www.youtube-nocookie.com",
+        "music.youtube.com"
+      ],
+      "excludeSelectors": [
+        ".captions-text",
+        ".ytp-caption-segment"
+      ]
+    },
+    {
+      "id": "youtubekids",
+      "name": "Youtubekids",
+      "description": "",
+      "includeUrls": "www.youtubekids.com",
+      "injectCss": [
+        "#video-title { -webkit-line-clamp: unset !important; max-height: unset !important; }",
+        "h1.ytd-watch-metadata { -webkit-line-clamp: unset !important; max-height: unset !important; }",
+        "yt-formatted-string#video-title { -webkit-line-clamp: unset !important; max-height: unset !important; }",
+        "ytd-expander.ytd-comment-renderer { --ytd-expander-max-lines: 1000 !important; }",
+        ".details.ytk-compact-video-renderer { height: unset !important; }",
+        ".primary-text.ytk-compact-video-renderer { -webkit-line-clamp: unset !important; max-height: unset !important; }"
+      ]
+    },
+    {
+      "id": "youtubeMobile",
+      "name": "Youtube Mobile",
+      "description": "",
+      "includeUrls": "m.youtube.com",
+      "includeSelectors": [
+        ".comment-text",
+        "#content-text",
+        ".media-item-headline",
+        ".slim-video-information-title",
+        ".yt-spec-button-view-model",
+        ".yt-core-attributed-string > span",
+        ".yt-core-attributed-string",
+        ".shortsLockupViewModelHostMetadataTitle",
+        ".YtmCommentRendererText",
+        ".ytAttributedStringHost",
+        ".title"
+      ],
+      "excludeSelectors": [
+        ".ytm-badge-and-byline-item-byline",
+        ".ytp-caption-window-container",
+        "text",
+        ".imt-caption-container",
+        "ytd-live-chat-frame"
+      ],
+      "injectCss": [
+        ".shortsLockupViewModelHostMetadataTitle,h4.compact-media-item-headline { max-height:unset !important; line-clamp:unset !important; overflow:unset !important; -webkit-line-clamp:unset !important; }",
+        ".comment-text { max-height:unset !important; }",
+        ".details,.subhead,.video-card-title,.media-item-headline { max-height:unset!important; -webkit-line-clamp:unset!important; }",
+        "truncated-text-content { max-height: unset !important; }"
+      ]
+    },
+    {
+      "id": "yuque",
+      "name": "Yuque",
+      "description": "",
+      "includeUrls": "https://www.yuque.com/*",
+      "excludeSelectors": [
+        ".lark-virtual-tree"
+      ]
+    },
+    {
+      "id": "zdf.de",
+      "name": "Zdf.de",
+      "description": "",
+      "includeUrls": "www.zdf.de",
+      "excludeSelectors": [
+        ".zdfplayer-video-container",
+        "#immersive-translate-caption-window"
+      ]
+    },
+    {
+      "id": "zebrack-shueisha",
+      "name": "Zebrack Shueisha",
+      "description": "",
+      "includeUrls": "zebrack-comic.shueisha.*",
+      "excludeSelectors": [
+        ".eAvsta_root"
+      ]
+    },
+    {
+      "id": "zendesk",
+      "name": "Zendesk",
+      "description": "",
+      "includeUrls": "https://*.zendesk.com/agent/*",
+      "includeSelectors": [
+        "[data-test-id*=subject]",
+        "[data-test-id*=content] > span",
+        ".zd-comment",
+        ".title"
+      ]
+    },
+    {
+      "id": "zenva",
+      "name": "Zenva",
+      "description": "",
+      "includeUrls": "academy.zenva.com",
+      "excludeSelectors": [
+        ".video-container"
+      ]
+    },
+    {
+      "id": "zoom",
+      "name": "Zoom",
+      "description": "",
+      "includeUrls": "*.zoom.us",
+      "excludeSelectors": [
+        ".live-transcription-subtitle__box"
+      ]
+    },
+    {
+      "id": "zoom-asu",
+      "name": "Zoom Asu",
+      "description": "",
+      "includeUrls": "*.zoom.us/rec/*",
+      "excludeSelectors": [
+        ".player-share .video-js"
+      ]
     }
   ]
 }
