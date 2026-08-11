@@ -16,7 +16,16 @@ vi.mock("@/utils/language", () => ({ isTraditionalChinese: vi.fn(() => false) })
 import { needsTranslate } from "@/main/strategy";
 import { getCSSRuleString, getHighlightCSSRuleString, buildTranslationCss } from "@/main/css";
 import { getTextLanguage } from "@/main/lang";
-import { DOMAIN_STRATEGY, DEFAULT_STRATEGY } from "@/main/constants";
+import { styleColorFields } from "@/utils/translationStyle";
+import {
+    DOMAIN_STRATEGY,
+    DEFAULT_STRATEGY,
+    STYLE_BLUR,
+    STYLE_DIM,
+    STYLE_NONE,
+    STYLE_QUOTE,
+    TRANSLATION_STYLE_GROUPS,
+} from "@/main/constants";
 import { franc } from "franc";
 import { isTraditionalChinese } from "@/utils/language";
 
@@ -127,6 +136,7 @@ describe("buildTranslationCss", () => {
         fontColor: "#000",
         borderStyle: "noneStyleSelect",
         borderColor: "",
+        quoteBorderColor: "#df5f47",
         highlightBg: "#ff0",
         highlightFontColor: "#111",
         highlightStyle: "underLine",
@@ -181,6 +191,92 @@ describe("buildTranslationCss", () => {
             highlightSwitch: false,
         });
         expect(css).toBe("");
+    });
+
+    it("drops the background for the enhance styles", () => {
+        // dim/blur attenuate the paragraph as a whole; a background fill would
+        // defeat that, so it is not applied — and Options does not offer it
+        // (both sides ask styleColorFields).
+        const dim = buildTranslationCss({ ...base, borderStyle: "dimText" });
+        expect(dim).not.toContain("background-color");
+        expect(dim).toContain("opacity: 0.6;");
+
+        const blur = buildTranslationCss({ ...base, borderStyle: "blurText" });
+        expect(blur).not.toContain("background-color");
+        expect(blur).toContain("filter: blur(4px);");
+    });
+
+    it("gives only blur a hover rule — dim is a permanent de-emphasis", () => {
+        expect(buildTranslationCss({ ...base, borderStyle: "blurText" })).toContain(
+            ".duo-translation:hover { filter: none; }",
+        );
+        expect(buildTranslationCss({ ...base, borderStyle: "dimText" })).not.toContain(":hover");
+    });
+
+    it("scopes the quote bar to translations that got their own line", () => {
+        // A translation appended inline (span divide, i.e. short enough to skip
+        // the <br>) must keep its colors but not grow a bar mid-sentence.
+        const css = buildTranslationCss({ ...base, borderStyle: "quoteBar" });
+        expect(css).toContain(".duo-translation { color: #000; }");
+        expect(css).toContain("br.duo-divide + .duo-translation {");
+        expect(css).toContain("border-left: 3px solid #df5f47;");
+        // inline-block, so the bar runs down every line of a wrapped translation
+        // rather than marking the first line fragment only.
+        expect(css).toContain("display: inline-block;");
+        expect(css).toContain("padding-left: 0.6em;");
+        expect(css).not.toContain(":hover");
+    });
+
+    it("colors the quote bar from its own key, falling back to currentColor", () => {
+        // borderColor is deliberately ignored here: the bar has its own config
+        // key so switching styles never carries one color over to the other.
+        const css = buildTranslationCss({
+            ...base,
+            borderStyle: "quoteBar",
+            borderColor: "#f00",
+            quoteBorderColor: "#00f",
+        });
+        expect(css).toContain("border-left: 3px solid #00f;");
+        expect(css).not.toContain("#f00");
+
+        const unset = buildTranslationCss({ ...base, borderStyle: "quoteBar", quoteBorderColor: "" });
+        expect(unset).toContain("border-left: 3px solid currentColor;");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// styleColorFields — the contract Options renders from and main/css.ts gates on
+// ---------------------------------------------------------------------------
+describe("styleColorFields", () => {
+    it("leads with the border color for the styles that are about an edge", () => {
+        for (const style of ["solidBorder", "dashedBorder", "underLine", "wavyLine"]) {
+            expect(styleColorFields(style)).toEqual(["border", "bg", "font"]);
+        }
+    });
+
+    it("keeps background + font for none", () => {
+        expect(styleColorFields(STYLE_NONE)).toEqual(["bg", "font"]);
+        // Unwritten config reads as "", which must behave as none rather than
+        // falling through to the border default.
+        expect(styleColorFields("")).toEqual(["bg", "font"]);
+    });
+
+    it("offers only what each enhance style can use", () => {
+        expect(styleColorFields(STYLE_DIM)).toEqual(["font"]);
+        expect(styleColorFields(STYLE_BLUR)).toEqual(["font"]);
+        expect(styleColorFields(STYLE_QUOTE)).toEqual(["font", "quoteBorder"]);
+    });
+});
+
+describe("TRANSLATION_STYLE_GROUPS", () => {
+    it("puts the enhance group directly after none", () => {
+        expect(TRANSLATION_STYLE_GROUPS[0].options[0].value).toBe(STYLE_NONE);
+        expect(TRANSLATION_STYLE_GROUPS[1].groupTitle).toBe("enhance");
+        expect(TRANSLATION_STYLE_GROUPS[1].options.map((o) => o.value)).toEqual([
+            STYLE_DIM,
+            STYLE_QUOTE,
+            STYLE_BLUR,
+        ]);
     });
 });
 

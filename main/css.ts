@@ -3,7 +3,16 @@
 // isolation (no DOM, no config). content.ts reads config and feeds the values
 // in via buildTranslationCss().
 import { effectiveFontColor } from "@/utils/color";
-import { HIGHLIGHT_BORDER_LINE_STYLE } from "@/utils/translationStyle";
+import {
+    BLUR_RADIUS_PX,
+    DIM_OPACITY,
+    HIGHLIGHT_BORDER_LINE_STYLE,
+    QUOTE_BAR_DEFAULT_COLOR,
+    QUOTE_BAR_GAP,
+    QUOTE_BAR_WIDTH_PX,
+    styleUsesBackground,
+} from "@/utils/translationStyle";
+import { STYLE_BLUR, STYLE_DIM, STYLE_QUOTE } from "@/main/constants";
 import { HIGHLIGHT_ORIGINAL, HIGHLIGHT_TRANSLATION } from "@/main/dom/sentenceHighlight";
 
 export interface TranslationCssOptions {
@@ -11,6 +20,8 @@ export interface TranslationCssOptions {
     fontColor: string;
     borderStyle: string;
     borderColor: string;
+    /** The quote style's leading bar; empty means "follow the text color". */
+    quoteBorderColor: string;
     highlightBg: string;
     highlightFontColor: string;
     highlightStyle: string;
@@ -21,7 +32,14 @@ export interface TranslationCssOptions {
 /**
  * Translate a style name (+ optional color) into a CSS declaration string.
  * Handles the border variants (solid/dotted/dashed), the underline variants
- * (wavy/double/under/dotted/dashed Line), and `noneStyleSelect`.
+ * (wavy/double/under/dotted/dashed Line), the enhance styles (dim/quote/blur)
+ * and `noneStyleSelect`.
+ *
+ * `color` is whichever color the style actually uses — the border color for the
+ * border/underline variants, the bar color for `quote`, and nothing for the two
+ * attenuating styles. The enhance styles emit only their *resting* state; their
+ * hover counterpart is a separate rule (getEnhanceHoverRuleString) because a
+ * declaration string cannot carry a second selector.
  */
 export function getCSSRuleString(style: string, color?: string): string {
     let cssRule = "";
@@ -30,6 +48,30 @@ export function getCSSRuleString(style: string, color?: string): string {
     switch (style) {
         case "noneStyleSelect":
             cssRule = "border: none;";
+            break;
+        // Dim is unconditional — it is a permanent de-emphasis, not a
+        // reveal-on-hover. (Blur is the opposite: unreadable until hovered, so
+        // it must have a way back. Hence no transition here and one there.)
+        case STYLE_DIM:
+            cssRule = `opacity: ${DIM_OPACITY};`;
+            break;
+        case STYLE_BLUR:
+            cssRule = `filter: blur(${BLUR_RADIUS_PX}px);transition: filter 0.2s ease;`;
+            break;
+        case STYLE_QUOTE:
+            // inline-block so the bar spans every line: `.duo-translation` is a
+            // <span>, and an inline box draws its left border on the first line
+            // fragment only. It stays inline-*level* rather than block so the
+            // preceding <br> still does its job — a block box after a <br>
+            // leaves an empty line. No width: shrink-to-fit already fills the
+            // available width once the text wraps.
+            //
+            // currentColor rather than dropping the declaration when unset: a
+            // borderless "quote" style would be indistinguishable from none.
+            cssRule =
+                `display: inline-block;` +
+                `border-left: ${QUOTE_BAR_WIDTH_PX}px solid ${color || QUOTE_BAR_DEFAULT_COLOR};` +
+                `padding-left: ${QUOTE_BAR_GAP};`;
             break;
         case "solidBorder":
             cssRule = "border: 2px solid;";
@@ -67,6 +109,26 @@ export function getCSSRuleString(style: string, color?: string): string {
         cssRule += `text-underline-offset: 4px;`;
     }
     return cssRule;
+}
+
+/**
+ * The hover half of the blur style, or "" for every other style. Kept separate
+ * from getCSSRuleString because it needs its own selector
+ * (`.duo-translation:hover`), not another declaration.
+ *
+ * Blur alone gets one, because blurred text cannot be read at all and a style
+ * with no way back would just be "hide the translation". Dim stays dimmed on
+ * hover — it is legible as-is, and restoring it would make the page flicker
+ * under a moving pointer.
+ *
+ * Only the translation carries the hover state, never the whole container:
+ * pointing at the original must leave the translation blurred — that is the
+ * entire point of the style, and it is also what bindRangeHighlightHandler
+ * mirrors when it refuses to paint a highlight the reader could not see (see
+ * main/content.ts).
+ */
+export function getEnhanceHoverRuleString(style: string): string {
+    return style === STYLE_BLUR ? "filter: none;" : "";
 }
 
 /**
@@ -119,15 +181,44 @@ export function buildTranslationCss(opts: TranslationCssOptions): string {
 
     // Translation style — applied to the appended translation copy.
     const translationDecls: string[] = [];
-    if (opts.bgColor) translationDecls.push(`background-color: ${opts.bgColor};`);
+    // The enhance styles attenuate the paragraph as a whole, so they drop the
+    // background fill (styleColorFields says the same thing to the Options
+    // pickers — one definition, so no color is offered that never lands, and
+    // none lands that cannot be changed).
+    const bgColor = styleUsesBackground(opts.borderStyle) ? opts.bgColor : "";
+    if (bgColor) translationDecls.push(`background-color: ${bgColor};`);
     // Nudge the font to a near-color only when it exactly matches the bg, so
     // identical bg+font text stays visible (config is untouched).
-    const translationFont = effectiveFontColor(opts.bgColor, opts.fontColor);
+    const translationFont = effectiveFontColor(bgColor, opts.fontColor);
     if (translationFont) translationDecls.push(`color: ${translationFont};`);
-    const translationRule = getCSSRuleString(opts.borderStyle, opts.borderColor);
-    if (translationRule) translationDecls.push(translationRule);
-    if (translationDecls.length > 0) {
-        blocks.push(`.duo-translation { ${translationDecls.join(" ")} }`);
+    // The quote bar has its own color key; every other style that takes a color
+    // takes the border one.
+    const isQuote = opts.borderStyle === STYLE_QUOTE;
+    const styleColor = isQuote ? opts.quoteBorderColor : opts.borderColor;
+    const translationRule = getCSSRuleString(opts.borderStyle, styleColor);
+    // The quote bar is the one style that depends on the *layout* the
+    // translation landed in. content.ts inserts either a <br class="duo-divide">
+    // (own line) or a <span class="duo-divide"> of two nbsp (appended inline,
+    // for translations under TRANSLATION_LINE_BREAK_MIN_CHARS), always directly
+    // before the translation — so the adjacent-sibling selector asks exactly
+    // "did this one get its own line?". A quote bar mid-sentence would read as
+    // a stray glyph, so the inline case keeps only the color declarations.
+    if (isQuote) {
+        if (translationDecls.length > 0) {
+            blocks.push(`.duo-translation { ${translationDecls.join(" ")} }`);
+        }
+        if (translationRule) {
+            blocks.push(`br.duo-divide + .duo-translation { ${translationRule} }`);
+        }
+    } else {
+        if (translationRule) translationDecls.push(translationRule);
+        if (translationDecls.length > 0) {
+            blocks.push(`.duo-translation { ${translationDecls.join(" ")} }`);
+        }
+    }
+    const hoverRule = getEnhanceHoverRuleString(opts.borderStyle);
+    if (hoverRule) {
+        blocks.push(`.duo-translation:hover { ${hoverRule} }`);
     }
 
     // Bilingual highlighting — unified across the original and its translation,

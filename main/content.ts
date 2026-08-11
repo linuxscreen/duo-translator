@@ -1,5 +1,5 @@
 import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
-import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE, EXTENSION_INVALID_CONTEXT_MSG } from "./constants";
+import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE, EXTENSION_INVALID_CONTEXT_MSG, STYLE_BLUR } from "./constants";
 import { restore, translateParams, getTranslateResult, translate, TranslateResult } from "./translateClient";
 import { notifyBackground, runtimeSendMessage, sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
@@ -375,6 +375,12 @@ export async function content() {
     // Highlight API where available, the <duo-span> wrapper otherwise. Resolved
     // once so a record's write path and its restore path can never disagree.
     const highlightApiSupported = supportsHighlightApi()
+    // Is the translation currently rendered blurred (STYLE_BLUR)? Kept in sync
+    // by updateStyle. The bilingual-highlight handlers read it: a blurred
+    // translation is only legible while the pointer rests on it (the blur is
+    // lifted by `.duo-translation:hover`), so a hover over the ORIGINAL must
+    // paint nothing at all — half the pair would be unreadable.
+    let translationBlurred = false
     // translated elements of SINGLE view strategy
     // SINGLE: one TranslateResult per translated unit, grouped by container.
     let translatedElementMap = new Map<UnitContainer, TranslateResult[]>()
@@ -2229,7 +2235,7 @@ export async function content() {
 
     async function updateStyle() {
         let [
-            bgColor, fontColor, borderStyle, borderColor,
+            bgColor, fontColor, borderStyle, borderColor, quoteBorderColor,
             highlightBg, highlightFontColor, highlightStyle, highlightBorderColor,
             highlightSwitch,
         ] = await Promise.all([
@@ -2237,17 +2243,20 @@ export async function content() {
             getConfig(CONFIG_KEY.FONT_COLOR),
             getConfig(CONFIG_KEY.STYLE),
             getConfig(CONFIG_KEY.BORDER_COLOR),
+            getConfig(CONFIG_KEY.QUOTE_BORDER_COLOR),
             getConfig(CONFIG_KEY.HIGHLIGHT_BG_COLOR),
             getConfig(CONFIG_KEY.HIGHLIGHT_FONT_COLOR),
             getConfig(CONFIG_KEY.HIGHLIGHT_STYLE),
             getConfig(CONFIG_KEY.HIGHLIGHT_BORDER_COLOR),
             getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
         ])
+        translationBlurred = borderStyle === STYLE_BLUR
         const css = buildTranslationCss({
             bgColor: bgColor || '',
             fontColor: fontColor || '',
             borderStyle: borderStyle || 'noneStyleSelect',
             borderColor: borderColor || '',
+            quoteBorderColor: quoteBorderColor || '',
             highlightBg: highlightBg || '',
             highlightFontColor: highlightFontColor || '',
             highlightStyle: highlightStyle || 'noneStyleSelect',
@@ -2488,6 +2497,13 @@ export async function content() {
         let frame = 0
         let pointerX = 0
         let pointerY = 0
+        // Blur style only: is the pointer inside a translation? Captured from the
+        // event rather than derived from the ranges, because the two answers
+        // differ exactly where it matters — a pointer in the blank between two
+        // lines of the translation is over no range, yet must keep the
+        // highlight (sticky), while a pointer on the original is over a range
+        // and must drop it.
+        let pointerInTranslation = false
 
         /** Is the pointer over sentence `index` of `record`, on either side? */
         function hits(record: DuoUnitRecord, index: number): boolean {
@@ -2495,6 +2511,13 @@ export async function content() {
             if (!pair) return false
             const original = pair.original[index]
             const translation = pair.translation[index]
+            // Under the blur style the original side never selects a sentence:
+            // it cannot lift the blur, so the pair it would light up is half
+            // unreadable. Hovering the translation still highlights both — by
+            // then the blur is gone and the original is the useful half.
+            if (translationBlurred) {
+                return !!translation && isPointOverRange(pointerX, pointerY, translation)
+            }
             return (!!original && isPointOverRange(pointerX, pointerY, original))
                 || (!!translation && isPointOverRange(pointerX, pointerY, translation))
         }
@@ -2504,6 +2527,16 @@ export async function content() {
             const records = duoTranslatedElementMap.get(container) ?? []
             // The record may have been restored away under us.
             if (current && !records.includes(current.record)) current = null
+            // Blurred: leaving the translation for the original re-blurs it, so
+            // the paint has to go with it — stickiness stops at the translation's
+            // edge instead of at the paragraph's.
+            if (translationBlurred && !pointerInTranslation) {
+                if (current) {
+                    current = null
+                    clearSentenceHighlight(container)
+                }
+                return
+            }
             // Cheapest first: the pointer usually stays inside the sentence it
             // is already on.
             if (current && hits(current.record, current.index)) return
@@ -2526,6 +2559,13 @@ export async function content() {
         const onMouseMove = (event: MouseEvent) => {
             pointerX = event.clientX
             pointerY = event.clientY
+            // Read from the event, not in resolve(): by the next frame the
+            // pointer may have moved on. composedTarget because a listener on
+            // the container sees `target` retargeted to the host for anything
+            // inside a nested shadow root.
+            if (translationBlurred) {
+                pointerInTranslation = !!composedTarget(event)?.closest?.(".duo-translation")
+            }
             if (frame) return
             frame = requestAnimationFrame(resolve)
         }
@@ -2534,6 +2574,7 @@ export async function content() {
         // actually exits the whole paragraph (original + translation).
         const onMouseLeave = () => {
             current = null
+            pointerInTranslation = false
             clearSentenceHighlight(container)
         }
 
@@ -2585,6 +2626,14 @@ export async function content() {
             // The ownership guard protects against spans of an enclosing or
             // nested paragraph (each has its own binding).
             if (!span || closestParagraph(span) !== originalElement) {
+                return
+            }
+            // Same rule as the Highlight-API path: with the translation blurred,
+            // only the translation side may select a sentence, and moving onto
+            // the original drops the paint (it re-blurs as soon as
+            // `.duo-translation:hover` stops matching).
+            if (translationBlurred && !span.closest('.duo-translation')) {
+                onMouseLeave()
                 return
             }
             const sequence = parseInt(span.getAttribute("duo-sequence")!)

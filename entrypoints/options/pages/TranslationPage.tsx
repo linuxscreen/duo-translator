@@ -18,6 +18,9 @@ import {
   TRANSLATION_FONT_COLORS,
   STYLE_GROUPS,
   STYLE_NONE,
+  STYLE_BLUR,
+  TRANSLATION_STYLE_GROUPS,
+  type TranslationStyleGroup,
   VIEW_STRATEGIES,
   DEFAULT_STRATEGY_OPTIONS,
   TTS_SERVICE_OPTIONS,
@@ -44,7 +47,13 @@ import { Switch } from '@/components/ui/switch';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { DomainListSection, type DomainItem } from '@/components/options/DomainListSection';
-import { buildStylePreview, styleHasBorder } from '@/utils/translationStyle';
+import {
+  buildStylePreview,
+  styleColorFields,
+  styleHasBorder,
+  styleUsesBackground,
+  type StyleColorField,
+} from '@/utils/translationStyle';
 import { ServiceMark } from '@/components/ui/service-mark';
 import { buildServiceOptions, getTranslateService, type ServiceOption } from '@/utils/service';
 
@@ -114,6 +123,10 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   const [fontColorIndex, setFontColorIndex] = useState(0);
   const [borderColor, setBorderColor] = useState('');
   const [borderColorIndex, setBorderColorIndex] = useState(0);
+  // The quote style's leading bar — its own key, so switching between the quote
+  // and the border styles doesn't carry one's color over to the other.
+  const [quoteBorderColor, setQuoteBorderColor] = useState('');
+  const [quoteBorderColorIndex, setQuoteBorderColorIndex] = useState(0);
 
   // Bilingual highlighting style (unified for both original + translation)
   const [highlightBg, setHighlightBg] = useState('');
@@ -126,6 +139,8 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
 
   // Preview hover state
   const [hoverPart, setHoverPart] = useState<1 | 2 | null>(null);
+  // Preview stand-in for `.duo-translation:hover` (dim / blur lift on hover).
+  const [translationHovered, setTranslationHovered] = useState(false);
 
   // Domain lists
   const [alwaysList, setAlwaysList] = useState<DomainItem[]>([]);
@@ -165,7 +180,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     (async () => {
       const [
         bh, fb, fbs, vs, tl, ts, ds, ms, lb, tc, tts,
-        styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg,
+        styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg, qbcCfg, qbcIdxCfg,
         hbCfg, hbIdxCfg, hfCfg, hfIdxCfg, hsCfg, hbcCfg, hbcIdxCfg,
       ] = await Promise.all([
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
@@ -186,6 +201,8 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         getConfig(CONFIG_KEY.FONT_COLOR_INDEX),
         getConfig(CONFIG_KEY.BORDER_COLOR),
         getConfig(CONFIG_KEY.BORDER_COLOR_INDEX),
+        getConfig(CONFIG_KEY.QUOTE_BORDER_COLOR),
+        getConfig(CONFIG_KEY.QUOTE_BORDER_COLOR_INDEX),
         getConfig(CONFIG_KEY.HIGHLIGHT_BG_COLOR),
         getConfig(CONFIG_KEY.HIGHLIGHT_BG_COLOR_INDEX),
         getConfig(CONFIG_KEY.HIGHLIGHT_FONT_COLOR),
@@ -232,6 +249,8 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
       setFontColorIndex(typeof fcIdxCfg === 'number' ? fcIdxCfg : 0);
       setBorderColor(typeof bcCfg === 'string' ? bcCfg : '');
       setBorderColorIndex(typeof bcIdxCfg === 'number' ? bcIdxCfg : 0);
+      setQuoteBorderColor(typeof qbcCfg === 'string' ? qbcCfg : '');
+      setQuoteBorderColorIndex(typeof qbcIdxCfg === 'number' ? qbcIdxCfg : 0);
       setHighlightBg(typeof hbCfg === 'string' ? hbCfg : '');
       setHighlightBgIndex(typeof hbIdxCfg === 'number' ? hbIdxCfg : 0);
       setHighlightFontColor(typeof hfCfg === 'string' ? hfCfg : '');
@@ -416,6 +435,16 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     setBorderColorIndex(i);
     persistColorDebounced(CONFIG_KEY.BORDER_COLOR, CONFIG_KEY.BORDER_COLOR_INDEX, c, i);
   };
+  const onQuoteBorderColor = (c: string, i: number) => {
+    setQuoteBorderColor(c);
+    setQuoteBorderColorIndex(i);
+    persistColorDebounced(
+      CONFIG_KEY.QUOTE_BORDER_COLOR,
+      CONFIG_KEY.QUOTE_BORDER_COLOR_INDEX,
+      c,
+      i,
+    );
+  };
 
   const onHighlightBg = (c: string, i: number) => {
     setHighlightBg(c);
@@ -464,10 +493,20 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     lng: targetLang,
   }) as string;
 
+  // The two attenuating styles hand the paragraph back on hover, which the page
+  // gets from `.duo-translation:hover` — the preview has to reproduce it, or it
+  // shows a permanently unreadable translation.
   const translationStyle = useMemo(
     () =>
-      buildStylePreview({ style, bgColor, fontColor, borderColor }),
-    [style, bgColor, fontColor, borderColor],
+      buildStylePreview({
+        style,
+        bgColor,
+        fontColor,
+        borderColor,
+        quoteBorderColor,
+        hovered: translationHovered,
+      }),
+    [style, bgColor, fontColor, borderColor, quoteBorderColor, translationHovered],
   );
   const highlightCss = useMemo(
     () =>
@@ -481,12 +520,17 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     [highlightStyle, highlightBg, highlightFontColor, highlightBorderColor],
   );
 
+  // Which color pickers the chosen style actually uses, in display order — the
+  // page gates its declarations on the same function.
+  const translationColorFields = useMemo(() => styleColorFields(style), [style]);
+
   // Readability guardrails — flag (don't block) bg/font pairs whose contrast is
   // too low to read. Pairs with a default/transparent color aren't evaluable
-  // and are left alone. See utils/color.
+  // and are left alone. See utils/color. A style that ignores the background is
+  // not evaluable either: the translation sits on the page's own backdrop.
   const translationLowContrast = useMemo(
-    () => !isReadableContrast(bgColor, fontColor),
-    [bgColor, fontColor],
+    () => styleUsesBackground(style) && !isReadableContrast(bgColor, fontColor),
+    [style, bgColor, fontColor],
   );
   const highlightLowContrast = useMemo(
     () => !isReadableContrast(highlightBg, highlightFontColor),
@@ -497,13 +541,17 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     return <div className="h-[480px] rounded-xl border border-line bg-surface/60 backdrop-blur-sm" />;
   }
 
-  const renderStyleSelect = (value: string, onChange: (v: string) => void) => (
+  const renderStyleSelect = (
+    value: string,
+    onChange: (v: string) => void,
+    groups: TranslationStyleGroup[],
+  ) => (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger className="min-w-[200px]">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        {STYLE_GROUPS.map((group, gi) => (
+        {groups.map((group, gi) => (
           <SelectGroup key={group.groupTitle ?? `__plain_${gi}`}>
             {group.groupTitle && (
               <SelectLabel>{t(group.groupTitle, group.groupTitle)}</SelectLabel>
@@ -518,6 +566,82 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
       </SelectContent>
     </Select>
   );
+
+  // Hovering the ORIGINAL paints nothing under the blur style: the translation
+  // is only legible while the pointer rests on it, so lighting up a pair whose
+  // other half is unreadable is worse than lighting up nothing. Mirrors the
+  // page — see bindRangeHighlightHandler in main/content.ts.
+  const onHoverOriginal = (part: 1 | 2) => {
+    if (!highlight || style === STYLE_BLUR) return;
+    setHoverPart(part);
+  };
+
+  // One color row of the translation style, picked by field name so the order
+  // is whatever styleColorFields returns for the selected style.
+  const renderTranslationColorRow = (field: StyleColorField) => {
+    switch (field) {
+      case 'border':
+        return (
+          <SettingRow
+            key={field}
+            label={t('borderColor', 'border color')}
+            control={
+              <ColorPicker
+                value={borderColor}
+                selectedIndex={borderColorIndex}
+                presets={TRANSLATION_BG_COLORS}
+                onChange={onBorderColor}
+              />
+            }
+          />
+        );
+      case 'quoteBorder':
+        return (
+          <SettingRow
+            key={field}
+            label={t('borderColor', 'border color')}
+            control={
+              <ColorPicker
+                value={quoteBorderColor}
+                selectedIndex={quoteBorderColorIndex}
+                presets={TRANSLATION_BG_COLORS}
+                onChange={onQuoteBorderColor}
+              />
+            }
+          />
+        );
+      case 'bg':
+        return (
+          <SettingRow
+            key={field}
+            label={t('backgroundColor', 'background color')}
+            control={
+              <ColorPicker
+                value={bgColor}
+                selectedIndex={bgColorIndex}
+                presets={TRANSLATION_BG_COLORS}
+                onChange={onBgColor}
+              />
+            }
+          />
+        );
+      case 'font':
+        return (
+          <SettingRow
+            key={field}
+            label={t('fontColor', 'font color')}
+            control={
+              <ColorPicker
+                value={fontColor}
+                selectedIndex={fontColorIndex}
+                presets={TRANSLATION_FONT_COLORS}
+                onChange={onFontColor}
+              />
+            }
+          />
+        );
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -758,60 +882,26 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
           </button>
         </div>
         {styleOpen && <>
-          <SettingRow className=' border-line border-b'
+          <SettingRow
             label={t('translationStyle', 'Translation style')}
             control
           />
           <SettingRow
-            label={t('border', 'border')}
-            control={renderStyleSelect(style, onStyle)}
+            label={t('displayStyle', 'Display style')}
+            control={renderStyleSelect(style, onStyle, TRANSLATION_STYLE_GROUPS)}
           />
-          <SettingRow
-            label={t('backgroundColor', 'background color')}
-            control={
-              <ColorPicker
-                value={bgColor}
-                selectedIndex={bgColorIndex}
-                presets={TRANSLATION_BG_COLORS}
-                onChange={onBgColor}
-              />
-            }
-          />
-          <SettingRow
-            label={t('fontColor', 'font color')}
-            control={
-              <ColorPicker
-                value={fontColor}
-                selectedIndex={fontColorIndex}
-                presets={TRANSLATION_FONT_COLORS}
-                onChange={onFontColor}
-              />
-            }
-          />
+          {translationColorFields.map(renderTranslationColorRow)}
           {translationLowContrast && (
             <ContrastWarning onFix={onFixTranslationContrast} />
           )}
-          {styleHasBorder(style) && (
-            <SettingRow
-              label={t('borderColor', 'border color')}
-              control={
-                <ColorPicker
-                  value={borderColor}
-                  selectedIndex={borderColorIndex}
-                  presets={TRANSLATION_BG_COLORS}
-                  onChange={onBorderColor}
-                />
-              }
-            />
-          )}
 
-          <SettingRow className=' border-line border-b border-t'
+          <SettingRow className=' border-line border-t'
             label={t('bilingualHighlightingStyle', 'Highlighting style')}
             control
           />
           <SettingRow
             label={t('border', 'border')}
-            control={renderStyleSelect(highlightStyle, onHighlightStyle)}
+            control={renderStyleSelect(highlightStyle, onHighlightStyle, STYLE_GROUPS)}
           />
           <SettingRow
             label={t('backgroundColor', 'background color')}
@@ -851,7 +941,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
               }
             />
           )}
-          <SettingRow className=' border-line border-b border-t'
+          <SettingRow className=' border-line border-t'
             label={t('stylePreview', 'Style preview')}
             control
           />
@@ -860,7 +950,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
               <span
                 className="cursor-pointer rounded-[2px] px-0.5 transition-colors"
                 style={hoverPart === 1 ? highlightCss : undefined}
-                onMouseEnter={() => highlight && setHoverPart(1)}
+                onMouseEnter={() => onHoverOriginal(1)}
                 onMouseLeave={() => setHoverPart(null)}
               >
                 {originalText1}
@@ -868,13 +958,18 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
               <span
                 className="cursor-pointer rounded-[2px] px-0.5 transition-colors"
                 style={hoverPart === 2 ? highlightCss : undefined}
-                onMouseEnter={() => highlight && setHoverPart(2)}
+                onMouseEnter={() => onHoverOriginal(2)}
                 onMouseLeave={() => setHoverPart(null)}
               >
                 {originalText2}
               </span>
             </p>
-            <p style={translationStyle} className="inline-block rounded px-1 py-0.5">
+            <p
+              style={translationStyle}
+              className="inline-block rounded px-1 py-0.5"
+              onMouseEnter={() => setTranslationHovered(true)}
+              onMouseLeave={() => setTranslationHovered(false)}
+            >
               <span
                 className="cursor-pointer rounded-[2px] px-0.5 transition-colors"
                 style={hoverPart === 1 ? highlightCss : undefined}

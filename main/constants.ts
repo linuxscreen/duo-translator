@@ -312,6 +312,11 @@ export enum CONFIG_KEY {
     BG_COLOR_INDEX = 'bgColorIndex',
     FONT_COLOR_INDEX = 'fontColorIndex',
     BORDER_COLOR_INDEX = 'borderColorIndex',
+    // The quote style's leading bar. Deliberately NOT BORDER_COLOR: the bar and
+    // the border/underline decorations are never shown together, and sharing one
+    // key would make picking a color for one silently restyle the other.
+    QUOTE_BORDER_COLOR = 'quoteBorderColor',
+    QUOTE_BORDER_COLOR_INDEX = 'quoteBorderColorIndex',
     // Bilingual highlighting style (used for both original + translation hover).
     HIGHLIGHT_BG_COLOR = 'highlightBgColor',
     HIGHLIGHT_BG_COLOR_INDEX = 'highlightBgColorIndex',
@@ -471,6 +476,11 @@ export const DEFAULT_VALUE = {
     HIGHLIGHT_STYLE: 'underLine',
     HIGHLIGHT_BORDER_COLOR: '#df5f47',
     HIGHLIGHT_BORDER_COLOR_INDEX: 1,
+    // The quote bar defaults to the first preset rather than "no color": a bar
+    // that follows the translation's own text color reads as part of the text
+    // instead of as a quote mark. Index 1 — presets[0] is the empty slot.
+    QUOTE_BORDER_COLOR: '#df5f47',
+    QUOTE_BORDER_COLOR_INDEX: 1,
     // DeepL needs an API key before it can translate anything, so it starts off.
     //
     // Built-in AI is deliberately NOT listed here: its default is a runtime
@@ -481,7 +491,7 @@ export const DEFAULT_VALUE = {
     // build ships to browsers that do and don't have it.
     DISABLED_TRANSLATE_SERVICES: ['deepl'],
     AI_TARGET_LANGUAGE: 'en',
-    THEME: 'dark',
+    THEME: 'system',
     DOUBLE_TAP_MODIFIER: 'ctrl',
     DOUBLE_TAP_TRANSLATE_SELECTION: true,
     DOUBLE_TAP_TOGGLE_PARAGRAPH: true,
@@ -1285,10 +1295,19 @@ export const LANGUAGES_MAP = new Map(LANGUAGES.map((lang) => [lang.value, lang])
 // The value strings double as CSS class names in the popup demo so legacy code can match by id.
 export const STYLE_NONE = 'noneStyleSelect';
 
+// "Enhance" styles — whole-paragraph treatments rather than an edge decoration.
+// They are TRANSLATION-ONLY (see TRANSLATION_STYLE_GROUPS): each one either
+// needs a box (the quote bar) or a hover state on the translation element
+// (dim / blur), and a highlight is painted on a range with neither.
+export const STYLE_DIM = 'dimText';
+export const STYLE_QUOTE = 'quoteBar';
+export const STYLE_BLUR = 'blurText';
+
 export type TranslationStyleOption = { value: string; title: string };
 // `groupTitle === null` renders the option(s) at the top level without a section header.
 export type TranslationStyleGroup = { groupTitle: string | null; options: TranslationStyleOption[] };
 
+/** Styles offered for the bilingual-highlight painter. */
 export const STYLE_GROUPS: TranslationStyleGroup[] = [
     {
         groupTitle: null,
@@ -1312,6 +1331,24 @@ export const STYLE_GROUPS: TranslationStyleGroup[] = [
             { value: 'dashedBorder', title: 'dashedBorder' },
         ],
     },
+];
+
+/**
+ * Styles offered for the translation itself: the highlight list plus the
+ * "enhance" group, inserted right after "none" so the two whole-paragraph
+ * treatments sit above the edge decorations.
+ */
+export const TRANSLATION_STYLE_GROUPS: TranslationStyleGroup[] = [
+    STYLE_GROUPS[0],
+    {
+        groupTitle: 'enhance',
+        options: [
+            { value: STYLE_DIM, title: 'dimText' },
+            { value: STYLE_QUOTE, title: 'quoteBar' },
+            { value: STYLE_BLUR, title: 'blurText' },
+        ],
+    },
+    ...STYLE_GROUPS.slice(1),
 ];
 
 // Preset color palettes. Empty string = "no color" (transparent slot rendered as a checker swatch).
