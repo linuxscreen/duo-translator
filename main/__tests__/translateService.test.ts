@@ -250,8 +250,8 @@ describe("MicrosoftTranslateService.detectLanguage", () => {
 // ---------------------------------------------------------------------------
 // YandexTranslateService
 // ---------------------------------------------------------------------------
-const YANDEX_TRANSLATE_HOST = "https://browser.translate.yandex.net/api/v1/tr.json/translate";
-const YANDEX_DETECT_HOST = "https://browser.translate.yandex.net/api/v1/tr.json/detect";
+const YANDEX_TRANSLATE_HOST = "https://translate.yandex.net/api/v1/tr.json/translate";
+const YANDEX_DETECT_HOST = "https://translate.yandex.net/api/v1/tr.json/detect";
 
 /** Answer a Yandex translate POST by echoing every `text` field back prefixed. */
 function yandexEcho(url: string, init: any, lang = "en-zh") {

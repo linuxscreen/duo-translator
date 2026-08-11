@@ -72,7 +72,7 @@ test.describe('@bundle background/content separation', () => {
             'anthropic-version',
             'edge.microsoft.com/translate/auth',
             'translate-pa.googleapis.com',
-            'browser.translate.yandex.net',
+            'translate.yandex.net',
             'DeepL-Auth-Key',
         ]) {
             expect(background, `background.js must contain "${marker}"`).toContain(marker);
