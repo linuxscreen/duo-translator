@@ -43,7 +43,25 @@ import {
     needsTranslateParagraphs,
     resetNoTranslateMarks,
 } from "@/main/dom/paragraphMarks";
-import { isSegmentBoundary, segmentParagraph, type TranslationUnit, type UnitRange } from "@/main/dom/segments";
+import { isSegmentBoundary, segmentParagraph, type TranslationUnit, type UnitContainer, type UnitRange } from "@/main/dom/segments";
+import { containersFor, observeContainer, resetObserveTargets, unobserveContainer } from "@/main/dom/observeTargets";
+import { composedTarget, deepActiveElement, deepContains, deepElementFromPoint, isShadowRoot, parentOrHost } from "@/main/dom/shadowTraversal";
+import { partitionRules, resolveRulePaths } from "@/main/dom/ruleSelector";
+import {
+    removeShadowCss,
+    resetShadowCss,
+    setShadowCss,
+    styleShadowRoot,
+    unstyleShadowRoot,
+} from "@/main/dom/shadowCss";
+import {
+    deepQuerySelector,
+    forgetRootsUnder,
+    knownRoots,
+    noteElement,
+    resetShadowRoots,
+    startShadowDiscovery,
+} from "@/main/dom/shadowRoots";
 // Type-only + one const: the progress bar surface itself is loaded lazily (see
 // onBuiltinAiDownloadProgress), so this adds no weight to the content bundle.
 import { BUILTIN_AI_MODEL_DOWNLOADING, type BuiltinAiDownloadProgress } from "@/main/builtinAi/types";
@@ -109,6 +127,42 @@ export async function content() {
     let startupAborted = false
     let markStartupReady: () => void = () => { }
     const startupReady = new Promise<void>((resolve) => { markStartupReady = resolve })
+
+    // Shadow-root discovery is registered in the same first synchronous pass and
+    // for the same reason: the MAIN-world bridge runs at document_start and
+    // buffers the roots attached before we are listening, but only until the
+    // handshake — and page components attach most of their roots long before
+    // `content()` finishes awaiting its config reads.
+    //
+    // The handlers can fire immediately — the bridge replays its buffer as soon
+    // as we say we are listening — which is well before the translation pipeline
+    // exists: everything below the first `await` (the observer, the pending-scan
+    // queue, the observe-state flags) is in its temporal dead zone until then,
+    // and reading any of it from here throws ReferenceError and takes the whole
+    // content script down. Hence the gate: before the pipeline is up, the only
+    // safe action is styling (module-level state), and nothing else is needed —
+    // `startObserveDom()` observes every root discovered so far, and the initial
+    // body scan descends into every root reachable from <body>.
+    let shadowPipelineReady = false;
+    startShadowDiscovery({
+        onRootAdded: (root, source) => {
+            styleShadowRoot(root);
+            if (!shadowPipelineReady) return;
+            observeShadowRoot(root);
+            // A root the marking scan found is already on its DFS stack. A root
+            // the bridge reported was attached to an element that is ALREADY in
+            // the document — an event that produces no mutation record — so
+            // nothing else will ever look at it. Queue it.
+            if (source === "bridge") {
+                pendingMarkRoots.add(root);
+                scheduleMutationProcess();
+            }
+        },
+        onRootRemoved: (root) => {
+            unstyleShadowRoot(root);
+            if (shadowPipelineReady) noteRootForgotten();
+        },
+    });
 
     // Accept messages from the popup, the shortcut dispatcher and the context
     // menu. Registered here rather than next to its body for the same reason as
@@ -212,7 +266,7 @@ export async function content() {
     let siteRuleStyleSheet: CSSStyleSheet | null = null
     let siteRuleStyleElement: HTMLStyleElement | null = null
 
-    let batchElements: HTMLElement[] = [];
+    let batchElements: UnitContainer[] = [];
     let batchTimer: NodeJS.Timeout | null = null
     const pendingTranslateParagraphElementsTask: Set<Promise<void>> = new Set()
     let translateTask: Promise<void> | null = null
@@ -274,7 +328,7 @@ export async function content() {
     const BUILTIN_AI_RETRY_GIVE_UP_MS = 15 * 60_000
     let manualTrigger = false // @deprecated
     const ignoreMutationElements = new WeakSet();
-    const paragraphElementMap = new Map<HTMLElement, ELEMENT_STATUS>();
+    const paragraphElementMap = new Map<UnitContainer, ELEMENT_STATUS>();
     // DOUBLE: one record per translated unit, grouped by container.
     //
     // The key stays the *container* even though the granularity is per unit: a
@@ -303,7 +357,7 @@ export async function content() {
          */
         texts: { text: Text, content: string }[]
     }
-    let duoTranslatedElementMap = new Map<HTMLElement, DuoUnitRecord[]>()
+    let duoTranslatedElementMap = new Map<UnitContainer, DuoUnitRecord[]>()
 
     /**
      * One logical-paragraph unit resolved from a pointer position, tagged with
@@ -311,19 +365,19 @@ export async function content() {
      * identity, so a stored target can be re-validated after page mutations.
      */
     type UnitTarget =
-        | { container: HTMLElement, kind: "unit", range: UnitRange, unit: TranslationUnit }
-        | { container: HTMLElement, kind: "duo", range: UnitRange, record: DuoUnitRecord }
-        | { container: HTMLElement, kind: "single", range: UnitRange, result: TranslateResult }
+        | { container: UnitContainer, kind: "unit", range: UnitRange, unit: TranslationUnit }
+        | { container: UnitContainer, kind: "duo", range: UnitRange, record: DuoUnitRecord }
+        | { container: UnitContainer, kind: "single", range: UnitRange, result: TranslateResult }
     // per-paragraph disposers for the delegated bilingual-highlight listeners;
     // WeakMap so paragraphs removed by the page don't pin the closures
-    const highlightDisposers = new WeakMap<HTMLElement, () => void>()
+    const highlightDisposers = new WeakMap<UnitContainer, () => void>()
     // Which bilingual-highlight strategy this frame uses: the CSS Custom
     // Highlight API where available, the <duo-span> wrapper otherwise. Resolved
     // once so a record's write path and its restore path can never disagree.
     const highlightApiSupported = supportsHighlightApi()
     // translated elements of SINGLE view strategy
     // SINGLE: one TranslateResult per translated unit, grouped by container.
-    let translatedElementMap = new Map<HTMLElement, TranslateResult[]>()
+    let translatedElementMap = new Map<UnitContainer, TranslateResult[]>()
     // Website rules, matched against THIS frame's own URL — a rule's selectors
     // are written against one document, and this frame's URL is what identifies
     // that document. (Per-domain strategy below deliberately uses the TOP
@@ -368,8 +422,15 @@ export async function content() {
     // Pre-join once instead of `rules.join(",")` per visited element, and drop
     // selectors the engine rejects — one malformed selector used to make
     // `el.matches()` throw for the whole list, silently disabling every rule.
-    let legacyRuleSelector = compileSelectorList(rules, "no-translate")
+    //
+    // Rules addressing an element inside a shadow root are stored as a `>>>`
+    // PATH (see main/dom/ruleSelector.ts) and must be kept OUT of that joined
+    // string: `>>>` is illegal CSS, and one bad selector kills the whole list.
+    // They are resolved to elements once per scan instead.
+    let { plain: legacyPlainRules, paths: legacyRulePaths } = partitionRules(rules)
+    let legacyRuleSelector = compileSelectorList(legacyPlainRules, "no-translate")
     let legacyRuleVersion = shareConfig.rulesVersion
+    let shadowRuleTargets: Set<Element> = new Set()
     // Website rules arrive as candidates (URL-matched only); their
     // `matchSelectors` conditions are evaluated against the live document, here
     // and again once per scan cycle. Populated by awaitSiteRules() from
@@ -398,9 +459,33 @@ export async function content() {
     // which yields to the browser every MARK_BUDGET_MS so the page never sees
     // a long task — even when shadcn-style sites flood us with mutations.
     const PROCESS_DEBOUNCE_MS = 50;
-    let pendingMarkRoots = new Set<HTMLElement>();
+    let pendingMarkRoots = new Set<UnitContainer>();
     let pendingProcessTimer: number | null = null;
     let processingActive = false;
+
+    // ===== Observer state =====
+    //
+    // Declared HERE, in content()'s first synchronous pass — NOT next to
+    // startObserveDom() further down. `startShadowDiscovery` is registered above
+    // and its onRootAdded / onRootRemoved can fire while the startup awaits are
+    // still pending; a `let` further down the closure body is in its temporal
+    // dead zone until execution reaches it, so touching it from an early
+    // callback throws ReferenceError and takes the whole content script down
+    // with it. (Function declarations are hoisted, so the functions themselves
+    // may stay where they read best — only their state has to move.)
+    //
+    // No attribute observation: paragraph marks live in content-script memory
+    // (paragraphMarks.ts), so page-side class rewrites can't touch them and our
+    // own marking produces no attribute mutations to filter.
+    const OBSERVE_INIT: MutationObserverInit = {
+        childList: true,
+        subtree: true,
+        characterData: true,// text content change
+        // characterDataOldValue: true,
+    };
+    let domObserved = false;
+    const ROOT_COMPACT_THRESHOLD = 32;
+    let forgottenRootCount = 0;
 
     //#region observer
     const observer = new MutationObserver(async mutations => {
@@ -413,7 +498,10 @@ export async function content() {
                 // return
                 // if (target.length <= 5) continue // for debug
                 // console.debug('characterData', mutation);
-                let p = closestNeedsTranslate(target.parentElement)
+                // parentNode, not parentElement: a text node directly under a
+                // ShadowRoot has no parent element, and the mutation would be
+                // dropped before the walk even started.
+                let p = closestNeedsTranslate(target.parentNode)
                 if (!p) continue
                 if (isIgnoreMutationElement(p)) continue
 
@@ -435,8 +523,11 @@ export async function content() {
                 })
                 continue
             }
-            if (mutation.target.nodeType !== Node.ELEMENT_NODE) continue;
-            const target = mutation.target as HTMLElement;
+            // A ShadowRoot is a valid mutation target (we observe each root
+            // directly — `subtree: true` does not cross the boundary) and a valid
+            // scan root, so it must not be filtered out here.
+            if (mutation.target.nodeType !== Node.ELEMENT_NODE && !isShadowRoot(mutation.target)) continue;
+            const target = mutation.target as UnitContainer;
 
             // We observe <html> (not <body>) so a wholesale <body> swap stays
             // visible — some SPAs (Turbo/Astro-style soft navigation) replace
@@ -471,17 +562,21 @@ export async function content() {
             return
         }
         for (const item of items) {
-            const el = item.target as HTMLElement;
             if (!item.isIntersecting) {
                 continue
             }
-            // translated and translating elements should be ignored
-            if (paragraphElementMap.get(el) != ELEMENT_STATUS.ORIGINAL) {
-                continue
+            // One observed element can stand in for several containers — itself,
+            // its shadow root, and any boxless descendant host that handed its
+            // observation up here. See main/dom/observeTargets.ts.
+            for (const el of containersFor(item.target)) {
+                // translated and translating elements should be ignored
+                if (paragraphElementMap.get(el) != ELEMENT_STATUS.ORIGINAL) {
+                    continue
+                }
+                batchElements.push(el)
+                paragraphElementMap.set(el, ELEMENT_STATUS.PENDING)
+                // console.log("IntersectionObserver in item", el.textContent)
             }
-            batchElements.push(el)
-            paragraphElementMap.set(el, ELEMENT_STATUS.PENDING)
-            // console.log("IntersectionObserver in item", el.textContent)
         }
         if (batchTimer == null) {
             batchTimer = setTimeout(() => {
@@ -546,7 +641,10 @@ export async function content() {
                 // only so a fanned-out message doesn't open one per frame.
                 if (!isTopFrame) break
                 ensureWorkbenchMounted()
-                const active = document.activeElement as HTMLElement | null
+                // deepActiveElement: for an input inside a web component,
+                // `document.activeElement` is the host, so the workbench would
+                // open with no seed text and a disabled "apply to input".
+                const active = deepActiveElement() as HTMLElement | null
                 let seedText = ""
                 if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
                     seedText = active.value
@@ -901,7 +999,7 @@ export async function content() {
             }
         }
         if (doInput) {
-            const active = document.activeElement;
+            const active = deepActiveElement();
             if (active instanceof HTMLElement && IsEditableElement(active)) {
                 lastEditableElement = active;
                 translateInputBox();
@@ -919,7 +1017,7 @@ export async function content() {
         let text = selection?.toString().trim()
         if (!text) {
             // translate input box
-            const active = document.activeElement
+            const active = deepActiveElement()
             if (!active || !(active instanceof HTMLElement) || IsEditableElement(active)) return
             lastEditableElement = active
             translateInputBox()
@@ -950,9 +1048,11 @@ export async function content() {
      * container behavior so the gesture never silently does nothing.
      */
     function resolveUnitTargetAtPoint(x: number, y: number): UnitTarget | null {
-        const hit = document.elementFromPoint(x, y) as Element | null
+        // deepElementFromPoint: the native call retargets to the shadow HOST, so
+        // inside a component it would resolve to the wrong container (or none).
+        const hit = deepElementFromPoint(x, y)
         const container = closestParagraph(hit)
-        if (!(container instanceof HTMLElement)) return null
+        if (!container) return null
 
         const candidates: UnitTarget[] = []
         for (const record of duoTranslatedElementMap.get(container) ?? []) {
@@ -1030,7 +1130,7 @@ export async function content() {
     }
 
     /** Whole-container fallback — the behavior before per-unit targeting. */
-    function toggleTranslateContainer(container: HTMLElement) {
+    function toggleTranslateContainer(container: UnitContainer) {
         const translated = duoTranslatedElementMap.has(container) || translatedElementMap.has(container)
         if (translated) {
             restoreOriginalParagraphElement(container)
@@ -1045,9 +1145,9 @@ export async function content() {
             applyUnitTarget(target)
             return
         }
-        const ele = document.elementFromPoint(lastX, lastY) as Element | null
+        const ele = deepElementFromPoint(lastX, lastY)
         const container = closestParagraph(ele)
-        if (container instanceof HTMLElement) toggleTranslateContainer(container)
+        if (container) toggleTranslateContainer(container)
     }
 
     function IsEditableElement(element: HTMLElement): boolean {
@@ -1158,18 +1258,25 @@ export async function content() {
                     }
                     for (const ele of collected) {
                         paragraphElementMap.set(ele, ELEMENT_STATUS.ORIGINAL);
-                        intersectionObserver.observe(ele);
+                        observeContainer(intersectionObserver, ele);
                     }
                 }
             }
         } finally {
             processingActive = false;
+            // After the queue has drained, so the disconnect/re-observe window
+            // in which a record could be dropped is as small as possible.
+            compactRootObservations();
         }
     }
 
     function cleanupRemovedSubtree(removedNode: Node) {
         if (removedNode.nodeType !== Node.ELEMENT_NODE) return;
         const removed = removedNode as HTMLElement;
+        // Shadow roots hosted anywhere in the removed subtree go with it. Done
+        // first: the observations and injected stylesheets they own must be
+        // released whether or not the subtree held any marks.
+        forgetRootsUnder(removed);
         if (isParagraph(removed)) {
             duoTranslatedElementMap.delete(removed);
             translatedElementMap.delete(removed);
@@ -1186,7 +1293,10 @@ export async function content() {
         // subtree — the map is much smaller than a re-scan of the whole subtree.
         if (paragraphElementMap.size === 0) return;
         for (const tracked of Array.from(paragraphElementMap.keys())) {
-            if (removed.contains(tracked)) {
+            // deepContains, not contains: a container inside a removed host's
+            // shadow tree is invisible to the native test, and would be left
+            // behind in all four maps forever.
+            if (deepContains(removed, tracked)) {
                 duoTranslatedElementMap.delete(tracked);
                 translatedElementMap.delete(tracked);
                 paragraphElementMap.delete(tracked);
@@ -1196,16 +1306,21 @@ export async function content() {
         }
     }
 
-    function isIgnoreMutationElement(element: HTMLElement) {
+    function isIgnoreMutationElement(element: Node) {
         // closest() is a native O(depth) walk — faster than the JS loop and
         // catches the common UI-framework patterns in one shot.
         // if (element.closest && element.closest(IGNORE_CONTAINER_SELECTOR)) return true;
-        let current: HTMLElement | null = element
-        while (current && current.nodeName !== "BODY") {
+        //
+        // Climbs the composed ancestry: a guard set on a container outside the
+        // component must still be seen from inside its shadow tree, or the
+        // observer re-enters on our own writes and translate/restore loops.
+        // "BODY" stays the terminator (and, as before, is itself never tested),
+        // but the walk can now actually reach it from a shadow tree — with
+        // `parentElement` it stopped dead at the boundary.
+        for (let current: Node | null = element; current && current.nodeName !== "BODY"; current = parentOrHost(current)) {
             if (ignoreMutationElements.has(current)) {
                 return true
             }
-            current = current.parentElement
         }
         return false
     }
@@ -1270,7 +1385,10 @@ export async function content() {
      */
     async function unload() {
         removeCSS()
+        domObserved = false
         observer.disconnect()
+        resetShadowRoots()
+        resetShadowCss()
         removeFloatBall()
         removeAiWritingDot()
         videoSubtitle?.destroy()
@@ -1339,7 +1457,7 @@ export async function content() {
             if (isTopFrame) relayToSubframes(TRANSLATE_ACTION.TRANSLATE)
             htmlElements.forEach((element) => {
                 paragraphElementMap.set(element, ELEMENT_STATUS.ORIGINAL)
-                intersectionObserver.observe(element)
+                observeContainer(intersectionObserver, element)
             })
         }
     }
@@ -1363,7 +1481,7 @@ export async function content() {
         const conditional = siteRulesConditional
         if (!includeSelector && !conditional) return
         const check = () => {
-            if (includeSelector && !document.querySelector(includeSelector)) {
+            if (includeSelector && !deepQuerySelector(includeSelector)) {
                 console.log(
                     APP_NAME_WITH_SUFFIX,
                     `website rule includeSelectors matched no element — nothing on this page will be translated.`,
@@ -1543,24 +1661,48 @@ export async function content() {
         }
         // Legacy cleanup — earlier versions used a <style id="duo-translation-style">.
         document.getElementById('duo-translation-style')?.remove()
+        removeShadowCss("translation")
     }
 
     function startObserveDom() {
-        // No attribute observation: paragraph marks live in content-script
-        // memory (paragraphMarks.ts), so page-side class rewrites can't touch
-        // them and our own marking produces no attribute mutations to filter.
-        //
+        domObserved = true;
+        // Everything the discovery handlers need now exists (see the gate at
+        // the top of content()).
+        shadowPipelineReady = true;
         // Observe <html>, not <body>: SPAs that swap the whole <body> on soft
         // navigation (Turbo/Astro-style) would otherwise leave this observer
         // watching the old detached body, so post-navigation content would
         // never get marked/translated. The callback filters out <head>-level
         // noise and re-roots onto a freshly-added <body>.
-        observer.observe(document.documentElement, {
-            childList: true,
-            subtree: true,
-            characterData: true,// text content change
-            // characterDataOldValue: true,
-        });
+        observer.observe(document.documentElement, OBSERVE_INIT);
+        for (const root of knownRoots()) observer.observe(root, OBSERVE_INIT);
+    }
+
+    // `subtree: true` does NOT cross a shadow boundary, so every root needs its
+    // own observe() call. It is the SAME observer instance — one MutationObserver
+    // may hold many targets and the callback already dispatches on
+    // `mutation.target`, so a per-root observer would buy nothing and cost a
+    // callback each.
+    function observeShadowRoot(root: ShadowRoot) {
+        if (!domObserved) return;
+        observer.observe(root, OBSERVE_INIT);
+    }
+
+    // MutationObserver keeps a strong reference to every target and offers no
+    // per-target unobserve, so roots that leave the page would pin their whole
+    // detached tree. `disconnect()` + re-observe is the only tool; batch it
+    // behind a threshold and run it after the mutation queue has drained, so the
+    // window in which a pending record could be dropped is as small as possible.
+    function noteRootForgotten() {
+        forgottenRootCount++;
+    }
+
+    function compactRootObservations() {
+        if (forgottenRootCount < ROOT_COMPACT_THRESHOLD) return;
+        forgottenRootCount = 0;
+        if (!domObserved) return;
+        observer.disconnect();
+        startObserveDom();
     }
 
     // Fan a translate/restore out to this tab's sub-frames. The top frame can't
@@ -1679,8 +1821,8 @@ export async function content() {
             // is with translation OFF, and `restoreOriginalAction` disconnects
             // the whole observer on the way there. `restoreOriginalPage` — the
             // one called here — does NOT disconnect.
-            intersectionObserver.unobserve(ele)
-            intersectionObserver.observe(ele)
+            unobserveContainer(intersectionObserver, ele)
+            observeContainer(intersectionObserver, ele)
         })
     }
 
@@ -1844,6 +1986,7 @@ export async function content() {
             await updateTranslateStatus(false)
             paragraphElementMap.clear()
             intersectionObserver.disconnect()
+            resetObserveTargets()
 
             if (batchTimer) {
                 clearTimeout(batchTimer)
@@ -1873,7 +2016,7 @@ export async function content() {
      * bookkeeping, so they must be left alone — hence the closestParagraph
      * ownership filter.
      */
-    function removeDuoSpansIn(container: HTMLElement, nodes: ChildNode[]) {
+    function removeDuoSpansIn(container: UnitContainer, nodes: ChildNode[]) {
         for (const node of nodes) {
             if (node.nodeType !== Node.ELEMENT_NODE) continue
             const el = node as HTMLElement
@@ -1896,7 +2039,7 @@ export async function content() {
      * `texts` is non-empty only for the <duo-span> fallback, which is the only
      * one that modified the page's own text.
      */
-    function restoreDuoRecords(element: HTMLElement, records: DuoUnitRecord[]) {
+    function restoreDuoRecords(element: UnitContainer, records: DuoUnitRecord[]) {
         const all = duoTranslatedElementMap.get(element) ?? []
         const remaining = all.filter(r => !records.includes(r))
         ignoreMutationElements.add(element)
@@ -1963,7 +2106,7 @@ export async function content() {
      * SINGLE: replay the original text of `results` (one per unit). Same
      * split as restoreDuoRecords — all of them, or just the hovered unit's.
      */
-    async function restoreSingleResults(element: HTMLElement, results: TranslateResult[]) {
+    async function restoreSingleResults(element: UnitContainer, results: TranslateResult[]) {
         const all = translatedElementMap.get(element) ?? []
         const remaining = all.filter(r => !results.includes(r))
         ignoreMutationElements.add(element)
@@ -1985,7 +2128,7 @@ export async function content() {
         })
     }
 
-    async function restoreOriginalParagraphElement(element: HTMLElement) {
+    async function restoreOriginalParagraphElement(element: UnitContainer) {
         const records = duoTranslatedElementMap.get(element)
         if (records) {
             restoreDuoRecords(element, [...records])
@@ -2045,7 +2188,8 @@ export async function content() {
             // Strip leftover duo-* attributes/classes from marked paragraphs
             // BEFORE dropping the marks — the marks map is the only index left.
             allParagraphs().forEach(element => {
-                removeDuoClassAndAttribute(element)
+                // A ShadowRoot container carries no attributes of its own.
+                if (!isShadowRoot(element)) removeDuoClassAndAttribute(element)
             })
             clearParagraphMarks()
             resetNoTranslateMarks()
@@ -2128,6 +2272,10 @@ export async function content() {
         } else if (translationStyleElement) {
             translationStyleElement.textContent = css
         }
+        // The document sheet does not reach inside a page's shadow roots, and
+        // that includes the ::highlight() rules — same string, delivered per
+        // root. See main/dom/shadowCss.ts.
+        setShadowCss("translation", css)
     }
 
     /**
@@ -2140,10 +2288,10 @@ export async function content() {
     // input still mark-completes without freezing the page. Behaviour matches
     // the previous recursive version (depth limit, text-node→duo-span wrapping,
     // mutation suppression around our own DOM writes).
-    async function markParagraphElement(element: HTMLElement): Promise<HTMLElement[]> {
+    async function markParagraphElement(element: UnitContainer): Promise<UnitContainer[]> {
         let notTranslate = false;
         const rawElement = element;
-        const collectElements: HTMLElement[] = [];
+        const collectElements: UnitContainer[] = [];
         // Website rules, resolved for this frame's URL. `excludeSelector` is
         // merged with the legacy per-host list (both mean "never translate in
         // here"); `includeSelector` is the positive gate — when non-empty, only
@@ -2153,8 +2301,16 @@ export async function content() {
         // most, never per element).
         if (legacyRuleVersion !== shareConfig.rulesVersion) {
             legacyRuleVersion = shareConfig.rulesVersion;
-            legacyRuleSelector = compileSelectorList(shareConfig.rules, "no-translate");
+            const split = partitionRules(shareConfig.rules);
+            legacyPlainRules = split.plain;
+            legacyRulePaths = split.paths;
+            legacyRuleSelector = compileSelectorList(legacyPlainRules, "no-translate");
         }
+        // Once per scan, not per element — and skipped entirely when no shadow
+        // rule exists, which is the overwhelming majority of pages.
+        shadowRuleTargets = legacyRulePaths.length === 0
+            ? shadowRuleTargets.size === 0 ? shadowRuleTargets : new Set()
+            : resolveRulePaths(legacyRulePaths);
         const excludeSelector = joinSelectors(legacyRuleSelector, siteRules.excludeSelector);
         const includeSelector = siteRules.includeSelector;
         // With no include restriction the flag is true everywhere and every
@@ -2163,27 +2319,38 @@ export async function content() {
 
         // Walk up — looking for an enclosing paragraph mark (early return) or
         // an isNotTranslateElement ancestor (sets the flag for descent).
-        const parentElements: HTMLElement[] = [];
-        while (element.parentElement && element.parentElement != document.body) {
-            parentElements.push(element.parentElement);
-            element = element.parentElement;
+        //
+        // Climbs the *composed* ancestry (`parentOrHost`), so a re-scan starting
+        // inside a shadow tree still sees the no-translate marks, include gate
+        // and enclosing paragraph that live outside the component. It stops at
+        // `document.body` exactly as before — which is what keeps
+        // `includeSelectors: "body"` a no-op — and at the Document above it.
+        const ancestors: UnitContainer[] = [];
+        for (let cur: Node | null = parentOrHost(element); cur && cur !== document.body; cur = parentOrHost(cur)) {
+            if (cur.nodeType !== Node.ELEMENT_NODE && !isShadowRoot(cur)) break;
+            ancestors.push(cur as UnitContainer);
         }
-        for (let i = parentElements.length - 1; i >= 0; i--) {
-            const p = parentElements[i];
-            if (isNotMarkElement(p)) return collectElements;
-            if (!notTranslate && isNotTranslateElement(p)) notTranslate = true;
-            // Accumulate the include flag here too: a mutation-driven re-scan
-            // starts deep inside the include region, and without this walk it
-            // would look like it is outside one.
-            if (!inInclude && matchesSelector(p, includeSelector)) inInclude = true;
+        for (let i = ancestors.length - 1; i >= 0; i--) {
+            const p = ancestors[i];
+            if (!isShadowRoot(p)) {
+                if (isNotMarkElement(p)) return collectElements;
+                if (!notTranslate && isNotTranslateElement(p)) notTranslate = true;
+                // Accumulate the include flag here too: a mutation-driven re-scan
+                // starts deep inside the include region, and without this walk it
+                // would look like it is outside one.
+                if (!inInclude && matchesSelector(p, includeSelector)) inInclude = true;
+            }
             if (isParagraph(p)) {
                 if (isMixedParagraph(p)) {
                     // Mixed container: a mutation under one of its block-ish
                     // children belongs to a deeper unit — keep walking inward
                     // (a nested mark or the Phase B scan handles it). Anything
                     // else sits inside one of the container's own inline runs.
-                    const child = (i > 0 ? parentElements[i - 1] : rawElement);
-                    if (isSegmentBoundary(child)) {
+                    const child = (i > 0 ? ancestors[i - 1] : rawElement);
+                    // A shadow root is always a boundary: its content is a
+                    // separate tree and can never be part of one of the host's
+                    // own inline runs.
+                    if (isShadowRoot(child) || isSegmentBoundary(child)) {
                         continue;
                     }
                 }
@@ -2194,8 +2361,8 @@ export async function content() {
 
         // Iterative DFS via a stack. Children are pushed in reverse order so
         // pop-order matches the original left-to-right recursion.
-        type Frame = { el: HTMLElement; notTranslate: boolean; inInclude: boolean; depth: number };
-        const stack: Frame[] = [{ el: rawElement, notTranslate, inInclude, depth: 0 }];
+        type Frame = { node: UnitContainer; notTranslate: boolean; inInclude: boolean; depth: number };
+        const stack: Frame[] = [{ node: rawElement, notTranslate, inInclude, depth: 0 }];
         let chunkStart = performance.now();
 
         while (stack.length > 0) {
@@ -2204,7 +2371,7 @@ export async function content() {
                 chunkStart = performance.now();
             }
             const frame = stack.pop()!;
-            const el = frame.el;
+            const el = frame.node;
             let nt = frame.notTranslate;
             let inc = frame.inInclude;
             const depth = frame.depth;
@@ -2212,20 +2379,40 @@ export async function content() {
             if (depth > MARK_MAX_DEPTH) continue;
             // Page may have removed the node while we were yielding.
             if (!el.isConnected) continue;
-            if (isNotMarkElement(el)) continue;
-            if (!nt && isNotTranslateElement(el)) nt = true;
-            if (!nt && matchesSelector(el, excludeSelector)) {
-                // Cache the positive rule match so re-scans of this
-                // subtree short-circuit via isNotTranslateElement.
-                markNoTranslate(el);
-                nt = true
-            }
-            // The positive gate. NOT a `continue` when still outside: the
-            // include root may be further down, so the walk keeps descending
-            // and only withholds the needs-translate flag on the way.
-            if (!inc && matchesSelector(el, includeSelector)) inc = true;
 
-            if (isEditable(el)) continue;
+            // The page-owned shadow root of this element, registered on first
+            // sight. One property read per visited element — see
+            // main/dom/shadowRoots.ts for why the scan is one of the three
+            // discovery sources.
+            let shadow: ShadowRoot | null = null;
+            if (isShadowRoot(el)) {
+                // A root has no tag, no class list, no selector identity and
+                // cannot be editable, so every per-element predicate is skipped.
+                // The inherited notTranslate / inInclude flags carry across the
+                // boundary unchanged — the component sits inside whatever region
+                // its host sits in.
+            } else {
+                if (isNotMarkElement(el)) continue;
+                if (!nt && isNotTranslateElement(el)) nt = true;
+                if (!nt && matchesSelector(el, excludeSelector)) {
+                    // Cache the positive rule match so re-scans of this
+                    // subtree short-circuit via isNotTranslateElement.
+                    markNoTranslate(el);
+                    nt = true
+                }
+                if (!nt && shadowRuleTargets.size > 0 && shadowRuleTargets.has(el)) {
+                    markNoTranslate(el);
+                    nt = true
+                }
+                // The positive gate. NOT a `continue` when still outside: the
+                // include root may be further down, so the walk keeps descending
+                // and only withholds the needs-translate flag on the way.
+                if (!inc && matchesSelector(el, includeSelector)) inc = true;
+
+                if (isEditable(el)) continue;
+
+                shadow = noteElement(el);
+            }
 
             // One segmentation decides everything about this element. There is
             // no separate "is this a paragraph?" gate any more: an element is a
@@ -2245,16 +2432,28 @@ export async function content() {
             // refreshing `mixed` is what lets cleanupParagraphMarks sweep the
             // marks nested underneath it.
             if (seg.units.length > 0 || isParagraph(el)) {
-                markParagraph(el, !nt && inc, seg.descendChildren.length > 0);
+                // A host with a shadow root counts as *mixed* even when it has
+                // no block children of its own: marks can live inside the root,
+                // and cleanupParagraphMarks' pure-mark early-return would
+                // otherwise strand every one of them.
+                markParagraph(el, !nt && inc, seg.descendChildren.length > 0 || shadow !== null);
                 if (!nt && inc && seg.units.some(u => !u.translated)) collectElements.push(el);
             }
             // Push in reverse so pop order = forward visit. Skip children the
-            // page detached while we were yielding.
+            // page detached while we were yielding. `parentNode`, not
+            // `parentElement`: the parent of a ShadowRoot container's child IS
+            // the root, and parentElement would reject every one of them.
             for (let j = seg.descendChildren.length - 1; j >= 0; j--) {
                 const child = seg.descendChildren[j];
-                if (child.parentElement === el) {
-                    stack.push({ el: child, notTranslate: nt, inInclude: inc, depth: depth + 1 });
+                if (child.parentNode === el) {
+                    stack.push({ node: child, notTranslate: nt, inInclude: inc, depth: depth + 1 });
                 }
+            }
+            // Pushed last so it pops first: for a component, the shadow tree is
+            // usually *the* content, and visiting it before the host's light
+            // children keeps the scan's output in rendering order.
+            if (shadow) {
+                stack.push({ node: shadow, notTranslate: nt, inInclude: inc, depth: depth + 1 });
             }
         }
         return collectElements;
@@ -2267,7 +2466,7 @@ export async function content() {
     // highlighted; it only switches over another sentence's text, and only
     // clears on leaving the paragraph. Returns a disposer that clears the
     // highlight and detaches the listeners.
-    function bindHighlightHandler(container: HTMLElement): () => void {
+    function bindHighlightHandler(container: UnitContainer): () => void {
         return highlightApiSupported
             ? bindRangeHighlightHandler(container)
             : bindSpanHighlightHandler(container)
@@ -2284,7 +2483,7 @@ export async function content() {
     // frame. The reads stay cheap because this path writes nothing to the DOM:
     // layout is clean, so every getClientRects after the first in a frame is a
     // lookup rather than a reflow.
-    function bindRangeHighlightHandler(container: HTMLElement): () => void {
+    function bindRangeHighlightHandler(container: UnitContainer): () => void {
         let current: { record: DuoUnitRecord, index: number } | null = null
         let frame = 0
         let pointerX = 0
@@ -2338,13 +2537,16 @@ export async function content() {
             clearSentenceHighlight(container)
         }
 
-        container.addEventListener("mousemove", onMouseMove)
+        // A ShadowRoot is an EventTarget like any other, but its
+        // addEventListener is typed generically, hence the cast.
+        const onMove = onMouseMove as EventListener
+        container.addEventListener("mousemove", onMove)
         container.addEventListener("mouseleave", onMouseLeave)
         return () => {
             if (frame) cancelAnimationFrame(frame)
             frame = 0
             onMouseLeave()
-            container.removeEventListener("mousemove", onMouseMove)
+            container.removeEventListener("mousemove", onMove)
             container.removeEventListener("mouseleave", onMouseLeave)
         }
     }
@@ -2359,7 +2561,7 @@ export async function content() {
     // spans of nested marked paragraphs (an <li> inside a mixed container — they
     // have their own binding and their own numbering) are never touched by this
     // one.
-    function bindSpanHighlightHandler(originalElement: HTMLElement): () => void {
+    function bindSpanHighlightHandler(originalElement: UnitContainer): () => void {
         let currentSequence: number | null = null
 
         function applyHighlight(sequence: number, add: boolean) {
@@ -2375,7 +2577,9 @@ export async function content() {
         }
 
         const onMouseOver = (event: Event) => {
-            const target = event.target as Element | null
+            // composedTarget: for a listener bound on the container, `target` is
+            // retargeted to the host whenever the span lives in a nested root.
+            const target = composedTarget(event)
             const span = target?.closest?.('duo-span[duo-sequence]')
             // No span under the pointer (blank area) → keep the current highlight.
             // The ownership guard protects against spans of an enclosing or
@@ -2418,7 +2622,7 @@ export async function content() {
      * @param elements
      * @param context hasDuplicated is false, indicate that the element has not been duplicated. targetTranslateService set custom translate service
      */
-    async function translateParagraphElements(elements: HTMLElement[], context?: any) {
+    async function translateParagraphElements(elements: UnitContainer[], context?: any) {
         if (elements.length == 0) {
             return
         }
@@ -2509,7 +2713,7 @@ export async function content() {
             await translate(translateService, translateResults)
 
             // Containers that actually received a translation this round.
-            const translatedContainers = new Set<HTMLElement>()
+            const translatedContainers = new Set<UnitContainer>()
 
             if (viewStrategyCopy == VIEW_STRATEGY.SINGLE) {
                 for (const result of translateResults) {
@@ -2527,7 +2731,7 @@ export async function content() {
                 // Group per container: one bookkeeping entry and one highlight
                 // binding per container, which then resolves the pointer against
                 // every record's sentence ranges.
-                const resultsByContainer = new Map<HTMLElement, TranslateResult[]>()
+                const resultsByContainer = new Map<UnitContainer, TranslateResult[]>()
                 for (const result of translateResults) {
                     const element = result.unit?.container
                     if (!element || !result.translatedCopyElement) continue
@@ -2652,7 +2856,7 @@ export async function content() {
 
             translatedContainers.forEach((element) => {
                 paragraphElementMap.set(element, ELEMENT_STATUS.TRANSLATED)
-                intersectionObserver.unobserve(element)
+                unobserveContainer(intersectionObserver, element)
             })
         } catch (e) {
             // The resilience boundary for page translation: one failed batch
@@ -2764,10 +2968,12 @@ function initAiWritingDotInFrame(): () => void {
                 console.warn(APP_NAME_WITH_SUFFIX, "mountAiWritingDot (iframe) failed", err),
             );
     };
-    const onFocusIn = (e: FocusEvent) => tryMount(e.target as Element | null);
+    // composedTarget / deepActiveElement: focus events are composed but their
+    // target is retargeted to the shadow host, which is never an input.
+    const onFocusIn = (e: FocusEvent) => tryMount(composedTarget(e));
     document.addEventListener("focusin", onFocusIn, true);
     // Seed: the field may already be focused (e.g. an autofocused iframe editor).
-    tryMount(document.activeElement);
+    tryMount(deepActiveElement());
     // Disposer: drop the pending focus listener and unmount if already up.
     return () => {
         disposed = true;

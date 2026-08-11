@@ -13,7 +13,8 @@ export default defineConfig({
         default_locale: 'en',
         permissions: ['storage', 'tabs', 'activeTab', 'contextMenus', 'alarms', 'webNavigation'], // 'identity'
         host_permissions: [
-            // firefox mv2 needs these
+            // firefox needs these (the firefox target is MV3 too -- see the
+            // `--mv3` flag on the firefox scripts in package.json)
             // 'https://translate-pa.googleapis.com/*',
             // 'https://api.cognitive.microsofttranslator.com/*',
             // 'https://api-free.deepl.com/*',

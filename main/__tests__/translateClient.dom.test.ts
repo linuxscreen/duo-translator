@@ -281,3 +281,37 @@ describe("updateTranslateElementContent — scoped to a unit range", () => {
         expect(div.lastChild!.previousSibling).toBe(ul);
     });
 });
+
+describe("a ShadowRoot as the unit container", () => {
+    it("serializes byte-identically to the same markup in the light DOM", () => {
+        // The translation cache is keyed on this string, so a shadow paragraph
+        // must produce the SAME key as the light-DOM paragraph it mirrors —
+        // otherwise every component page starts cold and re-pays for text the
+        // cache already holds.
+        document.body.innerHTML = "<div id='light'>Hello <b>world</b></div><div id='host'></div>";
+        const light = document.getElementById("light") as HTMLElement;
+        const root = document.getElementById("host")!.attachShadow({ mode: "open" });
+        root.innerHTML = "Hello <b>world</b>";
+
+        const fromLight = getElementPreProcessResult(light, VIEW_STRATEGY.DOUBLE);
+        const fromShadow = getElementPreProcessResult(root, VIEW_STRATEGY.DOUBLE);
+
+        expect(fromShadow.mappedHtmlText).toBe(fromLight.mappedHtmlText);
+        expect(fromShadow.text).toBe(fromLight.text);
+    });
+
+    it("writes back into the root through updateTranslateElementContent", () => {
+        document.body.innerHTML = "<div id='host'></div>";
+        const root = document.getElementById("host")!.attachShadow({ mode: "open" });
+        root.innerHTML = "Hello <b>world</b>";
+
+        const pre = getElementPreProcessResult(root, VIEW_STRATEGY.SINGLE);
+        pre.textNodes.forEach((t) => (t.textContent = ""));
+        // Same shape as the real pipeline: `mappedHtmlText` is the scratch
+        // div's innerHTML, so there is no wrapper element around it.
+        updateTranslateElementContent("\u4f60\u597d <b0>\u4e16\u754c</b0>", pre.elements);
+
+        expect(root.textContent).toContain("\u4f60\u597d");
+        expect(root.querySelector("b")?.textContent).toBe("\u4e16\u754c");
+    });
+});

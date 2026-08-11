@@ -6,6 +6,7 @@ import { ACTION, CONFIG_KEY, DB_ACTION, FLOAT_BALL_STYLE } from "@/main/constant
 import { setConfig } from "@/utils/db";
 import { notifyBackground, sendMessageToBackground } from "@/utils/message";
 import { loadTailwindIntoShadow } from "@/main/aiWriting/shadowStyle";
+import { attachOwnShadow } from "@/main/dom/shadowRoots";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
 import { bindThemeToElement } from "@/utils/theme";
 import { t, useLang } from "@/main/aiWriting/i18n";
@@ -72,7 +73,7 @@ export async function mountFloatBall(deps: FloatBallDeps): Promise<FloatBallCont
     // rebuild <html>'s children still remove it — keepHostMounted re-attaches.
     document.documentElement.appendChild(host);
     const stopKeepAlive = keepHostMounted(host);
-    const shadow = host.attachShadow({ mode: "open" });
+    const shadow = attachOwnShadow(host);
     loadTailwindIntoShadow(shadow);
     const mount = document.createElement("div");
     mount.className = "duo-ai-root";

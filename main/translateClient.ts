@@ -6,7 +6,7 @@ import { getConfig } from "@/utils/db";
 import { defineUnlistedScript } from "wxt/utils/define-unlisted-script";
 import { isTraditionalChinese } from "@/utils/language";
 import { contentInvisible, decodeHtmlText } from "@/utils/dom";
-import type { TranslationUnit, UnitRange } from "@/main/dom/segments";
+import type { TranslationUnit, UnitContainer, UnitRange } from "@/main/dom/segments";
 import { unitRangeOf } from "@/main/dom/unitHit";
 
 //#region types
@@ -16,7 +16,7 @@ import { unitRangeOf } from "@/main/dom/unitHit";
 
 // UnitRange is a unit concept and lives with the segmentation; re-exported here
 // because it is part of TranslateResult's shape.
-export type { UnitRange } from "@/main/dom/segments";
+export type { UnitContainer, UnitRange } from "@/main/dom/segments";
 
 export class TranslateResult {
     translatedMappedHtmlText: string; // translated innerHtml of the mapped tag element, for example <b0>translated text</b0>, or <a i=0>translated text</a>(google translate)
@@ -25,7 +25,9 @@ export class TranslateResult {
     rawText: string = "";
     rawTextLength: number = 0; // original text length, sum of all text nodes length
     translatedCopyElement?: HTMLElement; // a translated copy of the original element use for double view strategy
-    originalSliceElements?: HTMLElement[]; // first element is the original element itself, then are child elements of the original element
+    // First entry is the unit container itself (which may be a ShadowRoot),
+    // then the child elements of it that carry a <bN> mapping tag.
+    originalSliceElements?: UnitContainer[];
     rawMappedHtmlText?: string; // original innerHtml of the mapped tag element, for example <b0>original text</b0>
     translatedHtmlText?: string; // translated innerHtml of the original tag element, for example <p class="x" id="y">translated text</p>
     targetLang?: string;
@@ -67,14 +69,14 @@ export default defineUnlistedScript(() => { });
 // DOM-level helpers used by content scripts
 // ---------------------------------------------------------------------------
 class PreProcessResult {
-    elements: HTMLElement[]; // original elements that need mapping tag, which come from element and its children
+    elements: UnitContainer[]; // container first, then the descendants that need a mapping tag
     mappedHtmlText: string;
     textNodes: Text[]; // text nodes that need to be deleted, which come from the child text nodes of element
     text: string;
     totalTextNodesLength: number;
     textIndexMap: Map<number, number>
 
-    constructor(elements: HTMLElement[], mappedHtmlText: string, textNodes: Text[], text: string, totalTextNodesLength: number, textIndexMap: Map<number, number>) {
+    constructor(elements: UnitContainer[], mappedHtmlText: string, textNodes: Text[], text: string, totalTextNodesLength: number, textIndexMap: Map<number, number>) {
         this.elements = elements;
         this.mappedHtmlText = mappedHtmlText;
         this.textNodes = textNodes;
@@ -84,11 +86,11 @@ class PreProcessResult {
     }
 }
 
-export function getElementPreProcessResult(element: HTMLElement, viewStrategy: VIEW_STRATEGY, nodes?: ChildNode[]): PreProcessResult {
+export function getElementPreProcessResult(element: UnitContainer, viewStrategy: VIEW_STRATEGY, nodes?: ChildNode[]): PreProcessResult {
     let i = 0;
     let totalTextNodesLength = 0;
     let text = "";
-    const elements: HTMLElement[] = [];
+    const elements: UnitContainer[] = [];
     const processParent = document.createElement("div");
     const textNodes: Text[] = [];
     // Default (whole element) keeps the legacy byte-identical serialization;
@@ -167,7 +169,7 @@ export function getElementPreProcessResult(element: HTMLElement, viewStrategy: V
     return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, totalTextNodesLength, text, textIndexMap };
 }
 
-export function updateTranslateElementContent(rawTranslatedHtml: string, originalElements: HTMLElement[], range?: UnitRange) {
+export function updateTranslateElementContent(rawTranslatedHtml: string, originalElements: UnitContainer[], range?: UnitRange) {
     if (originalElements.length === 0 || rawTranslatedHtml === "") return;
 
     const container = originalElements[0];
@@ -178,8 +180,8 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
     const translatedElement = document.createElement("div");
     translatedElement.innerHTML = rawTranslatedHtml;
     const replacedTextNodes: Text[] = [];
-    const element2TextNodes: Map<HTMLElement, Text[]> = new Map();
-    const element2TextNodeIndex: Map<HTMLElement, number> = new Map();
+    const element2TextNodes: Map<UnitContainer, Text[]> = new Map();
+    const element2TextNodeIndex: Map<UnitContainer, number> = new Map();
 
     /** Direct children of the container inside the unit range (whole list when unbounded). */
     function containerChildNodes(): ChildNode[] {
@@ -211,7 +213,7 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
         }
     }
 
-    function getNextTextNode(element: HTMLElement): Text {
+    function getNextTextNode(element: UnitContainer): Text {
         let textNodes = element2TextNodes.get(element);
         if (textNodes === undefined) {
             const candidates = element === container ? containerChildNodes() : Array.from(element.childNodes);
@@ -265,22 +267,29 @@ export function updateTranslateElementContent(rawTranslatedHtml: string, origina
     return replacedTextNodes
 }
 
-/** Normalize a legacy element argument into a whole-element unit. */
-function toTranslationUnit(item: HTMLElement | TranslationUnit): TranslationUnit {
-    if (item instanceof HTMLElement) {
+/**
+ * Normalize a legacy container argument into a whole-element unit.
+ *
+ * Discriminated on `nodeType` rather than `instanceof HTMLElement`: a
+ * `ShadowRoot` container is a valid argument and is not an HTMLElement, and the
+ * shape test also survives Firefox's Xray wrappers.
+ */
+function toTranslationUnit(item: UnitContainer | TranslationUnit): TranslationUnit {
+    if ((item as Node).nodeType !== undefined) {
+        const container = item as UnitContainer;
         return {
-            container: item,
-            nodes: Array.from(item.childNodes),
+            container,
+            nodes: Array.from(container.childNodes),
             wholeElement: true,
             translated: false,
         };
     }
-    return item;
+    return item as TranslationUnit;
 }
 
 export async function getTranslateResult(
     service: string,
-    elements: (HTMLElement | TranslationUnit)[],
+    elements: (UnitContainer | TranslationUnit)[],
     targetLang: string,
     viewStrategy: VIEW_STRATEGY,
     signal?: AbortSignal

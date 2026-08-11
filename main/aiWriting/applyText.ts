@@ -1,3 +1,5 @@
+import { selectionForNode } from "@/main/dom/shadowTraversal";
+
 /**
  * Whether `applyTextToTarget` could actually write into `el` right now.
  * True only for a connected <textarea> / <input> / contentEditable element —
@@ -79,7 +81,7 @@ export async function applyTextToTarget(el: HTMLElement | null, text: string): P
             try {
                 const range = document.createRange();
                 range.selectNodeContents(el);
-                const sel = window.getSelection();
+                const sel = selectionForNode(el);
                 sel?.removeAllRanges();
                 sel?.addRange(range);
             } catch { /* selection may fail in iframe-restricted contexts */ }
@@ -140,7 +142,7 @@ export async function applyTextToTarget(el: HTMLElement | null, text: string): P
                 const range = document.createRange();
                 range.selectNodeContents(el);
                 range.collapse(false);
-                const sel = window.getSelection();
+                const sel = selectionForNode(el);
                 sel?.removeAllRanges();
                 sel?.addRange(range);
             } catch { /* best effort */ }
@@ -159,7 +161,7 @@ export async function applyTextToTarget(el: HTMLElement | null, text: string): P
 
         // Fallback: replace via Selection API + InputEvent.
         try {
-            const sel = window.getSelection();
+            const sel = selectionForNode(el);
             if (sel && sel.rangeCount > 0) {
                 const range = sel.getRangeAt(0);
                 range.deleteContents();

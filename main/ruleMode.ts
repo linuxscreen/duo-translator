@@ -1,7 +1,9 @@
-import getCssSelector from "css-selector-generator";
 import { addRuleToDB, deleteRuleFromDB, listRuleFromDB } from "@/utils/db";
 import { shareConfig } from "./content";
 import { anyParagraphUnder, isParagraph, markNoTranslate, paragraphsUnder, setNeedsTranslate, unmarkNoTranslate } from "@/main/dom/paragraphMarks";
+import { resolveRuleSelector, serializeRuleSelector } from "@/main/dom/ruleSelector";
+import { deepElementFromPoint, parentElementOrHost } from "@/main/dom/shadowTraversal";
+import { deepQuerySelectorAll } from "@/main/dom/shadowRoots";
 
 const svgAddCursor = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M12 0C5.37259 0 0 5.37259 0 12C0 18.6274 5.37259 24 12 24C18.6274 24 24 18.6274 24 12C24 5.37259 18.6274 0 12 0Z" fill="white"/>
@@ -19,10 +21,10 @@ const svgTrashBase64 = btoa(svgTrashCursor);
 const cursorAddUrl = `url('data:image/svg+xml;base64,${svgAddBase64}'), auto`;
 const cursorTrashUrl = `url('data:image/svg+xml;base64,${svgTrashBase64}'), auto`;
 
-const getCssSelectorString = (ele: HTMLElement): string => {
-    // ignore the elements with class start with duo
-    return getCssSelector(ele, { selectors: ["id", "class", "tag"], blacklist: ['.duo-*'] })
-}
+// Serialization lives in main/dom/ruleSelector.ts: an element inside a shadow
+// root needs a per-tree PATH, not a single selector, and both the storage format
+// and its resolution have to agree in one place.
+const getCssSelectorString = (ele: HTMLElement): string => serializeRuleSelector(ele)
 
 export interface RuleModeController {
     /** Enter select interaction for the given domain. */
@@ -57,7 +59,7 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
         console.log('rules:', rules)
         if (rules) {
             for (let rule of rules) {
-                let element = document.querySelector(rule);
+                let element = resolveRuleSelector(rule);
                 if (element) {
                     element.classList.add('duo-selected')
                 }
@@ -70,7 +72,7 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
     function deactivateSelectInteraction() {
         console.log('deactivateSelectionMode')
         // remove all element that have duo-selected
-        document.querySelectorAll('.duo-selected').forEach((element) => {
+        deepQuerySelectorAll('.duo-selected').forEach((element) => {
             element.classList.remove('duo-selected');
         })
         lastPointer = null
@@ -149,9 +151,11 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
 
     /** Element under the cursor, looking through the overlay's own hit area. */
     function elementUnderPointer(x: number, y: number): HTMLElement | null {
-        if (!overlay) return document.elementFromPoint(x, y) as HTMLElement | null;
+        // deepElementFromPoint: the native call stops at (and retargets to) a
+        // shadow host, so the picker could never select inside a component.
+        if (!overlay) return deepElementFromPoint(x, y) as HTMLElement | null;
         overlay.style.pointerEvents = 'none';
-        const el = document.elementFromPoint(x, y) as HTMLElement | null;
+        const el = deepElementFromPoint(x, y) as HTMLElement | null;
         overlay.style.pointerEvents = 'auto';
         return el;
     }
@@ -237,7 +241,7 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
     // elements (adds boxes for new selections, drops boxes for cleared ones).
     function syncSelectedHighlights() {
         if (!overlay) return;
-        const selected = new Set(document.querySelectorAll<HTMLElement>('.duo-selected'));
+        const selected = new Set(deepQuerySelectorAll('.duo-selected') as HTMLElement[]);
         // Drop boxes whose element is no longer selected.
         for (const [element, box] of selectedBoxes) {
             if (!selected.has(element)) {
@@ -308,7 +312,7 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
             removeNoTranslateMark(ele)
         } else {
             // if ele's parent element has duo-selected, remove it
-            let parent = ele.parentElement
+            let parent = parentElementOrHost(ele)
             while (parent) {
                 if (parent.classList.contains("duo-selected")) {
                     parent.classList.remove("duo-selected")
@@ -318,7 +322,7 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
                     removeNoTranslateMark(parent)
                     return
                 }
-                parent = parent.parentElement as HTMLElement
+                parent = parentElementOrHost(parent)
             }
             if (ele.classList.length == 0) {
                 ele.setAttribute("class", "duo-selected")
@@ -326,7 +330,7 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
                 ele.classList.add("duo-selected")
             }
             // remove children element that has duo-selected
-            let children = ele.querySelectorAll(".duo-selected")
+            let children = deepQuerySelectorAll(".duo-selected", ele)
             for (let child of children) {
                 child.classList.remove("duo-selected")
                 // save to db
@@ -357,7 +361,7 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
             if (current.classList.contains("duo-selected")) {
                 return current
             }
-            current = current.parentElement
+            current = parentElementOrHost(current)
         }
         return undefined
     }
@@ -373,12 +377,12 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
         if (anyParagraphUnder(element)) {
             return element
         }
-        let parent = element.parentElement
+        let parent = parentElementOrHost(element)
         while (parent) {
             if (isParagraph(parent)) {
                 return parent
             }
-            parent = parent.parentElement
+            parent = parentElementOrHost(parent)
         }
         return undefined
     }

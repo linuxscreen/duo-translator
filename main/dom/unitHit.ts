@@ -14,14 +14,14 @@
 //      the pointer is over a bare text node of it, which is precisely the
 //      multi-unit case (`text<br><br>text`). Then the unit has to be found from
 //      its line boxes.
-import type { TranslationUnit, UnitRange } from "@/main/dom/segments";
+import type { TranslationUnit, UnitContainer, UnitRange } from "@/main/dom/segments";
 
 /**
  * The ancestor-or-self of `node` whose parent is `container`, i.e. the container
  * child that owns `node`. Null when `node` is the container itself or lives
  * outside it.
  */
-export function directChildOf(node: Node | null, container: HTMLElement): ChildNode | null {
+export function directChildOf(node: Node | null, container: UnitContainer): ChildNode | null {
     let cur: Node | null = node;
     while (cur && cur !== container) {
         if (cur.parentNode === container) return cur as ChildNode;
@@ -55,7 +55,7 @@ export function unitRangeOf(unit: TranslationUnit): UnitRange {
  * detached is ignored (degrading to that container edge) — the same tolerance
  * the SINGLE write-back applies.
  */
-export function nodesInRange(container: HTMLElement, range: UnitRange): ChildNode[] {
+export function nodesInRange(container: UnitContainer, range: UnitRange): ChildNode[] {
     const start = range.start?.parentNode === container ? range.start : null;
     const end = range.end?.parentNode === container ? range.end : null;
     const out: ChildNode[] = [];
@@ -69,7 +69,7 @@ export function nodesInRange(container: HTMLElement, range: UnitRange): ChildNod
 
 /** Whether `child` (a direct child of `container`) lies inside `range`. */
 export function rangeContains(
-    container: HTMLElement,
+    container: UnitContainer,
     range: UnitRange,
     child: ChildNode,
 ): boolean {
@@ -131,7 +131,7 @@ export function isPointOverNodes(x: number, y: number, nodes: ChildNode[]): bool
  * whole-container behavior instead of silently doing nothing.
  */
 export function resolveCandidateAtPoint(
-    container: HTMLElement,
+    container: UnitContainer,
     candidates: ChildNode[][],
     hit: Node | null,
     x: number,

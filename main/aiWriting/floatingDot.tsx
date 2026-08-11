@@ -33,6 +33,8 @@ import {
     startFocusTracker,
 } from "./inputDetector";
 import { loadTailwindIntoShadow } from "./shadowStyle";
+import { attachOwnShadow, isInOwnUi } from "@/main/dom/shadowRoots";
+import { deepActiveElement } from "@/main/dom/shadowTraversal";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
 import { bindThemeToElement } from "@/utils/theme";
 import { applyTextToTarget } from "./applyText";
@@ -89,7 +91,7 @@ export async function mountAiWritingDot(opts: MountOptions): Promise<() => void>
     host.setAttribute("data-duo-ai-ui", "");
     document.documentElement.appendChild(host);
     const stopKeepAlive = keepHostMounted(host);
-    const shadow = host.attachShadow({ mode: "open" });
+    const shadow = attachOwnShadow(host);
     loadTailwindIntoShadow(shadow);
     const mount = document.createElement("div");
     mount.className = "duo-ai-root";
@@ -199,6 +201,29 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
     resultRef.current = result;
     const [task, setTask] = useState<AI_TASK>(taskMode);
 
+    /**
+     * Should the dot stay on screen even though the original input lost focus?
+     *
+     * Yes when the user has explicitly engaged with our UI (a popover or the
+     * result panel is open), when focus moved into our own surface, or when it
+     * simply moved to another valid AI target.
+     *
+     * `deepActiveElement()` is what makes the last two work: `document
+     * .activeElement` is only ever a shadow HOST when focus is inside any shadow
+     * tree — ours or the page's. The old code special-cased our own host by
+     * identity, which covered our surface but silently failed for a page input
+     * inside a web component: the dot vanished the moment it was shown.
+     */
+    const shouldKeepVisible = () => {
+        if (settingsOpenRef.current || closeMenuOpenRef.current || resultRef.current) return true;
+        const active = deepActiveElement();
+        if (!active) return false;
+        if (isInOwnUi(active)) return true;
+        return isAiWritingTarget(active);
+    };
+    const shouldKeepVisibleRef = useRef(shouldKeepVisible);
+    shouldKeepVisibleRef.current = shouldKeepVisible;
+
     // ---- Focus tracking ----------------------------------------------------
     // IMPORTANT: deps must NOT include `target` — the focus tracker keeps its
     // own `current` in a closure, and re-running this effect creates a fresh
@@ -225,18 +250,7 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
                     // explicitly engaged with the dot UI — keep it visible
                     // even after the original input loses focus. Closing the
                     // popover (X button / click-away) will re-evaluate.
-                    if (settingsOpenRef.current || closeMenuOpenRef.current || resultRef.current) return;
-                    const active = document.activeElement;
-                    // Focus moved inside our Shadow DOM (e.g. a <select> in the
-                    // settings popover that legitimately took focus). From the
-                    // outer document `activeElement` is the shadow host —
-                    // `containerRef.current.contains(...)` cannot cross the
-                    // shadow boundary, so check host identity explicitly.
-                    const rootNode = containerRef.current?.getRootNode();
-                    const shadowHost = rootNode instanceof ShadowRoot ? rootNode.host : null;
-                    if (active && active === shadowHost) return;
-                    if (active && containerRef.current?.contains(active)) return;
-                    if (isAiWritingTarget(active as Element)) return;
+                    if (shouldKeepVisibleRef.current()) return;
                     setVisible(false);
                     setExpanded(false);
                     setCloseMenuOpen(false);
@@ -352,13 +366,7 @@ function FloatingDotApp({ domain, taskMode }: { domain: string, taskMode: AI_TAS
     // Re-evaluate visibility after a popover/result closes. If focus is no
     // longer on a valid AI target (and not on our own UI), hide the dot.
     const maybeHideAfterPopoverClose = () => {
-        if (settingsOpenRef.current || closeMenuOpenRef.current || resultRef.current) return;
-        const active = document.activeElement;
-        const rootNode = containerRef.current?.getRootNode();
-        const shadowHost = rootNode instanceof ShadowRoot ? rootNode.host : null;
-        if (active && active === shadowHost) return;
-        if (active && containerRef.current?.contains(active)) return;
-        if (isAiWritingTarget(active as Element)) return;
+        if (shouldKeepVisible()) return;
         setVisible(false);
         setExpanded(false);
         targetRef.current = null;

@@ -14,6 +14,7 @@ import { notifyBackground } from "@/utils/message";
 import { useConfig } from "@/utils/reactiveConfig";
 import { buildAiTranslateService, buildServiceOptions } from "@/utils/service";
 import { loadTailwindIntoShadow } from "@/main/aiWriting/shadowStyle";
+import { attachOwnShadow } from "@/main/dom/shadowRoots";
 import { bindThemeToElement } from "@/utils/theme";
 import { t, useLang } from "@/main/aiWriting/i18n";
 import { DUO_LOGO_SVG } from "@/main/floatBall/logo";
@@ -114,7 +115,7 @@ export function mountSubtitleControls(deps: SubtitleControlsDeps): SubtitleContr
     host.id = MENU_HOST_ID;
     host.setAttribute("data-duo-ai-ui", "");
     player.appendChild(host);
-    const shadow = host.attachShadow({ mode: "open" });
+    const shadow = attachOwnShadow(host);
     loadTailwindIntoShadow(shadow);
     const mount = document.createElement("div");
     mount.className = "duo-ai-root";

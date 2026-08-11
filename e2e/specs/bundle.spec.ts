@@ -42,6 +42,28 @@ test.describe('@bundle background/content separation', () => {
         }
     });
 
+    test('the shadow bridge stays dependency-free and page-safe', () => {
+        // It patches Element.prototype.attachShadow on EVERY page in EVERY
+        // frame, in the page's own world. Anything it drags in runs there too,
+        // so it must import nothing but the protocol constants — same discipline
+        // as the YouTube bridge.
+        const bridge = readFileSync(`${OUT}/content-scripts/shadow-bridge.js`, 'utf8');
+
+        for (const marker of [
+            'translate-pa.googleapis.com', 'cognitive.microsofttranslator.com',
+            'api.deepl.com', 'browser.translate.yandex.net',
+            'DeepL-Auth-Key', 'x-api-key', 'x-goog-api-key',
+        ]) {
+            expect(bridge, `shadow-bridge.js must not contain "${marker}"`).not.toContain(marker);
+        }
+        // It cannot use extension APIs from the MAIN world anyway; the one
+        // permitted `chrome.runtime.id` read is its world self-check.
+        expect(bridge).not.toContain('browser.runtime');
+        expect(bridge).toContain('chrome?.runtime?.id');
+        // The whole point: closed roots are forced open.
+        expect(bridge).toContain('attachShadow');
+    });
+
     test('background bundle does contain the provider clients', () => {
         const background = readFileSync(`${OUT}/background.js`, 'utf8');
         // Guards against the inverse mistake: the split silently moving the

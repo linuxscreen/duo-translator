@@ -12,6 +12,9 @@ import { detectTextsLanguage } from "@/main/translateClient";
 import { allParagraphs } from "@/main/dom/paragraphMarks";
 import { utf8Length } from "@/utils/text";
 import { isVisibleForDetect } from "@/main/dom/visibility";
+import type { UnitContainer } from "@/main/dom/segments";
+import { isShadowRoot } from "@/main/dom/shadowTraversal";
+import { isInOwnUi } from "@/main/dom/shadowRoots";
 
 /** Stop growing a sample once it carries this many UTF-8 bytes. */
 const SAMPLE_BUDGET_BYTES = 2000;
@@ -81,14 +84,20 @@ export function getTextLanguage(text: string): string {
  * Concatenate the rendered text of an element, skipping excluded tags
  * (script/style/svg/…). Text nodes are trimmed and joined directly.
  */
-export function getElementTextContent(element: HTMLElement): string {
+export function getElementTextContent(element: UnitContainer): string {
     let text = "";
     function traverse(node: Node) {
         if (!node) return;
         if (node.nodeType === Node.TEXT_NODE) {
             text += node.textContent?.trim() || "";
-        } else if (node.nodeType === Node.ELEMENT_NODE) {
+        } else if (node.nodeType === Node.ELEMENT_NODE || isShadowRoot(node)) {
             if (excludedTagSet.has(node.nodeName.toLowerCase())) {
+                return;
+            }
+            // Our own UI lives in shadow roots and is written in the *interface*
+            // language, so sampling it would actively corrupt the page-language
+            // vote. Nothing else stops it: our hosts are plain <div>s.
+            if (isInOwnUi(node)) {
                 return;
             }
             for (const child of node.childNodes) {
@@ -103,14 +112,12 @@ export function getElementTextContent(element: HTMLElement): string {
 /**
  * Detect the dominant language of a set of paragraph elements.
  */
-export async function detectLanguage(elements?: HTMLElement[]): Promise<string> {
+export async function detectLanguage(elements?: UnitContainer[]): Promise<string> {
     let lang = "und";
-    if (elements === undefined) {
-        elements = allParagraphs();
-    }
+    const pool: UnitContainer[] = elements === undefined ? allParagraphs() : elements;
 
     // Randomly sample elements
-    elements = shuffle(elements);
+    const candidates = shuffle(pool);
 
     // Text the reader can actually see votes; text that is hidden (SEO blocks
     // parked offscreen, .sr-only copies, collapsed panels) only goes into a
@@ -120,8 +127,8 @@ export async function detectLanguage(elements?: HTMLElement[]): Promise<string> 
     const visible = new SampleBucket()
     const hidden = new SampleBucket()
     let probed = 0
-    for (let index = 0; index < elements.length; index++) {
-        const element = elements[index];
+    for (let index = 0; index < candidates.length; index++) {
+        const element = candidates[index];
         let content = getElementTextContent(element);
         let len = utf8Length(content)
         if (len === 0) continue

@@ -32,6 +32,47 @@ import {
 } from "@/main/constants";
 import { contentValid } from "@/utils/dom";
 import { isEditable, isExcludedNodeType } from "@/main/dom/predicates";
+import { hasTranslatableText } from "@/main/dom/textNodes";
+import { pageShadowRootOf } from "@/main/dom/shadowRoots";
+
+/**
+ * A host whose shadow tree renders *structure* — block-level content with real
+ * text in it — as opposed to a piece of a sentence.
+ *
+ * The two failure directions are not symmetric, which is what sets the gate:
+ *
+ *   - calling an inline component a boundary CUTS A SENTENCE IN HALF
+ *     (`Click <x-icon>★</x-icon> to continue.` → two units, two requests, and a
+ *     translation injected inside the icon). Icon/badge/chip components are
+ *     everywhere, so this would be constant, visible damage;
+ *   - missing a boundary leaves that component's text untranslated. Narrower,
+ *     and quiet.
+ *
+ * So "carries text" is NOT enough — `★` is text. The signal is that the root
+ * renders a BLOCK: a card/article component emits `<p>`/`<div>`/`<li>`, an icon
+ * emits a `<span>` or an `<svg>`. Note this check is only load-bearing for hosts
+ * that are inline boxes themselves; a component declaring `:host{display:block}`
+ * (the common shape for content components) is already a boundary via
+ * `isBlockBoundary`, since `:host` rules do reach the host's computed style.
+ *
+ * Accepted gap: an INLINE host whose root holds only inline prose stays part of
+ * the sentence, so that prose is never translated. Preferred over the alternative
+ * of shredding every sentence containing an icon.
+ */
+function isTranslatableShadowHost(el: HTMLElement): boolean {
+    const root = pageShadowRootOf(el);
+    if (!root) return false;
+    let rendersBlock = false;
+    for (const child of Array.from(root.children)) {
+        if (isSegmentBoundary(child as HTMLElement)) {
+            rendersBlock = true;
+            break;
+        }
+    }
+    // Cheap structural test first; the subtree walk only runs on the few hosts
+    // that actually look like structure.
+    return rendersBlock && hasTranslatableText(root);
+}
 
 /**
  * Exclusive boundary anchors of a translation unit among its container's direct
@@ -45,8 +86,18 @@ export interface UnitRange {
     end: ChildNode | null;
 }
 
+/**
+ * What a translation unit hangs off. A `ShadowRoot` is a first-class container,
+ * not a special case: it has `childNodes`, `insertBefore`/`appendChild` and
+ * `querySelectorAll`, so every write-back and restore path works on it
+ * unchanged. What it lacks is the *Element* surface (`matches`, `classList`,
+ * `getBoundingClientRect`, IntersectionObserver eligibility) — each of those is
+ * guarded at its one call site rather than by excluding roots from the model.
+ */
+export type UnitContainer = HTMLElement | ShadowRoot;
+
 export interface TranslationUnit {
-    container: HTMLElement;
+    container: UnitContainer;
     /** Ordered direct children of `container` making up this unit. */
     nodes: ChildNode[];
     /** True ⇒ `nodes` is exactly `container.childNodes` (legacy whole-element path). */
@@ -101,8 +152,26 @@ export function isBlockBoundary(el: HTMLElement): boolean {
     let result: boolean | undefined;
     const display = computedDisplay(el);
     if (display === "contents") {
+        // What renders in place of this element is NOT necessarily `el.children`:
+        //   - a shadow host renders its ROOT's children (its light children only
+        //     render where a <slot> places them), so a `display:contents` host
+        //     wrapping a block shadow tree would otherwise answer "inline";
+        //   - a <slot> is `display:contents` by default and renders its ASSIGNED
+        //     nodes, not the fallback content in `el.children`.
+        // Projection order is deliberately not modelled — the only question is
+        // whether any of them is a block.
+        const root = pageShadowRootOf(el);
+        let kids: Element[] = root
+            ? [...Array.from(root.children), ...Array.from(el.children)]
+            : Array.from(el.children);
+        if (el.tagName === "SLOT") {
+            const assigned = (el as HTMLSlotElement)
+                .assignedNodes?.({ flatten: true })
+                ?.filter((n): n is Element => n.nodeType === Node.ELEMENT_NODE) ?? [];
+            if (assigned.length > 0) kids = assigned;
+        }
         result = false;
-        for (const child of Array.from(el.children)) {
+        for (const child of kids) {
             if (isBlockBoundary(child as HTMLElement)) {
                 result = true;
                 break;
@@ -147,6 +216,12 @@ export function isBlockBoundary(el: HTMLElement): boolean {
  */
 export function isSegmentBoundary(el: HTMLElement): boolean {
     if (isBlockBoundary(el)) return true;
+    // A component that renders structure of its own has to be descended into,
+    // not merged into a neighbouring run — its content lives in a separate tree
+    // that the run's serialization cannot reach. Placed after the WeakMap-cached
+    // block test and gated on a single `el.shadowRoot` read, which is null for
+    // essentially every element on a page.
+    if (isTranslatableShadowHost(el)) return true;
     if (!el.querySelector(BLOCK_SELECTOR)) return false;
     // Detached / no computed style available: keep the tag-level verdict, the
     // same degradation isBlockBoundary itself falls back to.
@@ -221,6 +296,11 @@ function isInlineBox(el: HTMLElement): boolean {
  * merged path.
  */
 export function isMergeableInline(el: HTMLElement): boolean {
+    // Its text is in another tree: `getTextNodesAndText` would never see it, so
+    // merging would build a unit whose serialization silently omits it.
+    // An EMPTY host (`<x-icon></x-icon>`) is unaffected — it already fails the
+    // "every leaf is a non-blank text node" test below.
+    if (isTranslatableShadowHost(el)) return false;
     if (isExcludedNodeType(el) || isEditable(el)) return false;
     if (!isInlineBox(el)) return false;
     let hasText = false;
@@ -263,7 +343,7 @@ function classify(node: ChildNode): NodeKind {
  * children are returned in `descendChildren` instead, and the marking scan
  * visits them next.
  */
-export function segmentParagraph(container: HTMLElement): SegmentScan {
+export function segmentParagraph(container: UnitContainer): SegmentScan {
     const units: TranslationUnit[] = [];
     const descendChildren: HTMLElement[] = [];
 
@@ -399,6 +479,6 @@ export function segmentParagraph(container: HTMLElement): SegmentScan {
 }
 
 /** Whether `container` still has a unit without an inserted translation. */
-export function hasUntranslatedUnit(container: HTMLElement): boolean {
+export function hasUntranslatedUnit(container: UnitContainer): boolean {
     return segmentParagraph(container).units.some((unit) => !unit.translated);
 }

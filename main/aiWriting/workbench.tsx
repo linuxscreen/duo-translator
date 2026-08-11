@@ -25,6 +25,7 @@ import {
     type TranslateServiceChoice,
 } from "./translateRunner";
 import { loadTailwindIntoShadow } from "./shadowStyle";
+import { attachOwnShadow } from "@/main/dom/shadowRoots";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
 import { bindThemeToElement } from "@/utils/theme";
 import { NoProviderNotice } from "./NoProviderNotice";
@@ -59,7 +60,7 @@ export function ensureWorkbenchMounted(): void {
     }
     stopKeepAlive?.();
     stopKeepAlive = keepHostMounted(host);
-    const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+    const shadow = attachOwnShadow(host);
     loadTailwindIntoShadow(shadow);
     const mount = document.createElement("div");
     mount.className = "duo-ai-root";

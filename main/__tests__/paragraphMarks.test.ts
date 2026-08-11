@@ -6,11 +6,14 @@
 // never contains other marks.
 import { describe, it, expect, beforeEach } from "vitest";
 import {
+    anyParagraphUnder,
     markParagraph,
     isParagraph,
     isMixedParagraph,
+    closestParagraph,
     cleanupParagraphMarks,
     clearParagraphMarks,
+    paragraphsUnder,
 } from "@/main/dom/paragraphMarks";
 
 beforeEach(() => {
@@ -70,5 +73,58 @@ describe("cleanupParagraphMarks — nesting-aware", () => {
         markParagraph(p, true);
         cleanupParagraphMarks(wrap.querySelector("section") as HTMLElement);
         expect(isParagraph(p)).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Shadow DOM
+// ---------------------------------------------------------------------------
+describe("across shadow boundaries", () => {
+    /** `<section id=light><div id=host>` + shadow `<p id=leaf>` */
+    function build() {
+        document.body.innerHTML = "<section id='light'><div id='host'></div></section>";
+        const light = document.getElementById("light")!;
+        const host = document.getElementById("host")!;
+        const root = host.attachShadow({ mode: "open" });
+        root.innerHTML = "<p id='leaf'>text</p>";
+        return { light, host, root, leaf: root.getElementById("leaf")! as HTMLElement };
+    }
+
+    it("closestParagraph reaches a light-DOM ancestor from inside a root", () => {
+        const { light, leaf } = build();
+        markParagraph(light as HTMLElement, true, true);
+        expect(closestParagraph(leaf)).toBe(light);
+    });
+
+    it("a ShadowRoot can itself be the marked container", () => {
+        const { root, leaf } = build();
+        markParagraph(root, true);
+        expect(isParagraph(root)).toBe(true);
+        expect(closestParagraph(leaf)).toBe(root);
+    });
+
+    it("paragraphsUnder finds marks inside a host's shadow tree", () => {
+        const { host, leaf } = build();
+        markParagraph(leaf, true);
+        // Native contains cannot see it — that is the defect being fixed.
+        expect(host.contains(leaf)).toBe(false);
+        expect(paragraphsUnder(host)).toEqual([leaf]);
+        expect(anyParagraphUnder(host)).toBe(true);
+    });
+
+    it("cleanupParagraphMarks sweeps a removed host's shadow marks", () => {
+        const { host, root, leaf } = build();
+        // `mixed` is what the marking scan records for a host WITH a root, and
+        // it is exactly what stops the pure-mark early return from stranding
+        // everything inside it.
+        markParagraph(host as HTMLElement, true, true);
+        markParagraph(root, true);
+        markParagraph(leaf, true);
+
+        cleanupParagraphMarks(host as HTMLElement);
+
+        expect(isParagraph(host)).toBe(false);
+        expect(isParagraph(root)).toBe(false);
+        expect(isParagraph(leaf)).toBe(false);
     });
 });

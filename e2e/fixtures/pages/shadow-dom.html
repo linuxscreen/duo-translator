@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Shadow DOM fixture</title>
+    <style>
+        /* Content components declare their own box, as real ones do. */
+        x-card,
+        my-slot-wrap {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="light">
+        <p id="l1">Light paragraph one.</p>
+    </div>
+
+    <!-- Open root: a plain paragraph, a merged inline run, and a nested root. -->
+    <div id="open-host"></div>
+
+    <!-- A block-level component with a shadow root full of structure. -->
+    <x-card id="card"></x-card>
+
+    <!-- Pure pass-through wrapper: the <p> lives in the LIGHT DOM and renders
+         through the slot, so it must be translated exactly once, there. -->
+    <my-slot-wrap id="wrap">
+        <p id="slotted">Slotted paragraph text.</p>
+    </my-slot-wrap>
+
+    <!-- Inline icon component: its glyph is text, but the sentence must stay
+         whole and the icon must not receive a translation of its own. -->
+    <p id="inline-ce">Click <x-icon></x-icon> to continue reading the guide.</p>
+
+    <!-- attachShadow on an ALREADY CONNECTED element — produces no mutation
+         record at all, so only the MAIN-world bridge can surface it. -->
+    <button id="late">add late root</button>
+    <div id="late-host"></div>
+
+    <!-- Closed root: unreachable unless the bridge forced it open. -->
+    <div id="closed-host"></div>
+
+    <script>
+        const openRoot = document.getElementById('open-host').attachShadow({ mode: 'open' });
+        openRoot.innerHTML = `
+            <style>p { color: #111 }</style>
+            <p id="s1">Shadow paragraph one.</p>
+            <div id="s2"><span>Shadow split </span><span>sentence here.</span></div>
+            <div id="nest-host"></div>`;
+        openRoot.getElementById('nest-host').attachShadow({ mode: 'open' })
+            .innerHTML = '<p id="s3">Nested shadow paragraph.</p>';
+
+        document.getElementById('card').attachShadow({ mode: 'open' })
+            .innerHTML = '<p id="c1">Card body paragraph.</p>';
+
+        document.getElementById('wrap').attachShadow({ mode: 'open' })
+            .innerHTML = '<slot></slot>';
+
+        document.querySelector('#inline-ce x-icon').attachShadow({ mode: 'open' })
+            .innerHTML = '<span>&#9733;</span>';
+
+        // Kept in a closure — with no bridge, `host.shadowRoot` is null forever.
+        window.__closedRoot = document.getElementById('closed-host')
+            .attachShadow({ mode: 'closed' });
+        window.__closedRoot.innerHTML = '<p id="cl1">Closed shadow paragraph.</p>';
+
+        document.getElementById('late').onclick = () => {
+            document.getElementById('late-host').attachShadow({ mode: 'open' })
+                .innerHTML = '<p id="s4">Late attached paragraph.</p>';
+        };
+    </script>
+</body>
+
+</html>

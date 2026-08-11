@@ -63,7 +63,12 @@ export function wrapTextNode2Span(
                         span.setAttribute("duo-sequence", (startSequence + i).toString());
                         let spanText = document.createTextNode(text);
                         span.appendChild(spanText);
-                        textNodes[j]?.parentElement?.insertBefore(span, textNodes[j]);
+                        // parentNode, not parentElement: a text node sitting
+                        // directly under a ShadowRoot has no parent *element*,
+                        // and the insert would be silently skipped — the
+                        // sentence would lose its span and the highlight pairing
+                        // would go out of step with the other side.
+                        textNodes[j]?.parentNode?.insertBefore(span, textNodes[j]);
                         textNodes[j].textContent = "";
                         spans.push(span);
                     }
@@ -81,7 +86,7 @@ export function wrapTextNode2Span(
                     span.setAttribute("duo-sequence", (startSequence + i).toString());
                     let spanText = document.createTextNode(sentence);
                     span.appendChild(spanText);
-                    textNodes[j].parentElement?.insertBefore(span, textNodes[j]);
+                    textNodes[j].parentNode?.insertBefore(span, textNodes[j]);
                     spans.push(span);
                 }
                 break;

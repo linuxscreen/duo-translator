@@ -42,6 +42,9 @@ export type RectVerdict =
  * classic visually-hidden recipe is `width:1px;height:1px;overflow:hidden`, and
  * `font-size:0` collapses the line box to height 0.
  */
+import type { UnitContainer } from "@/main/dom/segments";
+import { isShadowRoot, parentElementOrHost } from "@/main/dom/shadowTraversal";
+
 const MIN_VISIBLE_PX = 2;
 
 /**
@@ -102,8 +105,8 @@ function cssHidden(element: HTMLElement): boolean {
  * (`display:contents` inside `display:contents`, which segments.ts supports).
  */
 function nearestBoxedAncestor(element: HTMLElement): HTMLElement | null {
-    let parent = element.parentElement;
-    for (let depth = 0; parent && depth < MAX_CLIP_ANCESTORS; depth++, parent = parent.parentElement) {
+    let parent = parentElementOrHost(element);
+    for (let depth = 0; parent && depth < MAX_CLIP_ANCESTORS; depth++, parent = parentElementOrHost(parent)) {
         const rect = parent.getBoundingClientRect();
         if (rect.width !== 0 || rect.height !== 0) return parent;
     }
@@ -125,8 +128,11 @@ function nearestBoxedAncestor(element: HTMLElement): HTMLElement | null {
  * on-screen items answer the same question.
  */
 function isClippedAway(element: HTMLElement, rect: RectLike): boolean {
-    let parent = element.parentElement;
-    for (let depth = 0; parent && depth < MAX_CLIP_ANCESTORS; depth++, parent = parent.parentElement) {
+    // Crosses host boundaries: a collapsed accordion *outside* the component is
+    // exactly what makes shadow text unreadable, and `parentElement` would stop
+    // at the boundary and report it visible.
+    let parent = parentElementOrHost(element);
+    for (let depth = 0; parent && depth < MAX_CLIP_ANCESTORS; depth++, parent = parentElementOrHost(parent)) {
         const style = getComputedStyle(parent);
         // Either axis being non-visible clips the box (CSS forces the other axis
         // to `auto` anyway), so one rect test covers both.
@@ -170,7 +176,10 @@ function contentRect(element: HTMLElement): RectLike | null {
  * frame that never got laid out) every rect is 0×0, and detection must keep
  * working exactly as it did before this filter existed.
  */
-export function isVisibleForDetect(element: HTMLElement): boolean {
+export function isVisibleForDetect(container: UnitContainer): boolean {
+    // A ShadowRoot has no box of its own — measure the host, which encloses
+    // exactly the content the root renders.
+    const element: HTMLElement = isShadowRoot(container) ? (container.host as HTMLElement) : container;
     const view = element.ownerDocument.defaultView;
     const scrollX = view?.scrollX ?? 0;
     const scrollY = view?.scrollY ?? 0;

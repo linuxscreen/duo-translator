@@ -141,3 +141,31 @@ describe("isPointOverRects", () => {
         expect(isPointOverRects(50, 35, [rect(10, 10, 0, 0)])).toBe(false);
     });
 });
+
+describe("with a ShadowRoot container", () => {
+    // Pure type widening in the source — these pin that the helpers really do
+    // only use the container as "the parent node", so a root works unchanged.
+    function root(html: string): ShadowRoot {
+        document.body.innerHTML = "<div id='h'></div>";
+        const r = document.getElementById("h")!.attachShadow({ mode: "open" });
+        r.innerHTML = html;
+        return r;
+    }
+
+    it("directChildOf resolves a node to the root's own child", () => {
+        const r = root("<span><b id='deep'>x</b></span>");
+        const deep = r.getElementById("deep")!;
+        expect(directChildOf(deep, r)).toBe(r.firstChild);
+    });
+
+    it("unitRangeOf / nodesInRange / rangeContains work off the root", () => {
+        const r = root("a<hr>b");
+        const [first, hr, last] = Array.from(r.childNodes);
+        const range = unitRangeOf({ container: r, nodes: [last], wholeElement: false, translated: false });
+
+        expect(range).toEqual({ start: hr, end: null });
+        expect(nodesInRange(r, range)).toEqual([last]);
+        expect(rangeContains(r, range, last as ChildNode)).toBe(true);
+        expect(rangeContains(r, range, first as ChildNode)).toBe(false);
+    });
+});

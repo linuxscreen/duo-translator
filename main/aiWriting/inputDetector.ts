@@ -12,6 +12,9 @@
  * workbench via shortcut or popup for those inputs.
  */
 
+import { composedTarget, deepActiveElement, deepClosest, parentElementOrHost } from "@/main/dom/shadowTraversal";
+import { isInOwnUi } from "@/main/dom/shadowRoots";
+
 const LONG_TEXT_MIN = 32;
 
 const FORBIDDEN_INPUT_TYPES = new Set([
@@ -34,8 +37,10 @@ export function isAiWritingTarget(el: Element | null | undefined): el is AiTarge
     if (!el || !(el instanceof HTMLElement)) return false;
     if (!el.isConnected) return false;
     // Exclude our own shadow-hosted UI to avoid recursion when the workbench
-    // textarea is itself focused.
-    if (el.closest("[data-duo-ai-ui]")) return false;
+    // textarea is itself focused. The registry, not the attribute: the six
+    // surfaces carry three different marker attributes, and `closest` could not
+    // cross out of a surface's own shadow root to find one anyway.
+    if (isInOwnUi(el)) return false;
     // Code editors (CodeMirror 5/6, Monaco, Ace) — the focused element is the
     // editor's input proxy, not the document: CM5 focuses a hidden textarea
     // that only mirrors the selection / recent keystrokes (and its geometry
@@ -43,7 +48,9 @@ export function isAiWritingTarget(el: Element | null | undefined): el is AiTarge
     // rendering so the DOM only holds the visible lines. We can neither read
     // the full content nor write back safely without editor-specific APIs, so
     // skip them entirely.
-    if (el.closest(".CodeMirror, .cm-editor, .monaco-editor, .ace_editor")) return false;
+    // deepClosest: an editor mounted inside a web component keeps its wrapper
+    // outside the input's own shadow tree, where plain `closest` cannot see it.
+    if (deepClosest(el, ".CodeMirror, .cm-editor, .monaco-editor, .ace_editor")) return false;
     // Visible?
     if (el.getClientRects().length === 0) return false;
 
@@ -86,7 +93,7 @@ function hasSensitiveAncestor(el: HTMLElement): boolean {
     while (cur && cur !== document.body) {
         const role = cur.getAttribute("role");
         if (role === "search") return true;
-        cur = cur.parentElement;
+        cur = parentElementOrHost(cur);
     }
     return false;
 }
@@ -103,8 +110,11 @@ export interface FocusTrackerHandlers {
 export function startFocusTracker(handlers: FocusTrackerHandlers): () => void {
     let current: AiTarget | null = null;
 
+    // composedTarget throughout: focus events are composed, so they DO escape a
+    // shadow root — but `e.target` is retargeted to the HOST, which is never an
+    // input, so the dot never appeared for any input inside a web component.
     const onFocusIn = (e: FocusEvent) => {
-        const t = e.target as Element | null;
+        const t = composedTarget(e);
         if (isAiWritingTarget(t)) {
             if (current && current !== t) handlers.onTargetOut(current);
             current = t;
@@ -116,7 +126,7 @@ export function startFocusTracker(handlers: FocusTrackerHandlers): () => void {
         // We don't immediately drop on focusout — the floating dot itself may
         // briefly take focus when the user hovers it. Caller is responsible
         // for hide-debouncing. We still notify so caller can start the timer.
-        const t = e.target as Element | null;
+        const t = composedTarget(e);
         if (current && t === current) {
             handlers.onTargetOut(current);
             // Keep `current` so caller can re-confirm via getCurrentTarget().
@@ -130,7 +140,7 @@ export function startFocusTracker(handlers: FocusTrackerHandlers): () => void {
     // never fire and the dot stays hidden forever. Promote a click on an
     // already-focused valid target into a synthetic onTargetIn.
     const onPointerDown = (e: PointerEvent) => {
-        const t = e.target as Element | null;
+        const t = composedTarget(e);
         if (!t || current === t) return;
         if (deepActiveElement() !== t) return;
         if (isAiWritingTarget(t)) {
@@ -156,14 +166,6 @@ export function startFocusTracker(handlers: FocusTrackerHandlers): () => void {
         document.removeEventListener("focusout", onFocusOut, true);
         document.removeEventListener("pointerdown", onPointerDown, true);
     };
-}
-
-function deepActiveElement(): Element | null {
-    let el: Element | null = document.activeElement;
-    while (el && (el as HTMLElement).shadowRoot?.activeElement) {
-        el = (el as HTMLElement).shadowRoot!.activeElement;
-    }
-    return el;
 }
 
 /**

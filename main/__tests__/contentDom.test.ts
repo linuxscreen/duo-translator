@@ -18,6 +18,7 @@ import {
     getLastContainingTextChild,
 } from "@/main/dom/textNodes";
 import { markNoTranslate, unmarkNoTranslate } from "@/main/dom/paragraphMarks";
+import { attachOwnShadow } from "@/main/dom/shadowRoots";
 
 beforeEach(() => {
     document.body.innerHTML = "";
@@ -139,5 +140,21 @@ describe("getLastContainingTextChild", () => {
         const e = el("<p>first<span></span><b>last</b></p>");
         const last = getLastContainingTextChild(e);
         expect((last as HTMLElement).tagName).toBe("B");
+    });
+});
+
+describe("isNotMarkElement and our own Shadow DOM UI", () => {
+    it("refuses to mark a host the extension owns", () => {
+        // Once the scan pierces shadow roots this is the ONLY thing standing
+        // between it and translating our own interface. The six surfaces carry
+        // three different marker attributes, so the registry — not an attribute
+        // selector — is the authority.
+        document.body.innerHTML = "<div id='page'></div><div id='ui'></div>";
+        const page = document.getElementById("page") as HTMLElement;
+        const ui = document.getElementById("ui") as HTMLElement;
+        attachOwnShadow(ui);
+
+        expect(isNotMarkElement(ui)).toBe(true);
+        expect(isNotMarkElement(page)).toBe(false);
     });
 });

@@ -22,53 +22,65 @@
 // Lifecycle: content.ts's MutationObserver calls `cleanupParagraphMarks` for
 // removed subtrees; enumeration helpers additionally sweep disconnected
 // entries so SPA navigations can't leak detached elements through this Map.
+//
+// Keys are `UnitContainer`, so a `ShadowRoot` can be marked directly. Element
+// identity works the same across trees and `isConnected` is true for a node
+// under a connected host, so the store itself needed no change for shadow DOM —
+// only the *walks* did (`parentOrHost` / `deepContains` instead of
+// `parentElement` / `contains`, neither of which crosses a boundary).
+import type { UnitContainer } from "@/main/dom/segments";
+import { deepContains, parentOrHost } from "@/main/dom/shadowTraversal";
 
 interface ParagraphMark {
     needsTranslate: boolean;
     mixed: boolean;
 }
 
-const marks = new Map<HTMLElement, ParagraphMark>();
+const marks = new Map<UnitContainer, ParagraphMark>();
 
 /** Mark `el` as a paragraph (container of translation units). */
-export function markParagraph(el: HTMLElement, needsTranslate: boolean, mixed = false): void {
+export function markParagraph(el: UnitContainer, needsTranslate: boolean, mixed = false): void {
     marks.set(el, { needsTranslate, mixed });
 }
 
-export function isParagraph(el: Element): boolean {
-    return marks.has(el as HTMLElement);
+export function isParagraph(el: Node): boolean {
+    return marks.has(el as UnitContainer);
 }
 
 /** Whether `el` carries a mixed mark (may have marks nested under it). */
-export function isMixedParagraph(el: Element): boolean {
-    return marks.get(el as HTMLElement)?.mixed === true;
+export function isMixedParagraph(el: Node): boolean {
+    return marks.get(el as UnitContainer)?.mixed === true;
 }
 
 /** Flip the needs-translate flag of an already-marked paragraph (rule mode). */
-export function setNeedsTranslate(el: Element, value: boolean): void {
-    const mark = marks.get(el as HTMLElement);
+export function setNeedsTranslate(el: Node, value: boolean): void {
+    const mark = marks.get(el as UnitContainer);
     if (mark) mark.needsTranslate = value;
 }
 
-/** Nearest marked paragraph, starting at `el` itself (closest() semantics). */
-export function closestParagraph(el: Element | null | undefined): HTMLElement | null {
-    for (let cur = el; cur; cur = cur.parentElement) {
-        if (marks.has(cur as HTMLElement)) return cur as HTMLElement;
+/**
+ * Nearest marked paragraph, starting at `el` itself (closest() semantics).
+ * Climbs through shadow hosts, and can answer with a `ShadowRoot` — a root is a
+ * container like any other.
+ */
+export function closestParagraph(el: Node | null | undefined): UnitContainer | null {
+    for (let cur: Node | null = el ?? null; cur; cur = parentOrHost(cur)) {
+        if (marks.has(cur as UnitContainer)) return cur as UnitContainer;
     }
     return null;
 }
 
 /** Nearest needs-translate paragraph, starting at `el` itself. */
-export function closestNeedsTranslate(el: Element | null | undefined): HTMLElement | null {
-    for (let cur = el; cur; cur = cur.parentElement) {
-        if (marks.get(cur as HTMLElement)?.needsTranslate) return cur as HTMLElement;
+export function closestNeedsTranslate(el: Node | null | undefined): UnitContainer | null {
+    for (let cur: Node | null = el ?? null; cur; cur = parentOrHost(cur)) {
+        if (marks.get(cur as UnitContainer)?.needsTranslate) return cur as UnitContainer;
     }
     return null;
 }
 
 /** All marked paragraphs; sweeps entries the page has since removed. */
-export function allParagraphs(): HTMLElement[] {
-    const out: HTMLElement[] = [];
+export function allParagraphs(): UnitContainer[] {
+    const out: UnitContainer[] = [];
     for (const el of marks.keys()) {
         if (!el.isConnected) {
             marks.delete(el);
@@ -80,23 +92,23 @@ export function allParagraphs(): HTMLElement[] {
 }
 
 /** All connected paragraphs whose needs-translate flag is on. */
-export function needsTranslateParagraphs(): HTMLElement[] {
+export function needsTranslateParagraphs(): UnitContainer[] {
     return allParagraphs().filter((el) => marks.get(el)!.needsTranslate);
 }
 
 /** Marked paragraphs strictly under `root` (querySelectorAll semantics — excludes `root`). */
-export function paragraphsUnder(root: Element): HTMLElement[] {
-    const out: HTMLElement[] = [];
+export function paragraphsUnder(root: Node): UnitContainer[] {
+    const out: UnitContainer[] = [];
     for (const el of marks.keys()) {
-        if (el !== root && root.contains(el)) out.push(el);
+        if (el !== root && deepContains(root, el)) out.push(el);
     }
     return out;
 }
 
 /** Whether any marked paragraph exists strictly under `root`. */
-export function anyParagraphUnder(root: Element): boolean {
+export function anyParagraphUnder(root: Node): boolean {
     for (const el of marks.keys()) {
-        if (el !== root && root.contains(el)) return true;
+        if (el !== root && deepContains(root, el)) return true;
     }
     return false;
 }
@@ -105,18 +117,20 @@ export function anyParagraphUnder(root: Element): boolean {
  * Drop marks for `removed` and everything under it. Called from the
  * MutationObserver while the removed subtree is still identifiable.
  */
-export function cleanupParagraphMarks(removed: HTMLElement): void {
+export function cleanupParagraphMarks(removed: Node): void {
     if (marks.size === 0) return;
     // A *pure* mark cannot contain other marks, so removing one is a
     // single-entry cleanup. A mixed mark (or an unmarked ancestor) may have
-    // marks nested beneath it — sweep the subtree.
-    const mark = marks.get(removed);
+    // marks nested beneath it — sweep the subtree. A host whose shadow root
+    // holds marks is recorded as mixed for exactly this reason, so the
+    // early-return can never strand them.
+    const mark = marks.get(removed as UnitContainer);
     if (mark) {
-        marks.delete(removed);
+        marks.delete(removed as UnitContainer);
         if (!mark.mixed) return;
     }
     for (const el of marks.keys()) {
-        if (removed.contains(el)) marks.delete(el);
+        if (deepContains(removed, el)) marks.delete(el);
     }
 }
 

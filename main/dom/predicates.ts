@@ -3,6 +3,7 @@
 // without a full content() context.
 import { excludedTagSet } from "@/main/constants";
 import { isNoTranslate } from "@/main/dom/paragraphMarks";
+import { isOwnHost } from "@/main/dom/shadowRoots";
 
 /** An element the user (or a rule) marked as a no-translate region. */
 export function isNotTranslateElement(element: HTMLElement): boolean {
@@ -14,11 +15,25 @@ export function isExcludedNodeType(node: Node): boolean {
     return excludedTagSet.has(node.nodeName.toLowerCase());
 }
 
-/** Elements that must not be marked: our own translation output or excluded tags. */
+/**
+ * Elements that must not be marked: our own translation output, our own Shadow
+ * DOM UI hosts, or excluded tags.
+ *
+ * The UI-host check only starts mattering once the scan pierces shadow roots —
+ * until then our surfaces are invisible to it purely by accident of living
+ * behind a boundary. It is not an attribute test on purpose: the six hosts carry
+ * three different marker attributes, and the video-subtitle one is mounted
+ * inside page content where the scan genuinely reaches it. See
+ * main/dom/shadowRoots.ts.
+ */
 export function isNotMarkElement(element: HTMLElement): boolean {
     // todo support user defined class to exclude translation
     // todo support user defined tag to exclude
-    return element.classList.contains("duo-translation") || isExcludedNodeType(element);
+    return (
+        element.classList.contains("duo-translation") ||
+        isOwnHost(element) ||
+        isExcludedNodeType(element)
+    );
 }
 
 /**

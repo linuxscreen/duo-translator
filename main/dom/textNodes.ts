@@ -3,6 +3,7 @@
 import { EXCLUDE_CHILD_ELEMENT_TAGS } from "@/main/constants";
 import { contentValid, contentVisible } from "@/utils/dom";
 import { isEditable, isExcludedNodeType } from "@/main/dom/predicates";
+import { pageShadowRootOf } from "@/main/dom/shadowRoots";
 
 /** Strip every `duo-*` class and attribute the extension added to an element. */
 export function removeDuoClassAndAttribute(element: HTMLElement) {
@@ -125,10 +126,22 @@ export function hasTranslatableText(node: Node): boolean {
             if (contentValid(cur)) return true;
             continue;
         }
+        // A ShadowRoot is a DocumentFragment, and it is a legitimate argument
+        // here: "does this host carry translatable text?" is asked of the root.
+        // Rejecting fragments outright made that question answer false always.
+        if (cur.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+            stack.push(...cur.childNodes);
+            continue;
+        }
         if (cur.nodeType !== Node.ELEMENT_NODE) continue;
         const el = cur as HTMLElement;
         if (isExcludedNodeType(el) || isEditable(el)) continue;
         stack.push(...el.childNodes);
+        // Nested components count too — the text a reader sees inside `node`
+        // includes whatever its descendants render from their own roots. Our own
+        // UI hosts answer null here and are never descended into.
+        const shadow = pageShadowRootOf(el);
+        if (shadow) stack.push(shadow);
     }
     return false;
 }

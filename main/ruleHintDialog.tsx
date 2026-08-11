@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { CONFIG_KEY } from "./constants";
 import { getConfig, setConfig } from "@/utils/db";
 import { loadTailwindIntoShadow } from "./aiWriting/shadowStyle";
+import { attachOwnShadow } from "@/main/dom/shadowRoots";
 import { bindThemeToElement } from "@/utils/theme";
 import { t, useLang } from "./aiWriting/i18n";
 
@@ -28,7 +29,7 @@ export async function confirmRuleModeHint(): Promise<void> {
         host.id = HOST_ID;
         host.setAttribute("data-duo-rule-ui", "");
         document.documentElement.appendChild(host);
-        const shadow = host.attachShadow({ mode: "open" });
+        const shadow = attachOwnShadow(host);
         loadTailwindIntoShadow(shadow);
         const mount = document.createElement("div");
         mount.className = "duo-ai-root";

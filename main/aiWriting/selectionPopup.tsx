@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createRoot, type Root } from "react-dom/client";
 import { Check, ChevronRight, Copy, Loader2, Pin, Volume2, X } from "lucide-react";
 import { loadTailwindIntoShadow } from "./shadowStyle";
+import { attachOwnShadow } from "@/main/dom/shadowRoots";
 import { bindThemeToElement } from "@/utils/theme";
 import { t, useLang } from "./i18n";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -97,7 +98,7 @@ function ensureMounted(): void {
     }
     document.addEventListener("fullscreenchange", reparentForFullscreen);
     reparentForFullscreen();
-    const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+    const shadow = attachOwnShadow(host);
     loadTailwindIntoShadow(shadow);
     const mount = document.createElement("div");
     mount.className = "duo-ai-root";

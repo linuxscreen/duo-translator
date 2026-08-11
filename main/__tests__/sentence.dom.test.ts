@@ -107,6 +107,25 @@ describe("wrapTextNode2Span", () => {
         expect(spans.map((s) => s.textContent)).toEqual(["Hel", "lo"]);
     });
 
+    it("wraps text nodes whose parent is a ShadowRoot", () => {
+        // The insert used to go through `parentElement`, which is null for a
+        // text node sitting directly under a root — the span was silently
+        // dropped and the two sides' sequences went out of step.
+        const host = document.createElement("div");
+        document.body.appendChild(host);
+        const root = host.attachShadow({ mode: "open" });
+        root.append(document.createTextNode("Hi there"));
+        const nodes = Array.from(root.childNodes).filter(
+            (n): n is Text => n.nodeType === Node.TEXT_NODE,
+        );
+
+        const spans = wrapTextNode2Span(nodes, ["Hi ", "there"], new WeakSet());
+
+        expect(spans).toHaveLength(2);
+        expect(spans.map((s) => s.textContent)).toEqual(["Hi ", "there"]);
+        expect(Array.from(root.querySelectorAll("duo-span"))).toEqual(spans);
+    });
+
     it("returns [] for no sentences", () => {
         document.body.innerHTML = "<p>x</p>";
         const p = document.body.querySelector("p")!;
