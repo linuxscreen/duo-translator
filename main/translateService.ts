@@ -274,8 +274,8 @@ const MS_TRANSLATE_URL = "https://edge.microsoft.com/translate/translatetext?isE
 const MS_DETECT_URL = `${MS_TRANSLATE_URL}to=en`
 const DEEPL_FREE_URL = "https://api-free.deepl.com/v2/translate";
 const DEEPL_PRO_URL = "https://api.deepl.com/v2/translate";
-const YANDEX_TRANSLATE_URL = "https://browser.translate.yandex.net/api/v1/tr.json/translate";
-const YANDEX_DETECT_URL = "https://browser.translate.yandex.net/api/v1/tr.json/detect";
+const YANDEX_TRANSLATE_URL = "https://translate.yandex.net/api/v1/tr.json/translate";
+const YANDEX_DETECT_URL = "https://translate.yandex.net/api/v1/tr.json/detect";
 
 /**
  * Pick the DeepL endpoint implied by the key. Free-tier keys carry a `:fx`
@@ -683,9 +683,7 @@ export class YandexTranslateService extends TranslateService {
             id: this.sessionId(),
             srv: "android",
             lang: this.langParam(targetLang, sourceLang),
-            format: "html",
-            options: "2",
-            version: "14.1",
+            format: "html"
         });
         const url = `${YANDEX_TRANSLATE_URL}?${query.toString()}`;
 
