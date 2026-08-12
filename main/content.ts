@@ -8,6 +8,7 @@ import { mountAiWritingDot } from "./aiWriting/floatingDot";
 import { isAiWritingTarget } from "./aiWriting/inputDetector";
 import { openWorkbench, ensureWorkbenchMounted, destroyWorkbench } from "./aiWriting/workbench";
 import { openSelectionTranslate } from "./aiWriting/selectionPopup";
+import { mountSelectionIcon } from "./selectionIcon";
 import { getConfig, listRuleFromDB } from "@/utils/db";
 import { createRuleMode, type RuleModeController } from "./ruleMode";
 import { ERROR_SCOPE, reportRequestError, showRelayedError, type ErrorScope as ERROR_SCOPE_VALUE } from "./errorReport";
@@ -304,6 +305,10 @@ export async function content() {
     // on each init() so a global-switch off→on cycle re-mounts cleanly.
     let aiWritingDotDispose: (() => void) | null = null
     let aiWritingDotDisposed = false
+    // Selection translate icon — mounted per frame (a selection belongs to the
+    // document it lives in), same off→on reset semantics as the dot above.
+    let selectionIconDispose: (() => void) | null = null
+    let selectionIconDisposed = false
 
     // return
     // set translate status to false when the page is loaded
@@ -871,6 +876,20 @@ export async function content() {
                     await initFloatBall()
                 }
                 break
+            case CONFIG_KEY.SELECTION_ICON_SWITCH: {
+                if (typeof value !== "boolean") return
+                // Re-mounting re-runs the gate (global switch off means there is
+                // nothing to mount onto), so both directions go through the same
+                // pair of calls rather than caching a flag here.
+                removeSelectionIcon()
+                if (value && globalSwitch) {
+                    selectionIconDisposed = false
+                    const teardown = await mountSelectionIcon({ domain: domainWithPort })
+                    if (selectionIconDisposed) teardown()
+                    else selectionIconDispose = teardown
+                }
+                break
+            }
             case CONFIG_KEY.CONTEXT_MENU_SWITCH:
                 if (typeof value === "boolean") {
                     contextMenuSwitch = value
@@ -1361,6 +1380,18 @@ export async function content() {
         if (isTopFrame && window.location.hostname === "www.youtube.com" && !videoSubtitle) {
             videoSubtitle = initVideoSubtitle()
         }
+        // Selection translate icon — every frame, since a selection is scoped
+        // to the document it was made in. The mount is cheap (three document
+        // listeners); the Shadow-DOM surface is built on the first selection.
+        selectionIconDisposed = false
+        mountSelectionIcon({ domain: domainWithPort })
+            .then((teardown) => {
+                if (selectionIconDisposed) { teardown(); return; }
+                selectionIconDispose = teardown
+            })
+            .catch((err) =>
+                console.warn(APP_NAME_WITH_SUFFIX, "mountSelectionIcon failed", err),
+            )
         aiWritingDotDisposed = false
         if (isTopFrame) {
             mountAiWritingDot({ domain: domainWithPort })
@@ -1375,6 +1406,12 @@ export async function content() {
         } else {
             aiWritingDotDispose = initAiWritingDotInFrame()
         }
+    }
+
+    function removeSelectionIcon() {
+        selectionIconDisposed = true
+        selectionIconDispose?.()
+        selectionIconDispose = null
     }
 
     async function removeAiWritingDot() {
@@ -1397,6 +1434,7 @@ export async function content() {
         resetShadowCss()
         removeFloatBall()
         removeAiWritingDot()
+        removeSelectionIcon()
         videoSubtitle?.destroy()
         videoSubtitle = null
         restoreOriginalPage(true, true)

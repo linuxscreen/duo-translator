@@ -14,6 +14,7 @@ export type DomainItem = {
   aiWritingDisabled?: boolean;
   aiWritingEnabled?: boolean;
   floatBallDisabled?: boolean;
+  selectionIconDisabled?: boolean;
 };
 
 /**
@@ -22,12 +23,14 @@ export type DomainItem = {
  *  - `aiWritingDisabled`: AI Writing floating dot blacklist (boolean true).
  *  - `aiWritingEnabled`: AI Writing floating dot whitelist (boolean true).
  *  - `floatBallDisabled`: translation float ball blacklist (boolean true).
+ *  - `selectionIconDisabled`: selection translate icon blacklist (boolean true).
  */
 export type DomainListKind =
   | { field: 'strategy'; strategy: DOMAIN_STRATEGY }
   | { field: 'aiWritingDisabled' }
   | { field: 'aiWritingEnabled' }
-  | { field: 'floatBallDisabled' };
+  | { field: 'floatBallDisabled' }
+  | { field: 'selectionIconDisabled' };
 
 export function normalizeDomain(raw: string): string {
   const s = (raw || '').trim().toLowerCase();
@@ -87,6 +90,7 @@ export function DomainListSection({
     if (kind.field === 'strategy') return { domain, strategy: kind.strategy };
     if (kind.field === 'aiWritingEnabled') return { domain, aiWritingEnabled: true };
     if (kind.field === 'floatBallDisabled') return { domain, floatBallDisabled: true };
+    if (kind.field === 'selectionIconDisabled') return { domain, selectionIconDisabled: true };
     return { domain, aiWritingDisabled: true };
   };
 

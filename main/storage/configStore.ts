@@ -50,9 +50,13 @@ export type DomainDoc = {
     aiWritingDisabled?: boolean;
     aiWritingEnabled?: boolean;
     floatBallDisabled?: boolean;
+    selectionIconDisabled?: boolean;
 };
 
 export type DomainListItem = { domain: string } & DomainDoc;
+
+/** Fields `domainRepo.clearField` can drop individually. */
+export type DomainField = keyof DomainDoc;
 
 const configKey = (name: string): StorageItemKey => `local:${STORAGE_PREFIX.CONFIG}${name}`;
 const domainKey = (host: string): StorageItemKey => `local:${STORAGE_PREFIX.DOMAIN}${host}`;
@@ -170,6 +174,7 @@ export const domainRepo = {
         if (patch.aiWritingDisabled !== undefined) next.aiWritingDisabled = patch.aiWritingDisabled;
         if (patch.aiWritingEnabled !== undefined) next.aiWritingEnabled = patch.aiWritingEnabled;
         if (patch.floatBallDisabled !== undefined) next.floatBallDisabled = patch.floatBallDisabled;
+        if (patch.selectionIconDisabled !== undefined) next.selectionIconDisabled = patch.selectionIconDisabled;
         await storage.setItem(domainKey(host), next);
         await touchKey(dataDomainKey(host));
     },
@@ -183,10 +188,7 @@ export const domainRepo = {
      * Drop a single field. When the doc becomes empty, remove it entirely —
      * keeps the storage tidy (mirrors original DomainStorage.clearField).
      */
-    async clearField(
-        host: string,
-        field: 'strategy' | 'aiWritingDisabled' | 'aiWritingEnabled' | 'viewStrategy' | 'floatBallDisabled',
-    ): Promise<void> {
+    async clearField(host: string, field: DomainField): Promise<void> {
         const doc = await storage.getItem<DomainDoc>(domainKey(host));
         if (!doc) return;
         delete (doc as Record<string, unknown>)[field];
@@ -195,7 +197,8 @@ export const domainRepo = {
             doc.viewStrategy === undefined &&
             doc.aiWritingDisabled === undefined &&
             doc.aiWritingEnabled === undefined &&
-            doc.floatBallDisabled === undefined;
+            doc.floatBallDisabled === undefined &&
+            doc.selectionIconDisabled === undefined;
         if (empty) {
             await storage.removeItem(domainKey(host));
             await tombstoneKey(dataDomainKey(host));
@@ -210,6 +213,7 @@ export const domainRepo = {
         aiWritingDisabled?: boolean;
         aiWritingEnabled?: boolean;
         floatBallDisabled?: boolean;
+        selectionIconDisabled?: boolean;
     }): Promise<DomainListItem[]> {
         const all = await storage.snapshot('local');
         let items: DomainListItem[] = [];
@@ -224,6 +228,7 @@ export const domainRepo = {
                 aiWritingDisabled: doc.aiWritingDisabled,
                 aiWritingEnabled: doc.aiWritingEnabled,
                 floatBallDisabled: doc.floatBallDisabled,
+                selectionIconDisabled: doc.selectionIconDisabled,
             });
         }
         if (filter?.strategy) items = items.filter((it) => it.strategy === filter.strategy);
@@ -235,6 +240,9 @@ export const domainRepo = {
         }
         if (filter?.floatBallDisabled !== undefined) {
             items = items.filter((it) => !!it.floatBallDisabled === filter.floatBallDisabled);
+        }
+        if (filter?.selectionIconDisabled !== undefined) {
+            items = items.filter((it) => !!it.selectionIconDisabled === filter.selectionIconDisabled);
         }
         return items;
     },

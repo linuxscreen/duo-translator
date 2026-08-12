@@ -102,6 +102,9 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   const [floatBallStyle, setFloatBallStyle] = useState<FLOAT_BALL_STYLE>(
     DEFAULT_VALUE.FLOAT_BALL_STYLE,
   );
+  const [selectionIcon, setSelectionIcon] = useState<boolean>(
+    DEFAULT_VALUE.SELECTION_ICON_SWITCH,
+  );
   const [translationCache, setTranslationCache] = useState(true);
   const [ttsService, setTtsService] = useState<string>(DEFAULT_VALUE.TTS_SERVICE);
   // Transient "cleared" state for the clear-cache button (resets after ~1.5s).
@@ -146,9 +149,11 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   const [alwaysList, setAlwaysList] = useState<DomainItem[]>([]);
   const [neverList, setNeverList] = useState<DomainItem[]>([]);
   const [floatBallDisabledList, setFloatBallDisabledList] = useState<DomainItem[]>([]);
+  const [selectionIconDisabledList, setSelectionIconDisabledList] = useState<DomainItem[]>([]);
   const [alwaysOpen, setAlwaysOpen] = useState(false);
   const [neverOpen, setNeverOpen] = useState(false);
   const [floatBallDisabledOpen, setFloatBallDisabledOpen] = useState(false);
+  const [selectionIconDisabledOpen, setSelectionIconDisabledOpen] = useState(false);
   // Style section expanded by default; only the chevron button on the right
   // toggles — not the header text — to avoid accidental collapse.
   const [styleOpen, setStyleOpen] = useState(true);
@@ -156,7 +161,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   const [ready, setReady] = useState(false);
 
   const refreshDomains = async () => {
-    const [a, n, fb] = await Promise.all([
+    const [a, n, fb, si] = await Promise.all([
       sendMessageToBackground({
         action: DB_ACTION.DOMAIN_LIST,
         data: { strategy: DOMAIN_STRATEGY.ALWAYS },
@@ -169,23 +174,29 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         action: DB_ACTION.DOMAIN_LIST,
         data: { floatBallDisabled: true },
       }),
+      sendMessageToBackground({
+        action: DB_ACTION.DOMAIN_LIST,
+        data: { selectionIconDisabled: true },
+      }),
     ]);
     setAlwaysList(Array.isArray(a) ? a : []);
     setNeverList(Array.isArray(n) ? n : []);
     setFloatBallDisabledList(Array.isArray(fb) ? fb : []);
+    setSelectionIconDisabledList(Array.isArray(si) ? si : []);
   };
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const [
-        bh, fb, fbs, vs, tl, ts, ds, ms, lb, tc, tts,
+        bh, fb, fbs, si, vs, tl, ts, ds, ms, lb, tc, tts,
         styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg, qbcCfg, qbcIdxCfg,
         hbCfg, hbIdxCfg, hfCfg, hfIdxCfg, hsCfg, hbcCfg, hbcIdxCfg,
       ] = await Promise.all([
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
         getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
         getConfig(CONFIG_KEY.FLOAT_BALL_STYLE),
+        getConfig(CONFIG_KEY.SELECTION_ICON_SWITCH),
         getConfig(CONFIG_KEY.VIEW_STRATEGY),
         getConfig(CONFIG_KEY.TARGET_LANGUAGE),
         getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
@@ -229,6 +240,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
           ? fbs as FLOAT_BALL_STYLE
           : DEFAULT_VALUE.FLOAT_BALL_STYLE,
       );
+      setSelectionIcon(si === undefined ? DEFAULT_VALUE.SELECTION_ICON_SWITCH : !!si);
       setTranslationCache(tc === undefined ? true : tc);
       setTtsService(typeof tts === 'string' && tts ? tts : DEFAULT_VALUE.TTS_SERVICE);
       setViewStrategy(vs === undefined ? DEFAULT_VALUE.VIEW_STRATEGY : vs);
@@ -354,6 +366,15 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     void sendMessageToAllTabs({
       action: ACTION.CONFIG_CHANGED,
       data: { [CONFIG_KEY.FLOAT_BALL_STYLE]: next },
+    });
+  };
+
+  const onSelectionIcon = (v: boolean) => {
+    setSelectionIcon(v);
+    void setConfig(CONFIG_KEY.SELECTION_ICON_SWITCH, v);
+    void sendMessageToAllTabs({
+      action: ACTION.CONFIG_CHANGED,
+      data: { [CONFIG_KEY.SELECTION_ICON_SWITCH]: v },
     });
   };
 
@@ -808,6 +829,11 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
           }
         />
         <SettingRow
+          label={t('selectionTranslateIcon', 'Selection translate icon')}
+          hint={t('selectionTranslateIconHint', 'Show a translate icon after selecting text')}
+          control={<Switch checked={selectionIcon} onCheckedChange={onSelectionIcon} />}
+        />
+        <SettingRow
           label={t('websiteTranslationRules', 'Website translation rules')}
           hint={t(
             'websiteTranslationRulesHint',
@@ -1020,6 +1046,16 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         onToggle={() => setFloatBallDisabledOpen((o) => !o)}
         items={floatBallDisabledList}
         kind={{ field: 'floatBallDisabled' }}
+        onChanged={refreshDomains}
+      />
+
+      <DomainListSection
+        title={t('selectionIconDisabledWebsites', 'Selection translate icon disabled websites')}
+        emptyHint={t('noDomainsConfigured', 'No websites configured.')}
+        open={selectionIconDisabledOpen}
+        onToggle={() => setSelectionIconDisabledOpen((o) => !o)}
+        items={selectionIconDisabledList}
+        kind={{ field: 'selectionIconDisabled' }}
         onChanged={refreshDomains}
       />
 

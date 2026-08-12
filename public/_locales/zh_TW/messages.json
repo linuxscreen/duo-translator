@@ -6,7 +6,7 @@
     "message": "支援網頁翻譯、劃詞翻譯、寫作增強等。"
   },
   "shortcutTranslateRestorePage": {
-    "message": "翻譯/恢復 頁面"
+    "message": "翻譯或復原頁面"
   },
   "shortcutTranslate": {
     "message": "翻譯頁面"
@@ -18,9 +18,9 @@
     "message": "開啟 AI 寫作工作臺"
   },
   "shortcutTranslateRestoreParagraph": {
-    "message": "翻譯/恢復 滑鼠懸停段落"
+    "message": "翻譯或恢復滑鼠懸停段落"
   },
   "shortcutTranslateSelectionInput": {
-    "message": "翻譯 選中文字/輸入框"
+    "message": "劃詞翻譯或輸入框翻譯"
   }
 }

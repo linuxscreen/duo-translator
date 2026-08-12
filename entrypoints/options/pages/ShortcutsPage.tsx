@@ -107,14 +107,14 @@ function DoubleTapShortcutsCard() {
       checked: translateSelection,
     },
     {
-      key: CONFIG_KEY.DOUBLE_TAP_TOGGLE_PARAGRAPH,
-      label: t('doubleTapToggleParagraph', 'Translate / restore mouse-over paragraph'),
-      checked: toggleParagraph,
-    },
-    {
       key: CONFIG_KEY.DOUBLE_TAP_TRANSLATE_INPUT,
       label: t('doubleTapTranslateInput', 'Translate input box'),
       checked: translateInput,
+    },
+    {
+      key: CONFIG_KEY.DOUBLE_TAP_TOGGLE_PARAGRAPH,
+      label: t('doubleTapToggleParagraph', 'Translate / restore mouse-over paragraph'),
+      checked: toggleParagraph,
     },
   ];
 

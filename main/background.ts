@@ -22,7 +22,7 @@ import { aiMessageHandlers, registerAiBridge } from "@/main/aiService";
 import { translateMessageHandlers } from "@/main/translateService";
 import { registerSiteRuleAlarms, siteRuleMessageHandlers } from "@/main/siteRules/siteRuleService";
 import { getDomainWithPortFromUrl } from '@/utils/url';
-import { configRepo, domainRepo, ruleRepo, type DomainDoc } from "@/main/storage/configStore";
+import { configRepo, domainRepo, ruleRepo, type DomainDoc, type DomainField } from "@/main/storage/configStore";
 import * as translationCache from "@/main/storage/translationCache";
 import { synthesizeTts } from "@/main/ttsService";
 import { migrateFromPouchIfNeeded } from "@/main/storage/migrateFromPouch";
@@ -183,7 +183,7 @@ export async function background() {
                 return true
             }
             case DB_ACTION.DOMAIN_DELETE: {
-                const fieldArg = message.data?.field as ('strategy' | 'aiWritingDisabled' | 'aiWritingEnabled' | 'viewStrategy' | 'floatBallDisabled' | undefined);
+                const fieldArg = message.data?.field as (DomainField | undefined);
                 const op = fieldArg
                     ? domainRepo.clearField(message.data.domain, fieldArg)
                     : domainRepo.delete(message.data.domain);
@@ -200,6 +200,7 @@ export async function background() {
                     aiWritingDisabled: message.data?.aiWritingDisabled,
                     aiWritingEnabled: message.data?.aiWritingEnabled,
                     floatBallDisabled: message.data?.floatBallDisabled,
+                    selectionIconDisabled: message.data?.selectionIconDisabled,
                 };
                 domainRepo.list(filter).then((data) => {
                     sendResponse({ status: STATUS_SUCCESS, data })

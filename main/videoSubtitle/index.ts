@@ -9,7 +9,6 @@ import { setConfig } from "@/utils/db";
 import { buildAiTranslateService } from "@/utils/service";
 import { translateTexts } from "@/main/translateClient";
 import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
-import { openSelectionTranslate } from "@/main/aiWriting/selectionPopup";
 import { SubtitleOverlay } from "./overlay";
 import { mountSubtitleControls, type SubtitleControlsController } from "./controls";
 import { nextAiChunkEnd, segmentChunkWithAi, segmentWords, wordIndexAtTime } from "./segmenter";
@@ -249,8 +248,6 @@ export function initVideoSubtitle(): VideoSubtitleController {
                     lastPositionPct = pct;
                     void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_POSITION, pct);
                 },
-                // Service and target language are resolved inside the popup.
-                onTranslateSelection: (text, rect) => openSelectionTranslate({ text, rect }),
                 reservedBottomPx: () => bottomControlsInsetPx(p),
             });
             lastStyleJson = JSON.stringify(style);

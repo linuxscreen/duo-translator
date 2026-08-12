@@ -343,6 +343,11 @@ export enum CONFIG_KEY {
     // target language for the popup, persisted across opens.
     SELECTION_TRANSLATE_SERVICE = 'selectionTranslateService',
     SELECTION_TARGET_LANGUAGE = 'selectionTargetLanguage',
+    // The little translate icon that appears under a text selection. One switch
+    // for the whole extension: the page surface and the video-subtitle overlay
+    // share the same icon implementation, so this also governs the icon shown
+    // when subtitle text is selected inside a player.
+    SELECTION_ICON_SWITCH = 'selectionIconSwitch',
     GLOBAL_SWITCH = 'globalSwitch',
     TRANSLATE_SERVICE = 'translateService',
     MICROSOFT_TOKEN = 'microsoftToken',
@@ -460,6 +465,7 @@ export const DEFAULT_VALUE = {
     BILINGUAL_HIGHLIGHTING_SWITCH: true,
     FLOAT_BALL_SWITCH: true,
     FLOAT_BALL_STYLE: FLOAT_BALL_STYLE.DOCKED,
+    SELECTION_ICON_SWITCH: true,
     CONTEXT_MENU_SWITCH: true,
     VIEW_STRATEGY: 'double',
     DEFAULT_STRATEGY: 'auto',
