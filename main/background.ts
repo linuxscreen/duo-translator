@@ -21,6 +21,7 @@ import { INTERFACE_LOCALES, detectInterfaceLang, normalizeInterfaceLang } from "
 import { aiMessageHandlers, registerAiBridge } from "@/main/aiService";
 import { translateMessageHandlers } from "@/main/translateService";
 import { registerSiteRuleAlarms, siteRuleMessageHandlers } from "@/main/siteRules/siteRuleService";
+import { dictMessageHandlers } from "@/main/dict/dictService";
 import { getDomainWithPortFromUrl } from '@/utils/url';
 import { configRepo, domainRepo, ruleRepo, type DomainDoc, type DomainField } from "@/main/storage/configStore";
 import * as translationCache from "@/main/storage/translationCache";
@@ -126,6 +127,7 @@ export async function background() {
         const featureHandler = translateMessageHandlers[message.action]
             ?? aiMessageHandlers[message.action]
             ?? siteRuleMessageHandlers[message.action]
+            ?? dictMessageHandlers[message.action]
         if (featureHandler) return featureHandler(message, sendResponse)
         switch (message.action) {
             case DB_ACTION.RULE_ADD:

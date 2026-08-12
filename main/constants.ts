@@ -265,6 +265,19 @@ export enum ACTION {
     // and returns an array of base64 `data:` URLs (one per <=170-char chunk) that
     // the content script plays sequentially through an <audio> element.
     TTS_SYNTHESIZE = 'ttsSynthesize',
+    // Dictionary lookup for a single selected word. content sends
+    // { provider, word, targetLang }; background serves it from a permanent
+    // IndexedDB cache and, on a miss, scrapes Bing's dictionary page or calls
+    // Google's `translate_a/single` dictionary mode. Both must live in
+    // background for the usual reason (no CORS headers on either), and the
+    // Bing one additionally because parsing its HTML next to the fetch is what
+    // keeps a ~200 KB page off the message channel.
+    DICT_LOOKUP = 'dictLookup',
+    // Fetch one dictionary pronunciation recording and return it as a `data:`
+    // URL. Same reason as TTS_SYNTHESIZE: a media element created by a content
+    // script is subject to the PAGE's CSP, so the bytes have to arrive
+    // out-of-band and be played through Web Audio.
+    DICT_AUDIO = 'dictAudio',
     // Sub-frame → top-frame error bubble. A content script in an iframe reports
     // a failed request with `data` = an ErrorToastPayload; background forwards
     // it to frame 0 of the sender's tab, which draws the bubble. Distinct from

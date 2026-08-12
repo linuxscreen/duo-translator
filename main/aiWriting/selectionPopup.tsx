@@ -19,6 +19,10 @@ import { getTextLanguage } from "@/main/lang";
 import { getConfig, setConfig } from "@/utils/db";
 import { buildServiceOptions, getTranslateService, type ServiceOption } from "@/utils/service";
 import { DUO_LOGO_SVG } from "@/main/floatBall/logo";
+import { DictView } from "./DictView";
+import { lookupDict } from "@/main/dict/dictClient";
+import { chooseDictEntry, dictProvidersFor, isDictWord } from "@/main/dict/select";
+import type { DictEntry, DictProvider } from "@/main/dict/types";
 
 // ---------------------------------------------------------------------------
 // Singleton mount — one popup per page (per frame). A fresh request replaces
@@ -382,6 +386,14 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
     const [pageDefaults, setPageDefaults] = useState<PageDefaults>({ service: "", lang: "", options: [] });
     // Detected language of the original text, used for its TTS playback.
     const [origLang, setOrigLang] = useState("und");
+    // Dictionary panel — only populated when the selection is a single word.
+    // Every candidate provider's answer is kept; which one is DISPLAYED is
+    // decided at render time, once the source language is known.
+    const [dictEntries, setDictEntries] = useState<Partial<Record<DictProvider, DictEntry | null>>>({});
+    const [dictLoading, setDictLoading] = useState(false);
+    const [dictError, setDictError] = useState<string | null>(null);
+    // Run token: a lookup superseded by a language change must not paint.
+    const dictRunRef = useRef(0);
     // "Show original text" is collapsed by default.
     const [origExpanded, setOrigExpanded] = useState(false);
     // Header overrides — null means "follow the page translation" (the default).
@@ -481,6 +493,60 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         })();
     }, []);
 
+    /**
+     * Look the selection up, when it is a single word.
+     *
+     * Every candidate provider is queried CONCURRENTLY and the winner is picked
+     * afterwards (`chooseDictEntry`). The alternative — decide first, then ask
+     * one — needs the source language before any request has been made, and a
+     * single word does not carry enough signal for that: judging "English" from
+     * the word being ASCII routes French "important" or "table" to Bing, which
+     * answers with the English entry.
+     *
+     * Runs alongside the translation rather than after it: independent
+     * requests, and the dictionary is usually a cache hit while the translation
+     * is always a network round trip.
+     */
+    const runDict = useCallback((text: string, targetLang: string) => {
+        const runId = ++dictRunRef.current;
+        setDictEntries({});
+        setDictError(null);
+        const word = text.trim();
+        if (!isDictWord(word)) {
+            setDictLoading(false);
+            return;
+        }
+        const providers = dictProvidersFor(targetLang);
+        setDictLoading(true);
+        (async () => {
+            const settled = await Promise.allSettled(
+                providers.map((p) => lookupDict(p, word, targetLang)),
+            );
+            if (runId !== dictRunRef.current) return;
+            const entries: Partial<Record<DictProvider, DictEntry | null>> = {};
+            const failures: any[] = [];
+            settled.forEach((r, i) => {
+                if (r.status === "fulfilled") entries[providers[i]] = r.value;
+                else failures.push(r.reason);
+            });
+            setDictEntries(entries);
+            setDictLoading(false);
+            // Every failure reaches the console; only a TOTAL failure reaches
+            // the panel. One provider being down while the other answers is not
+            // something the user can act on, and the answer is already there.
+            for (const e of failures) {
+                reportRequestError(ERROR_SCOPE.DICTIONARY, e, {
+                    silent: true,
+                    detail: { word, targetLang },
+                });
+            }
+            const answered = Object.values(entries).some(Boolean);
+            if (!answered && failures.length > 0) {
+                setDictError(failures[0]?.message || String(failures[0]));
+            }
+        })();
+    }, []);
+
     useEffect(() => {
         registerOpen((s) => {
             tts.stop();
@@ -490,6 +556,8 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             setOrigExpanded(false);
             setOrigLang(getTextLanguage(s.text) || "und");
             setManual(null);
+            setDictEntries({});
+            setDictError(null);
             setPlacement(computePlacement(s.rect));
             void (async () => {
                 // Re-read the page defaults so a service / language changed in
@@ -500,9 +568,10 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
                 const svc = serviceOverrideRef.current;
                 const lng = langOverrideRef.current;
                 runTranslate(s.text, lng ?? page.lang, parseTranslateServiceKey(svc ?? page.service));
+                runDict(s.text, lng ?? page.lang);
             })();
         });
-    }, [registerOpen, runTranslate, refreshPageDefaults]);
+    }, [registerOpen, runTranslate, refreshPageDefaults, runDict]);
 
     const onServiceChange = (value: string) => {
         const next = value || null;
@@ -526,6 +595,9 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             next ?? pageDefaults.lang,
             parseTranslateServiceKey(serviceOverride ?? pageDefaults.service),
         );
+        // The target language picks the dictionary provider as well as the
+        // language its glosses are written in, so this is a fresh lookup.
+        runDict(seed.text, next ?? pageDefaults.lang);
     };
 
     // Esc always closes (even when pinned).
@@ -692,6 +764,12 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         t("selectionFollowWeb", "Follow page ({{name}})").replace("{{name}}", name);
 
     const effectiveTargetLang = langOverride ?? pageDefaults.lang;
+    // Whose dictionary entry to show. Decided HERE rather than before the
+    // requests: by now the providers have answered and the translation has
+    // reported its detected source language, so the choice is made on a known
+    // language instead of a guess. `origLang` is the translation's detection
+    // (falling back to the local one), used only when Google returned nothing.
+    const dictEntry = chooseDictEntry(dictEntries, origLang, effectiveTargetLang);
     const translationBody = error ? (
         <span className="text-error">{error}</span>
     ) : running && !output ? (
@@ -853,6 +931,23 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
                         </div>
                     )}
                 </div>
+
+                {/* Dictionary — only for single-word selections. Renders nothing
+                    at all when the word has no entry, so ordinary prose
+                    selections look exactly as they did before. */}
+                {(dictLoading || dictError || dictEntry) && (
+                    <DictView
+                        entry={dictEntry}
+                        loading={dictLoading}
+                        error={dictError}
+                        wordLang={origLang}
+                        audio={{
+                            playingKey: tts.playingKey,
+                            playUrl: tts.toggleUrl,
+                            speak: tts.toggle,
+                        }}
+                    />
+                )}
             </div>
         </div>
     );

@@ -3,6 +3,7 @@ import { ACTION, API_REQUEST_TIMEOUT, CONFIG_KEY, DEFAULT_VALUE } from "@/main/c
 import { getConfig } from "@/utils/db";
 import { sendMessageToBackgroundOrThrow } from "@/utils/message";
 import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
+import { fetchDictAudio } from "@/main/dict/dictClient";
 
 /**
  * Text-to-speech playback for the selection-translate popup.
@@ -23,11 +24,16 @@ import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
  *   - `playingKey`  — the key currently playing, or null.
  *   - `toggle(key, text, lang)` — start that utterance, or stop it if it's the
  *     one already playing (click-to-pause). Switching keys stops the old first.
+ *   - `toggleUrl(key, url)` — same, for audio that already exists as a file:
+ *     the dictionary's human recordings. It shares this player rather than
+ *     owning one, so a word's pronunciation and the translation's TTS cannot
+ *     end up talking over each other, and one `playingKey` drives every button.
  *   - `stop()` — hard stop (used on popup close / re-open).
  */
 export function useTts(): {
     playingKey: string | null;
     toggle: (key: string, text: string, lang: string) => void;
+    toggleUrl: (key: string, url: string) => void;
     stop: () => void;
 } {
     const [playingKey, setPlayingKey] = useState<string | null>(null);
@@ -56,7 +62,18 @@ export function useTts(): {
         ctxRef.current = null;
     }, [stop]);
 
-    const toggle = useCallback((key: string, text: string, lang: string) => {
+    /**
+     * Shared pipeline: claim the player, resolve the audio (however the caller
+     * gets it), then decode and play the chunks in order. `resolve` is the only
+     * difference between speaking text and playing a dictionary recording, so
+     * everything downstream of it — the run token, the AudioContext, the
+     * autoplay resume, the failure reporting — exists once.
+     */
+    const play = useCallback((
+        key: string,
+        detail: Record<string, unknown>,
+        resolve: () => Promise<string[]>,
+    ) => {
         // Clicking the utterance that's already playing stops it.
         if (playingKey === key) {
             stop();
@@ -65,36 +82,29 @@ export function useTts(): {
         // Starting a new one — supersede any in-flight request/playback.
         stop();
         const runId = runIdRef.current;
-        const clean = (text || "").trim();
-        if (!clean) return;
         setPlayingKey(key);
 
         (async () => {
-            const service = (await getConfig(CONFIG_KEY.TTS_SERVICE)) || DEFAULT_VALUE.TTS_SERVICE;
-            let resp: any;
+            let audios: string[];
             try {
                 // Throwing variant: the swallowing one turned every TTS failure
                 // (dead endpoint, Bing token scrape broken, unsupported
                 // language) into a button that flickers and does nothing.
-                resp = await sendMessageToBackgroundOrThrow(
-                    { action: ACTION.TTS_SYNTHESIZE, data: { text: clean, lang, service } },
-                    API_REQUEST_TIMEOUT,
-                );
+                audios = await resolve();
             } catch (e) {
                 if (runId !== runIdRef.current) return;
                 setPlayingKey(null);
-                reportRequestError(ERROR_SCOPE.TTS, e, { detail: { service, lang } });
+                reportRequestError(ERROR_SCOPE.TTS, e, { detail });
                 return;
             }
             // Superseded while we were fetching.
             if (runId !== runIdRef.current) return;
-            const audios: string[] = resp?.audios ?? [];
             if (!audios.length) {
                 setPlayingKey(null);
                 reportRequestError(
                     ERROR_SCOPE.TTS,
                     new Error("the speech service returned no audio"),
-                    { detail: { service, lang } },
+                    { detail },
                 );
                 return;
             }
@@ -111,7 +121,7 @@ export function useTts(): {
             const fail = (e: any) => {
                 if (runId !== runIdRef.current) return;
                 setPlayingKey(null);
-                reportRequestError(ERROR_SCOPE.TTS, e, { detail: { service, lang, phase: "playback" } });
+                reportRequestError(ERROR_SCOPE.TTS, e, { detail: { ...detail, phase: "playback" } });
             };
             let index = 0;
             const playNext = async () => {
@@ -141,7 +151,25 @@ export function useTts(): {
         })();
     }, [playingKey, stop]);
 
-    return { playingKey, toggle, stop };
+    const toggle = useCallback((key: string, text: string, lang: string) => {
+        const clean = (text || "").trim();
+        if (!clean && playingKey !== key) return;
+        play(key, { lang }, async () => {
+            const service = (await getConfig(CONFIG_KEY.TTS_SERVICE)) || DEFAULT_VALUE.TTS_SERVICE;
+            const resp: any = await sendMessageToBackgroundOrThrow(
+                { action: ACTION.TTS_SYNTHESIZE, data: { text: clean, lang, service } },
+                API_REQUEST_TIMEOUT,
+            );
+            return resp?.audios ?? [];
+        });
+    }, [play, playingKey]);
+
+    const toggleUrl = useCallback((key: string, url: string) => {
+        if (!url && playingKey !== key) return;
+        play(key, { url }, () => fetchDictAudio(url));
+    }, [play, playingKey]);
+
+    return { playingKey, toggle, toggleUrl, stop };
 }
 
 /** Decode the base64 payload of a `data:` URL into an ArrayBuffer. */

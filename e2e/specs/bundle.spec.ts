@@ -30,6 +30,9 @@ test.describe('@bundle background/content separation', () => {
             'edge.microsoft.com/translate/auth',
             'api.deepl.com', 'api-free.deepl.com',
             'browser.translate.yandex.net',
+            // Dictionary providers — Bing's page is scraped and Google's
+            // dictionary mode is parsed entirely in background.
+            'www.bing.com', 'translate.google.com', 'translate_a/single',
             // Credentials
             'DeepL-Auth-Key', 'x-goog-api-key',
             // Built-in AI has no endpoint and no credential, so nothing else
@@ -74,6 +77,7 @@ test.describe('@bundle background/content separation', () => {
             'translate-pa.googleapis.com',
             'translate.yandex.net',
             'DeepL-Auth-Key',
+            'translate_a/single',
         ]) {
             expect(background, `background.js must contain "${marker}"`).toContain(marker);
         }

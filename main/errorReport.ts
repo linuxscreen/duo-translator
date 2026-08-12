@@ -75,6 +75,7 @@ export const ERROR_SCOPE = {
     TTS: "errScopeTts",
     AI_WRITING: "errScopeAiWriting",
     SUBTITLE: "errScopeSubtitle",
+    DICTIONARY: "errScopeDictionary",
 } as const;
 
 export type ErrorScope = (typeof ERROR_SCOPE)[keyof typeof ERROR_SCOPE];
@@ -86,6 +87,7 @@ const ERROR_SCOPE_FALLBACK: Record<string, string> = {
     [ERROR_SCOPE.TTS]: "Text to speech",
     [ERROR_SCOPE.AI_WRITING]: "AI writing",
     [ERROR_SCOPE.SUBTITLE]: "Video subtitles",
+    [ERROR_SCOPE.DICTIONARY]: "Dictionary",
 };
 
 export interface ReportOptions {
