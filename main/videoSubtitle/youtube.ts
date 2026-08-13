@@ -5,7 +5,14 @@ import {
     YT_BRIDGE_TRACK_RESPONSE,
     type YtBridgePlayerData,
 } from "./bridgeProtocol";
-import type { CaptionTrackInfo, SubtitleWord, VideoSiteAdapter } from "./types";
+import { VIDEO_SUBTITLE_SOURCE_POLICY } from "@/main/constants";
+import type {
+    CaptionTrackInfo,
+    SourcePreference,
+    SourceTrackOption,
+    SubtitleWord,
+    VideoSiteAdapter,
+} from "./types";
 
 /**
  * Isolated-world YouTube adapter.
@@ -125,48 +132,103 @@ export class YoutubeAdapter implements VideoSiteAdapter {
     }
 
     /**
-     * One-shot re-read of the player's current CC selection. Cheap enough to
-     * poll (a single postMessage round-trip); returns null when captions are
-     * off, the RPC times out, or the player has moved on to another video.
+     * One-shot re-read of the live player state that feeds `pickTrack` (CC
+     * selection + audio track). Cheap enough to poll — a single postMessage
+     * round-trip. False when the RPC timed out or the player has moved on to
+     * another video, in which case the previous state is left untouched.
      */
-    async selectedTrack(): Promise<CaptionTrackInfo | null> {
+    async refreshSourceState(): Promise<boolean> {
         const data = await bridgeRpc();
-        if (!data || data.videoId !== currentYoutubeVideoId()) return null;
+        if (!data || data.videoId !== currentYoutubeVideoId()) return false;
         this.lastPlayerData = data;
-        const selected = data.selectedTrack;
-        if (!selected) return null;
-        const tracks = await this.listTracks();
-        return tracks.find(
-            (t) => t.languageCode === selected.languageCode && t.auto === (selected.kind === "asr"),
-        ) ?? tracks.find((t) => t.languageCode === selected.languageCode) ?? null;
+        return true;
     }
 
     /**
-     * Pick the source track, in this order:
+     * Whether the player's own captions are on, or null when it cannot be told
+     * (the button is not in the control bar yet).
      *
-     *  1. What the player is showing — an explicit CC choice by the user beats
-     *     every heuristic we could apply.
-     *  2. YouTube's own default track for this video.
-     *  3. A manual track in the video's spoken language (the language the ASR
-     *     track was generated for), else that ASR track.
-     *  4. The first track.
-     *
-     * 1 and 2 used to be missing, so a video captioned in several languages was
-     * read off `captionTracks[0]` — its order is YouTube's, unrelated to what
-     * is on screen. On a video with Arabic and English tracks the overlay then
-     * showed Arabic even with English selected.
+     * Read off the control-bar button rather than through the bridge: it is the
+     * state the user is actually looking at, it costs no RPC — so the follow
+     * setting can poll it every tick — and it is the same signal the bridge
+     * itself samples to restore the CC state after driving the caption module.
      */
-    pickTrack(tracks: CaptionTrackInfo[]): CaptionTrackInfo | null {
+    nativeCaptionsOn(player: HTMLElement): boolean | null {
+        const pressed = player
+            .querySelector(".ytp-subtitles-button")
+            ?.getAttribute("aria-pressed");
+        return typeof pressed === "string" ? pressed === "true" : null;
+    }
+
+    /** Unique source languages of this video, for the manual picker. */
+    sourceOptions(tracks: CaptionTrackInfo[]): SourceTrackOption[] {
+        const byLang = new Map<string, CaptionTrackInfo>();
+        for (const t of tracks) {
+            const kept = byLang.get(t.languageCode);
+            // A language usually has BOTH an auto-generated and a hand-written
+            // track; label the entry with the hand-written one, whose name is
+            // the real title rather than "… (auto-generated)".
+            if (!kept || (kept.auto && !t.auto)) byLang.set(t.languageCode, t);
+        }
+        return [...byLang.values()].map((t) => ({ languageCode: t.languageCode, label: t.label }));
+    }
+
+    /**
+     * Pick the track to read as the ORIGINAL, honoring the user's
+     * source-language preference.
+     *
+     * A language pinned by hand in the player menu always wins — it is the
+     * most explicit statement of intent available. Behind it the policy orders
+     * the two player signals: the CC choice (what is on screen) and the audio
+     * (what is being spoken). Behind those, YouTube's own default track, then a
+     * spoken-language heuristic, then the first track.
+     *
+     * The audio fallback is what answers "captions are off": with CC off the
+     * player reports no selected track at all, and the caption list alone says
+     * nothing about which language is being spoken.
+     *
+     * A policy or a pin that this video cannot satisfy is never an error — it
+     * just falls through. That is what lets a pin survive a video change (it
+     * re-applies wherever the language exists, since it is stored as a language
+     * rather than a track) without ever stranding the overlay on a video that
+     * lacks it.
+     */
+    pickTrack(tracks: CaptionTrackInfo[], pref?: SourcePreference): CaptionTrackInfo | null {
         if (tracks.length === 0) return null;
 
-        const selected = this.lastPlayerData?.selectedTrack;
-        if (selected) {
-            const match = tracks.find(
+        const byLanguage = (lang: string | undefined): CaptionTrackInfo | null => {
+            if (!lang) return null;
+            const base = lang.split("-")[0].toLowerCase();
+            const same = tracks.filter((t) => t.languageCode.split("-")[0].toLowerCase() === base);
+            if (same.length === 0) return null;
+            // Exact region match first, then a hand-written track over an ASR
+            // one — the auto track is the lower-quality read of the same words.
+            return same.find((t) => t.languageCode.toLowerCase() === lang.toLowerCase() && !t.auto)
+                ?? same.find((t) => !t.auto)
+                ?? same[0];
+        };
+
+        const fromSelection = (): CaptionTrackInfo | null => {
+            const selected = this.lastPlayerData?.selectedTrack;
+            if (!selected) return null;
+            return tracks.find(
                 (t) => t.languageCode === selected.languageCode && t.auto === (selected.kind === "asr"),
             )
                 // Same language, either kind — the player reports `kind` for
                 // ASR tracks only in some responses.
-                ?? tracks.find((t) => t.languageCode === selected.languageCode);
+                ?? tracks.find((t) => t.languageCode === selected.languageCode)
+                ?? null;
+        };
+
+        const fromAudio = () => byLanguage(this.lastPlayerData?.audioLanguage);
+        const pinned = () => byLanguage(pref?.manualLang);
+
+        const chain = pref?.policy === VIDEO_SUBTITLE_SOURCE_POLICY.AUDIO
+            ? [pinned, fromAudio, fromSelection]
+            : [pinned, fromSelection, fromAudio];
+
+        for (const resolve of chain) {
+            const match = resolve();
             if (match) return match;
         }
 

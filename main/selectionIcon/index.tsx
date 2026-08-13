@@ -5,11 +5,13 @@ import { CONFIG_KEY, DB_ACTION, DEFAULT_VALUE } from "@/main/constants";
 import { getConfig, setConfig } from "@/utils/db";
 import { sendMessageToBackground } from "@/utils/message";
 import { attachOwnShadow, isInOwnUi } from "@/main/dom/shadowRoots";
+import { deepContains, deepSelection } from "@/main/dom/shadowTraversal";
+import { isInSelectableSurface } from "@/main/dom/selectableSurfaces";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
 import { loadTailwindIntoShadow } from "@/main/aiWriting/shadowStyle";
 import { bindThemeToElement } from "@/utils/theme";
 import { t, useLang } from "@/main/aiWriting/i18n";
-import { openSelectionTranslate } from "@/main/aiWriting/selectionPopup";
+import { isInSelectionPopup, openSelectionTranslate } from "@/main/aiWriting/selectionPopup";
 
 /**
  * Selection translate icon — the small button that appears under a text
@@ -52,6 +54,11 @@ const PILL_H = ICON_PX + 2 * PILL_PAD_PX + 2 * PILL_BORDER_PX;
 const GAP_PX = 6;
 /** Keep this clear of every viewport edge. */
 const MARGIN_PX = 6;
+/**
+ * Above the selection-translate popup (see `POPUP_Z` there), because a selection
+ * made inside the popup puts the pill on top of the card by construction.
+ */
+const PILL_Z = 2147483647;
 
 interface IconAnchor {
     /** Viewport coordinates of the pill's top-left corner. */
@@ -60,6 +67,12 @@ interface IconAnchor {
     text: string;
     /** Bounding rect of the selection — the popup anchors to it, not to us. */
     rect: DOMRect | null;
+    /**
+     * The selection lives inside the selection-translate popup. Translating it
+     * reuses that card in place instead of re-anchoring it to `rect`, which
+     * would point the card at its own body.
+     */
+    inPopup: boolean;
 }
 
 let iconHost: HTMLElement | null = null;
@@ -158,11 +171,80 @@ function caretRectOf(focus: FocusPoint): DOMRect | null {
     }
 }
 
+/** Which surface a pointer event landed on — each one is handled differently. */
+type Surface =
+    /** Our own pill (or its close menu). */
+    | "pill"
+    /** The selection-translate popup, which is a selectable reading surface. */
+    | "popup"
+    /** Another of our reading surfaces (the subtitle dictionary panel). */
+    | "readable"
+    /** Any other extension surface (workbench, float ball, …). */
+    | "other"
+    /** The page itself. */
+    | "page";
+
+function surfaceOf(node: Node | null | undefined): Surface {
+    if (iconHost && deepContains(iconHost, node)) return "pill";
+    if (isInSelectionPopup(node)) return "popup";
+    if (isInSelectableSurface(node)) return "readable";
+    return isInOwnUi(node) ? "other" : "page";
+}
+
+interface ResolvedSelection {
+    sel: Selection;
+    text: string;
+    /** Lives inside the selection-translate popup — re-use the card in place. */
+    inPopup: boolean;
+    /**
+     * Lives inside ANY of our reading surfaces (the popup included). This is
+     * what exempts it from the "never offer to translate our own UI" rule; the
+     * popup additionally gets `inPopup`, which only decides positioning.
+     */
+    inOwnSurface: boolean;
+}
+
+/**
+ * The selection the pill should act on, plus where it lives.
+ *
+ * `deepSelection` is what makes the pill work inside ANY shadow tree — a page's
+ * own components as much as our panels. Read through `window.getSelection()`
+ * the range is collapsed onto the host and has no rects, so `anchorFor` gives
+ * up and the pill silently never appears. Membership is then asked of the real
+ * anchor node, which is the only place it can be asked from.
+ *
+ * `ownOnly` restricts the answer to one of our own reading surfaces — see the
+ * `pointerInOwnSurface` gate in the controller.
+ */
+function resolveSelection(ownOnly: boolean): ResolvedSelection | null {
+    const sel = deepSelection();
+    const text = sel?.toString().trim() ?? "";
+    if (!sel || sel.rangeCount === 0 || text === "") return null;
+    const inPopup = isInSelectionPopup(sel.anchorNode) || isInSelectionPopup(sel.focusNode);
+    const inOwnSurface =
+        inPopup || isInSelectableSurface(sel.anchorNode) || isInSelectableSurface(sel.focusNode);
+    if (ownOnly && !inOwnSurface) return null;
+    return { sel, text, inPopup, inOwnSurface };
+}
+
 function startController(domain: string): () => void {
     /** Live clone of the selected range, so scrolling can re-measure it. */
     let anchorRange: Range | null = null;
     /** Where the selection's focus (caret) ended up — see `caretRectOf`. */
     let anchorFocus: FocusPoint | null = null;
+    /** Whether the tracked selection is the popup's own — see {@link IconAnchor}. */
+    let anchorInPopup = false;
+    /**
+     * Whether the last press landed inside one of our reading surfaces. While
+     * it is set, only THAT kind of selection counts.
+     *
+     * Every press inside such a card now runs a sync — it has to, or a drag
+     * across the result text would never be seen. But the card's own drag
+     * surfaces (header, resize handles) `preventDefault`, so the *page*
+     * selection that opened the card survives them intact: without this gate,
+     * nudging the card would re-show the pill next to that old selection.
+     */
+    let pointerInOwnSurface = false;
     let selecting = false;
     let rafId: number | null = null;
     let settleTimer: number | null = null;
@@ -171,6 +253,7 @@ function startController(domain: string): () => void {
     const hide = () => {
         anchorRange = null;
         anchorFocus = null;
+        anchorInPopup = false;
         pendingAnchor = null;
         hideSignal?.();
     };
@@ -184,7 +267,12 @@ function startController(domain: string): () => void {
      * clamped against both side edges using the pill's WIDEST state so
      * revealing the close button can never push it off-screen.
      */
-    const anchorFor = (range: Range, text: string, focus: FocusPoint | null): IconAnchor | null => {
+    const anchorFor = (
+        range: Range,
+        text: string,
+        focus: FocusPoint | null,
+        inPopup: boolean,
+    ): IconAnchor | null => {
         const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 || r.height > 0);
         const bounding = range.getBoundingClientRect();
         const spot = (focus && caretRectOf(focus)) ?? rects[rects.length - 1] ?? bounding;
@@ -207,22 +295,30 @@ function startController(domain: string): () => void {
         }
         y = Math.max(MARGIN_PX, Math.min(y, window.innerHeight - PILL_H - MARGIN_PX));
 
-        return { x, y, text, rect: bounding.width > 0 || bounding.height > 0 ? bounding : null };
+        return {
+            x,
+            y,
+            text,
+            rect: bounding.width > 0 || bounding.height > 0 ? bounding : null,
+            inPopup,
+        };
     };
 
     /** Re-evaluate the current selection and show/hide accordingly. */
     const sync = () => {
         if (disposed || sessionHidden) return;
-        const sel = window.getSelection();
-        const text = sel?.toString().trim() ?? "";
-        if (!sel || sel.rangeCount === 0 || text === "") {
+        const resolved = resolveSelection(pointerInOwnSurface);
+        if (!resolved) {
             if (!menuOpen) hide();
             return;
         }
-        // A selection inside one of our own panels (the translate popup's own
-        // result text, the workbench) is not page content — offering to
-        // translate it again would be noise.
-        if (isInOwnUi(sel.anchorNode) || isInOwnUi(sel.focusNode)) {
+        const { sel, text, inPopup, inOwnSurface } = resolved;
+        // A selection inside one of our own panels (the workbench, the AI
+        // writing surfaces) is not page content — offering to translate it
+        // again would be noise. Our reading surfaces are the deliberate
+        // exception: looking a word up from inside a result is what makes such
+        // a card a reading surface instead of a dead end.
+        if (!inOwnSurface && (isInOwnUi(sel.anchorNode) || isInOwnUi(sel.focusNode))) {
             if (!menuOpen) hide();
             return;
         }
@@ -230,13 +326,14 @@ function startController(domain: string): () => void {
         const focus: FocusPoint | null = sel.focusNode
             ? { node: sel.focusNode, offset: sel.focusOffset }
             : null;
-        const anchor = anchorFor(range, text, focus);
+        const anchor = anchorFor(range, text, focus, inPopup);
         if (!anchor) {
             if (!menuOpen) hide();
             return;
         }
         anchorRange = range.cloneRange();
         anchorFocus = focus;
+        anchorInPopup = inPopup;
         ensureMounted(domain);
         if (showSignal) showSignal(anchor);
         else pendingAnchor = anchor;
@@ -254,7 +351,11 @@ function startController(domain: string): () => void {
     const onMouseDown = (e: MouseEvent) => {
         // Our own buttons preventDefault on mousedown, so the selection they
         // act on is still there; anything else starts a fresh interaction.
-        if (isInOwnUi(e.composedPath()[0] as Node)) return;
+        // Our reading surfaces are the exception — a drag across their result
+        // text is a real selection and has to be tracked like a page one.
+        const where = surfaceOf(e.composedPath()[0] as Node);
+        if (where === "pill" || where === "other") return;
+        pointerInOwnSurface = where === "popup" || where === "readable";
         if (!menuOpen) hide();
         // Hold off re-showing for the length of a drag — the pill would
         // otherwise chase the pointer across the paragraph.
@@ -267,7 +368,8 @@ function startController(domain: string): () => void {
         // re-syncing here would re-show the pill we are about to dismiss
         // (mouseup lands before click, and the selection is deliberately still
         // intact at this point).
-        if (isInOwnUi(e.composedPath()[0] as Node)) return;
+        const where = surfaceOf(e.composedPath()[0] as Node);
+        if (where === "pill" || where === "other") return;
         settle();
     };
 
@@ -298,10 +400,9 @@ function startController(domain: string): () => void {
         rafId = requestAnimationFrame(() => {
             rafId = null;
             if (disposed || !anchorRange) return;
-            const sel = window.getSelection();
-            const text = sel?.toString().trim() ?? "";
-            if (text === "") return;
-            const anchor = anchorFor(anchorRange, text, anchorFocus);
+            const resolved = resolveSelection(pointerInOwnSurface);
+            if (!resolved) return;
+            const anchor = anchorFor(anchorRange, resolved.text, anchorFocus, anchorInPopup);
             if (!anchor) {
                 if (!menuOpen) hide();
                 return;
@@ -462,9 +563,9 @@ function SelectionIconApp({
     };
 
     const onTranslate = () => {
-        const { text, rect } = anchor;
+        const { text, rect, inPopup } = anchor;
         dismiss();
-        if (text !== "") openSelectionTranslate({ text, rect });
+        if (text !== "") openSelectionTranslate({ text, rect, keepPosition: inPopup });
     };
 
     const onPick = async (choice: "session" | "site" | "forever") => {
@@ -489,7 +590,7 @@ function SelectionIconApp({
 
     return (
         <div
-            style={{ position: "fixed", left: anchor.x, top: anchor.y, zIndex: 2147483600 }}
+            style={{ position: "fixed", left: anchor.x, top: anchor.y, zIndex: PILL_Z }}
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => { if (!closeMenuOpen) setHovered(false); }}
             // Never let a press on the pill reach the page: it would collapse

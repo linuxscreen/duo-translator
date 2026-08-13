@@ -28,6 +28,7 @@ export function DictView({
     error,
     wordLang,
     audio,
+    standalone = false,
 }: {
     entry: DictEntry | null;
     loading: boolean;
@@ -35,10 +36,19 @@ export function DictView({
     /** Language of the headword, for the TTS fallback. */
     wordLang: string;
     audio: DictAudioController;
+    /**
+     * The panel IS the card (the subtitle hover popup) rather than a section
+     * appended under a translation. Only difference: no top separator, which
+     * would otherwise double up with the card's own border.
+     */
+    standalone?: boolean;
 }) {
+    // Standalone: no top separator (the card has its own border) and room on
+    // the right for the close button floating over the first row.
+    const shellCls = standalone ? "pr-8 " : "border-t border-line ";
     if (loading) {
         return (
-            <div className="border-t border-line px-3 py-2 text-[12px] text-ink-soft">
+            <div className={`${shellCls}px-3 py-2 text-[12px] text-ink-soft`}>
                 <span className="inline-flex items-center gap-1.5">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     {t("dictLoading", "Looking up…")}
@@ -52,7 +62,7 @@ export function DictView({
     // looks exactly like a word that isn't in the dictionary.
     if (error) {
         return (
-            <div className="border-t border-line px-3 py-2 text-[12px] text-error">{error}</div>
+            <div className={`${shellCls}px-3 py-2 text-[12px] text-error`}>{error}</div>
         );
     }
     if (!entry) return null;
@@ -63,7 +73,7 @@ export function DictView({
     const speakFallback = () => audio.speak("dict-word", entry.word, wordLang);
 
     return (
-        <div className="border-t border-line px-3 py-2.5">
+        <div className={`${shellCls}px-3 py-2.5`}>
             <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-soft">
                 {t("dictSection", "Dictionary")}
             </div>

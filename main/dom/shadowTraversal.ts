@@ -125,6 +125,58 @@ export function deepActiveElement(): Element | null {
 }
 
 /**
+ * The selection, read from inside the shadow tree it actually lives in.
+ *
+ * `window.getSelection()` shadow-adjusts its positions to the DOCUMENT's tree
+ * scope: a selection made inside a component reports both of its ends as (the
+ * host's parent, the host's index) — a collapsed range that measures nothing.
+ * `toString()` still returns the right text, which is what makes this failure so
+ * quiet: everything textual works and only the geometry is wrong. Both symptoms
+ * come from that single empty rect — the selection icon has nothing to point at
+ * so it never appears, and the translate card reads "no measurable rect" as "no
+ * anchor" and places itself dead centre.
+ *
+ * `ShadowRoot.getSelection()` answers in that root's own scope. Descending from
+ * the adjusted anchor costs one hop per nesting level, deliberately NOT a sweep
+ * over every known root — a component-heavy page has hundreds and this runs on
+ * every `selectionchange`.
+ *
+ * Falls back to the window selection unchanged for plain light DOM, for
+ * browsers without the scoped accessor (Firefox, whose window selection already
+ * carries the real shadow nodes), and for a selection that spans a shadow
+ * boundary, where no single root owns both ends.
+ */
+export function deepSelection(): Selection | null {
+    let sel = window.getSelection();
+    for (let depth = 0; depth < MAX_PIERCE_DEPTH && sel; depth++) {
+        // An adjusted position points *at* the host, so the root to descend
+        // into is the one on the child sitting at that offset.
+        const host = sel.anchorNode?.childNodes?.[sel.anchorOffset];
+        const root = (host as HTMLElement | undefined)?.shadowRoot;
+        if (!root) break;
+        const scoped = scopedSelectionOf(root);
+        // `getSelection()` is scoped, not filtered: a root that does not hold
+        // the selection still answers, with positions it cannot express. Only
+        // an answer that lands inside the root is a real descent — anything
+        // else means the child under the anchor was a host by coincidence.
+        if (!scoped || !deepContains(root, scoped.anchorNode)) break;
+        sel = scoped;
+    }
+    return sel;
+}
+
+function scopedSelectionOf(root: ShadowRoot): Selection | null {
+    const get = (root as ShadowRoot & { getSelection?: () => Selection | null }).getSelection;
+    if (typeof get !== "function") return null;
+    try {
+        const sel = get.call(root);
+        return sel && sel.rangeCount > 0 ? sel : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * The Selection to use when reading or writing a caret around `node`.
  *
  * `window.getSelection()` retargets its ranges to the shadow HOST, so reading

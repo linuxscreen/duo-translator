@@ -220,12 +220,43 @@ export default defineContentScript({
                     ? rawDefault
                     : -1;
 
+            // Language of the audio being played. `getAudioTrack()` is the
+            // only source that reflects a dub the user switched to, but its
+            // shape is MINIFIED and the field names change between player
+            // builds — so the object is scanned for the one value that looks
+            // like an audio-track descriptor (an `id` of the form
+            // "<lang>.<n>", e.g. "en.4") rather than read by key. The player
+            // response's default audio track is the stable fallback; it is
+            // correct until the user switches dub.
+            const audioLangOf = (raw: any): string => {
+                if (typeof raw !== "string") return "";
+                const m = /^([A-Za-z]{2,3}(?:-[A-Za-z0-9]+)*)\./.exec(raw);
+                return m ? m[1] : "";
+            };
+            let audioLanguage = "";
+            try {
+                const active: any = getPlayer()?.getAudioTrack?.();
+                if (active && typeof active === "object") {
+                    for (const value of Object.values(active)) {
+                        if (!value || typeof value !== "object") continue;
+                        const lang = audioLangOf((value as any).id);
+                        if (lang) { audioLanguage = lang; break; }
+                    }
+                }
+            } catch { /* audio module not loaded yet */ }
+            if (audioLanguage === "") {
+                const defaultAudio = audioTracks[tracklist?.defaultAudioTrackIndex]
+                    ?? audioTracks.find((a) => typeof a?.audioTrackId === "string");
+                audioLanguage = audioLangOf(defaultAudio?.audioTrackId);
+            }
+
             return {
                 videoId: String(videoId),
                 isLive: !!pr?.videoDetails?.isLive,
                 captionTracks,
                 selectedTrack,
                 defaultTrackIndex,
+                audioLanguage,
             };
         };
 

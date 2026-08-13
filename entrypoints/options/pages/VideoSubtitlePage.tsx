@@ -7,6 +7,7 @@ import {
   DEFAULT_VALUE,
   LANGUAGES,
   VIDEO_SUBTITLE_DISPLAY_MODE,
+  VIDEO_SUBTITLE_SOURCE_POLICY,
 } from '@/main/constants';
 import {
   DEFAULT_VIDEO_SUBTITLE_STYLE,
@@ -47,26 +48,41 @@ export function VideoSubtitlePage() {
   const [serviceKey, setServiceKey] = useState<string>(DEFAULT_VALUE.VIDEO_SUBTITLE_TRANSLATE_SERVICE);
   const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
   const [targetLang, setTargetLang] = useState<string>('');
+  const [sourcePolicy, setSourcePolicy] = useState<string>(
+    DEFAULT_VALUE.VIDEO_SUBTITLE_SOURCE_POLICY,
+  );
   const [aiSegment, setAiSegment] = useState<boolean>(DEFAULT_VALUE.VIDEO_SUBTITLE_AI_SEGMENT);
   const [pauseOnSelect, setPauseOnSelect] = useState<boolean>(
     DEFAULT_VALUE.VIDEO_SUBTITLE_PAUSE_ON_SELECT,
+  );
+  const [hoverDict, setHoverDict] = useState<boolean>(DEFAULT_VALUE.VIDEO_SUBTITLE_HOVER_DICT);
+  const [followNativeCc, setFollowNativeCc] = useState<boolean>(
+    DEFAULT_VALUE.VIDEO_SUBTITLE_FOLLOW_NATIVE_CC,
+  );
+  const [chromeBottomOnly, setChromeBottomOnly] = useState<boolean>(
+    DEFAULT_VALUE.YOUTUBE_MINIMAL_PLAYER_UI,
   );
   const [style, setStyle] = useState<VideoSubtitleStyle>(DEFAULT_VIDEO_SUBTITLE_STYLE);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [sw, auto, m, svc, lang, pageLang, seg, pause, rawStyle] = await Promise.all([
-        getConfig(CONFIG_KEY.VIDEO_SUBTITLE_SWITCH),
-        getConfig(CONFIG_KEY.VIDEO_SUBTITLE_AUTO_ENABLE),
-        getConfig(CONFIG_KEY.VIDEO_SUBTITLE_DISPLAY_MODE),
-        getConfig(CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE),
-        getConfig(CONFIG_KEY.VIDEO_SUBTITLE_TARGET_LANGUAGE),
-        getConfig(CONFIG_KEY.TARGET_LANGUAGE),
-        getConfig(CONFIG_KEY.VIDEO_SUBTITLE_AI_SEGMENT),
-        getConfig(CONFIG_KEY.VIDEO_SUBTITLE_PAUSE_ON_SELECT),
-        getConfig(CONFIG_KEY.VIDEO_SUBTITLE_STYLE),
-      ]);
+      const [sw, auto, m, svc, lang, pageLang, srcPolicy, seg, pause, hoverWord, followCc, chromeGate, rawStyle] =
+        await Promise.all([
+          getConfig(CONFIG_KEY.VIDEO_SUBTITLE_SWITCH),
+          getConfig(CONFIG_KEY.VIDEO_SUBTITLE_AUTO_ENABLE),
+          getConfig(CONFIG_KEY.VIDEO_SUBTITLE_DISPLAY_MODE),
+          getConfig(CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE),
+          getConfig(CONFIG_KEY.VIDEO_SUBTITLE_TARGET_LANGUAGE),
+          getConfig(CONFIG_KEY.TARGET_LANGUAGE),
+          getConfig(CONFIG_KEY.VIDEO_SUBTITLE_SOURCE_POLICY),
+          getConfig(CONFIG_KEY.VIDEO_SUBTITLE_AI_SEGMENT),
+          getConfig(CONFIG_KEY.VIDEO_SUBTITLE_PAUSE_ON_SELECT),
+          getConfig(CONFIG_KEY.VIDEO_SUBTITLE_HOVER_DICT),
+          getConfig(CONFIG_KEY.VIDEO_SUBTITLE_FOLLOW_NATIVE_CC),
+          getConfig(CONFIG_KEY.YOUTUBE_MINIMAL_PLAYER_UI),
+          getConfig(CONFIG_KEY.VIDEO_SUBTITLE_STYLE),
+        ]);
       if (cancelled) return;
       setEnabled(sw === undefined ? DEFAULT_VALUE.VIDEO_SUBTITLE_SWITCH : !!sw);
       setAutoEnable(auto === undefined ? DEFAULT_VALUE.VIDEO_SUBTITLE_AUTO_ENABLE : !!auto);
@@ -74,11 +90,19 @@ export function VideoSubtitlePage() {
       // Unset subtitle language follows the page-translation target.
       setTargetLang(
         (typeof lang === 'string' && lang ? lang : '') ||
-          (typeof pageLang === 'string' && pageLang ? pageLang : '') ||
-          browserTargetLanguage(),
+        (typeof pageLang === 'string' && pageLang ? pageLang : '') ||
+        browserTargetLanguage(),
+      );
+      setSourcePolicy(
+        typeof srcPolicy === 'string' && srcPolicy
+          ? srcPolicy
+          : DEFAULT_VALUE.VIDEO_SUBTITLE_SOURCE_POLICY,
       );
       setAiSegment(!!seg);
       setPauseOnSelect(!!pause);
+      setHoverDict(!!hoverWord);
+      setFollowNativeCc(!!followCc);
+      setChromeBottomOnly(!!chromeGate);
       setStyle(normalizeVideoSubtitleStyle(rawStyle));
       // Same picker context as AI writing: translators + all enabled AI
       // providers, resolved with the shared fallback rules.
@@ -170,7 +194,9 @@ export function VideoSubtitlePage() {
       />,
     );
 
-  const bilingual = mode === VIDEO_SUBTITLE_DISPLAY_MODE.BILINGUAL;
+  // Which lines the preview draws — the same two questions the overlay asks.
+  const previewOriginal = mode !== VIDEO_SUBTITLE_DISPLAY_MODE.TRANSLATION;
+  const previewTranslation = mode !== VIDEO_SUBTITLE_DISPLAY_MODE.ORIGINAL;
 
   return (
     <div className="flex flex-col gap-4">
@@ -226,6 +252,9 @@ export function VideoSubtitlePage() {
                 <SelectItem value={VIDEO_SUBTITLE_DISPLAY_MODE.TRANSLATION}>
                   {t('videoSubtitleModeTranslation', 'Translation only')}
                 </SelectItem>
+                <SelectItem value={VIDEO_SUBTITLE_DISPLAY_MODE.ORIGINAL}>
+                  {t('videoSubtitleModeOriginal', 'Original only')}
+                </SelectItem>
               </SelectContent>
             </Select>
           }
@@ -249,6 +278,30 @@ export function VideoSubtitlePage() {
                     {t(l.title, l.name)}
                   </SelectItem>
                 ))}
+              </SelectContent>
+            </Select>
+          }
+        />
+        <SettingRow
+          label={t('videoSubtitleSourcePolicy', 'Source language priority')}
+          control={
+            <Select
+              value={sourcePolicy}
+              onValueChange={(v) => {
+                setSourcePolicy(v);
+                void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_SOURCE_POLICY, v);
+              }}
+            >
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={VIDEO_SUBTITLE_SOURCE_POLICY.CAPTION}>
+                  {t('videoSubtitleSourceFollowCaption', 'Follow the native captions')}
+                </SelectItem>
+                <SelectItem value={VIDEO_SUBTITLE_SOURCE_POLICY.AUDIO}>
+                  {t('videoSubtitleSourceFollowAudio', 'Follow the native audio')}
+                </SelectItem>
               </SelectContent>
             </Select>
           }
@@ -296,6 +349,22 @@ export function VideoSubtitlePage() {
           }
         />
         <SettingRow
+          label={t('videoSubtitleHoverDict', 'Look up words on hover')}
+          hint={t(
+            'videoSubtitleHoverDictHint',
+            'Look the word under the pointer up in the dictionary and pause the video; playback resumes when the pointer leaves',
+          )}
+          control={
+            <Switch
+              checked={hoverDict}
+              onCheckedChange={(v) => {
+                setHoverDict(v);
+                void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_HOVER_DICT, v);
+              }}
+            />
+          }
+        />
+        <SettingRow
           label={t('videoSubtitlePauseOnSelect', 'Pause playback when selecting text')}
           hint={t(
             'videoSubtitlePauseOnSelectHint',
@@ -307,6 +376,38 @@ export function VideoSubtitlePage() {
               onCheckedChange={(v) => {
                 setPauseOnSelect(v);
                 void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_PAUSE_ON_SELECT, v);
+              }}
+            />
+          }
+        />
+        <SettingRow
+          label={t('videoSubtitleFollowNativeCc', 'Follow the native caption switch')}
+          hint={t(
+            'videoSubtitleFollowNativeCcHint',
+            "Turning the player's own captions on or off turns bilingual subtitles on or off with them",
+          )}
+          control={
+            <Switch
+              checked={followNativeCc}
+              onCheckedChange={(v) => {
+                setFollowNativeCc(v);
+                void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_FOLLOW_NATIVE_CC, v);
+              }}
+            />
+          }
+        />
+        <SettingRow
+          label={t('youtubeMinimalPlayerUi', 'Minimal YouTube player UI')}
+          hint={t(
+            'youtubeMinimalPlayerUiHint',
+            'Show the control bar only when the pointer moves to the bottom of the YouTube player, and hide every other button and label',
+          )}
+          control={
+            <Switch
+              checked={chromeBottomOnly}
+              onCheckedChange={(v) => {
+                setChromeBottomOnly(v);
+                void setConfig(CONFIG_KEY.YOUTUBE_MINIMAL_PLAYER_UI, v);
               }}
             />
           }
@@ -347,7 +448,7 @@ export function VideoSubtitlePage() {
                 textShadow: '0 1px 2px rgba(0,0,0,0.8)',
               }}
             >
-              {bilingual && (
+              {previewOriginal && (
                 <div
                   style={{
                     color: style.originalColor,
@@ -358,15 +459,17 @@ export function VideoSubtitlePage() {
                   This is the original subtitle line
                 </div>
               )}
-              <div
-                style={{
-                  color: style.translationColor,
-                  fontSize: style.translationSize,
-                  fontWeight: style.translationWeight,
-                }}
-              >
-                {t('videoSubtitlePreviewTranslation', '这是译文字幕效果预览')}
-              </div>
+              {previewTranslation && (
+                <div
+                  style={{
+                    color: style.translationColor,
+                    fontSize: style.translationSize,
+                    fontWeight: style.translationWeight,
+                  }}
+                >
+                  {t('videoSubtitlePreviewTranslation', '这是译文字幕效果预览')}
+                </div>
+              )}
             </div>
           </div>
         </div>

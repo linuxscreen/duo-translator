@@ -7,11 +7,12 @@
 // and assignedNodes, so structure and traversal are fully testable here. It has
 // no layout and no `elementFromPoint`, so `deepElementFromPoint` /
 // `deepActiveElement` geometry+focus behaviour belongs to e2e.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
     composedTarget,
     deepClosest,
     deepContains,
+    deepSelection,
     isShadowRoot,
     parentElementOrHost,
     parentOrHost,
@@ -19,6 +20,10 @@ import {
 
 beforeEach(() => {
     document.body.innerHTML = "";
+});
+
+afterEach(() => {
+    vi.restoreAllMocks();
 });
 
 /** `<div id=outer>` → shadow → `<div id=inner>` → shadow → `<p id=leaf>text` */
@@ -153,5 +158,88 @@ describe("composedTarget", () => {
         const a = document.getElementById("a")!;
         const e = { target: a } as unknown as Event;
         expect(composedTarget(e)).toBe(a);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// deepSelection
+//
+// jsdom has neither Chrome's shadow adjustment nor `ShadowRoot.getSelection`,
+// so both are simulated: a stub `window.getSelection` returning the ADJUSTED
+// position Chrome would report (the host's parent, at the host's index), and a
+// stub `getSelection` on each root answering in its own scope. That is exactly
+// the shape the descent has to unwind, and it is not observable any other way
+// without a real engine.
+// ---------------------------------------------------------------------------
+
+/** Minimal stand-in — deepSelection only reads these three members. */
+function fakeSelection(anchorNode: Node | null, anchorOffset = 0, rangeCount = 1): Selection {
+    return { anchorNode, anchorOffset, rangeCount } as unknown as Selection;
+}
+
+function stubWindowSelection(sel: Selection | null): void {
+    vi.spyOn(window, "getSelection").mockReturnValue(sel);
+}
+
+function stubRootSelection(root: ShadowRoot, sel: Selection | null): void {
+    (root as ShadowRoot & { getSelection?: () => Selection | null }).getSelection = () => sel;
+}
+
+describe("deepSelection", () => {
+    it("returns the window selection untouched for a light-DOM selection", () => {
+        const { light } = buildNested();
+        const sel = fakeSelection(light.firstChild ?? light, 99);
+        stubWindowSelection(sel);
+        expect(deepSelection()).toBe(sel);
+    });
+
+    it("descends through every nesting level to the root that owns the selection", () => {
+        const { light, mid, innerRoot, outerRoot, leafText } = buildNested();
+        // What Chrome reports from the document's scope: collapsed onto #outer.
+        stubWindowSelection(fakeSelection(light, 0));
+        stubRootSelection(outerRoot, fakeSelection(mid, 0));
+        const real = fakeSelection(leafText, 2);
+        stubRootSelection(innerRoot, real);
+        expect(deepSelection()).toBe(real);
+    });
+
+    it("keeps the window selection when the root does not actually own it", () => {
+        // The child under the anchor is a host by coincidence — the page
+        // selection sits next to a component, not inside it. The root still
+        // answers (getSelection is scoped, not filtered), with a position it
+        // cannot express.
+        const { light, outerRoot } = buildNested();
+        const sel = fakeSelection(light, 0);
+        stubWindowSelection(sel);
+        stubRootSelection(outerRoot, fakeSelection(light, 0));
+        expect(deepSelection()).toBe(sel);
+    });
+
+    it("falls back to the window selection where the scoped accessor is missing", () => {
+        // Firefox: no ShadowRoot.getSelection, but its window selection already
+        // carries the real shadow nodes, so the fallback is the right answer.
+        const { light } = buildNested();
+        const sel = fakeSelection(light, 0);
+        stubWindowSelection(sel);
+        expect(deepSelection()).toBe(sel);
+    });
+
+    it("survives a throwing or empty scoped accessor", () => {
+        const { light, outerRoot, innerRoot, mid } = buildNested();
+        const sel = fakeSelection(light, 0);
+        stubWindowSelection(sel);
+        (outerRoot as ShadowRoot & { getSelection?: () => Selection | null }).getSelection = () => {
+            throw new Error("boom");
+        };
+        expect(deepSelection()).toBe(sel);
+
+        stubRootSelection(outerRoot, fakeSelection(mid, 0, 0)); // rangeCount 0
+        stubRootSelection(innerRoot, fakeSelection(null));
+        expect(deepSelection()).toBe(sel);
+    });
+
+    it("returns null when there is no selection at all", () => {
+        stubWindowSelection(null);
+        expect(deepSelection()).toBeNull();
     });
 });

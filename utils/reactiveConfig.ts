@@ -88,6 +88,31 @@ function subscribe(key: CONFIG_KEY, cb: () => void): () => void {
 }
 
 /**
+ * Imperative subscription for non-React call sites — the `useConfig` of plain
+ * controllers. `cb` is called with the current value as soon as it is known and
+ * again on every change, so a caller never has to decide between "read once at
+ * startup" (stale for the rest of the page's life) and "poll on a timer".
+ *
+ * The disposed flag matters: the first value arrives on a microtask at the
+ * earliest, which is comfortably after a short-lived caller can have torn
+ * itself down.
+ */
+export function watchConfig<T>(key: CONFIG_KEY, cb: (value: T) => void): () => void {
+    let disposed = false;
+    const emit = () => {
+        void readConfig<T>(key).then((v) => {
+            if (!disposed) cb(v);
+        });
+    };
+    const stop = subscribe(key, emit);
+    emit();
+    return () => {
+        disposed = true;
+        stop();
+    };
+}
+
+/**
  * Imperative read for non-React call sites (event handlers, plain helpers).
  * Always resolves to the STORED value, falling back to the key's shipped
  * default from `DEFAULT_VALUE` (via {@link configDefault}) when it has never

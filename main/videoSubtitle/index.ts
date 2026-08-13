@@ -3,6 +3,8 @@ import {
     browserTargetLanguage,
     CONFIG_KEY,
     normalizeLanguageTag,
+    VIDEO_SUBTITLE_DISPLAY_MODE,
+    VIDEO_SUBTITLE_SOURCE_POLICY,
 } from "@/main/constants";
 import { readConfig } from "@/utils/reactiveConfig";
 import { setConfig } from "@/utils/db";
@@ -13,7 +15,20 @@ import { SubtitleOverlay } from "./overlay";
 import { mountSubtitleControls, type SubtitleControlsController } from "./controls";
 import { nextAiChunkEnd, segmentChunkWithAi, segmentWords, wordIndexAtTime } from "./segmenter";
 import { YoutubeAdapter, currentYoutubeVideoId } from "./youtube";
-import { normalizeVideoSubtitleStyle, type SubtitleCue, type SubtitleWord } from "./types";
+import {
+    normalizeVideoSubtitleStyle,
+    type SourcePreference,
+    type SubtitleCue,
+    type SubtitleWord,
+} from "./types";
+import { bottomControlsInsetPx } from "./playerMetrics";
+import {
+    buildSrt,
+    downloadTextFile,
+    subtitleFileName,
+    type SubtitleDownloadKind,
+    type SubtitleDownloadState,
+} from "./download";
 
 /**
  * Video bilingual subtitles — controller. Currently YouTube only; the fetch /
@@ -41,35 +56,6 @@ const TRANSLATE_BATCH = 12;
 const LINGER_MS = 500;
 
 const CAPTION_HIDE_STYLE_ID = "duo-yt-native-caption-hide";
-
-/** Fallback share of the player height reserved at the bottom if nothing measurable is found. */
-const FALLBACK_BOTTOM_INSET_RATIO = 0.09;
-
-/**
- * Height of the player's bottom control band — the strip the subtitle must not
- * cover, so the progress bar stays visible and clickable.
- *
- * Measured rather than hardcoded (it scales with the player), and measured even
- * while the controls are auto-hidden: YouTube keeps their layout boxes and only
- * animates opacity, so the value is stable whether the controls are shown or
- * not. That stability is the point — a floor that changed with control
- * visibility would make the subtitle jump exactly when the user moves the mouse.
- *
- * The progress bar is taken into account separately because it is positioned
- * slightly ABOVE `.ytp-chrome-bottom`'s own top edge.
- */
-function bottomControlsInsetPx(player: HTMLElement): number {
-    const playerBottom = player.getBoundingClientRect().bottom;
-    let topMost = playerBottom;
-    for (const sel of [".ytp-chrome-bottom", ".ytp-progress-bar-container"]) {
-        const el = player.querySelector(sel);
-        if (!el) continue;
-        const r = el.getBoundingClientRect();
-        if (r.height > 0 && r.top < topMost) topMost = r.top;
-    }
-    const measured = playerBottom - topMost;
-    return measured > 0 ? measured : Math.round(player.clientHeight * FALLBACK_BOTTOM_INSET_RATIO);
-}
 
 /**
  * Caption-load state for one video.
@@ -150,6 +136,33 @@ const MAX_SEGMENT_FAILURES = 2;
  */
 const TRACK_RECHECK_MS = 2000;
 
+/**
+ * Where a source language pinned from the player menu lives.
+ *
+ * `sessionStorage`, not config: the pin is chosen from ONE video's track list,
+ * so it is scoped to the tab the user is watching in. Session storage is
+ * exactly that scope — per tab, per origin, gone when the tab closes — and it
+ * survives YouTube's SPA navigations for free, which a variable in the
+ * controller would not once the page re-creates it.
+ */
+const PINNED_SOURCE_LANG_KEY = "duo-video-subtitle-source-lang";
+
+/** Both wrapped: session storage throws outright in some privacy modes. */
+function readPinnedSourceLang(): string {
+    try {
+        return window.sessionStorage.getItem(PINNED_SOURCE_LANG_KEY) ?? "";
+    } catch {
+        return "";
+    }
+}
+
+function writePinnedSourceLang(lang: string): void {
+    try {
+        if (lang) window.sessionStorage.setItem(PINNED_SOURCE_LANG_KEY, lang);
+        else window.sessionStorage.removeItem(PINNED_SOURCE_LANG_KEY);
+    } catch { /* storage unavailable — the pin just does not stick */ }
+}
+
 export function initVideoSubtitle(): VideoSubtitleController {
     const adapter = new YoutubeAdapter();
 
@@ -169,6 +182,10 @@ export function initVideoSubtitle(): VideoSubtitleController {
     let lastStyleJson = "";
     let lastMode = "";
     let lastPauseOnSelect: boolean | null = null;
+    /** Serialized dictionary-hover context (switch + both languages). */
+    let lastDictKey = "";
+    /** Source policy as of the last tick, to notice a change from Options. */
+    let lastSourcePolicy: string | null = null;
     /** Last position value seen in config (live-edit edge detection). */
     let lastPositionPct: number | null = null;
     /** Last enabled-state pushed into the player menu's checkmark. */
@@ -188,15 +205,43 @@ export function initVideoSubtitle(): VideoSubtitleController {
         (await readConfig<string>(CONFIG_KEY.TARGET_LANGUAGE)) ||
         browserTargetLanguage();
 
-    /** Resolve the subtitle service key with the shared fallback rules. */
+    /**
+     * Which service translates the subtitles, in priority order: the setting
+     * made for subtitles → the page-translation setting → the first enabled
+     * translator (Microsoft if even that list is empty).
+     *
+     * `buildAiTranslateService` alone cannot express this — handed an unusable
+     * value it drops straight to the first enabled translator, stepping over
+     * the page-translation choice the user has already made. So the two
+     * candidates are tested against the enabled lists here and the resolver is
+     * asked for nothing but the final fallback.
+     */
     const resolveServiceKey = async () => {
-        const [raw, providers, disabled] = await Promise.all([
+        const [subtitleKey, pageKey, providers, disabled] = await Promise.all([
             readConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE),
+            readConfig<string>(CONFIG_KEY.TRANSLATE_SERVICE),
             readConfig<unknown[]>(CONFIG_KEY.AI_PROVIDERS),
             readConfig<string[]>(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES),
         ]);
-        return buildAiTranslateService(raw, providers, disabled).activeService;
+        const ctx = buildAiTranslateService(undefined, providers, disabled);
+        const usable = (key: string | undefined): key is string => {
+            if (!key) return false;
+            return key.startsWith(AI_PREFIX)
+                ? ctx.enabledAiProviders.some((p) => `${AI_PREFIX}${p.id}` === key)
+                : ctx.enabledTranslateServices.some((s) => s.value === key);
+        };
+        if (usable(subtitleKey)) return subtitleKey;
+        if (usable(pageKey)) return pageKey;
+        return ctx.activeService;
     };
+
+    /** The source-language preference `pickTrack` is asked with. */
+    const sourcePreference = async (): Promise<SourcePreference> => ({
+        policy: await readConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_SOURCE_POLICY),
+        // Read fresh rather than cached: the pin is in session storage so it is
+        // already correct after an SPA navigation, with nothing to re-sync.
+        manualLang: readPinnedSourceLang() || undefined,
+    });
 
     const currentStyle = async () =>
         normalizeVideoSubtitleStyle(await readConfig<unknown>(CONFIG_KEY.VIDEO_SUBTITLE_STYLE));
@@ -255,6 +300,9 @@ export function initVideoSubtitle(): VideoSubtitleController {
             overlay.setMode(mode);
             lastPauseOnSelect = pauseOnSelect;
             overlay.setPauseOnSelect(pauseOnSelect);
+            // Fresh overlay, so whatever was pushed into the old one is gone —
+            // the tick's comparison must not skip re-pushing it.
+            lastDictKey = "";
             lastPositionPct = positionPct;
 
             controls?.destroy();
@@ -276,9 +324,24 @@ export function initVideoSubtitle(): VideoSubtitleController {
                     // the tick loop would catch it too, this is just snappier.
                     teardownFeature();
                 },
+                onPinnedSourceLanguage: setPinnedSourceLanguage,
+                onDownload: (kind) => void startDownload(kind),
+                onCancelDownload: abortDownload,
+                onDismissDownloadError: () => publishDownloadState(null),
             });
             lastEnabled = enabled;
-            if (session) controls.setAvailability(availabilityOf(session));
+            controls.setPinnedSourceLanguage(readPinnedSourceLang());
+            // A job (or a failure the user has not dismissed) predating this
+            // menu must show up in it rather than be lost with the old one.
+            if (downloadState) controls.setDownloadState(downloadState);
+            if (session) {
+                controls.setAvailability(availabilityOf(session));
+                // A fresh menu starts with an empty picker; re-publish this
+                // video's languages instead of waiting for the next load.
+                void adapter.listTracks().then((tracks) => {
+                    controls?.setSourceTracks(adapter.sourceOptions(tracks));
+                });
+            }
         }
         if (!video || !video.isConnected) video = p.querySelector("video");
     };
@@ -357,7 +420,11 @@ export function initVideoSubtitle(): VideoSubtitleController {
                 if (abort.signal.aborted || session !== s) return;
                 adapter.setPlayerData(data);
                 const tracks = data && !data.isLive ? await adapter.listTracks() : [];
-                const track = adapter.pickTrack(tracks);
+                // The menu's manual picker lists this video's languages, so it
+                // is refreshed from the same place the list is read.
+                controls?.setSourceTracks(adapter.sourceOptions(tracks));
+                const track = adapter.pickTrack(tracks, await sourcePreference());
+                if (abort.signal.aborted || session !== s) return;
                 if (!track) {
                     failLoad(s, "no caption track");
                     return;
@@ -435,25 +502,86 @@ export function initVideoSubtitle(): VideoSubtitleController {
     let checkingTrack = false;
 
     /**
-     * Reload the session when the user picks a different subtitle language in
-     * the player. Only an explicit selection counts — turning captions off
-     * leaves ours alone rather than flipping back to the default track.
+     * Reload the session when the track we SHOULD be reading changes.
+     *
+     * The comparison is "what would be picked now" against what is loaded — not
+     * "did the user explicitly select something", which is what this did before
+     * the source-language policy existed. That older, narrower rule cannot
+     * express the policy: turning captions off has to fall through to the audio
+     * language, and switching dub has to be followed too, and neither is an
+     * explicit caption selection.
+     *
+     * Re-picking is also what keeps this from looping. A video with no track in
+     * the audio language re-picks the same fallback track every time, so the
+     * ids match and nothing reloads — whereas comparing raw languages would
+     * see a permanent mismatch and restart the session forever.
      */
-    const followSelectedTrack = async () => {
+    const followSourceTrack = async () => {
         const s = session;
         if (!s || s.loadState !== "ready" || checkingTrack) return;
-        if (Date.now() < nextTrackCheckAt || !adapter.selectedTrack) return;
+        if (Date.now() < nextTrackCheckAt || !adapter.refreshSourceState) return;
         checkingTrack = true;
         try {
-            const selected = await adapter.selectedTrack();
+            const fresh = await adapter.refreshSourceState();
             nextTrackCheckAt = Date.now() + TRACK_RECHECK_MS;
-            if (session !== s || !selected || selected.id === s.trackId) return;
+            if (!fresh || session !== s) return;
+            const tracks = await adapter.listTracks();
+            const want = adapter.pickTrack(tracks, await sourcePreference());
+            if (session !== s || !want || want.id === s.trackId) return;
             // Same machinery as a video change: abort what is in flight, drop
             // the cues, and let the tick loop load the new track.
             startSession(s.videoId);
         } finally {
             checkingTrack = false;
         }
+    };
+
+    /**
+     * Native caption switch as of the last observation; null = not observed yet
+     * (also the state the follow setting is re-armed to when switched off, so
+     * turning it back on re-syncs instead of waiting for the next CC toggle).
+     */
+    let lastNativeCcOn: boolean | null = null;
+
+    /**
+     * Mirror the player's own caption switch onto ours, when the user asked for
+     * it (CONFIG_KEY.VIDEO_SUBTITLE_FOLLOW_NATIVE_CC).
+     *
+     * Strictly one-way. Our own toggle never touches the player's captions, so
+     * this only ever reads — and it acts on CHANGES rather than on the level.
+     * Following the level would make our menu toggle look broken: switching our
+     * subtitles on while native captions are off would be undone within the
+     * tick, every time.
+     *
+     * Only while the captions are loaded: fetching a track makes the bridge
+     * drive the player's caption module (and restore it afterwards), which
+     * flickers the very button this reads.
+     */
+    const followNativeCaptions = (followEnabled: boolean) => {
+        if (!followEnabled) {
+            lastNativeCcOn = null;
+            return;
+        }
+        if (!player || !adapter.nativeCaptionsOn || session?.loadState !== "ready") return;
+        const on = adapter.nativeCaptionsOn(player);
+        if (on === null || on === lastNativeCcOn) return;
+        lastNativeCcOn = on;
+        // Nothing else to do here: the rest of the tick reads `isEnabled()`,
+        // pushes the new state into the menu and hides/shows the overlay.
+        sessionEnabled = on;
+    };
+
+    /**
+     * A language picked in the player menu's source-language dropdown ("" =
+     * back to the policy). Applies immediately — the user is looking at the
+     * subtitle they want changed.
+     */
+    const setPinnedSourceLanguage = (lang: string) => {
+        writePinnedSourceLang(lang);
+        controls?.setPinnedSourceLanguage(lang);
+        // Force the next poll to act rather than wait out its interval.
+        nextTrackCheckAt = 0;
+        void followSourceTrack();
     };
 
     // ------------------------------------------------------------------
@@ -562,14 +690,20 @@ export function initVideoSubtitle(): VideoSubtitleController {
         const s = session;
         if (!s || s.translating || s.cues.length === 0) return;
 
-        const [enabled, service, lang] = await Promise.all([
+        const [enabled, service, lang, mode] = await Promise.all([
             isEnabled(),
             resolveServiceKey(),
             targetLanguage(),
+            readMode(),
         ]);
         // Everything from here to `s.translating = true` runs without another
         // await, so two overlapping calls cannot both get past the flag.
         if (!enabled || session !== s || s.translating || s.cues.length === 0) return;
+        // Original-only: no provider call for a translation nobody will see.
+        // Returning before the translationKey bookkeeping is deliberate —
+        // whatever was already translated stays on the cues, so switching back
+        // to bilingual shows it instantly instead of re-fetching the track.
+        if (mode === VIDEO_SUBTITLE_DISPLAY_MODE.ORIGINAL) return;
 
         const key = `${service}|${lang}`;
         if (s.translationKey && s.translationKey !== key) {
@@ -618,10 +752,122 @@ export function initVideoSubtitle(): VideoSubtitleController {
     };
 
     // ------------------------------------------------------------------
+    // Subtitle download
+    // ------------------------------------------------------------------
+
+    /**
+     * One download job at a time. It deliberately does NOT hang off the
+     * session's AbortController: the cues are snapshotted when the job starts,
+     * so an unrelated reload (a caption-track switch, the pre-translation
+     * scheduler restarting) must not throw away a file the user is waiting for.
+     * A video change does cancel it — see `abortDownload`.
+     */
+    interface DownloadJob {
+        kind: SubtitleDownloadKind;
+        abort: AbortController;
+    }
+    let downloadJob: DownloadJob | null = null;
+    /**
+     * Last state pushed into the menu, kept here too: the controls are rebuilt
+     * whenever YouTube re-renders its player, and the job outlives that.
+     */
+    let downloadState: SubtitleDownloadState | null = null;
+
+    /** Bigger batches than playback uses: nobody is waiting on a first cue. */
+    const DOWNLOAD_BATCH = 20;
+
+    const abortDownload = () => downloadJob?.abort.abort();
+
+    const publishDownloadState = (state: SubtitleDownloadState | null) => {
+        downloadState = state;
+        controls?.setDownloadState(state);
+    };
+
+    const startDownload = async (kind: SubtitleDownloadKind) => {
+        if (downloadJob) return;
+        const s = session;
+        if (!s || s.loadState !== "ready" || s.words.length === 0) return;
+        const job: DownloadJob = { kind, abort: new AbortController() };
+        downloadJob = job;
+        publishDownloadState({ kind, percent: 0 });
+
+        let failure = "";
+        try {
+            // Rule-based segmentation over the WHOLE track, even when this
+            // session is running AI segmentation: that path is lazy by design —
+            // only the stretch around the playhead is ever segmented — so a file
+            // built from its cues would stop wherever the viewer happened to be.
+            // Copies, so filling in translations cannot touch what is on screen.
+            const cues = segmentWords(s.words).map((c) => ({ ...c }));
+            if (cues.length === 0) throw new Error("segmentation produced no cues");
+
+            const [service, lang] = await Promise.all([resolveServiceKey(), targetLanguage()]);
+            // Same rule as the on-screen path: a track already in the target
+            // language is not translated, and the file falls back to originals.
+            const sameLanguage = s.sourceLang !== "" && s.sourceLang === normalizeLanguageTag(lang);
+
+            if (kind !== "original" && !sameLanguage) {
+                for (let i = 0; i < cues.length; i += DOWNLOAD_BATCH) {
+                    const batch = cues.slice(i, i + DOWNLOAD_BATCH);
+                    const results = await translateTexts(
+                        service,
+                        batch.map((c) => c.text),
+                        lang,
+                        job.abort.signal,
+                    );
+                    if (job.abort.signal.aborted) return;
+                    if (results && results.length === batch.length) {
+                        for (let k = 0; k < batch.length; k++) {
+                            batch[k].translated = results[k]?.translatedMappedHtmlText ?? "";
+                        }
+                    }
+                    // Held below 100 until the file is actually built, so the
+                    // number never sits at "done" with nothing downloaded.
+                    const done = Math.min(cues.length, i + DOWNLOAD_BATCH);
+                    publishDownloadState({
+                        kind,
+                        percent: Math.min(99, Math.round((done / cues.length) * 100)),
+                    });
+                }
+            }
+            if (job.abort.signal.aborted) return;
+            publishDownloadState({ kind, percent: 100 });
+            downloadTextFile(
+                subtitleFileName(currentVideoTitle(), kind, lang, s.videoId),
+                buildSrt(cues, kind),
+            );
+        } catch (e) {
+            if (job.abort.signal.aborted) return;
+            failure = String((e as Error)?.message ?? e);
+            reportRequestError(ERROR_SCOPE.SUBTITLE, e, {
+                detail: { phase: "subtitle download", kind },
+            });
+        } finally {
+            if (downloadJob === job) {
+                downloadJob = null;
+                // A failure keeps the panel up (with its message) until the user
+                // dismisses it; success and cancellation just clear it.
+                publishDownloadState(failure ? { kind, percent: 0, error: failure } : null);
+            }
+        }
+    };
+
+    /** Best-effort video title for the file name. */
+    const currentVideoTitle = (): string => {
+        const heading = document.querySelector<HTMLElement>(
+            "h1.ytd-watch-metadata yt-formatted-string, #movie_player .ytp-title-link",
+        );
+        const fromDom = heading?.textContent?.trim();
+        if (fromDom) return fromDom;
+        return document.title.replace(/\s*-\s*YouTube\s*$/i, "").trim();
+    };
+
+    // ------------------------------------------------------------------
     // Feature teardown / tick loop
     // ------------------------------------------------------------------
 
     const teardownFeature = () => {
+        abortDownload();
         resetSession();
         overlay?.destroy();
         overlay = null;
@@ -645,7 +891,10 @@ export function initVideoSubtitle(): VideoSubtitleController {
         const videoId = currentYoutubeVideoId();
         if (!videoId) {
             // Not a watch page — drop the session, keep surfaces for the next one.
-            if (session) resetSession();
+            if (session) {
+                abortDownload();
+                resetSession();
+            }
             return;
         }
 
@@ -653,7 +902,11 @@ export function initVideoSubtitle(): VideoSubtitleController {
         if (destroyed || !player || !overlay) return;
         controls?.ensureButton();
 
-        if (!session || session.videoId !== videoId) startSession(videoId);
+        if (!session || session.videoId !== videoId) {
+            // Another video — the job's cues belong to the old one.
+            abortDownload();
+            startSession(videoId);
+        }
         const sessionAtStart = session;
 
         // Kick off the caption load — and retry a failed one — but never while
@@ -674,14 +927,26 @@ export function initVideoSubtitle(): VideoSubtitleController {
         // batch, so the whole group is applied against a single overlay
         // instance — reading them one await at a time could straddle a
         // teardown.
-        const [style, mode, pauseOnSelect, positionPct, enabledNow] = await Promise.all([
-            currentStyle(),
-            readMode(),
-            readConfig<boolean>(CONFIG_KEY.VIDEO_SUBTITLE_PAUSE_ON_SELECT),
-            readPositionPct(),
-            isEnabled(),
-        ]);
+        const [style, mode, pauseOnSelect, positionPct, autoEnable, followNativeCc, hoverDict, dictLang] =
+            await Promise.all([
+                currentStyle(),
+                readMode(),
+                readConfig<boolean>(CONFIG_KEY.VIDEO_SUBTITLE_PAUSE_ON_SELECT),
+                readPositionPct(),
+                readConfig<boolean>(CONFIG_KEY.VIDEO_SUBTITLE_AUTO_ENABLE),
+                readConfig<boolean>(CONFIG_KEY.VIDEO_SUBTITLE_FOLLOW_NATIVE_CC),
+                readConfig<boolean>(CONFIG_KEY.VIDEO_SUBTITLE_HOVER_DICT),
+                targetLanguage(),
+            ]);
         if (destroyed || !overlay || session !== sessionAtStart) return;
+
+        // Before `enabledNow` is derived, so a caption switch the user just
+        // flipped takes effect on THIS tick rather than 150ms later. This is
+        // also why the batch reads auto-enable rather than calling `isEnabled()`
+        // — the answer has to be computed after the follow, and computing it
+        // from `sessionEnabled` needs no further await.
+        followNativeCaptions(followNativeCc);
+        const enabledNow = sessionEnabled ?? autoEnable;
 
         const styleJson = JSON.stringify(style);
         if (styleJson !== lastStyleJson) {
@@ -696,6 +961,19 @@ export function initVideoSubtitle(): VideoSubtitleController {
             lastPauseOnSelect = pauseOnSelect;
             overlay.setPauseOnSelect(pauseOnSelect);
         }
+        // The caption track's language is what lets the panel pick a dictionary
+        // provider without asking both, so it travels with the switch — and it
+        // only becomes known once the track has loaded, hence the re-push.
+        const dictSourceLang = session?.sourceLang ?? "";
+        const dictKey = `${hoverDict}|${dictSourceLang}|${dictLang}`;
+        if (dictKey !== lastDictKey) {
+            lastDictKey = dictKey;
+            overlay.setDictContext({
+                enabled: hoverDict,
+                sourceLang: dictSourceLang,
+                targetLang: dictLang,
+            });
+        }
         // Position edited elsewhere (Options, another tab). Comparing against
         // the last CONFIG value — not the overlay's own — means an in-flight
         // drag is never fought.
@@ -703,6 +981,15 @@ export function initVideoSubtitle(): VideoSubtitleController {
             lastPositionPct = positionPct;
             overlay.setPosition(positionPct);
         }
+        // Source-language policy switched in Options — re-pick right away
+        // rather than at the next poll interval.
+        const sourcePolicy = await readConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_SOURCE_POLICY);
+        if (lastSourcePolicy !== null && sourcePolicy !== lastSourcePolicy) {
+            nextTrackCheckAt = 0;
+            void followSourceTrack();
+        }
+        lastSourcePolicy = sourcePolicy;
+
         // Menu checkmark — keeps the mark honest when auto-enable is changed
         // from Options while the page is open.
         if (enabledNow !== lastEnabled) {
@@ -728,7 +1015,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
         // the segmented region. These are all fire-and-forget — they hold their
         // own in-flight flags, and the display below must not wait on a network
         // round-trip.
-        void followSelectedTrack();
+        void followSourceTrack();
         void ensureSegmentedAhead(t);
         const idx = currentCueIndex(t);
         if (idx === null) {

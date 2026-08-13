@@ -2,7 +2,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createRoot, type Root } from "react-dom/client";
 import { Check, ChevronRight, Copy, Loader2, Pin, Volume2, X } from "lucide-react";
 import { loadTailwindIntoShadow } from "./shadowStyle";
-import { attachOwnShadow } from "@/main/dom/shadowRoots";
+import { attachOwnShadow, isInOwnUi } from "@/main/dom/shadowRoots";
+import { isInSelectableSurface } from "@/main/dom/selectableSurfaces";
+import { deepContains } from "@/main/dom/shadowTraversal";
 import { bindThemeToElement } from "@/utils/theme";
 import { t, useLang } from "./i18n";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -30,14 +32,73 @@ import type { DictEntry, DictProvider } from "@/main/dict/types";
 // ---------------------------------------------------------------------------
 
 const HOST_ID = "duo-selection-translate-host";
+let popupHost: HTMLElement | null = null;
 let popupRoot: Root | null = null;
 let openSignal: ((seed: SelectionSeed) => void) | null = null;
+
+/**
+ * Stacking order. The card sits one below the maximum so the selection pill —
+ * which is how a lookup is started from *inside* the card — can be painted above
+ * it. Equal z-indexes would leave the two surfaces' paint order decided by which
+ * host happened to be appended first, which is not something either side
+ * controls.
+ */
+const POPUP_Z = 2147483646;
 
 export interface SelectionSeed {
     /** The text to translate (the user's selection). */
     text: string;
     /** Viewport rect of the selection, used to anchor the popup. */
     rect: DOMRect | null;
+    /**
+     * Reuse the card exactly where it already is instead of re-anchoring it to
+     * `rect`. Set when the selection came from inside the card itself: the
+     * anchor is then a few pixels of the card's own body, so honoring it would
+     * make the card jump out from under the pointer that just asked for the
+     * lookup. Only the height follows the new content.
+     */
+    keepPosition?: boolean;
+}
+
+/** Whether `node` is the popup surface, or lives inside it. */
+export function isInSelectionPopup(node: Node | null | undefined): boolean {
+    return !!popupHost && deepContains(popupHost, node);
+}
+
+// ---------------------------------------------------------------------------
+// Open state, observable from outside
+// ---------------------------------------------------------------------------
+
+/**
+ * The card is a singleton that any surface can open, so a surface that SPAWNED
+ * one needs to know it is still there. The subtitle dictionary panel is the
+ * case this exists for: a lookup started from inside it must not have its
+ * parent vanish (or the video resume) the moment the pointer leaves the word —
+ * the card would be orphaned mid-read.
+ *
+ * A plain module variable plus listeners, not a store: there is exactly one
+ * card, and the only question anyone asks is "is it up right now".
+ */
+let popupOpen = false;
+const openWatchers = new Set<(open: boolean) => void>();
+
+export function isSelectionPopupOpen(): boolean {
+    return popupOpen;
+}
+
+/** Subscribe to the card appearing / disappearing. Returns the disposer. */
+export function watchSelectionPopupOpen(cb: (open: boolean) => void): () => void {
+    openWatchers.add(cb);
+    return () => {
+        openWatchers.delete(cb);
+    };
+}
+
+function publishOpen(open: boolean): void {
+    if (popupOpen === open) return;
+    popupOpen = open;
+    // Copied: a watcher may unsubscribe itself while being told.
+    for (const cb of [...openWatchers]) cb(open);
 }
 
 /** What the header's "Follow page (X)" options resolve to. */
@@ -80,7 +141,7 @@ async function loadPageDefaults(): Promise<PageDefaults> {
  * open and on fullscreen changes.
  */
 function reparentForFullscreen(): void {
-    const host = document.getElementById(HOST_ID);
+    const host = popupHost;
     if (!host) return;
     const target = document.fullscreenElement ?? document.documentElement;
     // A fullscreen host that can't contain children (e.g. <video>) is skipped —
@@ -101,6 +162,7 @@ function ensureMounted(): void {
         host.setAttribute("data-duo-ai-ui", "");
         document.documentElement.appendChild(host);
     }
+    popupHost = host;
     document.addEventListener("fullscreenchange", reparentForFullscreen);
     reparentForFullscreen();
     const shadow = attachOwnShadow(host);
@@ -178,10 +240,19 @@ function computePlacement(rect: DOMRect | null): Placement {
     const left = Math.max(MARGIN, Math.min(rect.left, vw - POPUP_WIDTH - MARGIN));
     const spaceBelow = vh - rect.bottom - GAP - MARGIN;
     const spaceAbove = rect.top - GAP - MARGIN;
-    // Prefer below; flip above only when below is too cramped AND above is roomier.
-    if (spaceBelow < MIN_HEIGHT && spaceAbove > spaceBelow) {
+    // Whichever side has more room — NOT "below unless below is unusable".
+    //
+    // The card's height is content-driven and most of that content arrives
+    // late (the translation streams, the dictionary is a second request). The
+    // old rule put a selection at 70% of the viewport below itself, where the
+    // remaining 30% was enough to clear the MIN_HEIGHT bar but not enough for
+    // the finished card — so it was placed, then yanked upward by the clamp
+    // once the rest showed up. Choosing the roomier side means the growth
+    // happens into space that is already there.
+    if (spaceAbove > spaceBelow) {
         // Anchor by `bottom` so the card grows upward as the stream arrives
-        // while staying pinned to the selection's top edge.
+        // while staying pinned to the selection's top edge — a late arrival
+        // extends it, it does not move it.
         return { left, bottom: vh - rect.top + GAP, maxHeight };
     }
     return { left, top: rect.bottom + GAP, maxHeight };
@@ -552,13 +623,34 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             tts.stop();
             setSeed(s);
             setOpen(true);
-            setPinned(false);
             setOrigExpanded(false);
             setOrigLang(getTextLanguage(s.text) || "und");
-            setManual(null);
             setDictEntries({});
             setDictError(null);
-            setPlacement(computePlacement(s.rect));
+            // A lookup started from inside the card keeps the card's own box:
+            // same top-left, same width, height back to auto so it shrink-wraps
+            // the new result instead of inheriting the old one's. Freezing the
+            // MEASURED box (rather than reusing `placement`) is what makes the
+            // bottom-anchored and user-dragged variants hold still too — neither
+            // of them has a `top` of its own to carry over. Pinning is left
+            // alone: it is a property of the card, not of the lookup.
+            const card = s.keepPosition ? cardRef.current : null;
+            if (card) {
+                const r = card.getBoundingClientRect();
+                setManual({ left: r.left, top: r.top, width: r.width, height: null });
+                // The auto-height ceiling now has to respect the frozen top as
+                // well, so growth stops at the viewport edge instead of running
+                // past it (the re-clamp below is skipped while `manual` is set).
+                setPlacement({
+                    left: r.left,
+                    top: r.top,
+                    maxHeight: Math.max(MIN_HEIGHT, Math.min(autoMaxHeight(), window.innerHeight - r.top - MARGIN)),
+                });
+            } else {
+                setPinned(false);
+                setManual(null);
+                setPlacement(computePlacement(s.rect));
+            }
             void (async () => {
                 // Re-read the page defaults so a service / language changed in
                 // Options since the last open is picked up. Only awaited to
@@ -572,6 +664,11 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             })();
         });
     }, [registerOpen, runTranslate, refreshPageDefaults, runDict]);
+
+    // Mirror the open flag out to whoever spawned the card — see publishOpen.
+    useEffect(() => {
+        publishOpen(open);
+    }, [open]);
 
     const onServiceChange = (value: string) => {
         const next = value || null;
@@ -622,6 +719,19 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             const card = cardRef.current;
             if (!card) return;
             if (e.composedPath().includes(card)) return;
+            // A press on our own CHROME is not a click-away. The one that
+            // matters is the selection pill: it is a separate host, so it falls
+            // outside the card, and closing here would tear the popup down on
+            // the very press that asks it to translate the text the user just
+            // selected inside it.
+            //
+            // Reading surfaces are excluded from that exemption, and the
+            // subtitle dictionary panel is why: it is our UI, but its text is
+            // content, so a press in it is an ordinary interaction elsewhere —
+            // exactly what click-away means. Blanket-exempting every own
+            // surface left the card stuck open on top of it.
+            const target = e.composedPath()[0] as Node;
+            if (isInOwnUi(target) && !isInSelectableSurface(target)) return;
             close();
         };
         // Defer registration so the opening interaction doesn't immediately
@@ -701,6 +811,26 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         beginGesture(e, (dx, dy) => setManual(resizeBox(dir, start, dx, dy)));
     };
 
+    // Re-clamp whenever the card's own size changes.
+    //
+    // A ResizeObserver rather than a dependency list of everything that can add
+    // a row, because that list is impossible to keep complete and failing to is
+    // silent: the dictionary panel landing a second after the translation was
+    // not in it, so a card anchored near the bottom of the screen never moved
+    // and its new rows were simply cut off below the fold. (It looked fine on a
+    // cache hit purely by accident — the translation was still streaming then,
+    // and `output` changing re-ran the clamp for it.)
+    //
+    // No feedback loop: the clamp only ever writes position, never size.
+    const [sizeTick, setSizeTick] = useState(0);
+    useEffect(() => {
+        const el = cardRef.current;
+        if (!open || !el || typeof ResizeObserver === "undefined") return;
+        const ro = new ResizeObserver(() => setSizeTick((n) => n + 1));
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, [open]);
+
     // After paint, re-clamp the card within the viewport in case the measured
     // size differs from the estimate (covers the all-four-corners edge cases).
     // Overflowing the top or bottom converts the anchored placement into a
@@ -725,7 +855,7 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         const top = Math.max(MARGIN, Math.min(r.top, vh - r.height - MARGIN));
         if ("top" in placement && placement.top === top && left === placement.left) return;
         setPlacement({ left, top, maxHeight: placement.maxHeight });
-    }, [open, output, origExpanded, manual, placement]);
+    }, [open, manual, placement, sizeTick]);
 
     if (!open) return null;
 
@@ -740,7 +870,7 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             ...(manual.height === null
                 ? { maxHeight: placement.maxHeight }
                 : { height: manual.height }),
-            zIndex: 2147483647,
+            zIndex: POPUP_Z,
         }
         : {
             position: "fixed",
@@ -748,7 +878,7 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             width: POPUP_WIDTH,
             maxWidth: "calc(100vw - 16px)",
             maxHeight: placement.maxHeight,
-            zIndex: 2147483647,
+            zIndex: POPUP_Z,
             ...("top" in placement ? { top: placement.top } : { bottom: placement.bottom }),
         };
 

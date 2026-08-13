@@ -7,7 +7,7 @@ import { mountFloatBall, type FloatBallController } from "./floatBall";
 import { mountAiWritingDot } from "./aiWriting/floatingDot";
 import { isAiWritingTarget } from "./aiWriting/inputDetector";
 import { openWorkbench, ensureWorkbenchMounted, destroyWorkbench } from "./aiWriting/workbench";
-import { openSelectionTranslate } from "./aiWriting/selectionPopup";
+import { isInSelectionPopup, openSelectionTranslate } from "./aiWriting/selectionPopup";
 import { mountSelectionIcon } from "./selectionIcon";
 import { getConfig, listRuleFromDB } from "@/utils/db";
 import { createRuleMode, type RuleModeController } from "./ruleMode";
@@ -46,7 +46,7 @@ import {
 } from "@/main/dom/paragraphMarks";
 import { isSegmentBoundary, segmentParagraph, type TranslationUnit, type UnitContainer, type UnitRange } from "@/main/dom/segments";
 import { containersFor, observeContainer, resetObserveTargets, unobserveContainer } from "@/main/dom/observeTargets";
-import { composedTarget, deepActiveElement, deepContains, deepElementFromPoint, isShadowRoot, parentOrHost } from "@/main/dom/shadowTraversal";
+import { composedTarget, deepActiveElement, deepContains, deepElementFromPoint, deepSelection, isShadowRoot, parentOrHost } from "@/main/dom/shadowTraversal";
 import { partitionRules, resolveRulePaths } from "@/main/dom/ruleSelector";
 import {
     removeShadowCss,
@@ -75,6 +75,7 @@ import {
     supportsHighlightApi,
 } from "@/main/dom/sentenceHighlight";
 import { initVideoSubtitle, type VideoSubtitleController } from "@/main/videoSubtitle";
+import { initMinimalPlayerUi, type MinimalPlayerUiController } from "@/main/videoSubtitle/minimalPlayerUi";
 
 export async function content() {
     //#region main
@@ -300,6 +301,7 @@ export async function content() {
     let floatBall: FloatBallController | null = null
     // Video bilingual subtitles (YouTube only for now) — top-frame singleton.
     let videoSubtitle: VideoSubtitleController | null = null
+    let minimalPlayerUi: MinimalPlayerUiController | null = null
     // AI Writing dot teardown. Top frame: the mount's unmount fn. Sub-frame: the
     // deferred-mount disposer (drops the focus listener + unmounts if up). Reset
     // on each init() so a global-switch off→on cycle re-mounts cleanly.
@@ -1016,10 +1018,9 @@ export async function content() {
         ]);
 
         if (doSelection) {
-            const selection = window.getSelection();
-            const text = selection?.toString().trim();
+            const { selection, text, inPopup } = currentTranslateSelection();
             if (text) {
-                translateSelection(text, selection);
+                translateSelection(text, selection, inPopup);
                 return;
             }
         }
@@ -1037,9 +1038,7 @@ export async function content() {
     }
 
     function translateSelectionInputBox() {
-        let selection = window.getSelection()
-        // console.log('translateSelectionInputBox selection: ', selection)
-        let text = selection?.toString().trim()
+        const { selection, text, inPopup } = currentTranslateSelection()
         if (!text) {
             // translate input box
             const active = deepActiveElement()
@@ -1050,7 +1049,7 @@ export async function content() {
             return
         }
         // console.log('translateSelectionInputBox text: ', text)
-        translateSelection(text, selection)
+        translateSelection(text, selection, inPopup)
 
     }
 
@@ -1217,19 +1216,37 @@ export async function content() {
     // target language (streamed), and the result is shown in a Shadow-DOM card
     // anchored to the selection.
     function translateSelectionAction(selectionText: string) {
-        const selection = window.getSelection()
+        const { selection, text: localSelection, inPopup } = currentTranslateSelection()
 
-        const localSelection = selection?.toString().trim() || ""
         // No local selection → the selection lives in another frame; skip so we
         // don't pop up a duplicate empty card here.
         if (localSelection === "") return
         const text = (selectionText && selectionText.trim() !== "") ? selectionText : localSelection
         if (text.trim() === "") return
 
-        translateSelection(text, selection)
+        translateSelection(text, selection, inPopup)
     }
 
-    function translateSelection(text: string, selection: Selection | null) {
+    /**
+     * The selection a translate gesture acts on.
+     *
+     * `deepSelection` rather than `window.getSelection()`: the latter collapses
+     * a selection made inside ANY shadow tree — a page component's as much as
+     * our own card's — onto the host, so `toString()` is still right while the
+     * rect measured below is empty. An unmeasurable rect reads as "no anchor",
+     * which is exactly the centered placement, so the card landed in the middle
+     * of the screen instead of at the text.
+     */
+    function currentTranslateSelection(): { selection: Selection | null; text: string; inPopup: boolean } {
+        const selection = deepSelection()
+        return {
+            selection,
+            text: selection?.toString().trim() ?? "",
+            inPopup: isInSelectionPopup(selection?.anchorNode) || isInSelectionPopup(selection?.focusNode),
+        }
+    }
+
+    function translateSelection(text: string, selection: Selection | null, keepPosition = false) {
         let rect: DOMRect | null = null
         try {
             if (selection && selection.rangeCount > 0) {
@@ -1238,7 +1255,7 @@ export async function content() {
             }
         } catch { /* detached range — fall back to centered placement */ }
 
-        openSelectionTranslate({ text, rect })
+        openSelectionTranslate({ text, rect, keepPosition })
     }
 
     function scheduleMutationProcess() {
@@ -1380,6 +1397,11 @@ export async function content() {
         if (isTopFrame && window.location.hostname === "www.youtube.com" && !videoSubtitle) {
             videoSubtitle = initVideoSubtitle()
         }
+        // Minimal player UI — same host gate, separate lifecycle: it is governed
+        // by its own setting and works whether or not subtitles are on.
+        if (isTopFrame && window.location.hostname === "www.youtube.com" && !minimalPlayerUi) {
+            minimalPlayerUi = initMinimalPlayerUi()
+        }
         // Selection translate icon — every frame, since a selection is scoped
         // to the document it was made in. The mount is cheap (three document
         // listeners); the Shadow-DOM surface is built on the first selection.
@@ -1437,6 +1459,8 @@ export async function content() {
         removeSelectionIcon()
         videoSubtitle?.destroy()
         videoSubtitle = null
+        minimalPlayerUi?.destroy()
+        minimalPlayerUi = null
         restoreOriginalPage(true, true)
     }
 

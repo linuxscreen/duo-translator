@@ -43,6 +43,26 @@ export interface CaptionTrackInfo {
 }
 
 /**
+ * Which caption track to read as the original, as asked of the adapter.
+ *
+ * `policy` mirrors CONFIG_KEY.VIDEO_SUBTITLE_SOURCE_POLICY and orders the
+ * player's own signals; `manualLang` is a language pinned from the player menu
+ * and outranks both. A pinned language that this video has no track for is NOT
+ * an error — the adapter falls through to the ordinary chain, which is what
+ * makes the pin survive a video change without stranding the overlay.
+ */
+export interface SourcePreference {
+    policy: string;
+    manualLang?: string;
+}
+
+/** One entry of the player menu's source-language picker, deduplicated by language. */
+export interface SourceTrackOption {
+    languageCode: string;
+    label: string;
+}
+
+/**
  * Site adapter contract. All methods run in the isolated content-script world;
  * page-context access (player APIs) goes through a site-specific bridge.
  */
@@ -52,13 +72,19 @@ export interface VideoSiteAdapter {
     /** Fetch + parse one track into a timed word stream. */
     fetchTrack(track: CaptionTrackInfo): Promise<SubtitleWord[]>;
     /**
-     * The track the player is showing right now because the USER selected it
-     * (null when the site's captions are off, or the site has no such notion).
-     * Polled at a low rate so switching subtitle language mid-video re-loads
-     * ours too. Deliberately not "the track that would be picked now": that
-     * would flip back and forth as the user toggles captions off and on.
+     * Re-read whatever live player state feeds {@link pickTrack} — the user's
+     * CC choice, the audio track being played. Polled at a low rate so a
+     * mid-video switch of either re-loads ours too. Resolves false when the
+     * state could not be read (RPC timeout, player moved on).
      */
-    selectedTrack?(): Promise<CaptionTrackInfo | null>;
+    refreshSourceState?(): Promise<boolean>;
+    /**
+     * Whether the site's OWN captions are switched on, or null when it cannot
+     * be told. Feeds the opt-in "follow the native caption switch" setting.
+     */
+    nativeCaptionsOn?(player: HTMLElement): boolean | null;
+    /** Choose the track to read, honoring the user's source-language preference. */
+    pickTrack(tracks: CaptionTrackInfo[], pref?: SourcePreference): CaptionTrackInfo | null;
 }
 
 /** User-configurable overlay style (CONFIG_KEY.VIDEO_SUBTITLE_STYLE). */

@@ -68,6 +68,26 @@ function baseLang(lang: string | undefined | null): string {
 }
 
 /**
+ * Providers to try IN ORDER when the source language is already known.
+ *
+ * This is the counterpart to `dictProvidersFor` + `chooseDictEntry`: those two
+ * exist because a bare selection carries no reliable language signal, so both
+ * providers have to be asked before the choice can be made. A subtitle word
+ * does not have that problem — the caption track states its language — so the
+ * right provider can be picked up front and only one request is made.
+ *
+ * The second entry is a fallback for a MISS, not a race: it is only requested
+ * when the first provider has no entry for the word, which is the uncommon
+ * case. Same preference as `chooseDictEntry` (Bing for en→zh-CN, Google
+ * otherwise), so both paths show the same entry for the same word.
+ */
+export function dictProviderChain(sourceLang: string, targetLang: string): DictProvider[] {
+    return baseLang(sourceLang) === "en" && targetLang === MICROSOFT_TARGET
+        ? ["microsoft", "google"]
+        : ["google"];
+}
+
+/**
  * Pick the answer to show, now that the source language is known.
  *
  * `detectedSourceLang` is what the translation running alongside reported.

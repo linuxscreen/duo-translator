@@ -33,6 +33,15 @@ export interface YtBridgePlayerData {
      * or -1. Used when the user has not chosen anything.
      */
     defaultTrackIndex: number;
+    /**
+     * Language code of the audio track being played — the dub the user picked,
+     * else the video's default audio. "" when it cannot be read.
+     *
+     * This is what makes "captions are off, so follow the audio" possible: with
+     * captions off the player reports no selected track at all, and the caption
+     * list alone says nothing about which language is being SPOKEN.
+     */
+    audioLanguage: string;
 }
 
 export interface YtBridgeTrackRequest {

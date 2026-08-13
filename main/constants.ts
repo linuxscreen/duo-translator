@@ -430,8 +430,13 @@ export enum CONFIG_KEY {
     VIDEO_SUBTITLE_SWITCH = 'videoSubtitleSwitch',
     // Auto-enable bilingual subtitles when a video with captions loads.
     VIDEO_SUBTITLE_AUTO_ENABLE = 'videoSubtitleAutoEnable',
-    // 'bilingual' (original + translation) | 'translation' (translation only).
+    // 'bilingual' (original + translation) | 'translation' (translation only)
+    // | 'original' (original only, no translation requested at all).
     VIDEO_SUBTITLE_DISPLAY_MODE = 'videoSubtitleDisplayMode',
+    // Which player signal decides the ORIGINAL caption track — see
+    // VIDEO_SUBTITLE_SOURCE_POLICY. A per-tab pin from the player menu
+    // (sessionStorage) overrides it.
+    VIDEO_SUBTITLE_SOURCE_POLICY = 'videoSubtitleSourcePolicy',
     // Translate service for subtitles — same key scheme as AI_TRANSLATE_SERVICE
     // (a TRANSLATE_SERVICE value or `ai:<providerId>`), stored separately.
     VIDEO_SUBTITLE_TRANSLATE_SERVICE = 'videoSubtitleTranslateService',
@@ -440,6 +445,13 @@ export enum CONFIG_KEY {
     VIDEO_SUBTITLE_TARGET_LANGUAGE = 'videoSubtitleTargetLanguage',
     // Pause playback while the user selects subtitle text. Default off.
     VIDEO_SUBTITLE_PAUSE_ON_SELECT = 'videoSubtitlePauseOnSelect',
+    // Look a subtitle word up while the pointer rests on it (pausing playback
+    // for as long as the panel is open). Default off.
+    VIDEO_SUBTITLE_HOVER_DICT = 'videoSubtitleHoverDict',
+    // Mirror the player's own caption switch onto ours: turning native captions
+    // on/off turns bilingual subtitles on/off with them. One-way — our toggle
+    // never drives the player's. Default off.
+    VIDEO_SUBTITLE_FOLLOW_NATIVE_CC = 'videoSubtitleFollowNativeCc',
     // VideoSubtitleStyle object (colors / sizes / weights / background).
     VIDEO_SUBTITLE_STYLE = 'videoSubtitleStyle',
     // Use the AI provider to re-segment auto-generated captions into
@@ -448,6 +460,13 @@ export enum CONFIG_KEY {
     // Vertical position of the subtitle overlay, percent of player height
     // measured from the bottom edge (user-draggable, persisted).
     VIDEO_SUBTITLE_POSITION = 'videoSubtitlePosition',
+    // Strip YouTube's player down: the control bar comes back only while the
+    // pointer is in the bottom band (playback, seeking and shortcuts never
+    // bring it up), and in fullscreen the title / info / like / "More videos"
+    // furniture stays hidden even then. Not a subtitle setting; it shares the
+    // Options tab because it is the same player. Default off: it overrides the
+    // site's own behaviour.
+    YOUTUBE_MINIMAL_PLAYER_UI = 'youtubeMinimalPlayerUi',
 
     // --- Website translation rules (main/siteRules/) ------------------------
     // Master switch for the whole rule system. Default on.
@@ -518,9 +537,13 @@ export const DEFAULT_VALUE = {
     VIDEO_SUBTITLE_SWITCH: true,
     VIDEO_SUBTITLE_AUTO_ENABLE: true,
     VIDEO_SUBTITLE_DISPLAY_MODE: 'bilingual',
+    VIDEO_SUBTITLE_SOURCE_POLICY: 'caption',
     VIDEO_SUBTITLE_TRANSLATE_SERVICE: 'microsoft',
     VIDEO_SUBTITLE_AI_SEGMENT: false,
     VIDEO_SUBTITLE_PAUSE_ON_SELECT: false,
+    VIDEO_SUBTITLE_HOVER_DICT: true,
+    VIDEO_SUBTITLE_FOLLOW_NATIVE_CC: false,
+    YOUTUBE_MINIMAL_PLAYER_UI: false,
     // Percent of player height from the bottom edge. 0 means "as low as it is
     // allowed to go": clampPct lifts it to the measured floor (the top of the
     // progress bar), so the default sits right above the controls and keeps
@@ -553,9 +576,28 @@ export const SITE_RULE_OFFICIAL_URL = IS_PROD ? 'https://raw.githubusercontent.c
 export const SITE_RULE_REFRESH_MINUTES = 24 * 60;
 
 /** Display modes for video bilingual subtitles. */
+/**
+ * Which of the player's own signals decides the ORIGINAL caption track.
+ *
+ * A durable preference, hence an Options row. It is not the whole answer: a
+ * language pinned from the player menu overrides it, and that pin lives in the
+ * tab's sessionStorage rather than in config — it is chosen from one video's
+ * track list, which is not something that can be meaningfully replayed on the
+ * next machine or the next day.
+ */
+export enum VIDEO_SUBTITLE_SOURCE_POLICY {
+    /** Follow the user's CC choice; captions off → the audio language; then the default. */
+    CAPTION = 'caption',
+    /** Follow the audio (dub) language; then the CC choice; then the default. */
+    AUDIO = 'audio',
+}
+
 export enum VIDEO_SUBTITLE_DISPLAY_MODE {
     BILINGUAL = 'bilingual',
     TRANSLATION = 'translation',
+    // Original only. Unlike the other two this needs no provider at all, so the
+    // pre-translation scheduler skips the whole track — see ensureTranslatedAhead.
+    ORIGINAL = 'original',
 }
 
 // CONFIG_KEY value -> enum key name. Lets us look up a default for any config
