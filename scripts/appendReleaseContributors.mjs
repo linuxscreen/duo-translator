@@ -82,8 +82,14 @@ async function compareCommits({ owner, repo, base, head, token }) {
     return commits;
 }
 
-function isBot(login) {
-    return login.toLowerCase().endsWith('[bot]');
+const AI_ACCOUNT_PATTERN = /^(?:claude(?:-code)?|copilot|github-copilot|chatgpt|openai|codex|gemini|google-gemini|devin|cursor|codeium|windsurf|swe-agent)(?:\[bot\]|[-_].*)?$/i;
+
+function isAutomatedAccount(login, accountType) {
+    return (
+        accountType?.toLowerCase() === 'bot' ||
+        login.toLowerCase().endsWith('[bot]') ||
+        AI_ACCOUNT_PATTERN.test(login)
+    );
 }
 
 function githubLoginFromEmail(email) {
@@ -120,32 +126,24 @@ function collectContributors(commits, owner, configuredExcludes) {
             .filter(Boolean),
     );
     const contributors = new Map();
-    const nameAliases = new Map();
 
-    const addContribution = ({ login, name }, commit) => {
+    const addContribution = ({ login, name, accountType }, commit) => {
         const normalizedLogin = login?.trim().replace(/^@/, '');
         const normalizedName = name?.replace(/[\r\n]+/g, ' ').trim();
+        // A release contributor must resolve to a real GitHub account. This
+        // deliberately drops unlinked Co-authored-by signatures such as AI
+        // model names, which otherwise get rendered as people and linked to
+        // the commit instead of a profile.
         if (
-            normalizedLogin &&
-            (!/^[a-z\d](?:[a-z\d-]{0,38})$/i.test(normalizedLogin) ||
-                excluded.has(normalizedLogin.toLowerCase()) ||
-                isBot(normalizedLogin))
-        ) {
-            return;
-        }
-        if (
-            !normalizedLogin &&
-            (!normalizedName ||
-                excluded.has(normalizedName.toLowerCase()) ||
-                normalizedName.toLowerCase().endsWith('[bot]'))
+            !normalizedLogin ||
+            !/^[a-z\d](?:[a-z\d-]{0,38})$/i.test(normalizedLogin) ||
+            excluded.has(normalizedLogin.toLowerCase()) ||
+            isAutomatedAccount(normalizedLogin, accountType)
         ) {
             return;
         }
 
-        const nameKey = normalizedName?.toLowerCase();
-        const key = normalizedLogin
-            ? `login:${normalizedLogin.toLowerCase()}`
-            : (nameAliases.get(nameKey) ?? `name:${nameKey}`);
+        const key = normalizedLogin.toLowerCase();
         let contributor = contributors.get(key);
         if (!contributor) {
             contributor = {
@@ -156,13 +154,19 @@ function collectContributors(commits, owner, configuredExcludes) {
             contributors.set(key, contributor);
         }
         contributor.contributions.set(commit.sha, contributionFromCommit(commit));
-        if (nameKey && normalizedLogin) nameAliases.set(nameKey, key);
     };
 
     for (const commit of commits) {
         const author = commit.commit?.author;
         if (commit.author?.login) {
-            addContribution({ login: commit.author.login, name: author?.name }, commit);
+            addContribution(
+                {
+                    login: commit.author.login,
+                    name: author?.name,
+                    accountType: commit.author.type,
+                },
+                commit,
+            );
         } else {
             const login = githubLoginFromEmail(author?.email ?? '');
             addContribution({ login, name: author?.name }, commit);
@@ -175,7 +179,7 @@ function collectContributors(commits, owner, configuredExcludes) {
     }
 
     return [...contributors.values()].sort((a, b) =>
-        (a.login ?? a.name).localeCompare(b.login ?? b.name, 'en', { sensitivity: 'base' }),
+        a.login.localeCompare(b.login, 'en', { sensitivity: 'base' }),
     );
 }
 
@@ -211,10 +215,8 @@ async function addAssociatedPulls(contributors, { owner, repo, token }) {
 
 function contributorLines(contributor) {
     const contributions = [...contributor.contributions.values()];
-    const label = contributor.login ? `@${contributor.login}` : escapeMarkdown(contributor.name);
-    const profileUrl = contributor.login
-        ? `https://github.com/${contributor.login}`
-        : contributions[0].url;
+    const label = `@${contributor.login}`;
+    const profileUrl = `https://github.com/${contributor.login}`;
     const lines = [`- [${label}](${profileUrl})`];
 
     for (const contribution of contributions) {
