@@ -305,6 +305,13 @@ export default defineContentScript({
             installCapture();
 
             const wasOn = nativeCaptionsOn();
+            // Which track the user was watching, so it can be put back. Taking
+            // the whole object rather than just its language: it carries
+            // whatever else the player needs to re-select that exact track.
+            let previousTrack: any = null;
+            if (wasOn) {
+                try { previousTrack = getPlayer()?.getOption?.("captions", "track"); } catch { /* noop */ }
+            }
             let done = false;
             const finish = (body: string | null) => {
                 if (done) return;
@@ -313,11 +320,24 @@ export default defineContentScript({
                 clearTimeout(timer);
                 pendingCaptures--;
                 scheduleUninstall();
-                // Leave the user-visible CC state as we found it. (While our
-                // overlay is enabled the isolated side hides native captions
-                // via CSS anyway, so a wasOn=true player stays clean too.)
+                // Leave the user-visible CC state as we found it. Fetching a
+                // track means SELECTING it in the real player, so this is not
+                // tidying up — without it the request changes what the user is
+                // watching. Captions off: unload the module again. Captions on
+                // a DIFFERENT track: re-select theirs. (It used to be enough to
+                // handle the off case, back when the only track we ever fetched
+                // was the one already selected — asking for it again was a
+                // no-op. A source language pinned in our own menu broke that
+                // assumption: it is routinely a different track.)
                 if (!wasOn) {
                     try { player.unloadModule("captions"); } catch { /* noop */ }
+                } else if (previousTrack && typeof previousTrack.languageCode === "string") {
+                    const sameTrack =
+                        previousTrack.languageCode === req.languageCode
+                        && String(previousTrack.kind ?? "") === req.kind;
+                    if (!sameTrack) {
+                        try { player.setOption("captions", "track", previousTrack); } catch { /* noop */ }
+                    }
                 }
                 respond(body);
             };
