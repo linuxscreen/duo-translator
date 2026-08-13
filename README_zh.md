@@ -32,6 +32,12 @@ AI驱动的翻译和写作助手。支持网页翻译、划词翻译、写作增
 
 或者您可以通过zip文件手动安装。
 
+## 社区
+
+- [Discord](https://discord.gg/VSjWP752JV)
+- [Telegram 中文](https://t.me/+v7Z9ssqrQLc3OGI5)
+- [Telegram](https://t.me/+_097YKqnuGhlYmNh)
+
 ## 截图
 <div align="center">
 <img style="width: 384px" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/popup.png" alt="">

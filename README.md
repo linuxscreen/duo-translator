@@ -32,6 +32,12 @@ Add to your browser:
 
 Alternatively, you can install it manually using the ZIP file.
 
+## Community
+
+- [Discord](https://discord.gg/VSjWP752JV)
+- [Telegram 中文](https://t.me/+v7Z9ssqrQLc3OGI5)
+- [Telegram](https://t.me/+_097YKqnuGhlYmNh)
+
 ## Screenshots
 <div align="center">
 <img style="width: 384px" src="https://raw.githubusercontent.com/linuxscreen/duo-translator/HEAD/docs/assets/popup.png" alt="">
