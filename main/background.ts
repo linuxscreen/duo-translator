@@ -439,6 +439,23 @@ export async function background() {
                     ).catch(() => { })
                 }
                 break
+            case ACTION.TRANSLATE_INDICATOR_STATE:
+                // Same shape as REPORT_ERROR: a sub-frame's translating-
+                // indicator state goes to frame 0, which draws the one corner
+                // pill for the tab. The sender's frameId is stamped on here
+                // because it is the top frame's aggregation key — content has no
+                // way to learn its own frame id.
+                if (sender.tab?.id) {
+                    browser.tabs.sendMessage(
+                        sender.tab.id,
+                        {
+                            action: ACTION.TRANSLATE_INDICATOR_STATE,
+                            data: { frameId: sender.frameId ?? -1, state: message.data },
+                        },
+                        { frameId: 0 },
+                    ).catch(() => { })
+                }
+                break
             case ACTION.RELAY_FRAMES:
                 // Re-broadcast an inner action to every frame of the sender's
                 // tab. The top-frame content script uses this to fan a

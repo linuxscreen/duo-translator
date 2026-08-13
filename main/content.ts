@@ -1,5 +1,5 @@
 import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
-import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE, EXTENSION_INVALID_CONTEXT_MSG, STYLE_BLUR } from "./constants";
+import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE, EXTENSION_INVALID_CONTEXT_MSG, STYLE_BLUR, TRANSLATING_ANIMATION } from "./constants";
 import { restore, translateParams, getTranslateResult, translate, TranslateResult } from "./translateClient";
 import { notifyBackground, runtimeSendMessage, sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
@@ -21,6 +21,16 @@ import { readConfig } from "@/utils/reactiveConfig";
 import { getDomainWithPortFromUrl } from "@/utils/url";
 import { getAiTranslateService, getTranslateService } from "@/utils/service";
 import { buildTranslationCss } from "@/main/css";
+import { TRANSLATE_INDICATOR_CSS } from "@/main/translateIndicator/indicatorCss";
+import {
+    beginTranslateIndicator,
+    clearTranslateIndicators,
+    ingestFrameIndicatorState,
+    retryFailedTranslations,
+    setTranslateIndicatorMode,
+    translateIndicatorActive,
+    type TranslateIndicatorSession,
+} from "@/main/translateIndicator";
 import {
     compileCandidates,
     fetchSiteRuleCandidates,
@@ -66,7 +76,7 @@ import {
 // Type-only + one const: the progress bar surface itself is loaded lazily (see
 // onBuiltinAiDownloadProgress), so this adds no weight to the content bundle.
 import { BUILTIN_AI_MODEL_DOWNLOADING, type BuiltinAiDownloadProgress } from "@/main/builtinAi/types";
-import { directChildOf, nodesInRange, rangeContains, resolveCandidateAtPoint, unitRangeOf } from "@/main/dom/unitHit";
+import { directChildOf, nodesInRange, rangeContains, resolveCandidateAtPoint, siblingSkippingIndicators, unitRangeOf } from "@/main/dom/unitHit";
 import {
     buildSentenceRanges,
     clearSentenceHighlight,
@@ -406,9 +416,9 @@ export async function content() {
     // get all config from storage
     let [rules, viewStrategy, targetLanguageConfig, translateServiceConfig, globalSwitch, defaultStrategy,
         rawDomainStrategy, floatBallSwitch, floatBallStyleConfig, bilingualHighlightingSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey,
-        aiTargetLanguageConfig, contextMenuSwitch, translateStatusConfig]
+        aiTargetLanguageConfig, contextMenuSwitch, translateStatusConfig, translatingAnimationConfig]
         : [string[], VIEW_STRATEGY, string | undefined, string | undefined, boolean, string, any, boolean, string, boolean, number,
-            number, string | undefined, string, boolean, boolean]
+            number, string | undefined, string, boolean, boolean, string | undefined]
         = await Promise.all(
             [
                 listRuleFromDB(domainWithPort),
@@ -427,9 +437,14 @@ export async function content() {
                 getConfig(CONFIG_KEY.AI_TARGET_LANGUAGE),
                 getConfig(CONFIG_KEY.CONTEXT_MENU_SWITCH),
                 getSessionStorage(tabTranslateStatusKey),
+                getConfig(CONFIG_KEY.TRANSLATING_ANIMATION),
             ]
         )
     translateStatus = !!translateStatusConfig
+    // Every frame keeps its own copy: the inline markers are drawn in the frame
+    // that owns the paragraph, and in corner mode a sub-frame still has to know
+    // it should report instead of staying silent.
+    setTranslateIndicatorMode(translatingAnimationConfig ?? DEFAULT_VALUE.TRANSLATING_ANIMATION)
     rules = rules || []
     shareConfig.rules = rules
     // Pre-join once instead of `rules.join(",")` per visited element, and drop
@@ -654,6 +669,21 @@ export async function content() {
                 // that failed; this side only draws the bubble.
                 if (!isTopFrame) break
                 showRelayedError(message.data)
+                break
+            case ACTION.TRANSLATE_INDICATOR_STATE:
+                // A sub-frame's translating-indicator state, forwarded here by
+                // background with the sender's frameId attached. Corner mode
+                // only — the inline markers are drawn by the frame that owns
+                // the paragraph and never travel.
+                if (!isTopFrame) break
+                if (typeof message.data?.frameId === "number" && message.data?.state) {
+                    ingestFrameIndicatorState(message.data.frameId, message.data.state)
+                }
+                break
+            case ACTION.RETRY_FAILED_TRANSLATIONS:
+                // Broadcast to every frame (the top one included) by the corner
+                // pill's retry button: each frame re-runs its own failures.
+                retryFailedTranslations()
                 break
             case ACTION.AI_OPEN_WORKBENCH: {
                 // The workbench is a single tab-level surface. Keep it top-frame
@@ -901,6 +931,13 @@ export async function content() {
                 }
                 break
             }
+            case CONFIG_KEY.TRANSLATING_ANIMATION:
+                if (typeof value !== "string") return
+                // Takes effect on the next batch; markers already in the page
+                // for an in-flight batch keep their original style until it
+                // settles (see setTranslateIndicatorMode).
+                setTranslateIndicatorMode(value)
+                break
             case CONFIG_KEY.CONTEXT_MENU_SWITCH:
                 if (typeof value === "boolean") {
                     contextMenuSwitch = value
@@ -2100,6 +2137,14 @@ export async function content() {
         if (restoreOriginalTask) {
             return
         }
+        // BEFORE anything asynchronous, including the `restoreOriginalTask`
+        // guard's own awaits. "Show me the original" is an instant intent, and
+        // everything below it waits: on a translate task, on the provider
+        // actually noticing the abort, on the restore itself. Leaving the
+        // spinners up for that wait is the same silence this indicator exists to
+        // end, only inverted — the page looks like it is still working on a
+        // translation the user just cancelled.
+        clearTranslateIndicators()
         const action = async () => {
             if (translateTask) {
                 await translateTask
@@ -2274,6 +2319,10 @@ export async function content() {
         if (setStatus) {
             await updateTranslateStatus(false)
         }
+        // Whatever was in flight is being abandoned and whatever failed is no
+        // longer on offer to retry — a marker outliving the translation it
+        // belongs to would be pointing at nothing.
+        clearTranslateIndicators()
 
         if (duoTranslatedElementMap.size > 0) {
             // Every container, every record — same code path as the per-unit
@@ -2371,7 +2420,13 @@ export async function content() {
             getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
         ])
         translationBlurred = borderStyle === STYLE_BLUR
-        const css = buildTranslationCss({
+        // The translating indicator's rules ride along with the translation
+        // stylesheet: a marker is inserted INSIDE a translation container, so it
+        // needs the one delivery path that also reaches page shadow roots
+        // (setShadowCss below). Appended unconditionally — the rules match
+        // nothing when the feature is off, and making delivery conditional would
+        // mean re-pushing a sheet to every root when the setting changes.
+        const css = TRANSLATE_INDICATOR_CSS + "\n" + buildTranslationCss({
             bgColor: bgColor || '',
             fontColor: fontColor || '',
             borderStyle: borderStyle || 'noneStyleSelect',
@@ -2824,6 +2879,43 @@ export async function content() {
     }
 
     /**
+     * Re-run units whose translation failed, from a retry button on the
+     * indicator (one unit for an inline marker, every failed unit of the frame
+     * for the corner pill's retry-all).
+     *
+     * A unit is derived data with no identity of its own, and a failed request's
+     * worth of time has passed since these were computed — so each one is
+     * re-derived from the live DOM by its range, which IS its identity. Three
+     * outcomes: the unit is still there and untranslated (retry the fresh one);
+     * it has since been translated by another path (drop it, retrying would
+     * translate it twice); its container is gone or re-segmented beyond
+     * recognition (drop it, or fall back to the stale unit when its nodes are
+     * demonstrably still in place).
+     */
+    function retryTranslateUnits(failedUnits: TranslationUnit[], errorScope: ERROR_SCOPE_VALUE) {
+        const fresh: TranslationUnit[] = []
+        for (const stale of failedUnits) {
+            const container = stale.container
+            if (!container.isConnected) continue
+            const range = unitRangeOf(stale)
+            let matched: TranslationUnit | null = null
+            let alreadyTranslated = false
+            for (const unit of segmentParagraph(container).units) {
+                const candidate = unitRangeOf(unit)
+                if (candidate.start !== range.start || candidate.end !== range.end) continue
+                if (unit.translated) alreadyTranslated = true
+                else matched = unit
+                break
+            }
+            if (alreadyTranslated) continue
+            if (matched) fresh.push(matched)
+            else if (stale.nodes.some(n => n.parentNode === container)) fresh.push(stale)
+        }
+        if (fresh.length === 0) return
+        void translateUnits(fresh, undefined, errorScope)
+    }
+
+    /**
      * Translate the given logical-paragraph units. The only entry point that
      * actually talks to the provider and writes translations: the whole-container
      * path above expands to units first, and the pointer-driven per-unit toggle
@@ -2850,12 +2942,24 @@ export async function content() {
         // visible clip-then-unclip.
         syncSiteRuleCss(true)
         let ignoreElements: Node[] = []
+        let indicator: TranslateIndicatorSession | null = null
+        // Set when the batch failed and the indicator now owns its markers, so
+        // the `finally` below does not take them straight back down again.
+        let indicatorFailed = false
         try {
             // Guard the containers, deduplicated — several units may share one.
             for (const container of new Set(units.map(u => u.container))) {
                 ignoreElements.push(container)
                 ignoreMutationElements.add(container)
             }
+            // Started INSIDE the guard on purpose: an inline marker is a real
+            // insertion into a translation container, and an unguarded one would
+            // queue a mutation that re-scans the very paragraph being
+            // translated. (The markers themselves are invisible to segmentation,
+            // ranges and serialization — see isTranslateIndicator.)
+            indicator = beginTranslateIndicator(units, (retryUnits) => {
+                retryTranslateUnits(retryUnits, errorScope)
+            })
             let service = translateService
             if (context && typeof context.targetTranslateService === "string" && context.targetTranslateService) {
                 service = context.targetTranslateService
@@ -2950,7 +3054,9 @@ export async function content() {
                         // provider — skip; that mutation requeues a scan.
                         if (!lastChild || lastChild.parentNode !== element) continue
                         // Already carries a translation (concurrent round) — skip.
-                        const next = lastChild.nextSibling as HTMLElement | null
+                        // Stepping over our own translating indicator, which is
+                        // sitting exactly here while this batch is in flight.
+                        const next = siblingSkippingIndicators(lastChild.nextSibling, "next") as HTMLElement | null
                         if (next?.classList?.contains("duo-divide") || next?.classList?.contains("duo-translation")) continue
 
                         // Capture the unit's anchors BEFORE inserting our nodes,
@@ -3051,12 +3157,29 @@ export async function content() {
             // own and the page re-translates when it lands, so a bubble here
             // would be alarming and wrong — the progress bar already says it.
             if (!isBuiltinAiModelDownloading(e)) {
-                reportRequestError(errorScope, e, {
+                // `silent` while an indicator is up: the marker (or the corner
+                // pill) carries the reason and a retry, and its "details"
+                // button opens this very payload as the usual bubble. Two
+                // copies of one failure would mean dismissing it twice, and
+                // dismissing the bubble is what makes the leftover marker read
+                // as "still broken".
+                const failure = reportRequestError(errorScope, e, {
                     detail: { service: translateService, targetLanguage, units: units.length },
+                    silent: translateIndicatorActive(),
                 })
+                // No payload means the reporter classified this as an abort (or
+                // itself failed) — nothing to show, so the markers just go.
+                if (failure && indicator) {
+                    indicator.fail(failure)
+                    indicatorFailed = true
+                }
             }
         }
         finally {
+            // A batch that failed keeps its markers: they are now the details +
+            // retry pair. Everything else — success, abort, an empty result, the
+            // model-download bail — takes them down.
+            if (!indicatorFailed) indicator?.done()
             Promise.resolve().then(() => {
                 for (let element of ignoreElements) {
                     ignoreMutationElements.delete(element)

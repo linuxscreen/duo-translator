@@ -201,6 +201,25 @@ describe("getElementPreProcessResult — per-unit node lists", () => {
     });
 });
 
+describe("getElementPreProcessResult — the translating indicator", () => {
+    // The whole-element path re-reads element.childNodes at preprocessing time,
+    // i.e. AFTER the marker for this very batch was inserted. Serializing it
+    // would ship scaffolding to the provider and change the cache key of every
+    // paragraph translated while a spinner is up.
+    it("is never serialized, and does not shift the <bN> numbering", () => {
+        document.body.innerHTML = "<p>Hello <b>world</b></p>";
+        const p = document.body.querySelector("p")! as HTMLElement;
+        const clean = getElementPreProcessResult(p, VIEW_STRATEGY.SINGLE);
+
+        document.body.innerHTML = "<p><duo-loading></duo-loading>Hello <b>world</b><duo-loading></duo-loading></p>";
+        const marked = document.body.querySelector("p")! as HTMLElement;
+        const withMarkers = getElementPreProcessResult(marked, VIEW_STRATEGY.SINGLE);
+
+        expect(withMarkers.mappedHtmlText).toBe(clean.mappedHtmlText);
+        expect(withMarkers.elements).toHaveLength(clean.elements.length);
+    });
+});
+
 describe("getTranslateResult — TranslationUnit input", () => {
     it("whole-element unit produces byte-identical provider text (SINGLE and DOUBLE)", async () => {
         for (const strategy of [VIEW_STRATEGY.SINGLE, VIEW_STRATEGY.DOUBLE]) {

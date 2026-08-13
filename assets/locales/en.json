@@ -597,5 +597,16 @@
   "builtinAiModelOneTime": "one time only, then it works offline",
   "builtinAiAutoDownloadHint": "Models download automatically the first time a page needs them — you only need this if you want a language ready in advance.",
   "builtinAiDetectorStatus": "Language detector",
-  "builtinAiTargetDraftHint": "Preview only — this does not change your translation target language."
+  "builtinAiTargetDraftHint": "Preview only — this does not change your translation target language.",
+  "translatingAnimation": "Translating animation",
+  "translatingAnimationHint": "Show a loading animation while translating. If the translation fails, users can view the error details or retry.",
+  "translatingAnimationNone": "Off",
+  "translatingAnimationInlineDots": "Bouncing dots at the translation",
+  "translatingAnimationInlineSpinner": "Spinner at the translation",
+  "translatingAnimationCornerSpinner": "Spinner in the bottom-right corner",
+  "translatingStatus": "Translating…",
+  "translateIndicatorDetails": "Translation failed — show details",
+  "translateIndicatorRetry": "Retry",
+  "translateIndicatorRetryAll": "Retry all failed paragraphs",
+  "translateIndicatorFailedCount": "Translation failed"
 }

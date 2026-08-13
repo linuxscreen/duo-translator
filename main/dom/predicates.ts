@@ -1,7 +1,7 @@
 // Pure element predicates used by the content-script translation pipeline.
 // Extracted from main/content.ts so the marking/skip rules are unit-testable
 // without a full content() context.
-import { excludedTagSet } from "@/main/constants";
+import { excludedTagSet, TRANSLATE_INDICATOR_TAG } from "@/main/constants";
 import { isNoTranslate, isOwnNoTranslate } from "@/main/dom/paragraphMarks";
 import { isOwnHost } from "@/main/dom/shadowRoots";
 
@@ -17,6 +17,28 @@ export function isNotTranslateElement(element: HTMLElement): boolean {
  */
 export function isOwnNoTranslateElement(element: HTMLElement): boolean {
     return isOwnNoTranslate(element);
+}
+
+/**
+ * Our own in-progress / failed marker (main/translateIndicator/), inserted next
+ * to where a unit's translation goes while its batch is in flight.
+ *
+ * It is a direct child of a translation container, i.e. it sits in the middle of
+ * the very node list the pipeline reasons about — so every place that walks a
+ * container's children has to step over it, and they all ask here:
+ * `segmentParagraph` (never part of a unit and never a split), `unitRangeOf` /
+ * `nodesInRange` (so a unit's anchors are the same whether or not an indicator
+ * is currently showing) and `getElementPreProcessResult` (so it is never
+ * serialized into the text sent to a provider, which would also change the
+ * translation-cache key of every paragraph translated while it is up).
+ *
+ * Takes a Node rather than an Element because every caller is iterating raw
+ * childNodes.
+ */
+export function isTranslateIndicator(node: Node | null | undefined): boolean {
+    return !!node
+        && node.nodeType === Node.ELEMENT_NODE
+        && (node as Element).tagName.toLowerCase() === TRANSLATE_INDICATOR_TAG;
 }
 
 /** True for tags we never descend into / mark (script, style, our own UI, …). */
@@ -40,6 +62,7 @@ export function isNotMarkElement(element: HTMLElement): boolean {
     // todo support user defined tag to exclude
     return (
         element.classList.contains("duo-translation") ||
+        isTranslateIndicator(element) ||
         isOwnHost(element) ||
         isExcludedNodeType(element)
     );

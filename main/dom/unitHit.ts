@@ -15,6 +15,26 @@
 //      multi-unit case (`text<br><br>text`). Then the unit has to be found from
 //      its line boxes.
 import type { TranslationUnit, UnitContainer, UnitRange } from "@/main/dom/segments";
+import { isTranslateIndicator } from "@/main/dom/predicates";
+
+/**
+ * The next/previous sibling the pipeline cares about, stepping over our own
+ * translating indicators.
+ *
+ * An indicator is inserted right after the unit it belongs to, so without this
+ * a unit's anchors would differ depending on whether one happened to be showing
+ * — and the anchors ARE the unit's identity (they are what a DuoUnitRecord
+ * stores and what revalidateUnitTarget matches on). An anchor that dissolves
+ * when the spinner is removed would silently degrade every later write-back and
+ * restore to whole-container behavior.
+ */
+export function siblingSkippingIndicators(node: ChildNode | null, dir: "next" | "prev"): ChildNode | null {
+    let cur = node;
+    while (cur && isTranslateIndicator(cur)) {
+        cur = dir === "next" ? cur.nextSibling : cur.previousSibling;
+    }
+    return cur;
+}
 
 /**
  * The ancestor-or-self of `node` whose parent is `container`, i.e. the container
@@ -45,8 +65,8 @@ export function unitRangeOf(unit: TranslationUnit): UnitRange {
         last = node;
     }
     return {
-        start: first?.previousSibling ?? null,
-        end: last?.nextSibling ?? null,
+        start: siblingSkippingIndicators(first?.previousSibling ?? null, "prev"),
+        end: siblingSkippingIndicators(last?.nextSibling ?? null, "next"),
     };
 }
 
@@ -61,7 +81,10 @@ export function nodesInRange(container: UnitContainer, range: UnitRange): ChildN
     const out: ChildNode[] = [];
     let node = start ? start.nextSibling : container.firstChild;
     while (node && node !== end) {
-        out.push(node);
+        // Our own indicator is never part of the unit's content: including it
+        // would put its box into the pointer hit-test rects and into the
+        // duo-span sweep on restore.
+        if (!isTranslateIndicator(node)) out.push(node);
         node = node.nextSibling;
     }
     return out;

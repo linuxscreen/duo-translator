@@ -8,6 +8,7 @@ import { isTraditionalChinese } from "@/utils/language";
 import { contentInvisible, decodeHtmlText } from "@/utils/dom";
 import type { TranslationUnit, UnitContainer, UnitRange } from "@/main/dom/segments";
 import { unitRangeOf } from "@/main/dom/unitHit";
+import { isTranslateIndicator } from "@/main/dom/predicates";
 
 //#region types
 // ---------------------------------------------------------------------------
@@ -129,6 +130,14 @@ export function getElementPreProcessResult(element: UnitContainer, viewStrategy:
     let index = 0
     const process = (isSon: boolean, node: Node | null, parent: HTMLElement) => {
         if (!node) return;
+        // Our own translating indicator. It sits among the container's children
+        // while the batch is in flight, and the whole-element path re-reads
+        // `element.childNodes` HERE — after it was inserted. Serializing it
+        // would ship `<bN></bN>` scaffolding to the provider and, worse, change
+        // the cache key of every paragraph translated while a spinner is up.
+        // Skipped before any index bookkeeping, so the <bN> numbering is
+        // identical with and without one.
+        if (isTranslateIndicator(node)) return;
         if (node.nodeType === Node.ELEMENT_NODE) {
             const ele = node as HTMLElement;
             // ignore empty element in double mode

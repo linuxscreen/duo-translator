@@ -307,15 +307,6 @@ export function ServicesPage() {
         setRows((prev) => prev.map((r) => (r.value === row.value ? { ...r, enabled: next } : r)));
         await setConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES, Array.from(nextDisabled));
         await notifyUpdateActiveTranslateService();
-
-        // Enabling Built-in AI immediately proves it works — and, when the
-        // model for this pair isn't on disk, that probe is what triggers the
-        // download, which the row then reports as progress rather than as a
-        // failure. Turning it off clears any stale result.
-        if (row.value === TRANSLATE_SERVICE.BUILTIN) {
-            if (next) void runTest(row.value);
-            else setTestStates((s) => ({ ...s, [row.value]: { kind: 'idle' } }));
-        }
     };
 
     if (!ready) {

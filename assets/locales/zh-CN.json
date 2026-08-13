@@ -597,5 +597,16 @@
   "builtinAiModelOneTime": "仅需下载一次，之后可离线使用",
   "builtinAiAutoDownloadHint": "首次有页面需要时会自动下载模型 —— 只有想提前准备好某个语言时才需要用到这里。",
   "builtinAiDetectorStatus": "语言检测器",
-  "builtinAiTargetDraftHint": "仅用于查看，不会修改你的翻译目标语言。"
+  "builtinAiTargetDraftHint": "仅用于查看，不会修改你的翻译目标语言。",
+  "translatingAnimation": "翻译中动画样式",
+  "translatingAnimationHint": "翻译过程中显示加载动画，翻译失败时可以查看报错信息或重试",
+  "translatingAnimationNone": "关闭",
+  "translatingAnimationInlineDots": "译文位置点状动画",
+  "translatingAnimationInlineSpinner": "译文位置转圈动画",
+  "translatingAnimationCornerSpinner": "屏幕右下角转圈动画",
+  "translatingStatus": "翻译中…",
+  "translateIndicatorDetails": "翻译失败 — 查看报错信息",
+  "translateIndicatorRetry": "重试",
+  "translateIndicatorRetryAll": "重试所有失败的段落",
+  "translateIndicatorFailedCount": "翻译失败"
 }

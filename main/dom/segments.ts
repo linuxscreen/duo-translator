@@ -31,7 +31,7 @@ import {
     SEGMENT_BR_SPLIT_MIN,
 } from "@/main/constants";
 import { contentValid } from "@/utils/dom";
-import { isEditable, isExcludedNodeType } from "@/main/dom/predicates";
+import { isEditable, isExcludedNodeType, isTranslateIndicator } from "@/main/dom/predicates";
 import { hasTranslatableText } from "@/main/dom/textNodes";
 import { pageShadowRootOf } from "@/main/dom/shadowRoots";
 
@@ -317,12 +317,18 @@ export function isMergeableInline(el: HTMLElement): boolean {
     return hasText;
 }
 
-type NodeKind = "text" | "passive" | "duo-marker" | "br" | "block" | "inline";
+type NodeKind = "text" | "passive" | "duo-marker" | "duo-indicator" | "br" | "block" | "inline";
 
 function classify(node: ChildNode): NodeKind {
     if (node.nodeType === Node.TEXT_NODE) return "text";
     if (node.nodeType !== Node.ELEMENT_NODE) return "passive";
     const el = node as HTMLElement;
+    // The translating indicator is transient scaffolding, not output: unlike
+    // `duo-marker` it must not even set `sawSplitOrMarker`, or a container
+    // re-segmented while a spinner is up would lose the whole-element path and
+    // translate under a different cache key than the same container does when
+    // nothing is in flight.
+    if (isTranslateIndicator(el)) return "duo-indicator";
     if (
         el.classList.contains("duo-translation") ||
         el.classList.contains("duo-divide")
@@ -457,6 +463,10 @@ export function segmentParagraph(container: UnitContainer): SegmentScan {
                 resetBrStreak();
                 descendChildren.push(node as HTMLElement);
                 break;
+            case "duo-indicator":
+                // Skipped entirely: not part of any unit, not a split, and no
+                // trace left in the scan's flags.
+                break;
             case "duo-marker":
                 sawSplitOrMarker = true;
                 if ((node as HTMLElement).classList.contains("duo-translation")) {
@@ -471,7 +481,11 @@ export function segmentParagraph(container: UnitContainer): SegmentScan {
     // Legacy whole-element path: byte-identical serialization (and therefore
     // identical translation-cache keys) for plain paragraphs.
     if (units.length === 1 && descendChildren.length === 0 && !sawSplitOrMarker) {
-        units[0].nodes = Array.from(container.childNodes);
+        // Re-reading childNodes here would put a translating indicator straight
+        // back into the unit the loop above was careful to keep it out of — and
+        // `nodes` is what DOUBLE clones into the copy it sends to the provider,
+        // and what the insertion anchor is picked from.
+        units[0].nodes = Array.from(container.childNodes).filter(n => !isTranslateIndicator(n));
         units[0].wholeElement = true;
     }
 

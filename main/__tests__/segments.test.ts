@@ -326,6 +326,36 @@ describe("segmentParagraph — our own duo nodes on rescan", () => {
     });
 });
 
+describe("segmentParagraph — the translating indicator is invisible", () => {
+    // A <duo-loading> marker is inserted next to the unit it belongs to WHILE
+    // that unit is being translated, so a re-scan during the request must land
+    // on exactly the same segmentation it would have without one — including
+    // the whole-element path, which is what keeps the translation-cache key of
+    // a plain paragraph stable.
+    it("does not split a run, join a unit or cost the whole-element path", () => {
+        const p = el("<p>Hello <b>world</b><duo-loading></duo-loading></p>");
+        const scan = segmentParagraph(p);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].wholeElement).toBe(true);
+        expect(scan.units[0].nodes.some((n) => (n as HTMLElement).tagName === "DUO-LOADING")).toBe(false);
+        expect(scan.descendChildren).toHaveLength(0);
+    });
+
+    it("mid-container marker does not cut the run in two", () => {
+        const div = el("<div>one <duo-loading></duo-loading>two</div>");
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].nodes).toHaveLength(2);
+    });
+
+    it("a marker alone is not a unit and is not descended into", () => {
+        const div = el("<div><duo-loading><span>x</span></duo-loading></div>");
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(0);
+        expect(scan.descendChildren).toHaveLength(0);
+    });
+});
+
 describe("isBlockBoundary — computed style first, static tag set fallback", () => {
     it("uses computed display for connected elements (CSS overrides tags)", () => {
         const inlineDiv = el('<div style="display:inline">x</div>');

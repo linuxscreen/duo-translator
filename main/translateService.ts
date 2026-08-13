@@ -886,7 +886,12 @@ export class BuiltinAiTranslateService extends TranslateService {
     ): Promise<TranslateResult[]> {
         if (texts.length === 0) return [];
 
-        const result = await builtinAiTranslateTexts(texts, targetLang, sourceLang);
+        // The signal matters MORE here than for the HTTP providers, not less: a
+        // batch is a queue of per-paragraph on-device calls, so an abandoned one
+        // keeps computing (and keeps the page's translating indicator up) for as
+        // long as it takes to grind through the rest. Dropping it here was the
+        // whole reason "restore original" used to take seconds to take effect.
+        const result = await builtinAiTranslateTexts(texts, targetLang, sourceLang, signal);
         if (!Array.isArray(result?.texts) || result.texts.length !== texts.length) {
             throw new Error("Built-in AI returned a mismatched translation batch");
         }

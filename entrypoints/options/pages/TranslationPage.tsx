@@ -24,6 +24,8 @@ import {
   VIEW_STRATEGIES,
   DEFAULT_STRATEGY_OPTIONS,
   TTS_SERVICE_OPTIONS,
+  TRANSLATING_ANIMATION,
+  TRANSLATING_ANIMATION_OPTIONS,
 } from '@/main/constants';
 import {
   sendMessageToAllTabs,
@@ -104,6 +106,9 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   );
   const [selectionIcon, setSelectionIcon] = useState<boolean>(
     DEFAULT_VALUE.SELECTION_ICON_SWITCH,
+  );
+  const [translatingAnimation, setTranslatingAnimation] = useState<TRANSLATING_ANIMATION>(
+    DEFAULT_VALUE.TRANSLATING_ANIMATION,
   );
   const [translationCache, setTranslationCache] = useState(true);
   const [ttsService, setTtsService] = useState<string>(DEFAULT_VALUE.TTS_SERVICE);
@@ -196,7 +201,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     let cancelled = false;
     (async () => {
       const [
-        bh, fb, fbs, si, vs, tl, ts, ds, ms, lb, tc, tts,
+        bh, fb, fbs, si, ta, vs, tl, ts, ds, ms, lb, tc, tts,
         styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg, qbcCfg, qbcIdxCfg,
         hbCfg, hbIdxCfg, hfCfg, hfIdxCfg, hsCfg, hbcCfg, hbcIdxCfg,
       ] = await Promise.all([
@@ -204,6 +209,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
         getConfig(CONFIG_KEY.FLOAT_BALL_STYLE),
         getConfig(CONFIG_KEY.SELECTION_ICON_SWITCH),
+        getConfig(CONFIG_KEY.TRANSLATING_ANIMATION),
         getConfig(CONFIG_KEY.VIEW_STRATEGY),
         getConfig(CONFIG_KEY.TARGET_LANGUAGE),
         getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
@@ -248,6 +254,11 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
           : DEFAULT_VALUE.FLOAT_BALL_STYLE,
       );
       setSelectionIcon(si === undefined ? DEFAULT_VALUE.SELECTION_ICON_SWITCH : !!si);
+      setTranslatingAnimation(
+        Object.values(TRANSLATING_ANIMATION).includes(ta as TRANSLATING_ANIMATION)
+          ? ta as TRANSLATING_ANIMATION
+          : DEFAULT_VALUE.TRANSLATING_ANIMATION,
+      );
       setTranslationCache(tc === undefined ? true : tc);
       setTtsService(typeof tts === 'string' && tts ? tts : DEFAULT_VALUE.TTS_SERVICE);
       setViewStrategy(vs === undefined ? DEFAULT_VALUE.VIEW_STRATEGY : vs);
@@ -382,6 +393,17 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     void sendMessageToAllTabs({
       action: ACTION.CONFIG_CHANGED,
       data: { [CONFIG_KEY.SELECTION_ICON_SWITCH]: v },
+    });
+  };
+
+  const onTranslatingAnimation = (v: string) => {
+    if (!Object.values(TRANSLATING_ANIMATION).includes(v as TRANSLATING_ANIMATION)) return;
+    const next = v as TRANSLATING_ANIMATION;
+    setTranslatingAnimation(next);
+    void setConfig(CONFIG_KEY.TRANSLATING_ANIMATION, next);
+    void sendMessageToAllTabs({
+      action: ACTION.CONFIG_CHANGED,
+      data: { [CONFIG_KEY.TRANSLATING_ANIMATION]: next },
     });
   };
 
@@ -839,6 +861,27 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
           label={t('selectionTranslateIcon', 'Selection translate icon')}
           hint={t('selectionTranslateIconHint', 'Show a translate icon after selecting text')}
           control={<Switch checked={selectionIcon} onCheckedChange={onSelectionIcon} />}
+        />
+        <SettingRow
+          label={t('translatingAnimation', 'Translating animation')}
+          hint={t(
+            'translatingAnimationHint',
+            'What the page shows while a paragraph is being translated, and how a failure is reported',
+          )}
+          control={
+            <Select value={translatingAnimation} onValueChange={onTranslatingAnimation}>
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TRANSLATING_ANIMATION_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {t(opt.title, opt.fallback)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
         />
         <SettingRow
           label={t('websiteTranslationRules', 'Website translation rules')}

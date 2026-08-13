@@ -32,7 +32,7 @@ export interface TranslatorSession {
 }
 
 export interface LanguageDetectorSession {
-    detect(text: string): Promise<{ detectedLanguage: string; confidence: number }[]>;
+    detect(text: string, options?: { signal?: AbortSignal }): Promise<{ detectedLanguage: string; confidence: number }[]>;
     destroy(): void;
 }
 

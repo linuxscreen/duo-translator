@@ -64,6 +64,28 @@ export function showRelayedError(payload: ErrorToastPayload): void {
 }
 
 /**
+ * The display half of `reportRequestError`, from whichever frame is asking.
+ *
+ * A sub-frame relays instead of drawing: a page-level notice inside an iframe is
+ * clipped to the iframe's box, and cross-origin frames are frequently a few
+ * pixels tall.
+ *
+ * Not exported on purpose. The translating indicator suppresses this bubble
+ * (`silent`) and shows the same payload anchored to the button the user
+ * pressed — see main/translateIndicator/errorPopover.tsx. A second entry point
+ * into the top-of-page bubble would just invite that decision to be undone by
+ * accident.
+ */
+function presentErrorBubble(payload: ErrorToastPayload): void {
+    if (!payload?.reason) return;
+    if (isTopFrame()) {
+        toast(payload);
+    } else {
+        void sendMessageToBackground({ action: ACTION.REPORT_ERROR, data: payload });
+    }
+}
+
+/**
  * Which feature failed. The value is the i18n key of the label shown in the
  * bubble; `ERROR_SCOPE_FALLBACK` below carries the English text used when the
  * key is missing.
@@ -152,10 +174,16 @@ const isTopFrame = (): boolean => {
  *
  * Safe to call from any frame and from any surface; it never throws and never
  * rejects, so it can be used inside a `catch` without a second guard.
+ *
+ * Returns the payload it logged, so a caller that suppressed the bubble
+ * (`silent`) can render the same reason in its own surface without re-deriving
+ * it — that is how the translating indicator's "details" button shows exactly
+ * the bubble the user would otherwise have got. Null when there was nothing to
+ * report (an abort, or the reporter itself failed).
  */
-export function reportRequestError(scope: ErrorScope, error: any, options?: ReportOptions): void {
+export function reportRequestError(scope: ErrorScope, error: any, options?: ReportOptions): ErrorToastPayload | null {
     try {
-        if (isAbortError(error)) return;
+        if (isAbortError(error)) return null;
 
         const scopeLabel = ERROR_SCOPE_FALLBACK[scope] || scope;
         const reason = reasonOf(error);
@@ -180,21 +208,14 @@ export function reportRequestError(scope: ErrorScope, error: any, options?: Repo
             },
         );
 
-        if (options?.silent) return;
-
-        // (2) The bubble.
         const payload: ErrorToastPayload = { scopeKey: scope, scopeLabel, reason };
-        if (isTopFrame()) {
-            toast(payload);
-        } else {
-            // A sub-frame has no business drawing a page-level bubble (it would
-            // be clipped to the iframe's box, and cross-origin frames often have
-            // no room at all). Background re-sends this to frame 0.
-            void sendMessageToBackground({ action: ACTION.REPORT_ERROR, data: payload });
-        }
+        // (2) The bubble.
+        if (!options?.silent) presentErrorBubble(payload);
+        return payload;
     } catch (e) {
         // Reporting must never become the failure. Nothing else to do here — if
         // even this line throws we have no channel left.
         console.log(APP_NAME_WITH_SUFFIX, "error reporting itself failed:", e);
+        return null;
     }
 }

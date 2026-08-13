@@ -206,6 +206,21 @@ function isAbortError(e: any): boolean {
 }
 
 /**
+ * Stop as soon as the caller has cancelled.
+ *
+ * The on-device model DOES support abort — `translator.translate()` and
+ * `detector.detect()` both take a signal — but a batch is a queue of
+ * per-paragraph calls, so honouring it also means not *starting* the ones still
+ * queued. Without both halves, "restore original" on a long page left the
+ * indicator turning for as long as the abandoned batch took to grind through
+ * the rest of its paragraphs.
+ */
+function throwIfAborted(signal?: AbortSignal | null): void {
+    if (!signal?.aborted) return;
+    throw new DOMException("Built-in AI translation aborted", "AbortError");
+}
+
+/**
  * Lift the cancel latch. Call from paths that represent the user explicitly
  * asking for the model again — never from an automatic one, or cancelling
  * would not survive its own page.
@@ -562,13 +577,17 @@ async function mapWithLimit<T, R>(
  * whatever that fragment resembles. Placeholders are stripped first — they are
  * ASCII noise that skews a short sample toward English.
  */
-export async function detectBatchLanguage(texts: string[]): Promise<string> {
+export async function detectBatchLanguage(texts: string[], signal?: AbortSignal | null): Promise<string> {
     requireSupport();
     const sample = texts.map(stripPlaceholders).join("\n").slice(0, DETECT_SAMPLE_CHARS).trim();
     if (!sample) return lastReliableSourceLang;
 
+    // NOT passed to `getDetector()`: the session is cached and shared by every
+    // batch, so aborting its *creation* on one caller's signal would take the
+    // detector away from all the others. Only the work is cancellable.
     const detector = await getDetector();
-    const results = await detector.detect(sample);
+    throwIfAborted(signal);
+    const results = await detector.detect(sample, signal ? { signal } : undefined);
     const top = results?.[0];
     if (top && top.confidence >= DETECT_MIN_CONFIDENCE) {
         lastReliableSourceLang = top.detectedLanguage;
@@ -591,12 +610,14 @@ async function translateBatch(
     texts: string[],
     targetLang: string,
     sourceLang?: string,
+    signal?: AbortSignal | null,
 ): Promise<BuiltinAiTranslateResult> {
     requireSupport();
     if (texts.length === 0) return { texts: [], sourceLang: "", plainTextFallback: false };
 
+    throwIfAborted(signal);
     const targetLanguage = toModelLang(targetLang);
-    const detected = sourceLang ? toModelLang(sourceLang) : await detectBatchLanguage(texts);
+    const detected = sourceLang ? toModelLang(sourceLang) : await detectBatchLanguage(texts, signal);
     if (!detected) {
         throw new Error("Built-in AI could not determine the source language of this text.");
     }
@@ -606,11 +627,19 @@ async function translateBatch(
         return { texts, sourceLang: detected, plainTextFallback: false, sameLanguage: true };
     }
 
+    // Same reasoning as the detector above — the signal cancels the work, not
+    // the shared session.
     const translator = await getTranslator(detected, targetLanguage);
+    throwIfAborted(signal);
 
     let plainTextFallback = false;
     const out = await mapWithLimit(texts, MAX_CONCURRENCY, async (text) => {
-        const translated = await translator.translate(text);
+        // Checked per item, not just per batch: a worker that is between two
+        // paragraphs has nothing in flight to reject, and would otherwise pick
+        // up the next one after the cancel.
+        throwIfAborted(signal);
+        const options = signal ? { signal } : undefined;
+        const translated = await translator.translate(text, options);
         // Verify the `<bN>` round-trip. A plain-text model may drop, merge or
         // renumber them; writing that back would scatter text into the wrong
         // inline elements, or leave a literal "<b0>" on the page.
@@ -620,7 +649,7 @@ async function translateBatch(
         // write-back lands it as flat text: invisible in DOUBLE (bilingual)
         // mode, where the translation is its own block, and a flattening of
         // that one paragraph's inline markup in SINGLE mode.
-        return await translator.translate(stripPlaceholders(text));
+        return await translator.translate(stripPlaceholders(text), options);
     });
 
     return { texts: out, sourceLang: detected, plainTextFallback };
@@ -631,14 +660,19 @@ export async function builtinAiTranslateTexts(
     texts: string[],
     targetLang: string,
     sourceLang?: string,
+    signal?: AbortSignal | null,
 ): Promise<BuiltinAiTranslateResult> {
     try {
-        return await translateBatch(texts, targetLang, sourceLang);
+        return await translateBatch(texts, targetLang, sourceLang, signal);
     } catch (e) {
+        // A cancel is not a crash: retrying it would run the whole batch again
+        // for a page the user has already restored — the exact stall this
+        // signal exists to end.
+        if (isAbortError(e) || signal?.aborted) throw e;
         if (!isGenericFailure(e)) throw e;
         resetSessions();
         // One retry against fresh sessions. A second failure is real and must
         // reach the user.
-        return await translateBatch(texts, targetLang, sourceLang);
+        return await translateBatch(texts, targetLang, sourceLang, signal);
     }
 }

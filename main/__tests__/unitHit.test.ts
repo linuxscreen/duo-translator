@@ -169,3 +169,34 @@ describe("with a ShadowRoot container", () => {
         expect(rangeContains(r, range, first as ChildNode)).toBe(false);
     });
 });
+
+describe("the translating indicator is stepped over", () => {
+    // The marker is inserted right after the unit it belongs to while the
+    // request is in flight. A unit's anchors ARE its identity (a DuoUnitRecord
+    // stores them, revalidateUnitTarget matches on them), so they must be the
+    // same whether or not a marker happens to be showing — otherwise every
+    // anchor captured during a translation would dissolve when it is removed.
+    it("unitRangeOf gives the same anchors with and without a marker", () => {
+        const div = el("<div>one<br><br>two</div>");
+        const before = segmentParagraph(div).units.map(unitRangeOf);
+
+        const marker = document.createElement("duo-loading");
+        div.insertBefore(marker, div.childNodes[1]);
+        const after = segmentParagraph(div).units.map(unitRangeOf);
+
+        expect(after).toHaveLength(before.length);
+        after.forEach((range, i) => {
+            expect(range.start).toBe(before[i].start);
+            expect(range.end).toBe(before[i].end);
+        });
+    });
+
+    it("nodesInRange leaves the marker out of the unit's content", () => {
+        const div = el("<div>one<br><br>two</div>");
+        const marker = document.createElement("duo-loading");
+        div.appendChild(marker);
+        const units = segmentParagraph(div).units;
+        const last = units[units.length - 1];
+        expect(nodesInRange(div, unitRangeOf(last))).not.toContain(marker);
+    });
+});

@@ -289,6 +289,17 @@ export enum ACTION {
     // RELAY_FRAMES, which broadcasts to EVERY frame — that would echo back to
     // the reporting frame and duplicate the console line.
     REPORT_ERROR = 'reportError',
+    // Sub-frame → top-frame translating-indicator state, corner-spinner mode
+    // only. The corner surface is viewport-anchored, so an iframe drawing its
+    // own would land inside the iframe's box; instead each frame reports
+    // { pending, failed, reason } and frame 0 aggregates. Same targeted
+    // forwarding as REPORT_ERROR (background stamps the sender's frameId, which
+    // is the aggregation key), not RELAY_FRAMES.
+    TRANSLATE_INDICATOR_STATE = 'translateIndicatorState',
+    // Corner spinner's retry button → every frame of the tab, through
+    // RELAY_FRAMES. Each frame retries the units whose translation failed in it;
+    // the top frame is included, so it needs no separate local path.
+    RETRY_FAILED_TRANSLATIONS = 'retryFailedTranslations',
     // --- Built-in AI (on-device translation model) -----------------------
     // The provider itself lives in background like every other one — the
     // `Translator` / `LanguageDetector` globals ARE exposed in an MV3 extension
@@ -366,6 +377,13 @@ export enum CONFIG_KEY {
     // share the same icon implementation, so this also governs the icon shown
     // when subtitle text is selected inside a player.
     SELECTION_ICON_SWITCH = 'selectionIconSwitch',
+    // What the page shows WHILE a paragraph batch is in flight, and what it
+    // shows when that batch fails. See TRANSLATING_ANIMATION. Anything other
+    // than 'none' also takes over failure reporting for page/paragraph
+    // translation: the indicator carries the reason and a retry, so the
+    // page-level error bubble is suppressed for those two scopes (it is still
+    // what the indicator's "details" button opens).
+    TRANSLATING_ANIMATION = 'translatingAnimation',
     GLOBAL_SWITCH = 'globalSwitch',
     TRANSLATE_SERVICE = 'translateService',
     MICROSOFT_TOKEN = 'microsoftToken',
@@ -497,12 +515,49 @@ export enum FLOAT_BALL_STYLE {
     CLASSIC = 'classic',
 }
 
+/**
+ * In-progress feedback for page/paragraph translation.
+ *
+ * The two INLINE_* variants place a marker where the translation itself is
+ * about to appear (one per logical paragraph unit) and turn into a
+ * details + retry pair if that unit's batch fails — retry re-runs that unit
+ * alone. CORNER_SPINNER is a single viewport-anchored surface for the whole
+ * tab instead, whose retry re-runs everything that failed.
+ *
+ * NONE keeps the pre-existing behavior exactly: no in-progress marker, and
+ * failures surface through the page-level error bubble as before.
+ */
+export enum TRANSLATING_ANIMATION {
+    NONE = 'none',
+    INLINE_DOTS = 'inlineDots',
+    INLINE_SPINNER = 'inlineSpinner',
+    CORNER_SPINNER = 'cornerSpinner',
+}
+
+/** Options-page rows for TRANSLATING_ANIMATION, in display order. */
+export const TRANSLATING_ANIMATION_OPTIONS: { value: TRANSLATING_ANIMATION, title: string, fallback: string }[] = [
+    { value: TRANSLATING_ANIMATION.NONE, title: 'translatingAnimationNone', fallback: 'Off' },
+    { value: TRANSLATING_ANIMATION.INLINE_DOTS, title: 'translatingAnimationInlineDots', fallback: 'Bouncing dots at the translation' },
+    { value: TRANSLATING_ANIMATION.INLINE_SPINNER, title: 'translatingAnimationInlineSpinner', fallback: 'Spinner at the translation' },
+    { value: TRANSLATING_ANIMATION.CORNER_SPINNER, title: 'translatingAnimationCornerSpinner', fallback: 'Spinner in the bottom-right corner' },
+]
+
+/**
+ * Tag name of the inline translating indicator. A custom element name rather
+ * than a class on a <span>: page stylesheets cannot address it by tag, and the
+ * translation pipeline recognises our own inserted nodes by it (see
+ * isTranslateIndicator in main/dom/predicates.ts) so they stay invisible to
+ * segmentation, unit ranges and serialization.
+ */
+export const TRANSLATE_INDICATOR_TAG = 'duo-loading'
+
 export const DEFAULT_VALUE = {
     GLOBAL_SWITCH: true,
     BILINGUAL_HIGHLIGHTING_SWITCH: true,
     FLOAT_BALL_SWITCH: true,
     FLOAT_BALL_STYLE: FLOAT_BALL_STYLE.DOCKED,
     SELECTION_ICON_SWITCH: true,
+    TRANSLATING_ANIMATION: TRANSLATING_ANIMATION.INLINE_DOTS,
     CONTEXT_MENU_SWITCH: true,
     VIEW_STRATEGY: 'double',
     DEFAULT_STRATEGY: 'auto',
