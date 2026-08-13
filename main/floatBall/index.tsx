@@ -61,6 +61,36 @@ const TOOLTIP_DELAY_MS = 350;
 // of the page's way even when the pointer has not moved after a click.
 const AUTO_RETRACT_DELAY_MS = 700;
 
+/**
+ * Whether a focus event should count as *keyboard* focus, i.e. the only kind
+ * that may expand the ball on its own.
+ *
+ * Clicking the toggle with the mouse leaves DOM focus on the button (nothing on
+ * the drag path calls preventDefault, so the click focuses it). When the tab or
+ * window is later re-activated, the browser hands focus back to that element and
+ * re-fires `focus`/`focusin` — with the pointer nowhere near the ball. Expanding
+ * on that is not just wrong at the moment it happens: no `mouseleave` can ever
+ * follow, so the ball stays expanded for good.
+ *
+ * `:focus-visible` is exactly the distinction we need. It is false for
+ * pointer-driven focus on a <button>, true when tabbed to — and on window
+ * re-activation the browser restores it as it was, so the stale re-focus above
+ * still reads false while a genuine keyboard focus still reads true.
+ */
+function isKeyboardFocus(target: EventTarget | null): boolean {
+    const el = target as Element | null;
+    if (!el || typeof el.matches !== "function") return false;
+    try {
+        return el.matches(":focus-visible");
+    } catch {
+        // Selector unsupported (pre-Chrome 86 / pre-Firefox 85, i.e. below our
+        // MV3 floor — unreachable in practice). Don't expand: mouse users are
+        // already covered by mouseenter, and re-introducing the stuck-open bug
+        // is the worse of the two failures.
+        return false;
+    }
+}
+
 export async function mountFloatBall(deps: FloatBallDeps): Promise<FloatBallController> {
     // Defensive: never mount twice.
     document.getElementById(HOST_ID)?.remove();
@@ -368,8 +398,8 @@ function FloatBallApp({
                 style={{ transform: isDockedStyle ? `translateX(${edgeOffset}px)` : undefined }}
                 onMouseEnter={onPointerEnter}
                 onMouseLeave={onPointerLeave}
-                onFocusCapture={() => {
-                    expandBall();
+                onFocusCapture={(event) => {
+                    if (isKeyboardFocus(event.target)) expandBall();
                 }}
                 onBlurCapture={(event) => {
                     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
