@@ -150,10 +150,12 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   const [neverList, setNeverList] = useState<DomainItem[]>([]);
   const [floatBallDisabledList, setFloatBallDisabledList] = useState<DomainItem[]>([]);
   const [selectionIconDisabledList, setSelectionIconDisabledList] = useState<DomainItem[]>([]);
+  const [translateAllElementsList, setTranslateAllElementsList] = useState<DomainItem[]>([]);
   const [alwaysOpen, setAlwaysOpen] = useState(false);
   const [neverOpen, setNeverOpen] = useState(false);
   const [floatBallDisabledOpen, setFloatBallDisabledOpen] = useState(false);
   const [selectionIconDisabledOpen, setSelectionIconDisabledOpen] = useState(false);
+  const [translateAllElementsOpen, setTranslateAllElementsOpen] = useState(false);
   // Style section expanded by default; only the chevron button on the right
   // toggles — not the header text — to avoid accidental collapse.
   const [styleOpen, setStyleOpen] = useState(true);
@@ -161,7 +163,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   const [ready, setReady] = useState(false);
 
   const refreshDomains = async () => {
-    const [a, n, fb, si] = await Promise.all([
+    const [a, n, fb, si, tae] = await Promise.all([
       sendMessageToBackground({
         action: DB_ACTION.DOMAIN_LIST,
         data: { strategy: DOMAIN_STRATEGY.ALWAYS },
@@ -178,11 +180,16 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         action: DB_ACTION.DOMAIN_LIST,
         data: { selectionIconDisabled: true },
       }),
+      sendMessageToBackground({
+        action: DB_ACTION.DOMAIN_LIST,
+        data: { translateAllElements: true },
+      }),
     ]);
     setAlwaysList(Array.isArray(a) ? a : []);
     setNeverList(Array.isArray(n) ? n : []);
     setFloatBallDisabledList(Array.isArray(fb) ? fb : []);
     setSelectionIconDisabledList(Array.isArray(si) ? si : []);
+    setTranslateAllElementsList(Array.isArray(tae) ? tae : []);
   };
 
   useEffect(() => {
@@ -1036,6 +1043,16 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         items={neverList}
         otherItems={alwaysList}
         kind={{ field: 'strategy', strategy: DOMAIN_STRATEGY.NEVER }}
+        onChanged={refreshDomains}
+      />
+
+      <DomainListSection
+        title={t('translateAllElementsWebsites', 'Translate-all-elements websites')}
+        emptyHint={t('noDomainsConfigured', 'No websites configured.')}
+        open={translateAllElementsOpen}
+        onToggle={() => setTranslateAllElementsOpen((o) => !o)}
+        items={translateAllElementsList}
+        kind={{ field: 'translateAllElements' }}
         onChanged={refreshDomains}
       />
 

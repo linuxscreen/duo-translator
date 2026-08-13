@@ -202,7 +202,9 @@ export class SubtitleOverlay {
 
         document.getElementById(BOX_ID)?.remove();
         this.box = document.createElement("div");
-        markNoTranslate(this.box)
+        // `own`: our own UI, not a user rule — stays excluded even on a site the
+        // user set to "translate all elements".
+        markNoTranslate(this.box, { own: true })
         this.box.id = BOX_ID;
         this.originalLine = document.createElement("div");
         this.translationLine = document.createElement("div");

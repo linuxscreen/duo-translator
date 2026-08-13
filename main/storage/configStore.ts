@@ -51,6 +51,13 @@ export type DomainDoc = {
     aiWritingEnabled?: boolean;
     floatBallDisabled?: boolean;
     selectionIconDisabled?: boolean;
+    /**
+     * "Translate every element on this site": the user's own exclusions — the
+     * legacy per-host no-translate areas AND the website rules' include/exclude
+     * selectors — stop applying here. Only the hard-coded exclusions (script /
+     * style / editable / our own UI) remain.
+     */
+    translateAllElements?: boolean;
 };
 
 export type DomainListItem = { domain: string } & DomainDoc;
@@ -175,6 +182,7 @@ export const domainRepo = {
         if (patch.aiWritingEnabled !== undefined) next.aiWritingEnabled = patch.aiWritingEnabled;
         if (patch.floatBallDisabled !== undefined) next.floatBallDisabled = patch.floatBallDisabled;
         if (patch.selectionIconDisabled !== undefined) next.selectionIconDisabled = patch.selectionIconDisabled;
+        if (patch.translateAllElements !== undefined) next.translateAllElements = patch.translateAllElements;
         await storage.setItem(domainKey(host), next);
         await touchKey(dataDomainKey(host));
     },
@@ -198,7 +206,8 @@ export const domainRepo = {
             doc.aiWritingDisabled === undefined &&
             doc.aiWritingEnabled === undefined &&
             doc.floatBallDisabled === undefined &&
-            doc.selectionIconDisabled === undefined;
+            doc.selectionIconDisabled === undefined &&
+            doc.translateAllElements === undefined;
         if (empty) {
             await storage.removeItem(domainKey(host));
             await tombstoneKey(dataDomainKey(host));
@@ -214,6 +223,7 @@ export const domainRepo = {
         aiWritingEnabled?: boolean;
         floatBallDisabled?: boolean;
         selectionIconDisabled?: boolean;
+        translateAllElements?: boolean;
     }): Promise<DomainListItem[]> {
         const all = await storage.snapshot('local');
         let items: DomainListItem[] = [];
@@ -229,6 +239,7 @@ export const domainRepo = {
                 aiWritingEnabled: doc.aiWritingEnabled,
                 floatBallDisabled: doc.floatBallDisabled,
                 selectionIconDisabled: doc.selectionIconDisabled,
+                translateAllElements: doc.translateAllElements,
             });
         }
         if (filter?.strategy) items = items.filter((it) => it.strategy === filter.strategy);
@@ -243,6 +254,9 @@ export const domainRepo = {
         }
         if (filter?.selectionIconDisabled !== undefined) {
             items = items.filter((it) => !!it.selectionIconDisabled === filter.selectionIconDisabled);
+        }
+        if (filter?.translateAllElements !== undefined) {
+            items = items.filter((it) => !!it.translateAllElements === filter.translateAllElements);
         }
         return items;
     },

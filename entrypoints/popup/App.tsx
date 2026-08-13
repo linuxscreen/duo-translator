@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AirplayIcon, Ban, Check, Globe, HelpCircle, Monitor, Moon, PenLine, Settings as SettingsIcon, Sparkles, Sun } from 'lucide-react';
+import { AirplayIcon, Ban, Check, Globe, HelpCircle, Monitor, Moon, PenLine, ScanText, Settings as SettingsIcon, Sparkles, Sun } from 'lucide-react';
 
 import {
   ACTION,
@@ -58,6 +58,9 @@ export default function App() {
   const [translateActive, setTranslateActive] = useState(false);
   const [defaultStrategy, setDefaultStrategy] = useState<DEFAULT_STRATEGY>(DEFAULT_STRATEGY.AUTO);
   const [siteRule, setSiteRule] = useState<DOMAIN_STRATEGY>(DOMAIN_STRATEGY.AUTO);
+  // Per-domain "translate all elements": drops the user's own exclusions (the
+  // no-translate areas and the website rules) for this site.
+  const [translateAllElements, setTranslateAllElements] = useState(false);
   const [highlight, setHighlight] = useState(true);
   const [domain, setDomain] = useState('');
   const [ready, setReady] = useState(false);
@@ -171,6 +174,7 @@ export default function App() {
         ) {
           setSiteRule(dom.strategy);
         }
+        if (!cancelled) setTranslateAllElements(!!dom?.translateAllElements);
       }
 
       if (typeof id === 'number') {
@@ -260,6 +264,24 @@ export default function App() {
   const openAiWorkbench = async () => {
     await sendMessageToTab({ action: ACTION.AI_OPEN_WORKBENCH });
     window.close();
+  };
+
+  const onTranslateAllElementsToggle = () => {
+    const next = !translateAllElements;
+    setTranslateAllElements(next);
+    // The menu stays open on purpose: this item is a checkbox, and the check
+    // mark appearing is the only feedback the action gives.
+    if (!domain) return;
+    // Field-aware write: turning it off clears only this field, so the site's
+    // Always/Never strategy (and every other per-domain flag) survives.
+    void sendMessageToBackground(
+      next
+        ? { action: DB_ACTION.DOMAIN_UPSERT, data: { domain, translateAllElements: true } }
+        : { action: DB_ACTION.DOMAIN_DELETE, data: { domain, field: 'translateAllElements' } },
+    ).then(() => {
+      // After the write, so a frame that re-reads the doc cannot race it.
+      void sendMessageToTab({ action: ACTION.TRANSLATE_ALL_ELEMENTS_CHANGED, data: next });
+    });
   };
 
   const enterSelectionMode = () => {
@@ -585,14 +607,30 @@ export default function App() {
             {t('more', 'More')}
           </a>
           {moreOpen && (
-            <div className="absolute bottom-full right-0 z-20 mb-1.5 min-w-[180px] overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-lg">
+            <div className="absolute bottom-full right-0 z-20 mb-1.5 min-w-[210px] overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-lg">
+              <button
+                type="button"
+                className={cn(
+                  'flex w-full items-center gap-2 px-3 py-1.5 text-left font-sans text-[12px] tracking-normal transition-colors hover:bg-hover',
+                  translateAllElements ? 'text-accent' : 'text-ink-soft hover:text-accent',
+                )}
+                onClick={onTranslateAllElementsToggle}
+                title={t(
+                  'translateAllElementsHint',
+                  'Ignore the website rules and no-translate areas on this site',
+                )}
+              >
+                <ScanText className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
+                <span className="flex-1">{t('translateAllElements', 'Translate all elements')}</span>
+                {translateAllElements && <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />}
+              </button>
               <button
                 type="button"
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-sans text-[12px] tracking-normal text-ink-soft transition-colors hover:bg-hover hover:text-accent"
                 onClick={enterSelectionMode}
               >
                 <Ban className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
-                {t('setNoTranslateArea', 'Set no-translate area')}
+                <span className="flex-1">{t('setNoTranslateArea', 'Set no-translate area')}</span>
               </button>
             </div>
           )}

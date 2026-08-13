@@ -203,6 +203,7 @@ export async function background() {
                     aiWritingEnabled: message.data?.aiWritingEnabled,
                     floatBallDisabled: message.data?.floatBallDisabled,
                     selectionIconDisabled: message.data?.selectionIconDisabled,
+                    translateAllElements: message.data?.translateAllElements,
                 };
                 domainRepo.list(filter).then((data) => {
                     sendResponse({ status: STATUS_SUCCESS, data })

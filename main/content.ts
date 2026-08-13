@@ -29,7 +29,7 @@ import {
 } from "@/main/siteRules/siteRuleClient";
 import { compileSelectorList } from "@/main/siteRules/selectors";
 import { EMPTY_CANDIDATES, EMPTY_COMPILED, type CompiledSiteRules, type SiteRuleCandidates } from "@/main/siteRules/types";
-import { isEditable, isNotMarkElement, isNotTranslateElement } from "@/main/dom/predicates";
+import { isEditable, isNotMarkElement, isNotTranslateElement, isOwnNoTranslateElement } from "@/main/dom/predicates";
 import { getTextNodesAndText, getTextNodesAndTextOfNodes, isContainsValidTextElement, removeDuoClassAndAttribute, removeTextNodes } from "@/main/dom/textNodes";
 import {
     allParagraphs,
@@ -458,6 +458,12 @@ export async function content() {
     shareConfig.aiTranslateServiceChoice = parsedAiTranslateService
     let targetLanguage = targetLanguageConfig || browserTargetLanguage()
     let domainStrategy = (rawDomainStrategy?.strategy || DOMAIN_STRATEGY.AUTO) as string
+    // Per-domain "translate all elements": the user's own exclusions stop
+    // applying on this site — both the legacy per-host no-translate areas and
+    // the website rules' include/exclude selectors. Read off the domain doc we
+    // already fetched above, so it costs nothing at startup. Sub-frames resolve
+    // the same (top) domain, so the whole tab agrees.
+    let translateAllElements = !!rawDomainStrategy?.translateAllElements
     let floatBallStyle = Object.values(FLOAT_BALL_STYLE).includes(floatBallStyleConfig as FLOAT_BALL_STYLE)
         ? floatBallStyleConfig as FLOAT_BALL_STYLE
         : DEFAULT_VALUE.FLOAT_BALL_STYLE
@@ -697,6 +703,9 @@ export async function content() {
                     }
                     updateDomainStrategy(strategy)
                 }
+                break
+            case ACTION.TRANSLATE_ALL_ELEMENTS_CHANGED:
+                await applyTranslateAllElements(!!message.data)
                 break
             case TRANSLATE_ACTION.TRANSLATE_INPUT_BOX:
                 // `break` was missing here: translating an input box also fell
@@ -961,6 +970,37 @@ export async function content() {
             default:
                 break
         }
+    }
+
+    /**
+     * Apply a flip of the per-domain "translate all elements" option live.
+     *
+     * Both directions need the same two steps, in this order:
+     *  1. Re-mark from `<body>`. Marking re-runs `markParagraph` on every
+     *     visited element, so needs-translate flags are refreshed both ways —
+     *     regions that were excluded gain the flag, regions that just became
+     *     excluded lose it. (Regions that were excluded were never marked as
+     *     paragraphs at all, so only a fresh scan can find them.)
+     *  2. Re-drive translation. `retranslateNeedsTranslateParagraphs` restores
+     *     the whole page first and then re-observes exactly the paragraphs that
+     *     now need translating, which is precisely the difference we want —
+     *     including dropping the translations of regions that just became
+     *     excluded.
+     *
+     * Rule-derived no-translate marks are NOT cleared: while the option is on
+     * the scan reads only the own-UI set (see `noTranslateOf`), so the cache
+     * stays valid for the moment the option is turned back off.
+     */
+    async function applyTranslateAllElements(value: boolean) {
+        if (value === translateAllElements) return
+        translateAllElements = value
+        // Website rules are gated at compile time — recompile with the new
+        // answer before anything reads `siteRules`.
+        refreshCompiledSiteRules()
+        await markParagraphElement(document.body)
+        if (!translateStatus) return
+        controller = new AbortController()
+        void retranslateNeedsTranslateParagraphs()
     }
 
     async function updateDefaultStrategy(strategy: string, activeFlag: boolean) {
@@ -1690,8 +1730,26 @@ export async function content() {
         refreshCompiledSiteRules()
     }
 
+    /**
+     * Neutralize the website rules' element gates when this site is set to
+     * "translate all elements".
+     *
+     * Done here rather than at the consumption point so that everything reading
+     * `siteRules` agrees — the marking scan AND `warnOnRuleMiss`, which would
+     * otherwise report an include selector that is no longer in force.
+     *
+     * `injectCss` is deliberately kept: it is a display fix that makes room for
+     * a translation (lifting a line-clamp, undoing an overflow:hidden), not a
+     * filter on which elements get translated. Dropping it on the site where
+     * MORE gets translated is the wrong direction.
+     */
+    function applyTranslateAllOverride(compiled: CompiledSiteRules): CompiledSiteRules {
+        if (!translateAllElements) return compiled
+        return { ...compiled, includeSelector: "", excludeSelector: "" }
+    }
+
     function refreshCompiledSiteRules(): boolean {
-        const next = compileCandidates(siteRuleCandidates)
+        const next = applyTranslateAllOverride(compileCandidates(siteRuleCandidates))
         const changed = next.includeSelector !== siteRules.includeSelector
             || next.excludeSelector !== siteRules.excludeSelector
             || next.injectCss !== siteRules.injectCss
@@ -2379,11 +2437,20 @@ export async function content() {
         }
         // Once per scan, not per element — and skipped entirely when no shadow
         // rule exists, which is the overwhelming majority of pages.
-        shadowRuleTargets = legacyRulePaths.length === 0
+        shadowRuleTargets = (translateAllElements || legacyRulePaths.length === 0)
             ? shadowRuleTargets.size === 0 ? shadowRuleTargets : new Set()
             : resolveRulePaths(legacyRulePaths);
-        const excludeSelector = joinSelectors(legacyRuleSelector, siteRules.excludeSelector);
+        // "Translate all elements" for this site: every user-authored exclusion
+        // is off. `siteRules` was already neutralized at compile time (see
+        // applyTranslateAllOverride); the legacy per-host list is dropped here.
+        const excludeSelector = translateAllElements
+            ? ""
+            : joinSelectors(legacyRuleSelector, siteRules.excludeSelector);
         const includeSelector = siteRules.includeSelector;
+        // Cached rule matches and rule-mode selections live in the same
+        // in-memory set; while the option is on, only our own inserted UI still
+        // counts as a no-translate region.
+        const noTranslateOf = translateAllElements ? isOwnNoTranslateElement : isNotTranslateElement;
         // With no include restriction the flag is true everywhere and every
         // `matches()` below is skipped outright.
         let inInclude = includeSelector === "";
@@ -2405,7 +2472,7 @@ export async function content() {
             const p = ancestors[i];
             if (!isShadowRoot(p)) {
                 if (isNotMarkElement(p)) return collectElements;
-                if (!notTranslate && isNotTranslateElement(p)) notTranslate = true;
+                if (!notTranslate && noTranslateOf(p)) notTranslate = true;
                 // Accumulate the include flag here too: a mutation-driven re-scan
                 // starts deep inside the include region, and without this walk it
                 // would look like it is outside one.
@@ -2464,7 +2531,7 @@ export async function content() {
                 // its host sits in.
             } else {
                 if (isNotMarkElement(el)) continue;
-                if (!nt && isNotTranslateElement(el)) nt = true;
+                if (!nt && noTranslateOf(el)) nt = true;
                 if (!nt && matchesSelector(el, excludeSelector)) {
                     // Cache the positive rule match so re-scans of this
                     // subtree short-circuit via isNotTranslateElement.

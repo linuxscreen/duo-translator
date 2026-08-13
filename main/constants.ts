@@ -218,6 +218,11 @@ export enum ACTION {
     DETECT_LANGUAGE = 'detectLanguage',
     STYLE_CHANGED = 'styleChanged',
     DOMAIN_STRATEGY_CHANGED = 'domainStrategyChanged',
+    // The per-domain "translate all elements" switch was flipped in the popup.
+    // Sent to every frame of the tab (the flag is resolved from the TOP
+    // domain, so sub-frames share it). Content re-marks the page with the
+    // user's exclusions turned on/off and re-drives translation if it is on.
+    TRANSLATE_ALL_ELEMENTS_CHANGED = 'translateAllElementsChanged',
     ENTER_SELECTION_MODE = 'enterSelectionMode',
     LEAVE_SELECTION_MODE = 'leaveSelectionMode',
     AI_OPEN_WORKBENCH = 'aiOpenWorkbench',

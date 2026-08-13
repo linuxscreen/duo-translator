@@ -147,12 +147,20 @@ export function clearParagraphMarks(): void {
 // and rule mode toggling a selection. Consumed only via `isNoTranslate` in
 // the marking scan (ancestor walk + descent) — never enumerated, so a
 // WeakSet suffices: no cleanup wiring, detached elements just get GC'd.
+//
+// Two sets, because they answer to different switches. The per-domain
+// "translate all elements" option turns the USER's exclusions off, and the
+// scan then has to ignore every rule-derived mark — but our own inserted UI
+// (the video-subtitle overlay) is a hard exclusion that no user option may
+// lift, so it is marked as `own` and kept in a set the scan always honors.
 // ---------------------------------------------------------------------------
 
 let noTranslateMarks = new WeakSet<Element>();
+const ownNoTranslateMarks = new WeakSet<Element>();
 
-export function markNoTranslate(el: Element): void {
-    noTranslateMarks.add(el);
+export function markNoTranslate(el: Element, options?: { own?: boolean }): void {
+    if (options?.own) ownNoTranslateMarks.add(el);
+    else noTranslateMarks.add(el);
 }
 
 export function unmarkNoTranslate(el: Element): void {
@@ -160,7 +168,12 @@ export function unmarkNoTranslate(el: Element): void {
 }
 
 export function isNoTranslate(el: Element): boolean {
-    return noTranslateMarks.has(el);
+    return noTranslateMarks.has(el) || ownNoTranslateMarks.has(el);
+}
+
+/** Only the marks the user cannot switch off — see the two-set note above. */
+export function isOwnNoTranslate(el: Element): boolean {
+    return ownNoTranslateMarks.has(el);
 }
 
 /** Forget every no-translate mark (WeakSet has no clear() — reassign). */

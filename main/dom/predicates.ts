@@ -2,12 +2,21 @@
 // Extracted from main/content.ts so the marking/skip rules are unit-testable
 // without a full content() context.
 import { excludedTagSet } from "@/main/constants";
-import { isNoTranslate } from "@/main/dom/paragraphMarks";
+import { isNoTranslate, isOwnNoTranslate } from "@/main/dom/paragraphMarks";
 import { isOwnHost } from "@/main/dom/shadowRoots";
 
 /** An element the user (or a rule) marked as a no-translate region. */
 export function isNotTranslateElement(element: HTMLElement): boolean {
     return isNoTranslate(element);
+}
+
+/**
+ * The same question with the user's own exclusions taken out of the answer —
+ * what the marking scan asks while the site is set to "translate all elements".
+ * Only our own inserted UI still counts.
+ */
+export function isOwnNoTranslateElement(element: HTMLElement): boolean {
+    return isOwnNoTranslate(element);
 }
 
 /** True for tags we never descend into / mark (script, style, our own UI, …). */
