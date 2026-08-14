@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-08-14
+
+### Fixed
+
+- Cloudflare human verification failing while the extension was enabled
+
+### Changed
+
+- Text inside closed shadow roots is no longer translated. Reaching into them is what broke the Cloudflare check, and the same technique guards captchas, payment fields and SSO popups. Sites built with the mainstream component frameworks are unaffected — those use open shadow roots.
+
 ## [2.2.0] - 2026-08-13
 
 ### Added
