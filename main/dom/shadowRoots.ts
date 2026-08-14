@@ -25,7 +25,7 @@
 //      attached gets scanned through the normal pending-roots path;
 //   3. the MAIN-world bridge — the ONLY way to learn about `attachShadow` called
 //      on an already-connected element, which produces no mutation record at
-//      all. That is why the bridge exists for open roots too, not just closed.
+//      all. That is the bridge's whole purpose; it does NOT open closed roots.
 import { deepContains, isShadowRoot, parentOrHost } from "@/main/dom/shadowTraversal";
 import { SHADOW_ATTACH_EVENT, SHADOW_BRIDGE_READY } from "@/main/dom/shadowBridgeProtocol";
 

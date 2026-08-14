@@ -39,7 +39,8 @@
     <button id="late">add late root</button>
     <div id="late-host"></div>
 
-    <!-- Closed root: unreachable unless the bridge forced it open. -->
+    <!-- Closed root: deliberately unreachable. The bridge honors `closed`, so
+         nothing here may ever be translated. -->
     <div id="closed-host"></div>
 
     <script>
@@ -61,7 +62,8 @@
         document.querySelector('#inline-ce x-icon').attachShadow({ mode: 'open' })
             .innerHTML = '<span>&#9733;</span>';
 
-        // Kept in a closure — with no bridge, `host.shadowRoot` is null forever.
+        // Kept in a closure, and `host.shadowRoot` stays null forever — this
+        // handle is the only way a test can look inside.
         window.__closedRoot = document.getElementById('closed-host')
             .attachShadow({ mode: 'closed' });
         window.__closedRoot.innerHTML = '<p id="cl1">Closed shadow paragraph.</p>';
