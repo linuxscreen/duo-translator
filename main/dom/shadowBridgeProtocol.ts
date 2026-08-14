@@ -13,16 +13,17 @@
 //     `event.composedPath()[0]`. `composed: true` is what makes that work when
 //     the host itself lives inside another shadow root.
 
-/** MAIN → isolated. Dispatched on the host element that just got a root. */
+/**
+ * MAIN → isolated. Dispatched on the host element that just got a root.
+ *
+ * No detail payload: the host node IS the message. (It used to carry
+ * `forcedOpen` for closed roots the bridge had rewritten to open; that rewrite
+ * is gone for good — see the header of entrypoints/shadow-bridge.content.ts.)
+ */
 export const SHADOW_ATTACH_EVENT = "duo:shadow-attached";
 
 /** isolated → MAIN (postMessage). "I am listening; replay your buffer." */
 export const SHADOW_BRIDGE_READY = "DUO_SHADOW_BRIDGE_READY";
 
-/** MAIN → isolated (postMessage). "Patch installed." Absence ⇒ open roots only. */
+/** MAIN → isolated (postMessage). "Patch installed." Absence ⇒ no late discovery. */
 export const SHADOW_BRIDGE_HELLO = "DUO_SHADOW_BRIDGE_HELLO";
-
-export interface ShadowAttachDetail {
-    /** The page asked for `mode: "closed"` and we forced it open. */
-    forcedOpen: boolean;
-}

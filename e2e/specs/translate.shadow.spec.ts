@@ -2,8 +2,9 @@ import { sendAction } from '../common/utils';
 import { test, expect } from '../fixtures/extension';
 import { mockTranslateProviders, ZH } from '../mocks/translateRoutes';
 
-// Shadow DOM support: content inside open, nested and closed shadow roots is
-// translated and restored like light DOM.
+// Shadow DOM support: content inside open and nested shadow roots is translated
+// and restored like light DOM. CLOSED roots are deliberately out of scope and
+// there is a test pinning that.
 //
 // Every assertion counts translations PER TREE via an explicit
 // `shadowRoot.querySelectorAll(...)`, never Playwright's implicit piercing —
@@ -117,16 +118,32 @@ test.describe('@shadow shadow DOM (mocked providers)', () => {
         expect(await textInRoot(page, '#late-host', '.duo-translation')).toContain(ZH);
     });
 
-    test('a CLOSED root is translated (the bridge forced it open)', async ({ page }) => {
+    test('a CLOSED root stays closed and untranslated', async ({ page }) => {
+        // Inverted on purpose. The bridge used to rewrite `mode: "closed"` to
+        // "open" so we could translate inside; that made Cloudflare's challenge
+        // fail (it builds its widget in a closed root in the calling page), and a
+        // user who cannot pass a bot check has no way to blame a translator. So
+        // `closed` is honored, and this test exists to make reintroducing the
+        // rewrite a visible, deliberate act rather than a silent regression. See
+        // the header of entrypoints/shadow-bridge.content.ts.
         await page.goto('/shadow-dom.html');
 
-        // Observable consequence of forcing the mode, asserted on purpose so the
-        // trade-off is visible if it ever changes.
-        await expect.poll(() =>
-            page.evaluate(() => (document.getElementById('closed-host') as HTMLElement).shadowRoot !== null),
-        ).toBe(true);
+        // Sync point: the open-root work is done, so the scan has been past
+        // #closed-host too and its absence below means "skipped", not "not yet".
+        await expect.poll(() => countInRoot(page, '#open-host', '.duo-translation')).toBeGreaterThan(0);
 
-        await expect.poll(() => countInRoot(page, '#closed-host', '.duo-translation')).toBe(1);
+        expect(
+            await page.evaluate(
+                () => (document.getElementById('closed-host') as HTMLElement).shadowRoot,
+            ),
+        ).toBeNull();
+
+        // Reached through the page's own handle, which is the only way in now.
+        expect(
+            await page.evaluate(
+                () => (window as any).__closedRoot.querySelectorAll('.duo-translation').length,
+            ),
+        ).toBe(0);
     });
 
     test('restore removes every shadow translation and leaves the text byte-identical', async ({ page, serviceWorker }) => {
@@ -137,7 +154,9 @@ test.describe('@shadow shadow DOM (mocked providers)', () => {
 
         await expect.poll(async () =>
             page.evaluate(() => {
-                const hosts = ['#open-host', '#card', '#late-host', '#closed-host'];
+                // #closed-host is absent: its root is unreachable from here now,
+                // and nothing was ever written into it. See the CLOSED test.
+                const hosts = ['#open-host', '#card', '#late-host'];
                 let n = 0;
                 for (const h of hosts) {
                     const root = (document.querySelector(h) as HTMLElement | null)?.shadowRoot;

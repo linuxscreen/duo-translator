@@ -7,9 +7,10 @@
 // (in particular main/dom/shadowRoots.ts does, which is why the registry-backed
 // `deepQuerySelector*` live over there instead of here).
 //
-// Open roots only, by construction: `el.shadowRoot` is `null` for a closed one.
-// Closed roots are handled upstream by the MAIN-world bridge, which forces them
-// open before any of this runs — see entrypoints/shadow-bridge.content.ts.
+// Open roots only, by construction: `el.shadowRoot` is `null` for a closed one,
+// so a closed subtree is simply invisible to all of this. That is deliberate and
+// permanent — see the header of entrypoints/shadow-bridge.content.ts for why we
+// no longer rewrite `mode: "closed"` to open.
 
 /** Depth cap for the descent loops: a pathological component can't hang us. */
 const MAX_PIERCE_DEPTH = 32;
