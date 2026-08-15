@@ -10,9 +10,12 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { segmentParagraph } from "@/main/dom/segments";
 import {
     directChildOf,
+    duoRecordCoversUnit,
     isPointOverRects,
     nodesInRange,
     rangeContains,
+    singleResultCoversUnit,
+    unitContainsNode,
     unitRangeOf,
 } from "@/main/dom/unitHit";
 
@@ -198,5 +201,68 @@ describe("the translating indicator is stepped over", () => {
         const units = segmentParagraph(div).units;
         const last = units[units.length - 1];
         expect(nodesInRange(div, unitRangeOf(last))).not.toContain(marker);
+    });
+});
+
+describe("unitContainsNode / coverage after a late sibling insert", () => {
+    it("whole-element units still contain their original text nodes after a button is appended", () => {
+        const p = el("<p>Hello world</p>");
+        const text = p.firstChild as Text;
+        const unitBefore = segmentParagraph(p).units[0];
+        expect(unitContainsNode(unitBefore, text)).toBe(true);
+
+        const btn = document.createElement("button");
+        btn.textContent = "Copy";
+        p.appendChild(btn);
+        const unitAfter = segmentParagraph(p).units[0];
+        expect(singleResultCoversUnit(unitAfter, { replacedTextNodes: [text] })).toBe(true);
+    });
+
+    it("a detached text node is not coverage", () => {
+        const p = el("<p>Hello</p>");
+        const stale = document.createTextNode("gone");
+        const unit = segmentParagraph(p).units[0];
+        expect(unitContainsNode(unit, stale)).toBe(false);
+        expect(singleResultCoversUnit(unit, { replacedTextNodes: [stale] })).toBe(false);
+    });
+
+    it("a new unit after <br><br> is not covered by the first unit's text nodes", () => {
+        const div = el("<div>first<br><br>second</div>");
+        const [first, second] = segmentParagraph(div).units;
+        const firstText = first.nodes[0] as Text;
+        expect(singleResultCoversUnit(first, { textNodes: [firstText] })).toBe(true);
+        expect(singleResultCoversUnit(second, { textNodes: [firstText] })).toBe(false);
+    });
+
+    it("duoRecordCoversUnit survives a block inserted between the run and the translation", () => {
+        const div = el(
+            '<div>hello<br class="duo-divide"><span class="duo-translation">你好</span></div>',
+        );
+        const text = div.firstChild as Text;
+        const translation = div.querySelector(".duo-translation") as HTMLElement;
+        const toolbar = document.createElement("div");
+        toolbar.textContent = "Share";
+        div.insertBefore(toolbar, div.querySelector(".duo-divide"));
+
+        const units = segmentParagraph(div).units;
+        const original = units.find((u) => u.nodes.includes(text))!;
+        expect(original.translated).toBe(false);
+        expect(duoRecordCoversUnit(original, { translation, anchor: text })).toBe(true);
+
+        const extra = units.find((u) => u !== original);
+        if (extra) {
+            expect(duoRecordCoversUnit(extra, { translation, anchor: text })).toBe(false);
+        }
+    });
+
+    it("duoRecordCoversUnit is false once the translation is detached", () => {
+        const p = el("<p>hello</p>");
+        const text = p.firstChild as Text;
+        const translation = document.createElement("span");
+        translation.className = "duo-translation";
+        p.appendChild(translation);
+        const unit = segmentParagraph(p).units[0];
+        translation.remove();
+        expect(duoRecordCoversUnit(unit, { translation, anchor: text })).toBe(false);
     });
 });

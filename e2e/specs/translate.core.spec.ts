@@ -110,4 +110,85 @@ test.describe('@core page translation (mocked providers)', () => {
         expect(text1).toEqual('This is ' + newText + ' English text.');
         await expect(page.locator('#p4 .duo-translation')).toContainText(`${ZH}This is ${ZH}${newText}${ZH} English text.`);
     });
+
+    // A click-action surface (share/copy toolbar, modal host, portal button)
+    // is a childList mutation on <body> or inside an already-translated
+    // paragraph. The observer must pick up genuinely new copy, but must not
+    // send the existing runs back to the provider.
+    test('click-action UI does not re-translate already-translated paragraphs (double)', async ({ page }) => {
+        await page.goto('/basic.html');
+        await expect(page.locator('#p1 .duo-translation')).toContainText(ZH);
+        const before = await page.locator('.duo-translation').count();
+
+        await page.evaluate(() => {
+            const portal = document.createElement('button');
+            portal.id = 'click-op-portal';
+            portal.textContent = 'Share';
+            document.body.appendChild(portal);
+
+            const inline = document.createElement('button');
+            inline.id = 'click-op-inline';
+            inline.textContent = 'Copy';
+            document.querySelector('#p1')!.appendChild(inline);
+
+            const nested = document.createElement('button');
+            nested.id = 'click-op-nested';
+            nested.textContent = 'More';
+            document.querySelector('#p4 a')!.appendChild(nested);
+        });
+
+        // Mutation debounce is 50ms; give the observer a chance to misbehave.
+        await expect(page.locator('#click-op-portal')).toBeVisible();
+        await expect.poll(async () => page.locator('.duo-translation').count(), {
+            timeout: 1500,
+        }).toBe(before);
+        await expect(page.locator('#p1 > .duo-translation')).toHaveCount(1);
+        const doubled = await page.locator('#p1 > .duo-translation').textContent();
+        expect(doubled?.split(ZH).length).toBe(2);
+
+        // New copy after the click-action still translates.
+        await page.evaluate(() => {
+            const next = document.createElement('p');
+            next.id = 'after-click';
+            next.textContent = 'A brand new paragraph after the click action.';
+            document.body.appendChild(next);
+        });
+        await expect(page.locator('#after-click .duo-translation')).toContainText(ZH);
+    });
+
+    test('click-action UI does not re-translate already-translated paragraphs (single)', async ({ page, seedConfig }) => {
+        await seedConfig({ config_viewStrategy: 'single', config_translateService: 'microsoft' });
+        await page.goto('/basic.html');
+        await expect(page.locator('#p1')).toContainText(ZH);
+
+        const zhIn = (id: string) => page.evaluate(({ id, zh }) => {
+            return ((document.getElementById(id)?.textContent) || '').split(zh).length - 1;
+        }, { id, zh: ZH });
+
+        expect(await zhIn('p1')).toBe(1);
+        expect(await zhIn('p4')).toBeGreaterThanOrEqual(1);
+
+        await page.evaluate(() => {
+            const portal = document.createElement('button');
+            portal.id = 'click-op-portal';
+            portal.textContent = 'Share';
+            document.body.appendChild(portal);
+
+            const inline = document.createElement('button');
+            inline.id = 'click-op-inline';
+            inline.textContent = 'Copy';
+            document.querySelector('#p1')!.appendChild(inline);
+        });
+
+        await expect(page.locator('#click-op-portal')).toBeVisible();
+        await expect.poll(async () => zhIn('p1'), { timeout: 1500 }).toBe(1);
+
+        await page.evaluate(() => {
+            const next = document.createElement('p');
+            next.id = 'after-click';
+            next.textContent = 'A brand new paragraph after the click action.';
+            document.body.appendChild(next);
+        });
+        await expect(page.locator('#after-click')).toContainText(ZH);
+    });
 });

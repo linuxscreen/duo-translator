@@ -90,6 +90,63 @@ export function nodesInRange(container: UnitContainer, range: UnitRange): ChildN
     return out;
 }
 
+/**
+ * Whether `node` still belongs to `unit` — itself, or a descendant of one of
+ * the unit's nodes. Used to decide that a SINGLE-view translation still covers
+ * this run after the page has inserted unrelated siblings (a click-action
+ * button, a portal host, …) around it.
+ *
+ * A detached node never counts: the page has replaced that text, so the old
+ * translation no longer applies.
+ */
+export function unitContainsNode(unit: TranslationUnit, node: Node): boolean {
+    if (!node.isConnected) return false;
+    if (unit.wholeElement) {
+        return node === unit.container || unit.container.contains(node);
+    }
+    for (const child of unit.nodes) {
+        if (child === node) return true;
+        if (child.nodeType === Node.ELEMENT_NODE && (child as Element).contains(node)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * DOUBLE bookkeeping: the inserted translation is still in the tree AND the
+ * unit still owns the content node we hung it off. Structural inserts that
+ * sit *between* the run and `.duo-translation` make `unit.translated` flip
+ * to false (the marker is no longer adjacent), but this still recognizes
+ * the original run so it is not sent to the provider a second time.
+ */
+export function duoRecordCoversUnit(
+    unit: TranslationUnit,
+    record: { translation: Node; anchor: ChildNode | null },
+): boolean {
+    return record.translation.isConnected
+        && !!record.anchor
+        && record.anchor.isConnected
+        && unit.nodes.includes(record.anchor);
+}
+
+/**
+ * SINGLE bookkeeping: any of the result's written-back text nodes still
+ * lives inside this unit. New units (a fresh run after `<br><br>`) do not
+ * share those nodes and so are not covered.
+ */
+export function singleResultCoversUnit(
+    unit: TranslationUnit,
+    result: { replacedTextNodes?: Array<Node | null | undefined>; textNodes?: Array<Node | null | undefined> },
+): boolean {
+    const texts = result.replacedTextNodes ?? result.textNodes;
+    if (!texts) return false;
+    for (const text of texts) {
+        if (text && unitContainsNode(unit, text)) return true;
+    }
+    return false;
+}
+
 /** Whether `child` (a direct child of `container`) lies inside `range`. */
 export function rangeContains(
     container: UnitContainer,

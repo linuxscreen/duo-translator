@@ -76,7 +76,7 @@ import {
 // Type-only + one const: the progress bar surface itself is loaded lazily (see
 // onBuiltinAiDownloadProgress), so this adds no weight to the content bundle.
 import { BUILTIN_AI_MODEL_DOWNLOADING, type BuiltinAiDownloadProgress } from "@/main/builtinAi/types";
-import { directChildOf, nodesInRange, rangeContains, resolveCandidateAtPoint, siblingSkippingIndicators, unitRangeOf } from "@/main/dom/unitHit";
+import { directChildOf, duoRecordCoversUnit, nodesInRange, rangeContains, resolveCandidateAtPoint, siblingSkippingIndicators, singleResultCoversUnit, unitRangeOf } from "@/main/dom/unitHit";
 import {
     buildSentenceRanges,
     clearSentenceHighlight,
@@ -373,6 +373,13 @@ export async function content() {
          * Empty on the Highlight-API path, which never touches the text.
          */
         texts: { text: Text, content: string }[]
+        /**
+         * The unit's last content node at insert time. Exclusive anchors grow
+         * when the page later injects siblings inside the original range (a
+         * click-action bar between the run and `.duo-translation`), so this
+         * node is what still identifies "the same run" after that.
+         */
+        anchor: ChildNode
     }
     let duoTranslatedElementMap = new Map<UnitContainer, DuoUnitRecord[]>()
 
@@ -1168,7 +1175,7 @@ export async function content() {
             })
         }
         for (const unit of segmentParagraph(container).units) {
-            if (unit.translated) continue
+            if (!unitNeedsTranslation(unit)) continue
             candidates.push({ container, kind: "unit", range: unitRangeOf(unit), unit })
         }
         if (candidates.length === 0) return null
@@ -1202,7 +1209,7 @@ export async function content() {
                 // Units are re-derived, so match by the stable identity: the
                 // exclusive anchors.
                 for (const unit of segmentParagraph(target.container).units) {
-                    if (unit.translated) continue
+                    if (!unitNeedsTranslation(unit)) continue
                     const range = unitRangeOf(unit)
                     if (range.start === target.range.start && range.end === target.range.end) {
                         return { ...target, range, unit }
@@ -1335,6 +1342,28 @@ export async function content() {
         openSelectionTranslate({ text, rect, keepPosition })
     }
 
+    /**
+     * Does this unit still need a provider round?
+     *
+     * `unit.translated` only sees an adjacent `.duo-translation` (DOUBLE).
+     * SINGLE writes back in place and leaves no marker, so a re-scan after
+     * an unrelated childList mutation (a click-action button portaled onto
+     * `<body>`, a toolbar injected into the paragraph) would otherwise treat
+     * every already-translated run as new work and send it again.
+     */
+    function unitNeedsTranslation(unit: TranslationUnit): boolean {
+        if (unit.translated) return false;
+        const duoRecords = duoTranslatedElementMap.get(unit.container);
+        if (duoRecords?.some((record) => duoRecordCoversUnit(unit, record))) return false;
+        const singleResults = translatedElementMap.get(unit.container);
+        if (singleResults?.some((result) => singleResultCoversUnit(unit, result))) return false;
+        return true;
+    }
+
+    function containerNeedsTranslation(container: UnitContainer): boolean {
+        return segmentParagraph(container).units.some(unitNeedsTranslation);
+    }
+
     function scheduleMutationProcess() {
         if (pendingProcessTimer != null || processingActive) return;
         pendingProcessTimer = window.setTimeout(processPendingMutations, PROCESS_DEBOUNCE_MS);
@@ -1376,7 +1405,18 @@ export async function content() {
                         continue
                     }
                     for (const ele of collected) {
+                        // In-flight containers are already going to the provider;
+                        // re-queueing them would reset PENDING → ORIGINAL and,
+                        // on the next intersection, send the same text again.
+                        if (paragraphElementMap.get(ele) === ELEMENT_STATUS.PENDING) continue;
+                        if (ignoreMutationElements.has(ele)) continue;
+                        if (!containerNeedsTranslation(ele)) continue;
                         paragraphElementMap.set(ele, ELEMENT_STATUS.ORIGINAL);
+                        // Already-translated containers were unobserved on
+                        // success; unobserve first so a still-watched element
+                        // actually gets a fresh callback (observe() is a no-op
+                        // while the observer is already watching it).
+                        unobserveContainer(intersectionObserver, ele);
                         observeContainer(intersectionObserver, ele);
                     }
                 }
@@ -2285,16 +2325,20 @@ export async function content() {
             ignoreMutationElements.add(text)
         }))
         await restore(results)
+        // Drop the entries NOW, not in the trailing microtask: the
+        // characterData path restores and then immediately re-translates, and
+        // `unitNeedsTranslation` would otherwise still see the old results
+        // and skip the new text.
+        if (remaining.length > 0) {
+            translatedElementMap.set(element, remaining)
+        } else {
+            translatedElementMap.delete(element)
+        }
         Promise.resolve().then(() => {
             ignoreMutationElements.delete(element)
             results.forEach(result => result.replacedTextNodes?.forEach(text => {
                 ignoreMutationElements.delete(text)
             }))
-            if (remaining.length > 0) {
-                translatedElementMap.set(element, remaining)
-            } else {
-                translatedElementMap.delete(element)
-            }
             syncSiteRuleCss()
         })
     }
@@ -2348,14 +2392,15 @@ export async function content() {
                 }))
             })
             await restore(results)
+            const restored = new Map(translatedElementMap)
+            translatedElementMap.clear()
             Promise.resolve().then(() => {
-                translatedElementMap.forEach((elementResults, element) => {
+                restored.forEach((elementResults, element) => {
                     ignoreMutationElements.delete(element)
                     elementResults.forEach(result => result.replacedTextNodes?.forEach(text => {
                         ignoreMutationElements.delete(text)
                     }))
                 })
-                translatedElementMap.clear()
                 syncSiteRuleCss()
             })
         }
@@ -2547,7 +2592,12 @@ export async function content() {
                         continue;
                     }
                 }
-                if (!notTranslate && inInclude) collectElements.push(p);
+                // Same gate as the DFS collect below — an already-translated
+                // paragraph must not be re-queued just because a click-action
+                // (or any other child) appeared inside it.
+                if (!notTranslate && inInclude && containerNeedsTranslation(p)) {
+                    collectElements.push(p);
+                }
                 return collectElements;
             }
         }
@@ -2630,7 +2680,7 @@ export async function content() {
                 // and cleanupParagraphMarks' pure-mark early-return would
                 // otherwise strand every one of them.
                 markParagraph(el, !nt && inc, seg.descendChildren.length > 0 || shadow !== null);
-                if (!nt && inc && seg.units.some(u => !u.translated)) collectElements.push(el);
+                if (!nt && inc && seg.units.some(unitNeedsTranslation)) collectElements.push(el);
             }
             // Push in reverse so pop order = forward visit. Skip children the
             // page detached while we were yielding. `parentNode`, not
@@ -2873,7 +2923,7 @@ export async function content() {
         // unit already translated) are skipped.
         const units: TranslationUnit[] = []
         for (const element of elements) {
-            units.push(...segmentParagraph(element).units.filter(u => !u.translated))
+            units.push(...segmentParagraph(element).units.filter(unitNeedsTranslation))
         }
         await translateUnits(units, context)
     }
@@ -2903,7 +2953,7 @@ export async function content() {
             for (const unit of segmentParagraph(container).units) {
                 const candidate = unitRangeOf(unit)
                 if (candidate.start !== range.start || candidate.end !== range.end) continue
-                if (unit.translated) alreadyTranslated = true
+                if (!unitNeedsTranslation(unit)) alreadyTranslated = true
                 else matched = unit
                 break
             }
@@ -3091,7 +3141,7 @@ export async function content() {
                             element.appendChild(translatedElement)
                         }
                         insertedAny = true
-                        const record: DuoUnitRecord = { range, translation: translatedElement, divide, sentences: null, texts: [] }
+                        const record: DuoUnitRecord = { range, translation: translatedElement, divide, sentences: null, texts: [], anchor: lastChild }
                         records.push(record)
 
                         // Bilingual sentence highlighting, gated per unit — a
