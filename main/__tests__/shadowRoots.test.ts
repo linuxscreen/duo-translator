@@ -98,23 +98,9 @@ describe("discovery", () => {
         expect(noteElement(host)).toBe(root);
 
         expect(onRootAdded).toHaveBeenCalledTimes(1);
-        expect(onRootAdded).toHaveBeenCalledWith(root, "scan");
+        expect(onRootAdded).toHaveBeenCalledWith(root);
         expect(isKnownRoot(root)).toBe(true);
         expect(knownRoots()).toEqual([root]);
-    });
-
-    it("tags the source so the caller knows whether to queue a scan", () => {
-        // The marking scan is about to descend into what it found; a root the
-        // bridge reports has never been looked at by anything.
-        const onRootAdded = vi.fn();
-        startShadowDiscovery({ onRootAdded });
-        const { host: a } = pageHost("a");
-        const { host: b } = pageHost("b");
-
-        noteElement(a);
-        noteElement(b, "bridge");
-
-        expect(onRootAdded.mock.calls.map((c) => c[1])).toEqual(["scan", "bridge"]);
     });
 
     it("returns null for an element with no shadow root", () => {

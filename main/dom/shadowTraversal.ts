@@ -9,8 +9,9 @@
 //
 // Open roots only, by construction: `el.shadowRoot` is `null` for a closed one,
 // so a closed subtree is simply invisible to all of this. That is deliberate and
-// permanent — see the header of entrypoints/shadow-bridge.content.ts for why we
-// no longer rewrite `mode: "closed"` to open.
+// permanent — an author choosing `closed` is saying "stay out", and the widgets
+// that do (Turnstile, hCaptcha, Stripe Elements, SSO popups) are exactly the
+// ones we should not be translating. See the header of main/dom/shadowRoots.ts.
 
 /** Depth cap for the descent loops: a pathological component can't hang us. */
 const MAX_PIERCE_DEPTH = 32;

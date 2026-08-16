@@ -140,35 +140,28 @@ export async function content() {
     let markStartupReady: () => void = () => { }
     const startupReady = new Promise<void>((resolve) => { markStartupReady = resolve })
 
-    // Shadow-root discovery is registered in the same first synchronous pass and
-    // for the same reason: the MAIN-world bridge runs at document_start and
-    // buffers the roots attached before we are listening, but only until the
-    // handshake — and page components attach most of their roots long before
-    // `content()` finishes awaiting its config reads.
+    // Shadow-root discovery is registered in this first synchronous pass so the
+    // handlers exist before anything can find a root.
     //
-    // The handlers can fire immediately — the bridge replays its buffer as soon
-    // as we say we are listening — which is well before the translation pipeline
-    // exists: everything below the first `await` (the observer, the pending-scan
-    // queue, the observe-state flags) is in its temporal dead zone until then,
-    // and reading any of it from here throws ReferenceError and takes the whole
-    // content script down. Hence the gate: before the pipeline is up, the only
-    // safe action is styling (module-level state), and nothing else is needed —
-    // `startObserveDom()` observes every root discovered so far, and the initial
-    // body scan descends into every root reachable from <body>.
+    // `shadowPipelineReady` is a temporal-dead-zone gate, and it stays even
+    // though every root now arrives from the marking scan (which cannot run
+    // before the pipeline exists). Everything below the first `await` — the
+    // observer, the pending-scan queue, the observe-state flags — is in its TDZ
+    // until then, and reading any of it from a handler that fires early throws
+    // ReferenceError and takes the whole content script down. That happened
+    // once, back when a MAIN-world bridge could report roots at document_start.
+    // Before the pipeline is up the only safe action is styling (module-level
+    // state), and nothing else is needed anyway: `startObserveDom()` observes
+    // every root discovered so far, and the initial body scan descends into
+    // every root reachable from <body>.
     let shadowPipelineReady = false;
     startShadowDiscovery({
-        onRootAdded: (root, source) => {
+        onRootAdded: (root) => {
             styleShadowRoot(root);
             if (!shadowPipelineReady) return;
+            // No scan to queue: the only caller is the marking scan itself, and
+            // the root it just found is already on its DFS stack.
             observeShadowRoot(root);
-            // A root the marking scan found is already on its DFS stack. A root
-            // the bridge reported was attached to an element that is ALREADY in
-            // the document — an event that produces no mutation record — so
-            // nothing else will ever look at it. Queue it.
-            if (source === "bridge") {
-                pendingMarkRoots.add(root);
-                scheduleMutationProcess();
-            }
         },
         onRootRemoved: (root) => {
             unstyleShadowRoot(root);
@@ -500,13 +493,15 @@ export async function content() {
     // ===== Observer state =====
     //
     // Declared HERE, in content()'s first synchronous pass — NOT next to
-    // startObserveDom() further down. `startShadowDiscovery` is registered above
-    // and its onRootAdded / onRootRemoved can fire while the startup awaits are
-    // still pending; a `let` further down the closure body is in its temporal
-    // dead zone until execution reaches it, so touching it from an early
-    // callback throws ReferenceError and takes the whole content script down
-    // with it. (Function declarations are hoisted, so the functions themselves
-    // may stay where they read best — only their state has to move.)
+    // startObserveDom() further down. `startShadowDiscovery` is registered above,
+    // and any handler of it that fires while the startup awaits are still
+    // pending would read these: a `let` further down the closure body is in its
+    // temporal dead zone until execution reaches it, so touching it from an
+    // early callback throws ReferenceError and takes the whole content script
+    // down with it. That is a real regression, not a hypothetical — it is why
+    // `shadowPipelineReady` gates that callback. (Function declarations are
+    // hoisted, so the functions themselves may stay where they read best — only
+    // their state has to move.)
     //
     // No attribute observation: paragraph marks live in content-script memory
     // (paragraphMarks.ts), so page-side class rewrites can't touch them and our
