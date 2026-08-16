@@ -18,27 +18,50 @@
 //     MutationObserver can observe it, styles can be injected into it, and the
 //     deep queries below have somewhere to look.
 //
-// Discovery has three sources, and all three are needed:
+// Discovery has two sources:
 //   1. the marking scan, via `noteElement` on each visited element (one property
 //      read) — covers everything present when a scan runs;
 //   2. the content MutationObserver — a host inserted with its root already
-//      attached gets scanned through the normal pending-roots path;
-//   3. the MAIN-world bridge — the ONLY way to learn about `attachShadow` called
-//      on an already-connected element, which produces no mutation record at
-//      all. That is the bridge's whole purpose; it does NOT open closed roots.
+//      attached gets scanned through the normal pending-roots path.
+//
+// There used to be a third: a MAIN-world content script that wrapped
+// `Element.prototype.attachShadow`, the only notification point for a root
+// attached to an ALREADY-CONNECTED element (that emits no mutation record of
+// any kind). **It is gone, and must not come back in that form.** Replacing a
+// native DOM method is exactly what anti-bot fingerprinting looks for — the
+// patched function fails the `[native code]` check on `toString()`, and an
+// anonymous function assigned to a member expression also reports `name: ""`
+// where the native one reports `"attachShadow"`. On leetcode.com's login page
+// that got Cloudflare to answer 600010 ("Bot behavior detected"), telling the
+// user they were a bot with nothing on screen pointing at a translation
+// extension. Bisected: with a second DOM-heavy extension held installed,
+// removing the patch was the single change that flipped fail → pass; keeping
+// the patch but skipping the notification did not.
+//
+// What that costs is small, because (2) covers more than it looks like:
+// `connectedCallback` runs synchronously during insertion, and our observer
+// callback is a microtask that runs after that task — so by the time we scan,
+// the root a custom element attached is already there. That is Lit, Stencil,
+// FAST and every mainstream design system. What is genuinely lost is a root
+// attached to an element that has been connected for a while, where no light-DOM
+// mutation follows near it (an interaction-triggered `attachShadow` that touches
+// nothing else). Even that self-heals on the next mutation under that host,
+// since `noteElement` runs on every element every scan.
+//
+// A periodic idle sweep would buy those cases back for ~1 ms a pass, and was
+// deliberately NOT added: it means a permanent background timer on every page,
+// and no real site has been shown to need it. Add it when one is.
 import { deepContains, isShadowRoot, parentOrHost } from "@/main/dom/shadowTraversal";
-import { SHADOW_ATTACH_EVENT, SHADOW_BRIDGE_READY } from "@/main/dom/shadowBridgeProtocol";
-
-/** Where a root came from — the caller needs to know whether to scan it. */
-export type RootSource =
-    /** Found by the marking scan, which is already about to descend into it. */
-    | "scan"
-    /** Reported by the MAIN-world bridge; nothing has scanned it yet. */
-    | "bridge";
 
 export interface ShadowDiscoveryHandlers {
-    /** A page root we had not seen before. Fired once per root. */
-    onRootAdded?: (root: ShadowRoot, source: RootSource) => void;
+    /**
+     * A page root we had not seen before. Fired once per root.
+     *
+     * Every root now arrives from the marking scan, which is already about to
+     * descend into it — so the handler only has to style and observe it, never
+     * to queue it for a scan of its own.
+     */
+    onRootAdded?: (root: ShadowRoot) => void;
     /** A page root whose host left the document. */
     onRootRemoved?: (root: ShadowRoot) => void;
 }
@@ -105,13 +128,13 @@ export function isInOwnUi(node: Node | null | undefined): boolean {
  * Called once per element visited by the marking scan, so it must stay at one
  * property read plus a Set lookup.
  */
-export function noteElement(el: Element, source: RootSource = "scan"): ShadowRoot | null {
+export function noteElement(el: Element): ShadowRoot | null {
     const root = (el as HTMLElement).shadowRoot;
     if (!root) return null;
     if (ownHosts.has(el) || ownRoots.has(root)) return null;
     if (!pageRoots.has(root)) {
         pageRoots.add(root);
-        handlers.onRootAdded?.(root, source);
+        handlers.onRootAdded?.(root);
     }
     return root;
 }
@@ -164,90 +187,11 @@ export function forgetRootsUnder(removed: Node): void {
     }
 }
 
-/**
- * Register the discovery callbacks and open the MAIN-world bridge. Returns a
- * disposer.
- *
- * Must be called in `content()`'s FIRST synchronous pass. The bridge runs at
- * document_start and buffers hosts until we say we are listening; components
- * attach most of their roots long before `content()` finishes awaiting its
- * config reads, so a late handshake means a late (or, past the buffer cap,
- * lost) replay.
- */
+/** Register the discovery callbacks. Returns a disposer. */
 export function startShadowDiscovery(next: ShadowDiscoveryHandlers): () => void {
     handlers = next;
-    const stopBridge = startShadowBridge();
     return () => {
         handlers = {};
-        stopBridge();
-    };
-}
-
-// ---------------------------------------------------------------------------
-// MAIN-world bridge (isolated side)
-// ---------------------------------------------------------------------------
-
-/** Probes allowed per window before we assume the page is flooding us. */
-const PROBE_RATE_LIMIT = 500;
-const PROBE_WINDOW_MS = 1000;
-/** How long to stay deaf after tripping the limit. */
-const PROBE_COOLDOWN_MS = 5000;
-
-function startShadowBridge(): () => void {
-    if (typeof window === "undefined" || typeof document === "undefined") {
-        return () => { };
-    }
-
-    const queued = new Set<Element>();
-    let flushScheduled = false;
-    let windowStart = 0;
-    let windowCount = 0;
-    let deafUntil = 0;
-
-    const flush = () => {
-        flushScheduled = false;
-        for (const host of queued) noteElement(host, "bridge");
-        queued.clear();
-    };
-
-    const onAttach = (e: Event) => {
-        const now = Date.now();
-        if (now < deafUntil) return;
-        // A page script can dispatch this event too. Nothing privileged sits
-        // behind it — the worst it buys is a probe of a node we would probe
-        // anyway — so the only real risk is CPU. Hence a rate limit rather than
-        // a nonce, which the page could simply read off the event it observes.
-        if (now - windowStart > PROBE_WINDOW_MS) {
-            windowStart = now;
-            windowCount = 0;
-        }
-        if (++windowCount > PROBE_RATE_LIMIT) {
-            deafUntil = now + PROBE_COOLDOWN_MS;
-            queued.clear();
-            return;
-        }
-        const host = (e as CustomEvent).composedPath?.()[0];
-        if (!host || (host as Node).nodeType !== Node.ELEMENT_NODE) return;
-        if (!(host as HTMLElement).shadowRoot) return;
-        queued.add(host as Element);
-        if (!flushScheduled) {
-            flushScheduled = true;
-            // Coalesced into one batch: a component tree mounting attaches many
-            // roots in one synchronous burst.
-            queueMicrotask(flush);
-        }
-    };
-
-    document.addEventListener(SHADOW_ATTACH_EVENT, onAttach, true);
-    try {
-        window.postMessage({ type: SHADOW_BRIDGE_READY }, "*");
-    } catch {
-        // Bridge absent (older browser, hardened page) — open roots still get
-        // found by the marking scan, we just lose late attachments.
-    }
-
-    return () => {
-        document.removeEventListener(SHADOW_ATTACH_EVENT, onAttach, true);
     };
 }
 

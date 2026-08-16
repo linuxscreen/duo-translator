@@ -45,26 +45,32 @@ test.describe('@bundle background/content separation', () => {
         }
     });
 
-    test('the shadow bridge stays dependency-free and page-safe', () => {
-        // It patches Element.prototype.attachShadow on EVERY page in EVERY
-        // frame, in the page's own world. Anything it drags in runs there too,
-        // so it must import nothing but the protocol constants — same discipline
-        // as the YouTube bridge.
-        const bridge = readFileSync(`${OUT}/content-scripts/shadow-bridge.js`, 'utf8');
+    test('no MAIN-world script patches a native DOM method on every page', () => {
+        // There used to be a shadow bridge here: a MAIN-world content script,
+        // matching every http(s) URL in every frame, that replaced
+        // `Element.prototype.attachShadow` so we could learn about roots
+        // attached to already-connected elements. Anti-bot fingerprinting reads
+        // exactly that — the patched function fails `toString()`'s
+        // `[native code]` check — and it got Cloudflare to answer 600010 ("Bot
+        // behavior detected") on a real login page, which tells the user they
+        // are a bot with nothing pointing at a translation extension. See the
+        // header of main/dom/shadowRoots.ts.
+        //
+        // Asserted at the bundle level because the cost of the mistake is
+        // invisible in every other test: everything keeps working, on every
+        // site, right up until a site scores the environment.
+        const manifest = JSON.parse(readFileSync(`${OUT}/manifest.json`, 'utf8'));
+        const mainWorld = (manifest.content_scripts ?? [])
+            .filter((cs: { world?: string }) => cs.world === 'MAIN');
 
-        for (const marker of [
-            'translate-pa.googleapis.com', 'cognitive.microsofttranslator.com',
-            'api.deepl.com', 'browser.translate.yandex.net',
-            'DeepL-Auth-Key', 'x-api-key', 'x-goog-api-key',
-        ]) {
-            expect(bridge, `shadow-bridge.js must not contain "${marker}"`).not.toContain(marker);
+        for (const cs of mainWorld) {
+            // The YouTube bridge is the one legitimate MAIN-world script, and
+            // it is scoped to youtube.com — never <all_urls>.
+            expect(
+                (cs.matches ?? []).every((m: string) => m.includes('youtube.com')),
+                `MAIN-world content script must stay site-scoped, got ${JSON.stringify(cs.matches)}`,
+            ).toBe(true);
         }
-        // It cannot use extension APIs from the MAIN world anyway; the one
-        // permitted `chrome.runtime.id` read is its world self-check.
-        expect(bridge).not.toContain('browser.runtime');
-        expect(bridge).toContain('chrome?.runtime?.id');
-        // The whole point: closed roots are forced open.
-        expect(bridge).toContain('attachShadow');
     });
 
     test('background bundle does contain the provider clients', () => {

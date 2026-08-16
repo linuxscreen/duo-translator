@@ -106,26 +106,39 @@ test.describe('@shadow shadow DOM (mocked providers)', () => {
         expect(iconTranslations).toBe(0);
     });
 
-    test('a root attached to an already-connected element is picked up', async ({ page }) => {
-        // Attaching a shadow root emits NO mutation record, so this only works
-        // through the MAIN-world bridge.
+    test('a root attached to an already-connected element is NOT picked up', async ({ page }) => {
+        // Inverted on purpose, like the closed-root case below. Attaching a
+        // shadow root emits NO mutation record, so the only way to see this one
+        // was a MAIN-world script wrapping `Element.prototype.attachShadow` —
+        // and that patch made Cloudflare answer 600010 ("Bot behavior
+        // detected") on a real login page. It was removed; see the header of
+        // main/dom/shadowRoots.ts for the bisect and for why no idle sweep
+        // replaced it.
+        //
+        // The fixture's #late button is the pure form of the gap: its handler
+        // ONLY attaches the root and fills it, touching nothing in the light
+        // DOM, so nothing ever asks us to re-scan that host. Components that
+        // attach in `connectedCallback` are unaffected — their host's insertion
+        // is a mutation record, and our observer callback is a microtask that
+        // runs after it, so the root is already there when we scan (covered by
+        // the tests above).
         await page.goto('/shadow-dom.html');
         await expect(page.locator('#l1 .duo-translation')).toContainText(ZH);
 
         await page.click('#late');
 
-        await expect.poll(() => countInRoot(page, '#late-host', '.duo-translation')).toBe(1);
-        expect(await textInRoot(page, '#late-host', '.duo-translation')).toContain(ZH);
+        await page.waitForTimeout(1500);
+        expect(await countInRoot(page, '#late-host', '.duo-translation')).toBe(0);
     });
 
     test('a CLOSED root stays closed and untranslated', async ({ page }) => {
-        // Inverted on purpose. The bridge used to rewrite `mode: "closed"` to
-        // "open" so we could translate inside; that made Cloudflare's challenge
-        // fail (it builds its widget in a closed root in the calling page), and a
-        // user who cannot pass a bot check has no way to blame a translator. So
-        // `closed` is honored, and this test exists to make reintroducing the
-        // rewrite a visible, deliberate act rather than a silent regression. See
-        // the header of entrypoints/shadow-bridge.content.ts.
+        // Inverted on purpose. A MAIN-world script used to rewrite
+        // `mode: "closed"` to "open" so we could translate inside; that made
+        // Cloudflare's challenge fail (it builds its widget in a closed root in
+        // the calling page), and a user who cannot pass a bot check has no way
+        // to blame a translator. So `closed` is honored, and this test exists to
+        // make reintroducing the rewrite a visible, deliberate act rather than a
+        // silent regression. See the header of main/dom/shadowRoots.ts.
         await page.goto('/shadow-dom.html');
 
         // Sync point: the open-root work is done, so the scan has been past
