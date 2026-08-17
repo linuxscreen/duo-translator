@@ -58,7 +58,8 @@ const HOST_ID = "duo-float-ball-host";
 const COLLAPSE_DELAY_MS = 150;
 const TOOLTIP_DELAY_MS = 350;
 // Keep the result visible long enough to register, then get the control back out
-// of the page's way even when the pointer has not moved after a click.
+// of the page's way — but ONLY once the pointer is no longer on the ball. See
+// `scheduleAutoRetract`.
 const AUTO_RETRACT_DELAY_MS = 700;
 
 /**
@@ -242,9 +243,20 @@ function FloatBallApp({
             setSwitchHover(false);
         }, delay);
     };
-    retractAfterDragRef.current = () => {
-        if (isDockedStyle) scheduleCollapse(AUTO_RETRACT_DELAY_MS);
+    /**
+     * Retract after an action the user just performed on the ball (toggle click,
+     * drag release, opening settings).
+     *
+     * While the pointer is still on the ball, the user is not done with it — so
+     * the only thing that may collapse it is `mouseleave`. Retracting under a
+     * stationary cursor is worse than merely surprising: no `mouseenter` can
+     * follow, so the toolbar can't be brought back without moving away first.
+     */
+    const scheduleAutoRetract = () => {
+        if (!isDockedStyle || hoveredRef.current) return;
+        scheduleCollapse(AUTO_RETRACT_DELAY_MS);
     };
+    retractAfterDragRef.current = scheduleAutoRetract;
 
     const expandBall = () => {
         cancelCollapse();
@@ -288,9 +300,11 @@ function FloatBallApp({
         if (!guardExtensionAlive()) return;
         if (active) deps.onRestore();
         else deps.onTranslate();
-        if (isDockedStyle) {
+        // Pointer still on the switch → keep the toolbar (and its tooltip, which
+        // now reads the opposite action) up until the pointer leaves.
+        if (isDockedStyle && !hoveredRef.current) {
             onSwitchLeave();
-            scheduleCollapse(AUTO_RETRACT_DELAY_MS);
+            scheduleAutoRetract();
         }
     };
 
@@ -311,6 +325,9 @@ function FloatBallApp({
         // surface/position as clicking the icon. Background calls
         // chrome.action.openPopup() (must run there, not in the content script).
         notifyBackground({ action: ACTION.OPEN_POPUP });
+        // Same rule as the toggle: only get out of the way once the pointer has
+        // actually left the ball.
+        if (hoveredRef.current) return;
         setExpanded(false);
     };
 
