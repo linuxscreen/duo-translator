@@ -77,6 +77,7 @@ import {
 // onBuiltinAiDownloadProgress), so this adds no weight to the content bundle.
 import { BUILTIN_AI_MODEL_DOWNLOADING, type BuiltinAiDownloadProgress } from "@/main/builtinAi/types";
 import { directChildOf, nodesInRange, rangeContains, resolveCandidateAtPoint, siblingSkippingIndicators, unitRangeOf } from "@/main/dom/unitHit";
+import { planUnit as planUnitCoverage } from "@/main/dom/unitCoverage";
 import {
     buildSentenceRanges,
     clearSentenceHighlight,
@@ -366,8 +367,67 @@ export async function content() {
          * Empty on the Highlight-API path, which never touches the text.
          */
         texts: { text: Text, content: string }[]
+        /**
+         * The run's source text nodes at the moment it was translated — what
+         * makes this record recognizable again on a later scan.
+         *
+         * Not the same thing as `texts`, which only exists on the fallback path
+         * and means "backup to replay on restore". This one is populated on both
+         * paths and is never written back.
+         */
+        covered: Text[]
     }
     let duoTranslatedElementMap = new Map<UnitContainer, DuoUnitRecord[]>()
+
+    /** The bookkeeping a re-translation of a unit supersedes, per view. */
+    type UnitReplacement = { duo?: DuoUnitRecord, single?: TranslateResult }
+
+    /**
+     * What this unit needs: a first translation, nothing, or a re-translation
+     * that replaces what is already there.
+     *
+     * The two container-keyed maps are the bookkeeping; see
+     * main/dom/unitCoverage.ts for why the DOM-side `translated` flag cannot
+     * answer this on its own.
+     */
+    function planUnit(unit: TranslationUnit) {
+        return planUnitCoverage<DuoUnitRecord, TranslateResult>(
+            unit,
+            duoTranslatedElementMap.get(unit.container),
+            translatedElementMap.get(unit.container),
+        )
+    }
+
+    /** Does this unit still have to go to a provider — freshly or again? */
+    function needsTranslation(unit: TranslationUnit): boolean {
+        return planUnit(unit).action !== "skip"
+    }
+
+    /**
+     * Plan every unit of `container` in one pass, and hand back units derived
+     * from the settled DOM.
+     *
+     * "Settled" is the whole point of doing this in one place: a unit about to
+     * be replaced has its highlight wrappers unwrapped first, and that changes
+     * the container's children — so the segmentation has to be redone before
+     * anyone holds on to a unit's node list.
+     */
+    function planContainerUnits(container: UnitContainer) {
+        let seg = segmentParagraph(container)
+        let plans = seg.units.map(planUnit)
+        // Not while a batch is in flight here: translateUnits drops this
+        // container's units, so unwrapping now would strip the highlighting off
+        // a translation that is not being replaced after all.
+        if (!ignoreMutationElements.has(container)
+            && plans.some(p => p.action === "replace" && (p.duo?.texts.length ?? 0) > 0)) {
+            for (const plan of plans) {
+                if (plan.action === "replace" && plan.duo) unwrapHighlightSpans(container, plan.duo)
+            }
+            seg = segmentParagraph(container)
+            plans = seg.units.map(planUnit)
+        }
+        return seg.units.map((unit, index) => ({ unit, plan: plans[index] }))
+    }
 
     /**
      * One logical-paragraph unit resolved from a pointer position, tagged with
@@ -609,11 +669,7 @@ export async function content() {
         }
         if (batchTimer == null) {
             batchTimer = setTimeout(() => {
-                const task = translateParagraphElements(batchElements)
-                pendingTranslateParagraphElementsTask.add(task)
-                task.finally(() => {
-                    pendingTranslateParagraphElementsTask.delete(task)
-                })
+                trackParagraphTranslation(batchElements)
                 console.log("batchElements translated", batchElements.length)
                 batchElements = [];
                 batchTimer = null
@@ -622,6 +678,19 @@ export async function content() {
     }, {
         rootMargin: '300px 0px',
     });
+
+    /**
+     * Run a paragraph-translation batch and register it, so a whole-page
+     * translate/restore waits for it instead of racing its write-back.
+     */
+    function trackParagraphTranslation(elements: UnitContainer[], staleOnly = false) {
+        const task = translateParagraphElements(elements, undefined, staleOnly)
+        pendingTranslateParagraphElementsTask.add(task)
+        task.finally(() => {
+            pendingTranslateParagraphElementsTask.delete(task)
+        })
+        return task
+    }
     //#endregion
 
     //#endregion
@@ -1163,7 +1232,7 @@ export async function content() {
             })
         }
         for (const unit of segmentParagraph(container).units) {
-            if (unit.translated) continue
+            if (!needsTranslation(unit)) continue
             candidates.push({ container, kind: "unit", range: unitRangeOf(unit), unit })
         }
         if (candidates.length === 0) return null
@@ -1197,7 +1266,7 @@ export async function content() {
                 // Units are re-derived, so match by the stable identity: the
                 // exclusive anchors.
                 for (const unit of segmentParagraph(target.container).units) {
-                    if (unit.translated) continue
+                    if (!needsTranslation(unit)) continue
                     const range = unitRangeOf(unit)
                     if (range.start === target.range.start && range.end === target.range.end) {
                         return { ...target, range, unit }
@@ -1368,6 +1437,22 @@ export async function content() {
                     // console.log("processPendingMutations root");
                     const collected = await markParagraphElement(root);
                     if (!translateStatus) {
+                        // Page translation is off, so nothing here may START
+                        // translating. One exception: a container the user
+                        // translated by hand, which the page has since changed —
+                        // its translation now sits next to text it does not
+                        // match, exactly the staleness the page-translation path
+                        // repairs. `staleOnly` is what keeps this from becoming
+                        // "translate the page anyway": only units the records
+                        // already cover are re-run.
+                        //
+                        // The filter also bounds the cost: with the switch off
+                        // the bookkeeping holds a handful of containers, while
+                        // `collected` can be the whole page.
+                        const stale = collected.filter(
+                            el => duoTranslatedElementMap.has(el) || translatedElementMap.has(el)
+                        )
+                        if (stale.length > 0) trackParagraphTranslation(stale, true)
                         continue
                     }
                     for (const ele of collected) {
@@ -2269,6 +2354,58 @@ export async function content() {
     }
 
     /**
+     * <duo-span> highlight fallback only: give the run its own text back and
+     * drop our wrappers, leaving the translation itself on screen.
+     *
+     * A unit about to be re-translated is serialized straight from the page,
+     * and on this path the page's own text nodes are empty — the text lives in
+     * our wrappers. Serializing that would ship `<duo-span duo-sequence>`
+     * scaffolding to the provider and clone it into the new translation.
+     *
+     * Only the wrapping is undone here, not the translation: taking that down
+     * before the replacement exists is exactly the flash-back this whole path
+     * is built to avoid. It comes down in the insert loop, with its successor
+     * in hand.
+     */
+    function unwrapHighlightSpans(element: UnitContainer, record: DuoUnitRecord) {
+        if (record.texts.length === 0) return
+        const texts = record.texts
+        record.texts = []
+        ignoreMutationElements.add(element)
+        // The painted sentence is anchored in nodes we are about to empty.
+        clearSentenceHighlight(element)
+        try {
+            removeDuoSpansIn(element, nodesInRange(element, record.range))
+        } catch (e) {
+            console.error(APP_NAME_WITH_SUFFIX, "unwrap highlight spans error:", e)
+        }
+        for (const t of texts) {
+            ignoreMutationElements.add(t.text)
+            t.text.textContent = t.content
+        }
+        Promise.resolve().then(() => {
+            ignoreMutationElements.delete(element)
+            for (const t of texts) ignoreMutationElements.delete(t.text)
+        })
+    }
+
+    /**
+     * Take down the translation a re-translation supersedes, at the moment its
+     * successor is ready to go in.
+     *
+     * `records` is the container's live array (the very object in
+     * duoTranslatedElementMap when there is one), so the splice IS the
+     * bookkeeping update.
+     */
+    function dropDuoRecord(element: UnitContainer, records: DuoUnitRecord[], record: DuoUnitRecord) {
+        clearSentenceHighlight(element)
+        record.divide.remove()
+        record.translation.remove()
+        const index = records.indexOf(record)
+        if (index >= 0) records.splice(index, 1)
+    }
+
+    /**
      * SINGLE: replay the original text of `results` (one per unit). Same
      * split as restoreDuoRecords — all of them, or just the hovered unit's.
      */
@@ -2625,7 +2762,7 @@ export async function content() {
                 // and cleanupParagraphMarks' pure-mark early-return would
                 // otherwise strand every one of them.
                 markParagraph(el, !nt && inc, seg.descendChildren.length > 0 || shadow !== null);
-                if (!nt && inc && seg.units.some(u => !u.translated)) collectElements.push(el);
+                if (!nt && inc && seg.units.some(needsTranslation)) collectElements.push(el);
             }
             // Push in reverse so pop order = forward visit. Skip children the
             // page detached while we were yielding. `parentNode`, not
@@ -2850,7 +2987,17 @@ export async function content() {
      * @param elements
      * @param context hasDuplicated is false, indicate that the element has not been duplicated. targetTranslateService set custom translate service
      */
-    async function translateParagraphElements(elements: UnitContainer[], context?: any) {
+    async function translateParagraphElements(
+        elements: UnitContainer[],
+        context?: any,
+        /**
+         * Only repair translations that have gone stale; never start a new one.
+         * What a page with the translate switch OFF allows: the user translated
+         * a paragraph by hand and the page then changed it, so its translation
+         * has to follow — but nothing else may pick one up.
+         */
+        staleOnly = false,
+    ) {
         if (elements.length == 0) {
             return
         }
@@ -2863,14 +3010,45 @@ export async function content() {
             // remove duplicate elements
             elements = Array.from(new Set(elements))
         }
-        // Expand each container into its untranslated logical-paragraph units;
-        // containers with nothing left to do (translation in flight, or every
-        // unit already translated) are skipped.
+        // Expand each container into the logical-paragraph units that still
+        // need work — never translated, or translated and since grown. Units
+        // fully accounted for by the records are dropped here, which is what
+        // keeps an unrelated mutation from re-sending the whole page.
         const units: TranslationUnit[] = []
+        const replacements = new Map<TranslationUnit, UnitReplacement>()
         for (const element of elements) {
-            units.push(...segmentParagraph(element).units.filter(u => !u.translated))
+            let pending = 0
+            for (const { unit, plan } of planContainerUnits(element)) {
+                if (plan.action === "skip") continue
+                // Repair only. A unit that was never translated stays that way.
+                if (staleOnly && plan.action !== "replace") continue
+                pending++
+                units.push(unit)
+                if (plan.action === "replace") {
+                    replacements.set(unit, { duo: plan.duo, single: plan.single })
+                }
+            }
+            // Nothing to settle in repair mode: these containers were never put
+            // into PENDING by the IntersectionObserver (it is gated off with the
+            // page switch), so there is no state owed back to it.
+            if (pending === 0 && !staleOnly) {
+                // No provider request, no DOM write. Settle it here anyway: the
+                // IntersectionObserver put it in PENDING on its way in, and
+                // nothing further down this function will ever see it, so
+                // without this it stays PENDING and observed forever.
+                paragraphElementMap.set(element, ELEMENT_STATUS.TRANSLATED)
+                unobserveContainer(intersectionObserver, element)
+            }
         }
-        await translateUnits(units, context)
+        await translateUnits(
+            units,
+            context,
+            // Repair mode only ever runs with the page switch off, i.e. on a
+            // paragraph the user translated by hand — so a failure belongs to
+            // that gesture, not to a page translation the user never started.
+            staleOnly ? ERROR_SCOPE.PARAGRAPH_TRANSLATE : ERROR_SCOPE.PAGE_TRANSLATE,
+            replacements,
+        )
     }
 
     /**
@@ -2889,17 +3067,25 @@ export async function content() {
      */
     function retryTranslateUnits(failedUnits: TranslationUnit[], errorScope: ERROR_SCOPE_VALUE) {
         const fresh: TranslationUnit[] = []
+        const replacements = new Map<TranslationUnit, UnitReplacement>()
         for (const stale of failedUnits) {
             const container = stale.container
             if (!container.isConnected) continue
             const range = unitRangeOf(stale)
             let matched: TranslationUnit | null = null
             let alreadyTranslated = false
-            for (const unit of segmentParagraph(container).units) {
+            for (const { unit, plan } of planContainerUnits(container)) {
                 const candidate = unitRangeOf(unit)
                 if (candidate.start !== range.start || candidate.end !== range.end) continue
-                if (unit.translated) alreadyTranslated = true
-                else matched = unit
+                if (plan.action === "skip") alreadyTranslated = true
+                else {
+                    matched = unit
+                    // The page grew this unit while the failed batch was out —
+                    // the retry has to supersede, not append.
+                    if (plan.action === "replace") {
+                        replacements.set(unit, { duo: plan.duo, single: plan.single })
+                    }
+                }
                 break
             }
             if (alreadyTranslated) continue
@@ -2907,7 +3093,7 @@ export async function content() {
             else if (stale.nodes.some(n => n.parentNode === container)) fresh.push(stale)
         }
         if (fresh.length === 0) return
-        void translateUnits(fresh, undefined, errorScope)
+        void translateUnits(fresh, undefined, errorScope, replacements)
     }
 
     /**
@@ -2921,6 +3107,11 @@ export async function content() {
         context?: any,
         /** Label a failure is reported under; the pointer gesture overrides it. */
         errorScope: ERROR_SCOPE_VALUE = ERROR_SCOPE.PAGE_TRANSLATE,
+        /**
+         * Units being re-translated because the page grew them, mapped to the
+         * bookkeeping their result supersedes. Everything else is an append.
+         */
+        replacements?: Map<TranslationUnit, UnitReplacement>,
     ) {
         let viewStrategyCopy = viewStrategy
         // A container whose guard is already set has a translation in flight —
@@ -2964,7 +3155,20 @@ export async function content() {
                 service = TRANSLATE_SERVICE.MICROSOFT
             }
 
-            let translateResults = await getTranslateResult(service, units, targetLanguage, viewStrategyCopy, controller?.signal)
+            // SINGLE overwrote the page's own text nodes, so a unit being
+            // re-translated cannot be read from the DOM — this is where its
+            // source comes from instead. One flat map, since a text node
+            // belongs to exactly one unit.
+            let sourceTextOf: ((node: Text) => string | undefined) | undefined
+            if (replacements) {
+                const sourceText = new Map<Text, string>()
+                for (const replacement of replacements.values()) {
+                    replacement.single?.sourceText?.forEach((content, node) => sourceText.set(node, content))
+                }
+                if (sourceText.size > 0) sourceTextOf = (node) => sourceText.get(node)
+            }
+
+            let translateResults = await getTranslateResult(service, units, targetLanguage, viewStrategyCopy, controller?.signal, sourceTextOf)
             if (!translateResults || translateResults.length === 0) {
                 return
             }
@@ -2985,6 +3189,19 @@ export async function content() {
                 return
             }
 
+            // SINGLE is about to overwrite these nodes, so this is the last
+            // moment their source content exists anywhere. For a unit that is
+            // itself a re-translation the live content is already ours — the
+            // resolver, not the DOM, is the source of truth.
+            const sourceBefore = new Map<Text, string>()
+            if (viewStrategyCopy == VIEW_STRATEGY.SINGLE) {
+                for (const result of translateResults) {
+                    result.textNodes?.forEach(node => {
+                        sourceBefore.set(node, sourceTextOf?.(node) ?? node.textContent ?? "")
+                    })
+                }
+            }
+
             // the elements will be replaced(translated) in single view strategy
             // the copy of elements will be replaced(translated) in double view strategy
             await translate(translateService, translateResults)
@@ -2996,7 +3213,17 @@ export async function content() {
                 for (const result of translateResults) {
                     const element = result.unit?.container
                     if (!element) continue
-                    const elementResults = translatedElementMap.get(element) ?? []
+                    // Every node now holding our output, with what it used to
+                    // say. Nodes the write-back minted map to "" — they carry
+                    // no source but must still be cleared next time round.
+                    const sourceText = new Map<Text, string>()
+                    result.replacedTextNodes?.forEach(node => {
+                        sourceText.set(node, sourceBefore.get(node) ?? "")
+                    })
+                    result.sourceText = sourceText
+                    const superseded = result.unit ? replacements?.get(result.unit)?.single : undefined
+                    let elementResults = translatedElementMap.get(element) ?? []
+                    if (superseded) elementResults = elementResults.filter(r => r !== superseded)
                     elementResults.push(result)
                     translatedElementMap.set(element, elementResults)
                     translatedContainers.add(element)
@@ -3048,6 +3275,13 @@ export async function content() {
                         // Unit nodes may have been detached while awaiting the
                         // provider — skip; that mutation requeues a scan.
                         if (!lastChild || lastChild.parentNode !== element) continue
+                        // A unit the page grew: the translation it supersedes
+                        // comes down only HERE, with its replacement in hand, so
+                        // the page never shows the untranslated original in
+                        // between. Before the `next` probe, which would
+                        // otherwise read the old pair as "already translated".
+                        const superseded = replacements?.get(unit)?.duo
+                        if (superseded) dropDuoRecord(element, records, superseded)
                         // Already carries a translation (concurrent round) — skip.
                         // Stepping over our own translating indicator, which is
                         // sitting exactly here while this batch is in flight.
@@ -3086,7 +3320,13 @@ export async function content() {
                             element.appendChild(translatedElement)
                         }
                         insertedAny = true
-                        const record: DuoUnitRecord = { range, translation: translatedElement, divide, sentences: null, texts: [] }
+                        const record: DuoUnitRecord = {
+                            range, translation: translatedElement, divide, sentences: null, texts: [],
+                            // Captured above, before anything was inserted — the
+                            // run's own source nodes, which is what makes this
+                            // record findable again on a later scan.
+                            covered: originalTextResult.textNodes,
+                        }
                         records.push(record)
 
                         // Bilingual sentence highlighting, gated per unit — a
@@ -3125,6 +3365,14 @@ export async function content() {
                     if (insertedAny) {
                         duoTranslatedElementMap.set(element, records)
                         translatedContainers.add(element)
+                    } else if (records.length === 0) {
+                        // Every record was superseded and none of the successors
+                        // made it in (detached nodes, a dropped echo). Leaving an
+                        // empty array behind would read as "this container is
+                        // translated" to everything that only asks `has`.
+                        duoTranslatedElementMap.delete(element)
+                        highlightDisposers.get(element)?.()
+                        highlightDisposers.delete(element)
                     }
                     if (highlightedAny) {
                         highlightDisposers.get(element)?.()

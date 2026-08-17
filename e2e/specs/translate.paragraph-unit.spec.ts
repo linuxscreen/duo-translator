@@ -105,4 +105,70 @@ test.describe('@paragraph-unit pointer-driven per-unit translation', () => {
         await expect(page.locator('#li1 .duo-translation')).toHaveCount(1);
         await expect(page.locator('#li2 .duo-translation')).toHaveCount(0);
     });
+
+    // A hand-translated paragraph has to stay in step with its source, the same
+    // way page translation does. The page switch is OFF here, so these also pin
+    // the boundary: repairing an existing translation is allowed, starting a new
+    // one is not.
+    test.describe('a hand-translated paragraph follows its source', () => {
+        /** Translate #lonespan by hand and hand back its translation text. */
+        async function translateLoneSpan(page: any) {
+            await page.goto('/segments.html');
+            await expect(page.locator('.duo-translation')).toHaveCount(0);
+            await doubleTapOver(page, '#lonespan');
+            await expect(page.locator('#lonespan > .duo-translation')).toContainText(ZH);
+            await page.evaluate(() => {
+                document.querySelector('#lonespan > .duo-translation')!.setAttribute('data-e2e-stamp', 'v1');
+            });
+        }
+
+        test('its text changing re-translates it', async ({ page }) => {
+            await translateLoneSpan(page);
+
+            await page.evaluate(() => {
+                const span = document.querySelector('#lonespan')!;
+                (span.firstChild as Text).textContent = 'Completely different sentence now.';
+            });
+
+            await expect(page.locator('#lonespan > .duo-translation')).toContainText('Completely different');
+            await expect(page.locator('#lonespan > .duo-translation')).toHaveCount(1);
+        });
+
+        test('the page growing it re-translates the whole run', async ({ page }) => {
+            await translateLoneSpan(page);
+
+            await page.evaluate(() => {
+                const extra = document.createElement('span');
+                extra.textContent = ' Plus an appended tail.';
+                document.querySelector('#lonespan')!.appendChild(extra);
+            });
+
+            await expect(page.locator('#lonespan > .duo-translation')).toContainText('appended tail');
+            await expect(page.locator('#lonespan > .duo-translation')).toContainText('Wrapped in exactly one');
+            await expect(page.locator('#lonespan > .duo-translation')).toHaveCount(1);
+            // Replaced, not appended to.
+            await expect(page.locator('#lonespan > .duo-translation')).not.toHaveAttribute('data-e2e-stamp', 'v1');
+        });
+
+        // The permission is narrow: repair what is translated, never start
+        // anything new. Nothing else on the page may pick up a translation just
+        // because one paragraph was repaired.
+        test('does not start translating anything else on the page', async ({ page }) => {
+            await translateLoneSpan(page);
+
+            await page.evaluate(() => {
+                document.querySelector('#lonespan')!.appendChild(document.createElement('span')).textContent =
+                    ' Plus an appended tail.';
+                const fresh = document.createElement('p');
+                fresh.id = 'fresh';
+                fresh.textContent = 'A brand new paragraph that nobody asked to translate.';
+                document.body.appendChild(fresh);
+            });
+
+            await expect(page.locator('#lonespan > .duo-translation')).toContainText('appended tail');
+            await expect(page.locator('#fresh .duo-translation')).toHaveCount(0);
+            await expect(page.locator('#softbr .duo-translation')).toHaveCount(0);
+            await expect(page.locator('.duo-translation')).toHaveCount(1);
+        });
+    });
 });

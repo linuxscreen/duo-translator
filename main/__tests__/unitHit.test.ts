@@ -200,3 +200,47 @@ describe("the translating indicator is stepped over", () => {
         expect(nodesInRange(div, unitRangeOf(last))).not.toContain(marker);
     });
 });
+
+describe("our own translation output is stepped over too", () => {
+    // A DuoUnitRecord captures the anchors BEFORE inserting the divide and the
+    // translation, and later code matches a re-derived unit against them. If
+    // our own inserted nodes could serve as anchors, a translated unit's
+    // identity would change the instant its translation landed and every such
+    // match would fail — permanently, not just while something is in flight.
+    function insertTranslationAfter(anchor: ChildNode) {
+        const divide = document.createElement("br");
+        divide.className = "duo-divide";
+        const translation = document.createElement("span");
+        translation.className = "duo-translation";
+        translation.textContent = "一";
+        anchor.after(divide, translation);
+        return { divide, translation };
+    }
+
+    it("unitRangeOf gives the same anchors before and after a translation is inserted", () => {
+        const div = el("<div>one<br><br>two</div>");
+        const first = segmentParagraph(div).units[0];
+        const anchor = first.nodes[first.nodes.length - 1];
+        const captured = unitRangeOf(first);
+
+        insertTranslationAfter(anchor);
+
+        const again = segmentParagraph(div).units.find(u => u.nodes.includes(anchor))!;
+        const derived = unitRangeOf(again);
+        expect(derived.start).toBe(captured.start);
+        expect(derived.end).toBe(captured.end);
+    });
+
+    it("nodesInRange still yields the inserted nodes — restore has to sweep them", () => {
+        const div = el("<div>one<br><br>two</div>");
+        const first = segmentParagraph(div).units[0];
+        const anchor = first.nodes[first.nodes.length - 1];
+        const range = unitRangeOf(first);
+
+        const { divide, translation } = insertTranslationAfter(anchor);
+
+        const nodes = nodesInRange(div, range);
+        expect(nodes).toContain(divide);
+        expect(nodes).toContain(translation);
+    });
+});

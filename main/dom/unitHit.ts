@@ -37,6 +37,43 @@ export function siblingSkippingIndicators(node: ChildNode | null, dir: "next" | 
 }
 
 /**
+ * Nodes we insert *after* a unit rather than into it: the transient translating
+ * indicator, the divide, and the translation itself.
+ *
+ * `duo-span` is deliberately NOT one of them — the highlight fallback wraps the
+ * run's own text in those, so they are unit *content* and must keep counting as
+ * such.
+ */
+function isOwnUnitOutput(node: ChildNode): boolean {
+    if (isTranslateIndicator(node)) return true;
+    const classList = (node as Element).classList;
+    return !!classList && (classList.contains("duo-divide") || classList.contains("duo-translation"));
+}
+
+/**
+ * The next/previous sibling for *anchor* purposes: steps over everything we
+ * ourselves put next to a unit.
+ *
+ * The anchors are a unit's identity — a `DuoUnitRecord` captures them BEFORE
+ * inserting the divide and the translation, and later scans re-derive them to
+ * recognize the same run. If our own output could serve as an anchor, that
+ * identity would change the instant the translation landed and every later
+ * match would fail; unlike the indicator case that failure is permanent, not
+ * just "while something is in flight".
+ *
+ * Only anchor selection is affected. `nodesInRange` must keep returning these
+ * nodes: the restore path sweeps them, and the pointer hit-test needs the
+ * translation's rects.
+ */
+export function siblingSkippingOwnNodes(node: ChildNode | null, dir: "next" | "prev"): ChildNode | null {
+    let cur = node;
+    while (cur && isOwnUnitOutput(cur)) {
+        cur = dir === "next" ? cur.nextSibling : cur.previousSibling;
+    }
+    return cur;
+}
+
+/**
  * The ancestor-or-self of `node` whose parent is `container`, i.e. the container
  * child that owns `node`. Null when `node` is the container itself or lives
  * outside it.
@@ -65,8 +102,8 @@ export function unitRangeOf(unit: TranslationUnit): UnitRange {
         last = node;
     }
     return {
-        start: siblingSkippingIndicators(first?.previousSibling ?? null, "prev"),
-        end: siblingSkippingIndicators(last?.nextSibling ?? null, "next"),
+        start: siblingSkippingOwnNodes(first?.previousSibling ?? null, "prev"),
+        end: siblingSkippingOwnNodes(last?.nextSibling ?? null, "next"),
     };
 }
 

@@ -10,7 +10,6 @@ import {
     isBlockBoundary,
     isSegmentBoundary,
     isMergeableInline,
-    hasUntranslatedUnit,
 } from "@/main/dom/segments";
 
 beforeEach(() => {
@@ -231,7 +230,6 @@ describe("segmentParagraph — run qualification (text anywhere inside the run)"
         expect(scan.units).toHaveLength(1);
         expect(scan.units[0].translated).toBe(true);
         expect(scan.descendChildren).toHaveLength(0);
-        expect(hasUntranslatedUnit(div)).toBe(false);
     });
 
     it("stays one translated unit when the duo-spans sit inside an inline child", () => {
@@ -315,14 +313,15 @@ describe("segmentParagraph — our own duo nodes on rescan", () => {
         expect(scan.units).toHaveLength(2);
         expect(scan.units[0].translated).toBe(true);
         expect(scan.units[1].translated).toBe(false);
-        expect(hasUntranslatedUnit(div)).toBe(true);
     });
 
-    it("hasUntranslatedUnit is false when every unit is translated", () => {
+    it("a container whose only unit is translated has nothing left to do", () => {
         const div = el(
             '<div>one<br class="duo-divide"><span class="duo-translation">一</span></div>'
         );
-        expect(hasUntranslatedUnit(div)).toBe(false);
+        const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].translated).toBe(true);
     });
 });
 
@@ -530,5 +529,81 @@ describe("isSegmentBoundary — tag-level probe gated by a computed-style rechec
         const scan = segmentParagraph(div);
         expect(scan.units).toHaveLength(1);
         expect(scan.descendChildren).toHaveLength(0);
+    });
+});
+
+describe("atomic inline-level elements are boundaries", () => {
+    // A <button> renders as an atomic box carrying a label that has nothing to
+    // do with the surrounding sentence. Merging it into the run makes it share
+    // the paragraph's fate: it is never translated on its own, and in DOUBLE it
+    // gets cloned into the translation (duplicate id, inert copy).
+    it("a trailing button leaves the run and becomes its own container", () => {
+        const p = el("<p>This paragraph has an action.<button>Copy</button></p>");
+        const scan = segmentParagraph(p);
+        expect(scan.descendChildren).toEqual([p.querySelector("button")]);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].nodes).toEqual([p.firstChild]);
+    });
+
+    it("a detached button is still atomic — the tag list carries it", () => {
+        // No computed style available, so the display allowlist cannot answer.
+        const detached = document.createElement("button");
+        detached.textContent = "Copy";
+        expect(isSegmentBoundary(detached)).toBe(true);
+    });
+
+    it("splits the sentence when the button sits mid-run — the accepted cost", () => {
+        // Documented trade-off, not an oversight: distinguishing "trailing" from
+        // "mid-sentence" was evaluated and rejected as not worth the machinery.
+        // Inline links are <a> (display:inline) and are unaffected.
+        const p = el("<p>Click <button>here</button> to continue.</p>");
+        const scan = segmentParagraph(p);
+        expect(scan.descendChildren).toEqual([p.querySelector("button")]);
+        expect(scan.units).toHaveLength(2);
+    });
+
+    it("a text-free inline-block icon stays in the run", () => {
+        // The `hasTranslatableText` term of the predicate. Icon components are
+        // everywhere mid-sentence; pulling one out would cut the sentence in
+        // half for no gain — it has nothing to translate.
+        const p = el('<p>Press the <i style="display:inline-block"></i> button.</p>');
+        const scan = segmentParagraph(p);
+        expect(scan.descendChildren).toEqual([]);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].wholeElement).toBe(true);
+    });
+
+    it("an excluded tag stays in the run even when it is an atomic box", () => {
+        const p = el('<p>Run <code style="display:inline-block">npm i</code> first.</p>');
+        expect(segmentParagraph(p).descendChildren).toEqual([]);
+        expect(segmentParagraph(p).units).toHaveLength(1);
+    });
+
+    it("editable controls stay in the run — the scan skips them anyway", () => {
+        // An enabled <select>/<textarea> is never translated (markParagraphElement
+        // bails on isEditable), so making it a boundary would only remove its
+        // text from the sentence without gaining anything.
+        expect(segmentParagraph(el("<p>Type <textarea>draft</textarea> here.</p>")).descendChildren).toEqual([]);
+        expect(segmentParagraph(el("<p>Pick <select><option>one</option></select> now.</p>")).descendChildren).toEqual([]);
+    });
+
+    it("display:contents and display:none wrappers are not atomic", () => {
+        // `display:contents` generates no box of its own — isBlockBoundary
+        // already answers for what its children render as. `display:none` is a
+        // collapsed region, not an atomic box.
+        const p = el(
+            '<p>a <span style="display:contents">b</span> c ' +
+            '<span style="display:none">hidden</span> d</p>'
+        );
+        const scan = segmentParagraph(p);
+        expect(scan.descendChildren).toEqual([]);
+        expect(scan.units).toHaveLength(1);
+    });
+
+    it("isSegmentBoundary is the single predicate that answers for atomics", () => {
+        const p = el('<p><button>Copy</button><i style="display:inline-block"></i><a href="#">link</a></p>');
+        expect(isSegmentBoundary(p.querySelector("button")!)).toBe(true);
+        expect(isSegmentBoundary(p.querySelector("i")!)).toBe(false);
+        expect(isSegmentBoundary(p.querySelector("a")!)).toBe(false);
     });
 });

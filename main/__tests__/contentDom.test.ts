@@ -58,6 +58,15 @@ describe("isNotMarkElement", () => {
         expect(isNotMarkElement(el("<code>x</code>"))).toBe(true);
         expect(isNotMarkElement(el("<p>x</p>"))).toBe(false);
     });
+
+    it("rejects the highlight fallback's own spans", () => {
+        // On the <duo-span> path the run's text is moved into these, so a scan
+        // that marked one would translate our own output a second time, inside
+        // the original. `curTranslated` qualifying the run is the first line of
+        // defense; this is the second.
+        expect(isNotMarkElement(el("<duo-span>x</duo-span>"))).toBe(true);
+        expect(isNotMarkElement(el('<br class="duo-divide">'))).toBe(true);
+    });
 });
 
 describe("isEditable", () => {

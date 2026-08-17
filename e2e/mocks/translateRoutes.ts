@@ -6,14 +6,44 @@ import type { BrowserContext } from '@playwright/test';
 export const ZH = '「译」';
 
 /**
+ * What the (mocked) providers were actually asked to translate.
+ *
+ * Counting `.duo-translation` nodes cannot tell "nothing was re-sent" from
+ * "it was re-sent and the result happened to look the same" — the
+ * same-language drop and the echo guard both hide a redundant request. So the
+ * incremental specs assert on the request payloads instead.
+ */
+export interface TranslateRecorder {
+    /** Every source string handed to a provider, in request order. */
+    texts: string[];
+    /** Translate requests only — the auth/token endpoint is not counted. */
+    requests: number;
+    /** Forget everything recorded so far (call right before the mutation). */
+    reset(): void;
+}
+
+/**
  * Intercept every translation-provider request at the context level (catches
  * both content-script `fetch` — Google — and background service-worker requests
  * — Microsoft) and answer with a deterministic, offline translation:
  * `${ZH}<original text>`.
  *
- * Returns nothing; call once per context in `beforeEach`.
+ * Call once per context in `beforeEach`. The returned recorder is live.
  */
-export async function mockTranslateProviders(context: BrowserContext): Promise<void> {
+export async function mockTranslateProviders(context: BrowserContext): Promise<TranslateRecorder> {
+    const recorder: TranslateRecorder = {
+        texts: [],
+        requests: 0,
+        reset() {
+            this.texts.length = 0;
+            this.requests = 0;
+        },
+    };
+    const record = (texts: string[]) => {
+        recorder.requests++;
+        recorder.texts.push(...texts);
+    };
+
     // --- Google: POST translate-pa.googleapis.com/v1/translateHtml ---------
     // Request body: [[<texts[]>, "auto", <target>], "te_lib"]
     // Response shape consumed by GoogleTranslateService.translateText:
@@ -21,6 +51,7 @@ export async function mockTranslateProviders(context: BrowserContext): Promise<v
     await context.route('**/translate-pa.googleapis.com/**', async (route) => {
         const body = route.request().postDataJSON() as [[string[], string, string], string];
         const texts = body?.[0]?.[0] ?? [];
+        record(texts);
         const translated = texts.map((t) => t.replace(/(<a i=\d+>)([^<>]+(<\/a>))/g, (_, sep, text) => `${sep}${ZH}${text}`));
         const langs = texts.map(() => 'en');
         await route.fulfill({
@@ -38,6 +69,9 @@ export async function mockTranslateProviders(context: BrowserContext): Promise<v
     // MicrosoftTranslateService: [{ translations: [{text}], detectedLanguage }]
     await context.route('**/edge.microsoft.com/translate/translatetext*', async (route) => {
         const texts = (route.request().postDataJSON() as string[]) ?? [];
+        // The detect path posts to this same endpoint pinned to `to=en`; it is a
+        // real provider request and is recorded like any other.
+        record(texts);
         const body = texts.map((text) => ({
             translations: [{ text: text.replace(/(^|>)([^<>]+)/g, (_, sep, inner) => `${sep}${ZH}${inner}`) }],
             detectedLanguage: { language: 'en', score: 1 },
@@ -60,6 +94,7 @@ export async function mockTranslateProviders(context: BrowserContext): Promise<v
             return;
         }
         const texts = new URLSearchParams(route.request().postData() ?? '').getAll('text');
+        record(texts);
         await route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -77,4 +112,6 @@ export async function mockTranslateProviders(context: BrowserContext): Promise<v
     await context.route('**/edge.microsoft.com/translate/auth', async (route) => {
         await route.fulfill({ status: 200, contentType: 'text/plain', body: 'e2e-token' });
     });
+
+    return recorder;
 }

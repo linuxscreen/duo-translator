@@ -8,7 +8,6 @@
 // and tag defaults; CSS-blockification inside a root belongs to e2e.
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-    hasUntranslatedUnit,
     isBlockBoundary,
     isMergeableInline,
     isSegmentBoundary,
@@ -186,11 +185,11 @@ describe("segmentParagraph over a ShadowRoot", () => {
     it("reports an untranslated unit, and stops once a translation is adjacent", () => {
         const host = el("<div></div>");
         const root = shadow(host, "Some text.");
-        expect(hasUntranslatedUnit(root)).toBe(true);
+        expect(segmentParagraph(root).units[0].translated).toBe(false);
 
         const translation = document.createElement("div");
         translation.className = "duo-translation";
         root.appendChild(translation);
-        expect(hasUntranslatedUnit(root)).toBe(false);
+        expect(segmentParagraph(root).units[0].translated).toBe(true);
     });
 });

@@ -35,6 +35,21 @@ export class TranslateResult {
     textNodes?: Text[];
     textIndexMap?: Map<number, number>; // key: text node index, value: corresponding childNode of original element(ancestor of text node) index
     replacedTextNodes?: Text[]; // use for SINGLE view strategy, text nodes that have been replaced(has been translated or restored)
+    /**
+     * SINGLE only: what each node in `replacedTextNodes` held BEFORE we wrote
+     * our translation into it.
+     *
+     * This view leaves no copy of the source in the page, so a later
+     * re-translation of the same unit (the page grew it) has nothing to
+     * serialize: reading the DOM would hand our own output back to the provider.
+     * Feeding this map in as a `SourceTextResolver` rebuilds the source without
+     * restoring the page first, so the old translation stays on screen for the
+     * whole round trip.
+     *
+     * Nodes the write-back minted itself map to "" — they contribute nothing to
+     * the source but must still be collected, since they hold output to clear.
+     */
+    sourceText?: Map<Text, string>;
     unit?: TranslationUnit; // the logical paragraph this result belongs to
     // SINGLE only: the unit's span among the container's direct children, as
     // exclusive boundary anchors (null = container edge). Write-back and
@@ -73,27 +88,41 @@ class PreProcessResult {
     elements: UnitContainer[]; // container first, then the descendants that need a mapping tag
     mappedHtmlText: string;
     textNodes: Text[]; // text nodes that need to be deleted, which come from the child text nodes of element
+    /** Source content of each `textNodes` entry, index-aligned. Equals its
+     *  live `textContent` unless a `sourceTextOf` override supplied it. */
+    sourceTexts: string[];
     text: string;
     totalTextNodesLength: number;
     textIndexMap: Map<number, number>
 
-    constructor(elements: UnitContainer[], mappedHtmlText: string, textNodes: Text[], text: string, totalTextNodesLength: number, textIndexMap: Map<number, number>) {
+    constructor(elements: UnitContainer[], mappedHtmlText: string, textNodes: Text[], sourceTexts: string[], text: string, totalTextNodesLength: number, textIndexMap: Map<number, number>) {
         this.elements = elements;
         this.mappedHtmlText = mappedHtmlText;
         this.textNodes = textNodes;
+        this.sourceTexts = sourceTexts;
         this.text = text;
         this.totalTextNodesLength = totalTextNodesLength;
         this.textIndexMap = textIndexMap
     }
 }
 
-export function getElementPreProcessResult(element: UnitContainer, viewStrategy: VIEW_STRATEGY, nodes?: ChildNode[]): PreProcessResult {
+/**
+ * What a text node's SOURCE content is — the answer the live DOM cannot give
+ * once the SINGLE view has overwritten it.
+ *
+ * Returning `undefined` means "the page's own content is the source", which is
+ * the normal case and every case under DOUBLE. See `TranslateResult.sourceText`.
+ */
+export type SourceTextResolver = (node: Text) => string | undefined;
+
+export function getElementPreProcessResult(element: UnitContainer, viewStrategy: VIEW_STRATEGY, nodes?: ChildNode[], sourceTextOf?: SourceTextResolver): PreProcessResult {
     let i = 0;
     let totalTextNodesLength = 0;
     let text = "";
     const elements: UnitContainer[] = [];
     const processParent = document.createElement("div");
     const textNodes: Text[] = [];
+    const sourceTexts: string[] = [];
     // Default (whole element) keeps the legacy byte-identical serialization;
     // a caller passing a unit's node list scopes everything to that unit.
     const rootNodes: ChildNode[] = nodes ?? Array.from(element.childNodes);
@@ -156,15 +185,23 @@ export function getElementPreProcessResult(element: UnitContainer, viewStrategy:
         } else if (node.nodeType === Node.TEXT_NODE) {
             const textNode = node as Text;
             if (contentInvisible(textNode)) return;
-            totalTextNodesLength += textNode.textContent.length;
-            text += textNode.textContent;
+            // The node's SOURCE content, which is what a provider must be given.
+            // Under SINGLE the node may already hold a translation of ours — see
+            // SourceTextResolver. The visibility test above stays on the live
+            // content on purpose: a node holding our output is a real slot in
+            // the run and has to be collected (so the write-back reuses it),
+            // even when its source contribution turns out to be empty.
+            const content = sourceTextOf?.(textNode) ?? textNode.textContent;
+            totalTextNodesLength += content.length;
+            text += content;
             textNodes.push(textNode);
+            sourceTexts.push(content);
             textIndexMap.set(textIndex, index)
             textIndex++
             if (isSon) {
                 index++
             }
-            parent.appendChild(textNode.cloneNode(true));
+            parent.appendChild(document.createTextNode(content));
         } else {
             if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
                 removeChildren.push(node)
@@ -175,7 +212,7 @@ export function getElementPreProcessResult(element: UnitContainer, viewStrategy:
     if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
         removeChildren.forEach(child => child.parentNode?.removeChild(child))
     }
-    return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, totalTextNodesLength, text, textIndexMap };
+    return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, sourceTexts, totalTextNodesLength, text, textIndexMap };
 }
 
 export function updateTranslateElementContent(rawTranslatedHtml: string, originalElements: UnitContainer[], range?: UnitRange) {
@@ -301,7 +338,12 @@ export async function getTranslateResult(
     elements: (UnitContainer | TranslationUnit)[],
     targetLang: string,
     viewStrategy: VIEW_STRATEGY,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    /**
+     * Where the source text of an already-overwritten node comes from. Only
+     * SINGLE re-translations pass one; see TranslateResult.sourceText.
+     */
+    sourceTextOf?: SourceTextResolver,
 ): Promise<TranslateResult[]> {
     if (!elements || elements.length === 0) return [];
 
@@ -335,13 +377,16 @@ export async function getTranslateResult(
             // exclusive boundary anchors before anything moves.
             range = unitRangeOf(unit);
         }
-        const pre = getElementPreProcessResult(element, viewStrategy, nodes);
+        // DOUBLE preprocesses a detached CLONE, whose text nodes are not the
+        // ones the resolver knows — and does not need to be: that view never
+        // overwrites the page's source, so the clone already carries it.
+        const pre = getElementPreProcessResult(element, viewStrategy, nodes, copy ? undefined : sourceTextOf);
         if (pre.mappedHtmlText.trim() === "") continue;
         let text: string;
         if (service === TRANSLATE_SERVICE.GOOGLE) {
             text = "";
             for (let index = 0; index < pre.textNodes.length; index++) {
-                text += `<a i=${index}>${pre.textNodes[index].textContent}</a>`
+                text += `<a i=${index}>${pre.sourceTexts[index]}</a>`
             }
         } else {
             text = pre.mappedHtmlText;

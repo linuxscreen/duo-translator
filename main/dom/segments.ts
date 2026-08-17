@@ -118,15 +118,36 @@ const BLOCK_DISPLAYS = new Set([
 ]);
 
 const boundaryCache = new WeakMap<Element, boolean>();
+const displayCache = new WeakMap<Element, string>();
 
-/** Computed `display` of a connected element, or undefined when unavailable. */
+/**
+ * Computed `display` of a connected element, or undefined when unavailable.
+ *
+ * Memoized, and NOT redundantly with the two derived caches below: they store
+ * their own booleans, so they never spare the underlying `getComputedStyle`.
+ * The marking scan asks both questions of the same element in one pass —
+ * `classify` → `isSegmentBoundary` → `isBlockBoundary`, then `flushRun` →
+ * `isMergeableInline` → `isInlineBox` — so without this the element pays for
+ * style resolution twice per scan.
+ *
+ * Only a real answer is cached. A detached element has no computed style at
+ * all, and remembering that absence would freeze the tag-set fallback in place
+ * for an element the page is about to insert. Same staleness trade-off as the
+ * derived caches otherwise: `display` rarely changes at runtime, and a stale
+ * hit only degrades to static-tag precision.
+ */
 function computedDisplay(el: HTMLElement): string | undefined {
     if (!el.isConnected) return undefined;
+    const cached = displayCache.get(el);
+    if (cached !== undefined) return cached;
+    let display: string | undefined;
     try {
-        return getComputedStyle(el).display || undefined;
+        display = getComputedStyle(el).display || undefined;
     } catch {
         return undefined;
     }
+    if (display !== undefined) displayCache.set(el, display);
+    return display;
 }
 
 /**
@@ -187,10 +208,68 @@ export function isBlockBoundary(el: HTMLElement): boolean {
     return result;
 }
 
+// Inline-*level* boxes laid out as one unbreakable rectangle. An explicit list,
+// NOT `!isInlineBox(el)`: `display: contents` generates no box of its own (what
+// its children render as is the question `isBlockBoundary` already answers) and
+// `display: none` is a collapsed region. Calling either one atomic would cut
+// sentences in half.
+const ATOMIC_INLINE_DISPLAYS = new Set([
+    "inline-block", "inline-flex", "inline-grid", "inline-table",
+]);
+
+// The same verdict by tag, for the case computed style does not deliver one:
+// a detached element. Just <button> — `<select>`/`<input>`/`<textarea>` are
+// editable, so the marking scan skips them outright and `isEditable` below
+// rejects them anyway; listing them would imply a behavior we do not have.
+const ATOMIC_TAGS = new Set(["BUTTON"]);
+
 /**
- * Whether `el` must act as a segment boundary: it either is a block box itself,
- * or it hides one (an inline wrapper containing block content — `<span><div>…` —
- * has to be descended into instead of being swallowed into an inline run).
+ * Whether `el` is an atomic inline-level box carrying a label of its own — a
+ * button, a chip, a badge.
+ *
+ * Such an element is inline-*level* but not inline *content*: it renders as one
+ * unbreakable rectangle and its text belongs to it, not to the sentence around
+ * it. Merged into the run it shares the paragraph's fate — never translated on
+ * its own once the paragraph is translated, and (in DOUBLE) cloned into the
+ * translation, which duplicates its id and leaves an inert copy on the page.
+ *
+ * All three conditions are load bearing; each keeps a different thing inside the
+ * run, where cutting it out would split a sentence:
+ *
+ *   - **carries text of its own** — a text-free `inline-block` icon
+ *     (`<i class="icon"></i>`) is everywhere mid-sentence and has nothing to
+ *     translate;
+ *   - **not an excluded tag** — `<code>`/`<pre>` render as part of the line and
+ *     their text is deliberately never translated;
+ *   - **not editable** — an enabled `<input>`/`<textarea>` is the user's, not
+ *     ours.
+ *
+ * Deliberately NOT memoized. The box half is already cached one level down
+ * (`computedDisplay`), and the text half must stay live: a component that fills
+ * its label after first paint would be frozen as "not atomic" forever. This is
+ * the same trap that keeps `isMergeableInline` uncached.
+ */
+export function isAtomicTextUnit(el: HTMLElement): boolean {
+    const display = computedDisplay(el);
+    const atomicBox = ATOMIC_TAGS.has(el.tagName)
+        || (display !== undefined && ATOMIC_INLINE_DISPLAYS.has(display));
+    if (!atomicBox) return false;
+    if (isExcludedNodeType(el) || isEditable(el)) return false;
+    // Nothing inside, nothing to carry — and nothing to walk. Icon components
+    // drawn entirely from CSS (`<i class="icon"></i>`) are the bulk of a real
+    // page's inline-block elements, and `hasTranslatableText` is not free for
+    // them: it allocates a stack and spreads an empty childNodes list. Worth
+    // ~3 ms of the ~15 ms this predicate costs on a synthetic page carrying
+    // 3000 such icons — the rest is the per-element call itself, not the walk.
+    if (!el.firstChild) return false;
+    return hasTranslatableText(el);
+}
+
+/**
+ * Whether `el` must act as a segment boundary: it is a block box itself, an
+ * atomic inline-level box with its own label, or an inline wrapper hiding block
+ * content (`<span><div>…`) that has to be descended into instead of being
+ * swallowed into an inline run.
  *
  * The tag-level `querySelector` is only a *probe*. It runs natively with an
  * early exit, so it costs nothing on the overwhelming majority of inline
@@ -222,6 +301,10 @@ export function isSegmentBoundary(el: HTMLElement): boolean {
     // block test and gated on a single `el.shadowRoot` read, which is null for
     // essentially every element on a page.
     if (isTranslatableShadowHost(el)) return true;
+    // Its label is not part of the surrounding sentence. Ordered after the two
+    // above so the subtree walk inside it only runs for elements that are
+    // already known to be atomic boxes.
+    if (isAtomicTextUnit(el)) return true;
     if (!el.querySelector(BLOCK_SELECTOR)) return false;
     // Detached / no computed style available: keep the tag-level verdict, the
     // same degradation isBlockBoundary itself falls back to.
@@ -296,13 +379,17 @@ function isInlineBox(el: HTMLElement): boolean {
  * merged path.
  */
 export function isMergeableInline(el: HTMLElement): boolean {
+    // Ordered by cost, not by importance — all three reject, so the order only
+    // decides how much is paid before the answer. `classify` has just resolved
+    // this element's `display` (see computedDisplay), so this is a WeakMap hit,
+    // and on a real page most element children are blocks and stop right here.
+    if (!isInlineBox(el)) return false;
     // Its text is in another tree: `getTextNodesAndText` would never see it, so
     // merging would build a unit whose serialization silently omits it.
     // An EMPTY host (`<x-icon></x-icon>`) is unaffected — it already fails the
     // "every leaf is a non-blank text node" test below.
     if (isTranslatableShadowHost(el)) return false;
     if (isExcludedNodeType(el) || isEditable(el)) return false;
-    if (!isInlineBox(el)) return false;
     let hasText = false;
     for (const child of el.childNodes) {
         if (child.nodeType === Node.TEXT_NODE) {
@@ -492,7 +579,3 @@ export function segmentParagraph(container: UnitContainer): SegmentScan {
     return { units, descendChildren };
 }
 
-/** Whether `container` still has a unit without an inserted translation. */
-export function hasUntranslatedUnit(container: UnitContainer): boolean {
-    return segmentParagraph(container).units.some((unit) => !unit.translated);
-}

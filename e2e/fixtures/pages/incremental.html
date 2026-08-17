@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Duo Translator e2e — incremental</title>
+    <style>
+        /* An icon component: an atomic inline-level box with NO text of its own.
+           It must stay inside the surrounding run, or the sentence gets cut. */
+        .icon { display: inline-block; width: 12px; height: 12px; background: #333; }
+    </style>
+</head>
+<body>
+    <h1>Incremental translation fixture</h1>
+
+    <!-- Baseline prose: once translated, this must never be sent again. -->
+    <p id="plain">The quick brown fox jumps over the lazy dog.</p>
+    <p id="plain2">Machine translation should replace this paragraph with a bilingual rendering.</p>
+
+    <!-- A trailing action button. It carries its own label, unrelated to the
+         sentence, so it must become its own translation unit — and the
+         paragraph's translation must not contain a clone of it. -->
+    <p id="with-button">This paragraph has a trailing action.<button id="act">Copy</button></p>
+
+    <!-- A mid-sentence inline-block icon with no text: the sentence must stay
+         a single unit. This one is expected to pass BEFORE and AFTER the
+         change; it pins the `hasTranslatableText` term of the predicate. -->
+    <p id="with-icon">Press the <i class="icon"></i> button to continue reading.</p>
+
+    <!-- No direct text of its own: the two spans qualify as one run only
+         because both are mergeable inline (segments.ts, criterion 3). Appending
+         a third one grows the SAME unit, so the sentence has to be translated
+         again as a whole — a translation cannot be composed from parts. -->
+    <p id="spans"><span>Hello </span><span>brave world.</span></p>
+</body>
+</html>
