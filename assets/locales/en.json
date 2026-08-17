@@ -510,6 +510,8 @@
   "errScopeDictionary": "Dictionary",
   "selectionTranslateIcon": "Selection translate icon",
   "selectionTranslateIconHint": "Show a translate icon after selecting text",
+  "selectionIconTriggerClick": "Click to translate",
+  "selectionIconTriggerHover": "Hover to translate",
   "selectionIconDisabledWebsites": "Selection translate icon disabled websites",
   "disableSelectionIcon": "Disable selection translate icon",
   "websiteTranslationRules": "Website translation rules",

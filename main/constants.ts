@@ -389,6 +389,9 @@ export enum CONFIG_KEY {
     // share the same icon implementation, so this also governs the icon shown
     // when subtitle text is selected inside a player.
     SELECTION_ICON_SWITCH = 'selectionIconSwitch',
+    // How the selection-translate icon fires: click it, or merely hover it.
+    // See SELECTION_ICON_TRIGGER.
+    SELECTION_ICON_TRIGGER = 'selectionIconTrigger',
     // What the page shows WHILE a paragraph batch is in flight, and what it
     // shows when that batch fails. See TRANSLATING_ANIMATION. Anything other
     // than 'none' also takes over failure reporting for page/paragraph
@@ -546,6 +549,25 @@ export enum TRANSLATING_ANIMATION {
     CORNER_SPINNER = 'cornerSpinner',
 }
 
+/**
+ * How the selection-translate icon fires.
+ *
+ * HOVER also drops the icon's close menu: the close button is only revealed by
+ * hovering the pill, and in this mode that same gesture already translates, so
+ * there is no pointer state left in which the menu could be reached. Disabling
+ * the icon then goes through Options (or the per-site list) instead.
+ */
+export enum SELECTION_ICON_TRIGGER {
+    CLICK = 'click',
+    HOVER = 'hover',
+}
+
+/** Options-page rows for SELECTION_ICON_TRIGGER, in display order. */
+export const SELECTION_ICON_TRIGGER_OPTIONS: { value: SELECTION_ICON_TRIGGER, title: string, fallback: string }[] = [
+    { value: SELECTION_ICON_TRIGGER.CLICK, title: 'selectionIconTriggerClick', fallback: 'Click to translate' },
+    { value: SELECTION_ICON_TRIGGER.HOVER, title: 'selectionIconTriggerHover', fallback: 'Hover to translate' },
+]
+
 /** Options-page rows for TRANSLATING_ANIMATION, in display order. */
 export const TRANSLATING_ANIMATION_OPTIONS: { value: TRANSLATING_ANIMATION, title: string, fallback: string }[] = [
     { value: TRANSLATING_ANIMATION.NONE, title: 'translatingAnimationNone', fallback: 'Off' },
@@ -569,6 +591,7 @@ export const DEFAULT_VALUE = {
     FLOAT_BALL_SWITCH: true,
     FLOAT_BALL_STYLE: FLOAT_BALL_STYLE.DOCKED,
     SELECTION_ICON_SWITCH: true,
+    SELECTION_ICON_TRIGGER: SELECTION_ICON_TRIGGER.CLICK,
     TRANSLATING_ANIMATION: TRANSLATING_ANIMATION.INLINE_DOTS,
     CONTEXT_MENU_SWITCH: true,
     VIEW_STRATEGY: 'double',

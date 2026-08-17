@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Languages, X } from "lucide-react";
-import { CONFIG_KEY, DB_ACTION, DEFAULT_VALUE } from "@/main/constants";
+import { CONFIG_KEY, DB_ACTION, DEFAULT_VALUE, SELECTION_ICON_TRIGGER } from "@/main/constants";
 import { getConfig, setConfig } from "@/utils/db";
+import { useConfig } from "@/utils/reactiveConfig";
 import { sendMessageToBackground } from "@/utils/message";
 import { attachOwnShadow, isInOwnUi } from "@/main/dom/shadowRoots";
 import { deepContains, deepSelection } from "@/main/dom/shadowTraversal";
@@ -46,6 +47,11 @@ const PILL_BORDER_PX = 1;
  * Widest and tallest the pill ever gets — the clamps below reserve this much
  * so revealing the close button can never push it off an edge. Derived rather
  * than written out, so resizing a button can't silently invalidate the clamp.
+ *
+ * Deliberately NOT narrowed for the hover trigger (which never shows the close
+ * button): the placement runs in the controller, which would then have to track
+ * the setting, and reserving too much only parks the pill a few px further from
+ * a viewport edge — reserving too little would clip it.
  */
 const PILL_MAX_W =
     ICON_PX + PILL_GAP_PX + CLOSE_PX + 2 * PILL_PAD_PX + 2 * PILL_BORDER_PX;
@@ -526,12 +532,28 @@ function SelectionIconApp({
     const [anchor, setAnchor] = useState<IconAnchor | null>(null);
     const [hovered, setHovered] = useState(false);
     const [closeMenuOpen, setCloseMenuOpen] = useState(false);
+    // Live so a change in Options applies to the next selection without a
+    // reload. Until hydration lands this reads the shipped default (click),
+    // which is only reachable in the microtask before the first paint — the
+    // pointer cannot have reached the pill by then.
+    const trigger = useConfig<SELECTION_ICON_TRIGGER>(CONFIG_KEY.SELECTION_ICON_TRIGGER);
+    const hoverTrigger = trigger === SELECTION_ICON_TRIGGER.HOVER;
+    /**
+     * One translation per appearance of the pill. `dismiss()` only clears the
+     * anchor on the next render, so a second event landing inside the same
+     * commit (a click arriving right behind the hover that already fired) would
+     * otherwise open the card twice. Reset whenever the pill is shown again.
+     */
+    const firedRef = useRef(false);
 
     // Registered in an effect, like the selection popup's open signal: the
     // controller may call it before the first paint has committed.
     useEffect(() => {
         registerControl(
-            (a) => setAnchor(a),
+            (a) => {
+                firedRef.current = false;
+                setAnchor(a);
+            },
             () => {
                 setAnchor(null);
                 setHovered(false);
@@ -539,6 +561,7 @@ function SelectionIconApp({
             },
         );
         if (pendingAnchor) {
+            firedRef.current = false;
             setAnchor(pendingAnchor);
             pendingAnchor = null;
         }
@@ -563,6 +586,8 @@ function SelectionIconApp({
     };
 
     const onTranslate = () => {
+        if (firedRef.current) return;
+        firedRef.current = true;
         const { text, rect, inPopup } = anchor;
         dismiss();
         if (text !== "") openSelectionTranslate({ text, rect, keepPosition: inPopup });
@@ -610,6 +635,13 @@ function SelectionIconApp({
                 <button
                     type="button"
                     onClick={onTranslate}
+                    // Hover trigger: the pointer entering the button IS the
+                    // gesture. Kept on the button rather than the wrapper so the
+                    // pill's own padding is not a hair-trigger, and the click
+                    // handler stays wired — a pointer that lands on the button
+                    // without ever crossing its edge (a stationary pointer the
+                    // pill appears under) still has a way to translate.
+                    onMouseEnter={hoverTrigger ? onTranslate : undefined}
                     title={t("translate", "Translate")}
                     aria-label={t("translate", "Translate")}
                     className="inline-flex items-center justify-center rounded-full text-ink hover:bg-hover-4 hover:text-accent"
@@ -617,7 +649,10 @@ function SelectionIconApp({
                 >
                     <Languages className="h-3.5 w-3.5" />
                 </button>
-                {(hovered || closeMenuOpen) && (
+                {/* Hover mode has no pointer state left in which a close menu
+                    could be opened — hovering the pill translates and dismisses
+                    it — so the button is not rendered at all there. */}
+                {!hoverTrigger && (hovered || closeMenuOpen) && (
                     <div className="relative">
                         <button
                             type="button"

@@ -26,6 +26,8 @@ import {
   TTS_SERVICE_OPTIONS,
   TRANSLATING_ANIMATION,
   TRANSLATING_ANIMATION_OPTIONS,
+  SELECTION_ICON_TRIGGER,
+  SELECTION_ICON_TRIGGER_OPTIONS,
 } from '@/main/constants';
 import {
   sendMessageToAllTabs,
@@ -107,6 +109,9 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   );
   const [selectionIcon, setSelectionIcon] = useState<boolean>(
     DEFAULT_VALUE.SELECTION_ICON_SWITCH,
+  );
+  const [selectionIconTrigger, setSelectionIconTrigger] = useState<SELECTION_ICON_TRIGGER>(
+    DEFAULT_VALUE.SELECTION_ICON_TRIGGER,
   );
   const [translatingAnimation, setTranslatingAnimation] = useState<TRANSLATING_ANIMATION>(
     DEFAULT_VALUE.TRANSLATING_ANIMATION,
@@ -203,7 +208,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     let cancelled = false;
     (async () => {
       const [
-        bh, fb, fbs, si, ta, vs, tl, ts, ds, ms, lb, tc, tts, ntl,
+        bh, fb, fbs, si, sit, ta, vs, tl, ts, ds, ms, lb, tc, tts, ntl,
         styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg, qbcCfg, qbcIdxCfg,
         hbCfg, hbIdxCfg, hfCfg, hfIdxCfg, hsCfg, hbcCfg, hbcIdxCfg,
       ] = await Promise.all([
@@ -211,6 +216,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
         getConfig(CONFIG_KEY.FLOAT_BALL_STYLE),
         getConfig(CONFIG_KEY.SELECTION_ICON_SWITCH),
+        getConfig(CONFIG_KEY.SELECTION_ICON_TRIGGER),
         getConfig(CONFIG_KEY.TRANSLATING_ANIMATION),
         getConfig(CONFIG_KEY.VIEW_STRATEGY),
         getConfig(CONFIG_KEY.TARGET_LANGUAGE),
@@ -257,6 +263,11 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
           : DEFAULT_VALUE.FLOAT_BALL_STYLE,
       );
       setSelectionIcon(si === undefined ? DEFAULT_VALUE.SELECTION_ICON_SWITCH : !!si);
+      setSelectionIconTrigger(
+        Object.values(SELECTION_ICON_TRIGGER).includes(sit as SELECTION_ICON_TRIGGER)
+          ? sit as SELECTION_ICON_TRIGGER
+          : DEFAULT_VALUE.SELECTION_ICON_TRIGGER,
+      );
       setTranslatingAnimation(
         Object.values(TRANSLATING_ANIMATION).includes(ta as TRANSLATING_ANIMATION)
           ? ta as TRANSLATING_ANIMATION
@@ -407,6 +418,16 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
       action: ACTION.CONFIG_CHANGED,
       data: { [CONFIG_KEY.SELECTION_ICON_SWITCH]: v },
     });
+  };
+
+  const onSelectionIconTrigger = (v: string) => {
+    if (!Object.values(SELECTION_ICON_TRIGGER).includes(v as SELECTION_ICON_TRIGGER)) return;
+    const next = v as SELECTION_ICON_TRIGGER;
+    setSelectionIconTrigger(next);
+    // No CONFIG_CHANGED fan-out: the icon reads this key through the reactive
+    // config store (`useConfig`), which is driven by `storage.watch` and so
+    // updates every open tab off this write alone.
+    void setConfig(CONFIG_KEY.SELECTION_ICON_TRIGGER, next);
   };
 
   const onTranslatingAnimation = (v: string) => {
@@ -873,7 +894,27 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         <SettingRow
           label={t('selectionTranslateIcon', 'Selection translate icon')}
           hint={t('selectionTranslateIconHint', 'Show a translate icon after selecting text')}
-          control={<Switch checked={selectionIcon} onCheckedChange={onSelectionIcon} />}
+          control={
+            <div className="flex items-center gap-2">
+              <Select
+                value={selectionIconTrigger}
+                onValueChange={onSelectionIconTrigger}
+                disabled={!selectionIcon}
+              >
+                <SelectTrigger className="min-w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SELECTION_ICON_TRIGGER_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {t(opt.title, opt.fallback)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Switch checked={selectionIcon} onCheckedChange={onSelectionIcon} />
+            </div>
+          }
         />
         <SettingRow
           label={t('translatingAnimation', 'Translating animation')}

@@ -510,6 +510,8 @@
   "errScopeDictionary": "词典查询",
   "selectionTranslateIcon": "划词翻译图标",
   "selectionTranslateIconHint": "选中文本后显示翻译图标",
+  "selectionIconTriggerClick": "点击触发翻译",
+  "selectionIconTriggerHover": "悬浮触发翻译",
   "selectionIconDisabledWebsites": "已禁用划词翻译图标的网站",
   "disableSelectionIcon": "关闭划词翻译图标",
   "websiteTranslationRules": "网站翻译规则",
