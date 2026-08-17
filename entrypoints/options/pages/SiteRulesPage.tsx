@@ -264,8 +264,10 @@ export function SiteRulesPage({ onBack }: Props) {
                     disabledIds={data.disabledIds}
                     busy={busy}
                     officialUrl={data.officialUrl}
+                    // Returns the promise on purpose: adding a subscription has
+                    // to await the write before it asks background to fetch.
                     onSave={(next: SiteRuleSubscription[]) =>
-                        void write(CONFIG_KEY.SITE_RULE_SUBSCRIPTIONS, next)
+                        write(CONFIG_KEY.SITE_RULE_SUBSCRIPTIONS, next)
                     }
                     onRefresh={(url) => void refreshSubscriptions(url)}
                     onToggleRules={setDisabledMany}

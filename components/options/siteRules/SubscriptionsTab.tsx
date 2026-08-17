@@ -18,7 +18,8 @@ type Props = {
   busy: boolean;
   /** The built-in official package, which is NOT subscribable — see `add`. */
   officialUrl: string;
-  onSave: (next: SiteRuleSubscription[]) => void;
+  /** Resolves once the list is persisted — `add` has to await it, see there. */
+  onSave: (next: SiteRuleSubscription[]) => Promise<void>;
   onRefresh: (url?: string) => void;
   /**
    * Enable/disable rules by refKey. Takes a list so a batch is ONE write —
@@ -102,8 +103,13 @@ export function SubscriptionsTab({
     }
     setError('');
     // Fire the permission prompt synchronously, then persist regardless.
-    void requestOriginPermission(value).then(() => {
-      onSave([...subscriptions, { url: value, enabled: true, addedAt: Date.now() }]);
+    void requestOriginPermission(value).then(async () => {
+      // The save MUST land before the refresh is dispatched. Background decides
+      // what to fetch by reading the stored subscription list, and the two are
+      // separate messages handled concurrently — firing both at once means the
+      // refresh routinely reads the list from before the add and fetches
+      // nothing, leaving a subscription with no rules behind it.
+      await onSave([...subscriptions, { url: value, enabled: true, addedAt: Date.now() }]);
       onRefresh(value);
     });
     setUrl('');
@@ -249,7 +255,7 @@ export function SubscriptionsTab({
           defaultValue: 'Its rules stop applying immediately.',
         })}
         onConfirm={() => {
-          onSave(subscriptions.filter((s) => s.url !== pendingDelete?.url));
+          void onSave(subscriptions.filter((s) => s.url !== pendingDelete?.url));
           setPendingDelete(null);
         }}
         onCancel={() => setPendingDelete(null)}

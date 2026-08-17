@@ -185,15 +185,23 @@ export async function resolveForUrl(url: string): Promise<SiteRuleCandidates> {
 // ------------------------------ fetching -----------------------------------
 
 /**
- * Fetch and cache one subscription.
- *
- * On failure the previous cache entry is KEPT and the error is recorded on the
- * subscription — a flaky network must not silently drop a user's rules.
+ * The record fields a fetch owns. Everything else on a `SiteRuleSubscription`
+ * (url / enabled / addedAt) belongs to the user, and a refresh must never write
+ * back its own stale copy of those — see refreshSubscriptions.
  */
-async function fetchSubscription(sub: SiteRuleSubscription): Promise<SiteRuleSubscription> {
-    const next: SiteRuleSubscription = { ...sub, lastFetchAt: Date.now() };
+type FetchOutcome = Pick<SiteRuleSubscription, 'lastFetchAt' | 'name' | 'ruleCount' | 'lastError'>;
+
+/**
+ * Fetch and cache one package.
+ *
+ * On failure the previous cache entry is KEPT and the error is reported back to
+ * be recorded on the subscription — a flaky network must not silently drop a
+ * user's rules.
+ */
+async function fetchPackage(url: string): Promise<FetchOutcome> {
+    const outcome: FetchOutcome = { lastFetchAt: Date.now() };
     try {
-        const response = await fetch(sub.url, { cache: 'no-cache' });
+        const response = await fetch(url, { cache: 'no-cache' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const text = await response.text();
         if (text.length > MAX_PACKAGE_BYTES) {
@@ -202,24 +210,29 @@ async function fetchSubscription(sub: SiteRuleSubscription): Promise<SiteRuleSub
         // JSONC: a published package is hand-maintained, same as the baseline.
         const { bundle, warnings } = normalizeBundle(parseJsonc(text));
         if (warnings.length > 0) {
-            console.log(APP_NAME_WITH_SUFFIX, `site rules from ${sub.url}:`, warnings);
+            console.log(APP_NAME_WITH_SUFFIX, `site rules from ${url}:`, warnings);
         }
         const cache = await readCache();
-        cache[sub.url] = bundle;
+        cache[url] = bundle;
         await writeCache(cache);
-        next.name = bundle.name || undefined;
-        next.ruleCount = bundle.rules.length;
-        next.lastError = undefined;
+        outcome.name = bundle.name || undefined;
+        outcome.ruleCount = bundle.rules.length;
+        outcome.lastError = undefined;
     } catch (e: any) {
-        next.lastError = e?.message || String(e);
-        console.log(APP_NAME_WITH_SUFFIX, `site rule subscription failed: ${sub.url}`, e);
+        outcome.lastError = e?.message || String(e);
+        console.log(APP_NAME_WITH_SUFFIX, `site rule subscription failed: ${url}`, e);
     }
-    return next;
+    return outcome;
 }
 
 /** The official package is fetched like a subscription but has no list entry. */
 async function fetchOfficial(): Promise<SiteRuleSubscription> {
-    const meta = await fetchSubscription({ url: SITE_RULE_OFFICIAL_URL, enabled: true, addedAt: 0 });
+    const meta: SiteRuleSubscription = {
+        url: SITE_RULE_OFFICIAL_URL,
+        enabled: true,
+        addedAt: 0,
+        ...(await fetchPackage(SITE_RULE_OFFICIAL_URL)),
+    };
     await storage.setItem(OFFICIAL_META_KEY, meta);
     return meta;
 }
@@ -232,6 +245,21 @@ async function getOfficialMeta(): Promise<SiteRuleSubscription | null> {
  * Refresh one subscription, or the official package plus every enabled
  * subscription when `url` is omitted. Returns the updated subscription list so
  * the caller can re-render.
+ *
+ * This is a read-modify-write over a list the user edits from Options, with a
+ * NETWORK ROUND TRIP in the middle — so the list it started from is routinely
+ * stale by the time it writes. It must therefore re-read and write back only
+ * the fields a fetch owns; blindly persisting the snapshot it began with erases
+ * whatever happened meanwhile.
+ *
+ * That is not hypothetical: "add a subscription" fires the config write and
+ * this refresh as two concurrent background messages, and adding a per-element
+ * bookkeeping read to configRepo.set (cloud-sync collection merging) was enough
+ * to let this handler's read slip in front of the add — the row appeared and
+ * then vanished, because this function wrote the pre-add list back over it. The
+ * caller now awaits the save (that is what makes the new URL actually get
+ * fetched), and this merge is what keeps any such interleaving from losing
+ * data — the 24h alarm can fire mid-edit too.
  */
 export async function refreshSubscriptions(url?: string): Promise<SiteRuleSubscription[]> {
     if (url === SITE_RULE_OFFICIAL_URL) {
@@ -240,12 +268,16 @@ export async function refreshSubscriptions(url?: string): Promise<SiteRuleSubscr
     }
     if (!url) await fetchOfficial();
 
-    const list = await getSubscriptions();
-    const next: SiteRuleSubscription[] = [];
-    for (const sub of list) {
+    const outcomes = new Map<string, FetchOutcome>();
+    for (const sub of await getSubscriptions()) {
         const wanted = url ? sub.url === url : sub.enabled;
-        next.push(wanted ? await fetchSubscription(sub) : sub);
+        if (wanted) outcomes.set(sub.url, await fetchPackage(sub.url));
     }
+
+    const next = (await getSubscriptions()).map((sub) => {
+        const outcome = outcomes.get(sub.url);
+        return outcome ? { ...sub, ...outcome } : sub;
+    });
     await setSubscriptions(next);
     return next;
 }
