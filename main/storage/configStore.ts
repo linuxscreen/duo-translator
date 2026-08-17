@@ -26,6 +26,8 @@ import {
     DOMAIN_STRATEGY,
     VIEW_STRATEGY,
 } from '@/main/constants';
+import { collectionIdentity, indexElements } from './collections';
+import { stableStr } from './stableJson';
 
 export const STORAGE_PREFIX = {
     CONFIG: 'config_',
@@ -82,16 +84,35 @@ const dataRuleKey = (host: string): string => `${STORAGE_PREFIX.RULE}${host}`;
 // time of a removed key. Sync merges key-by-key using these, so edits to
 // different keys on different devices never clobber each other.
 
+export type ElementSyncMeta = {
+    /** Element identity → last-modified clock (ms). */
+    clocks: Record<string, number>;
+    /** Element identity → deletion clock (ms). */
+    tombstones: Record<string, number>;
+};
+
 export type SyncMeta = {
     clocks: Record<string, number>;
     tombstones: Record<string, number>;
+    /**
+     * Element-level clocks for *collection* keys (see storage/collections.ts):
+     * keys whose value is an array of independent elements. Nesting the clocks
+     * here rather than inside the stored value keeps every reader of
+     * AI_PROVIDERS / SITE_RULE_* / rule_<host> untouched — the stored shape is
+     * still a plain array.
+     */
+    elements: Record<string, ElementSyncMeta>;
 };
 
 const META_KEY: StorageItemKey = 'local:__sync_meta';
 
 export async function getSyncMeta(): Promise<SyncMeta> {
-    const m = await storage.getItem<SyncMeta>(META_KEY);
-    return m ?? { clocks: {}, tombstones: {} };
+    const m = await storage.getItem<Partial<SyncMeta>>(META_KEY);
+    return {
+        clocks: m?.clocks ?? {},
+        tombstones: m?.tombstones ?? {},
+        elements: m?.elements ?? {},
+    };
 }
 
 async function saveSyncMeta(m: SyncMeta): Promise<void> {
@@ -103,29 +124,106 @@ export async function setSyncMeta(meta: SyncMeta): Promise<void> {
     await saveSyncMeta(meta);
 }
 
-/** Mark a data key as live-modified now (and clear any tombstone for it). */
-async function touchKey(dataKey: string): Promise<void> {
+/**
+ * The element-meta bucket for a collection key, created on demand.
+ *
+ * Creation SEEDS every element that already exists with the key's current
+ * clock. Without that seed, elements written before element tracking began
+ * would be clockless and fall back to the key clock at merge time — so an
+ * unrelated edit to a sibling element (which bumps the key clock) would make
+ * them look newer than a remote deletion and resurrect it.
+ */
+function elementMetaFor(m: SyncMeta, dataKey: string, before: unknown): ElementSyncMeta {
+    const existing = m.elements[dataKey];
+    if (existing) return existing;
+    const idOf = collectionIdentity(dataKey);
+    const created: ElementSyncMeta = { clocks: {}, tombstones: {} };
+    if (idOf) {
+        const base = m.clocks[dataKey] ?? 0;
+        for (const id of indexElements(before, idOf).byId.keys()) created.clocks[id] = base;
+    }
+    m.elements[dataKey] = created;
+    return created;
+}
+
+/**
+ * Record element-level events for a collection key from a before/after diff.
+ * Only added or *changed* elements get a fresh clock — an untouched sibling
+ * keeps its old one, which is exactly what makes "device A adds a provider"
+ * stop clobbering "device B deleted a different provider".
+ */
+function diffElements(m: SyncMeta, dataKey: string, before: unknown, after: unknown, now: number): void {
+    const idOf = collectionIdentity(dataKey);
+    if (!idOf) return;
+    const b = indexElements(before, idOf);
+    const a = indexElements(after, idOf);
+    const em = elementMetaFor(m, dataKey, before);
+    for (const [id, el] of a.byId) {
+        const prev = b.byId.get(id);
+        if (prev === undefined || stableStr(prev) !== stableStr(el)) em.clocks[id] = now;
+        delete em.tombstones[id];
+    }
+    for (const id of b.byId.keys()) {
+        if (a.byId.has(id)) continue;
+        delete em.clocks[id];
+        em.tombstones[id] = now;
+    }
+}
+
+/**
+ * Mark a data key as live-modified now (and clear any tombstone for it).
+ *
+ * `change` is only needed for collection keys — pass the value as it was before
+ * the write and as it is after, and the element-level clocks are derived from
+ * the diff. Callers of non-collection keys pass nothing.
+ */
+async function touchKey(dataKey: string, change?: { before: unknown; after: unknown }): Promise<void> {
     const m = await getSyncMeta();
-    m.clocks[dataKey] = Date.now();
+    const now = Date.now();
+    // Before the key clock moves: the seed inside diffElements reads it.
+    if (change) diffElements(m, dataKey, change.before, change.after, now);
+    m.clocks[dataKey] = now;
     delete m.tombstones[dataKey];
     await saveSyncMeta(m);
 }
 
-/** Mark a data key as deleted now (and drop its live clock). */
-async function tombstoneKey(dataKey: string): Promise<void> {
+/**
+ * Mark a data key as deleted now (and drop its live clock).
+ *
+ * For a collection key, `before` is the value that was removed: every one of
+ * its elements gets its own tombstone. The key-level tombstone alone is not
+ * enough — it is cleared the moment the key is re-created, and the elements
+ * that were deleted with it would then be resurrected by a stale peer.
+ */
+async function tombstoneKey(dataKey: string, before?: unknown): Promise<void> {
     const m = await getSyncMeta();
+    const now = Date.now();
+    if (before !== undefined) diffElements(m, dataKey, before, [], now);
     delete m.clocks[dataKey];
-    m.tombstones[dataKey] = Date.now();
+    m.tombstones[dataKey] = now;
     await saveSyncMeta(m);
 }
 
 /** Bump clocks for several data keys to now — used after a manual import so the
- *  imported values win on the next sync. */
+ *  imported values win on the next sync. Collection keys additionally get a
+ *  fresh clock on every element they currently hold (read back from storage,
+ *  since the import writes the merged value before calling this), so the
+ *  imported elements propagate individually. */
 export async function touchKeys(dataKeys: string[]): Promise<void> {
     if (dataKeys.length === 0) return;
     const m = await getSyncMeta();
     const now = Date.now();
+    const collections = dataKeys.filter((k) => collectionIdentity(k) !== null);
+    const stored = collections.length > 0 ? await storage.snapshot('local') : {};
     for (const k of dataKeys) {
+        const idOf = collectionIdentity(k);
+        if (idOf) {
+            const em = elementMetaFor(m, k, stored[k]);
+            for (const id of indexElements(stored[k], idOf).byId.keys()) {
+                em.clocks[id] = now;
+                delete em.tombstones[id];
+            }
+        }
         m.clocks[k] = now;
         delete m.tombstones[k];
     }
@@ -152,8 +250,13 @@ export const configRepo = {
         return value
     },
     async set(name: string, value: unknown): Promise<void> {
+        const dataKey = dataConfigKey(name);
+        // Collection keys need the previous value to derive element-level
+        // clocks; every other key skips the extra read.
+        const isCollection = collectionIdentity(dataKey) !== null;
+        const before = isCollection ? await storage.getItem<unknown>(configKey(name)) : undefined;
         await storage.setItem(configKey(name), value);
-        await touchKey(dataConfigKey(name));
+        await touchKey(dataKey, isCollection ? { before, after: value } : undefined);
     },
 };
 
@@ -272,9 +375,10 @@ export const ruleRepo = {
     async add(host: string, rule: string): Promise<void> {
         const existing = (await storage.getItem<string[]>(ruleKey(host))) ?? [];
         if (existing.includes(rule)) return;
-        existing.push(rule);
-        await storage.setItem(ruleKey(host), existing);
-        await touchKey(dataRuleKey(host));
+        // Not a push: the pre-write value has to survive for the element diff.
+        const next = [...existing, rule];
+        await storage.setItem(ruleKey(host), next);
+        await touchKey(dataRuleKey(host), { before: existing, after: next });
     },
 
     async delete(host: string, rule: string): Promise<void> {
@@ -283,10 +387,10 @@ export const ruleRepo = {
         const next = existing.filter((r) => r !== rule);
         if (next.length === 0) {
             await storage.removeItem(ruleKey(host));
-            await tombstoneKey(dataRuleKey(host));
+            await tombstoneKey(dataRuleKey(host), existing);
         } else {
             await storage.setItem(ruleKey(host), next);
-            await touchKey(dataRuleKey(host));
+            await touchKey(dataRuleKey(host), { before: existing, after: next });
         }
     },
 
@@ -297,10 +401,10 @@ export const ruleRepo = {
         const next = existing.filter((r) => !drop.has(r));
         if (next.length === 0) {
             await storage.removeItem(ruleKey(host));
-            await tombstoneKey(dataRuleKey(host));
+            await tombstoneKey(dataRuleKey(host), existing);
         } else {
             await storage.setItem(ruleKey(host), next);
-            await touchKey(dataRuleKey(host));
+            await touchKey(dataRuleKey(host), { before: existing, after: next });
         }
     },
 

@@ -145,8 +145,10 @@ describe("applyImportedSnapshot — secrets", () => {
         );
 
         const providers = store[AI_PROVIDERS_KEY] as any[];
-        expect(providers).toHaveLength(1);
-        expect(providers[0].apiKey).toBe("");
+        const p9 = providers.find((p) => p.id === "p9");
+        expect(p9).toBeDefined();
+        // No local record to take a key from, so it stays empty.
+        expect(p9.apiKey).toBe("");
     });
 
     it("writes the DeepL key when the device has none and the file carries one", async () => {
