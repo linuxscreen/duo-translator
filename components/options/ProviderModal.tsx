@@ -4,9 +4,10 @@ import { useTranslation } from 'react-i18next';
 import { browser } from 'wxt/browser';
 import { ACTION, STATUS_SUCCESS } from '@/main/constants';
 import { AiProvider, AiProviderType } from '@/main/aiProvider';
-import { PROVIDER_CATALOG, getCatalogEntry } from '@/main/aiProvider';
+import { PROVIDER_CATALOG, getCatalogEntry, getDefaultModel } from '@/main/aiProvider';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { ServiceMark } from '@/components/ui/service-mark';
 import {
@@ -37,7 +38,12 @@ export function ProviderModal({ open, initial, onClose, onSave }: Props) {
     const [name, setName] = useState(initial?.name ?? getCatalogEntry('openai').label);
     const [url, setUrl] = useState(initial?.url ?? getCatalogEntry('openai').defaultUrl);
     const [apiKey, setApiKey] = useState(initial?.apiKey ?? '');
-    const [model, setModel] = useState(initial?.model ?? '');
+    const [model, setModel] = useState(initial?.model ?? getDefaultModel('openai'));
+    // Free-text model entry. Forced on for provider types with no catalog
+    // (Custom) and for a saved model the catalog doesn't know about — an
+    // existing provider must never be silently rewritten to a listed model
+    // just because the dialog was opened.
+    const [customModel, setCustomModel] = useState(false);
     const [showKey, setShowKey] = useState(false);
 
     // Tracks whether the user has manually edited `name` / `url`. When they
@@ -59,7 +65,9 @@ export function ProviderModal({ open, initial, onClose, onSave }: Props) {
         setName(initial?.name ?? entry.label);
         setUrl(initial?.url ?? entry.defaultUrl);
         setApiKey(initial?.apiKey ?? '');
-        setModel(initial?.model ?? '');
+        const model0 = initial?.model ?? entry.models[0] ?? '';
+        setModel(model0);
+        setCustomModel(!entry.models.includes(model0));
         setNameDirty(!!initial);
         setUrlDirty(!!initial);
         setShowKey(false);
@@ -76,7 +84,24 @@ export function ProviderModal({ open, initial, onClose, onSave }: Props) {
         const ent = getCatalogEntry(t1);
         if (!nameDirty) setName(ent.label);
         if (!urlDirty) setUrl(ent.defaultUrl);
+        // The model is always reset — unlike name/url there is no "dirty" case
+        // worth preserving, since a model id is only meaningful to the provider
+        // it came from.
+        setModel(ent.models[0] ?? '');
+        setCustomModel(ent.models.length === 0);
         setTestReply(null);
+    };
+
+    /**
+     * Toggling free-text entry carries the current value across in both
+     * directions: ticking hands the dropdown's selection to the input, and
+     * unticking keeps a typed value that happens to be a catalog model (falling
+     * back to the default only when it isn't one).
+     */
+    const onCustomModelChange = (next: boolean) => {
+        setCustomModel(next);
+        if (!next && !entry.models.includes(model.trim())) setModel(entry.models[0] ?? '');
+        else if (!next) setModel(model.trim());
     };
 
     // Validation. apiKey is required only for catalog entries with
@@ -241,11 +266,35 @@ export function ProviderModal({ open, initial, onClose, onSave }: Props) {
                 </Field>
 
                 <Field label={t('aiProviderModel', 'Model')} required>
-                    <Input
-                        value={model}
-                        onChange={(e) => setModel(e.target.value)}
-                        placeholder={placeholderModel(type)}
-                    />
+                    {customModel || entry.models.length === 0 ? (
+                        <Input
+                            value={model}
+                            onChange={(e) => setModel(e.target.value)}
+                            placeholder={getDefaultModel(type) || 'model-name'}
+                        />
+                    ) : (
+                        <Select value={model} onValueChange={setModel}>
+                            <SelectTrigger>
+                                <SelectValue placeholder={getDefaultModel(type)} />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {entry.models.map((m) => (
+                                    <SelectItem key={m} value={m}>
+                                        {m}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    )}
+                    {entry.models.length > 0 && (
+                        <label className="flex w-fit cursor-pointer items-center gap-1.5 text-[11px] text-ink-mute">
+                            <Checkbox
+                                checked={customModel}
+                                onChange={(e) => onCustomModelChange(e.target.checked)}
+                            />
+                            {t('aiCustomModelName', 'Enter a custom model name')}
+                        </label>
+                    )}
                 </Field>
 
                 {testReply && (
@@ -262,18 +311,6 @@ export function ProviderModal({ open, initial, onClose, onSave }: Props) {
             </div>
         </Dialog>
     );
-}
-
-function placeholderModel(type: AiProviderType): string {
-    switch (type) {
-        case 'openai': return 'gpt-4o-mini';
-        case 'deepseek': return 'deepseek-chat';
-        case 'gemini': return 'gemini-2.0-flash';
-        case 'ollama': return 'llama3.1';
-        case 'openrouter': return 'openai/gpt-4o-mini';
-        case 'claude': return 'claude-sonnet-4-5';
-        case 'custom': return '';
-    }
 }
 
 function Field({

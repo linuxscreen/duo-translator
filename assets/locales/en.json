@@ -234,6 +234,7 @@
   "aiNoProvider": "No provider configured. Add one to get started.",
   "aiProviderName": "Name",
   "aiProviderModel": "Model",
+  "aiCustomModelName": "Enter a custom model name",
   "aiProviderBaseUrl": "Base URL (OpenAI-compatible)",
   "aiProviderApiKey": "API Key",
   "aiActive": "Active",

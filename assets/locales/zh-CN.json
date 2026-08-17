@@ -234,6 +234,7 @@
   "aiNoProvider": "还没有配置服务商,添加一个开始使用。",
   "aiProviderName": "名称",
   "aiProviderModel": "模型",
+  "aiCustomModelName": "输入自定义模型名称",
   "aiProviderBaseUrl": "Base URL (OpenAI 兼容)",
   "aiProviderApiKey": "API Key",
   "aiActive": "当前使用",
