@@ -8,6 +8,7 @@ import {
 } from "@/main/constants";
 import { readConfig } from "@/utils/reactiveConfig";
 import { setConfig } from "@/utils/db";
+import { buildNoTranslateLanguageSet, isNoTranslateLanguage } from "@/main/noTranslateLanguage";
 import { buildAiTranslateService } from "@/utils/service";
 import { translateTexts } from "@/main/translateClient";
 import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
@@ -91,6 +92,22 @@ interface VideoSession {
     loadAttempts: number;
     /** Epoch ms before which no retry should be made (backoff). */
     nextRetryAt: number;
+    /**
+     * The loaded track's language is on the user's no-translate list. A sticky
+     * fact about this video's captions, so the menu keeps offering "Original
+     * only (this time)" even after the user has picked something else.
+     */
+    captionLanguageExcluded: boolean;
+    /**
+     * That rule is currently in force: show the original only, WITHOUT writing
+     * it into the display-mode setting.
+     *
+     * Starts equal to `captionLanguageExcluded` and is cleared the moment the
+     * user picks bilingual / translation-only — that choice is explicit and
+     * goes to config as usual. Per session, because it answers a question about
+     * this video's track; the next video re-decides from its own.
+     */
+    originalOnlyByLanguage: boolean;
     /** AI segmentation on for this video (turns itself off after failures). */
     aiSegment: boolean;
     /** Index of the first word not yet turned into cues (AI mode only). */
@@ -296,8 +313,8 @@ export function initVideoSubtitle(): VideoSubtitleController {
                 reservedBottomPx: () => bottomControlsInsetPx(p),
             });
             lastStyleJson = JSON.stringify(style);
-            lastMode = mode;
-            overlay.setMode(mode);
+            lastMode = effectiveMode(mode);
+            overlay.setMode(lastMode);
             lastPauseOnSelect = pauseOnSelect;
             overlay.setPauseOnSelect(pauseOnSelect);
             // Fresh overlay, so whatever was pushed into the old one is gone —
@@ -325,12 +342,28 @@ export function initVideoSubtitle(): VideoSubtitleController {
                     teardownFeature();
                 },
                 onPinnedSourceLanguage: setPinnedSourceLanguage,
+                onOriginalOnlyOnce: () => {
+                    if (session) session.originalOnlyByLanguage = true;
+                    publishLanguageOverride();
+                },
+                onDisplayModePicked: () => {
+                    // Bilingual / translation-only: an explicit override of the
+                    // language rule for the rest of this video. The value
+                    // itself is written to config by the menu; all this side
+                    // has to do is stop forcing original-only.
+                    if (session) session.originalOnlyByLanguage = false;
+                    publishLanguageOverride();
+                },
                 onDownload: (kind) => void startDownload(kind),
                 onCancelDownload: abortDownload,
                 onDismissDownloadError: () => publishDownloadState(null),
             });
             lastEnabled = enabled;
             controls.setPinnedSourceLanguage(readPinnedSourceLang());
+            // A menu rebuilt mid-video (YouTube re-rendered the controls) has
+            // to be told again, or its "Original only (this time)" entry would
+            // silently turn back into the plain one.
+            publishLanguageOverride();
             // A job (or a failure the user has not dismissed) predating this
             // menu must show up in it rather than be lost with the old one.
             if (downloadState) controls.setDownloadState(downloadState);
@@ -351,6 +384,26 @@ export function initVideoSubtitle(): VideoSubtitleController {
 
     const readMode = () =>
         readConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_DISPLAY_MODE);
+
+    const readNoTranslateLanguages = async () =>
+        buildNoTranslateLanguageSet(await readConfig<string[]>(CONFIG_KEY.NO_TRANSLATE_LANGUAGES));
+
+    /**
+     * The mode actually rendered. The stored setting is overridden — for this
+     * video only — when its captions are already in a language the user asked
+     * us not to translate. Everything that consumes a mode goes through here so
+     * the overlay and the pre-translation scheduler cannot disagree.
+     */
+    const effectiveMode = (configMode: string) =>
+        session?.originalOnlyByLanguage ? VIDEO_SUBTITLE_DISPLAY_MODE.ORIGINAL : configMode;
+
+    /** Push the language rule's two flags into the menu. */
+    const publishLanguageOverride = () => {
+        controls?.setLanguageOverride({
+            excluded: !!session?.captionLanguageExcluded,
+            active: !!session?.originalOnlyByLanguage,
+        });
+    };
 
     const availabilityOf = (s: VideoSession) =>
         s.loadState === "ready" ? "available" as const
@@ -386,6 +439,8 @@ export function initVideoSubtitle(): VideoSubtitleController {
             loadState: "pending",
             loadAttempts: 0,
             nextRetryAt: 0,
+            captionLanguageExcluded: false,
+            originalOnlyByLanguage: false,
             aiSegment: false,
             segCursor: 0,
             segmenting: false,
@@ -431,6 +486,15 @@ export function initVideoSubtitle(): VideoSubtitleController {
                 }
                 s.sourceLang = normalizeLanguageTag(track.languageCode);
                 s.trackId = track.id;
+                // Decided here rather than in the tick: this is the one moment
+                // the track's language becomes known, and the answer must be in
+                // place before the pre-translation scheduler asks for a mode —
+                // otherwise the first cues are translated and then hidden.
+                const excluded = isNoTranslateLanguage(s.sourceLang, await readNoTranslateLanguages());
+                if (abort.signal.aborted || session !== s) return;
+                s.captionLanguageExcluded = excluded;
+                s.originalOnlyByLanguage = excluded;
+                publishLanguageOverride();
                 const words = await adapter.fetchTrack(track);
                 if (abort.signal.aborted || session !== s) return;
                 if (words.length === 0) {
@@ -703,7 +767,10 @@ export function initVideoSubtitle(): VideoSubtitleController {
         // Returning before the translationKey bookkeeping is deliberate —
         // whatever was already translated stays on the cues, so switching back
         // to bilingual shows it instantly instead of re-fetching the track.
-        if (mode === VIDEO_SUBTITLE_DISPLAY_MODE.ORIGINAL) return;
+        // Also covers "this track is in a no-translate language" — that is the
+        // whole point of routing the mode through effectiveMode: the saving is
+        // the provider call, not just the hidden line.
+        if (effectiveMode(mode) === VIDEO_SUBTITLE_DISPLAY_MODE.ORIGINAL) return;
 
         const key = `${service}|${lang}`;
         if (s.translationKey && s.translationKey !== key) {
@@ -953,9 +1020,13 @@ export function initVideoSubtitle(): VideoSubtitleController {
             lastStyleJson = styleJson;
             overlay.setStyle(style);
         }
-        if (mode !== lastMode) {
-            lastMode = mode;
-            overlay.setMode(mode);
+        // Compared AFTER the override, so the tick also picks up the moment the
+        // track's language turns the override on (the load resolves between
+        // ticks and never touches the stored mode).
+        const shownMode = effectiveMode(mode);
+        if (shownMode !== lastMode) {
+            lastMode = shownMode;
+            overlay.setMode(shownMode);
         }
         if (pauseOnSelect !== lastPauseOnSelect) {
             lastPauseOnSelect = pauseOnSelect;

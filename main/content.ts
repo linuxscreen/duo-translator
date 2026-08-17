@@ -1,6 +1,12 @@
 import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
 import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE, EXTENSION_INVALID_CONTEXT_MSG, STYLE_BLUR, TRANSLATING_ANIMATION } from "./constants";
-import { restore, translateParams, getTranslateResult, translate, TranslateResult } from "./translateClient";
+import { restore, translateParams, getTranslateResult, translate, TranslateResult, detectTextsLanguages } from "./translateClient";
+import { buildNoTranslateLanguageSet, isNoTranslateLanguage } from "./noTranslateLanguage";
+import {
+    needsCompanionDetect,
+    partitionByLocalLanguage,
+    rejectByDetectedLanguage,
+} from "./noTranslateLanguageFilter";
 import { notifyBackground, runtimeSendMessage, sendMessageToBackground } from "../utils/message";
 import { browser } from "wxt/browser"
 import { mountFloatBall, type FloatBallController } from "./floatBall";
@@ -469,9 +475,9 @@ export async function content() {
     // get all config from storage
     let [rules, viewStrategy, targetLanguageConfig, translateServiceConfig, globalSwitch, defaultStrategy,
         rawDomainStrategy, floatBallSwitch, floatBallStyleConfig, bilingualHighlightingSwitch, bilingualHighlightingMinSentences, translationLineBreakMinChars, aiTranslateServiceKey,
-        aiTargetLanguageConfig, contextMenuSwitch, translateStatusConfig, translatingAnimationConfig]
+        aiTargetLanguageConfig, contextMenuSwitch, translateStatusConfig, translatingAnimationConfig, noTranslateLanguagesConfig]
         : [string[], VIEW_STRATEGY, string | undefined, string | undefined, boolean, string, any, boolean, string, boolean, number,
-            number, string | undefined, string, boolean, boolean, string | undefined]
+            number, string | undefined, string, boolean, boolean, string | undefined, string[] | undefined]
         = await Promise.all(
             [
                 listRuleFromDB(domainWithPort),
@@ -491,6 +497,7 @@ export async function content() {
                 getConfig(CONFIG_KEY.CONTEXT_MENU_SWITCH),
                 getSessionStorage(tabTranslateStatusKey),
                 getConfig(CONFIG_KEY.TRANSLATING_ANIMATION),
+                getConfig(CONFIG_KEY.NO_TRANSLATE_LANGUAGES),
             ]
         )
     translateStatus = !!translateStatusConfig
@@ -525,6 +532,10 @@ export async function content() {
     shareConfig.aiTargetLanguage = aiTargetLanguageConfig
     shareConfig.aiTranslateServiceChoice = parsedAiTranslateService
     let targetLanguage = targetLanguageConfig || browserTargetLanguage()
+    // Languages the user never wants translated, pre-normalized once. An empty
+    // set is the "feature not configured" fast path every consumer checks
+    // first, so nobody who leaves this alone pays for it.
+    let noTranslateLanguages = buildNoTranslateLanguageSet(noTranslateLanguagesConfig)
     let domainStrategy = (rawDomainStrategy?.strategy || DOMAIN_STRATEGY.AUTO) as string
     // Per-domain "translate all elements": the user's own exclusions stop
     // applying on this site — both the legacy per-host no-translate areas and
@@ -961,6 +972,21 @@ export async function content() {
                     }
                 }
                 break
+            case CONFIG_KEY.NO_TRANSLATE_LANGUAGES: {
+                const next = buildNoTranslateLanguageSet(value)
+                if (next.size === noTranslateLanguages.size
+                    && [...next].every(l => noTranslateLanguages.has(l))) return
+                noTranslateLanguages = next
+                // Takes effect on the next batch only. Deliberately NOT a
+                // restore + re-translate like TARGET_LANGUAGE does: the two
+                // directions are not symmetric. Adding a language would have to
+                // find and tear down translations that are already correct on
+                // screen, and removing one would have to re-detect the whole
+                // page to know what to pick up — for a setting the user edits
+                // once. Reloading the tab is the honest answer, same as the
+                // website rules.
+                break
+            }
             case CONFIG_KEY.FLOAT_BALL_SWITCH:
                 if (typeof value !== "boolean") return
                 if (value === floatBallSwitch) return
@@ -1037,7 +1063,7 @@ export async function content() {
                         if (pageLanguage === undefined) {
                             pageLanguage = await detectLanguage()
                         }
-                        let needTranslate = targetLanguage != pageLanguage
+                        let needTranslate = autoNeedsTranslate()
                         if (translateStatus && !needTranslate) {
                             await restoreOriginalAction()
                         } else if (!translateStatus && needTranslate) {
@@ -1124,10 +1150,10 @@ export async function content() {
                 if (pageLanguage === undefined) {
                     pageLanguage = await detectLanguage()
                 }
-                if (translateStatus && targetLanguage === pageLanguage) {
+                if (translateStatus && !autoNeedsTranslate()) {
                     await restoreOriginalAction()
                 }
-                if (!translateStatus && targetLanguage !== pageLanguage) {
+                if (!translateStatus && autoNeedsTranslate()) {
                     await translateAction()
                 }
                 console.log('default strategy:', translateStatus)
@@ -1621,6 +1647,21 @@ export async function content() {
         restoreOriginalPage(true, true)
     }
 
+    /**
+     * The AUTO/AUTO verdict, for an already-detected `pageLanguage`: translate
+     * unless the page is already in the target language, or is in a language
+     * the user put on the no-translate list.
+     *
+     * Four call sites ask exactly this (startup, the per-domain strategy
+     * switch, the default strategy switch, and `needsTranslate` below) and used
+     * to spell it out inline — one place now, so a change cannot land in three
+     * of the four.
+     */
+    function autoNeedsTranslate(): boolean {
+        if (isNoTranslateLanguage(pageLanguage, noTranslateLanguages)) return false
+        return pageLanguage !== targetLanguage
+    }
+
     function needsTranslate(): boolean | undefined {
         if (!globalSwitch) return false;
         if (domainStrategy === DOMAIN_STRATEGY.NEVER) return false;
@@ -1628,7 +1669,10 @@ export async function content() {
         if (defaultStrategy === DEFAULT_STRATEGY.NEVER) return false;
         if (defaultStrategy === DEFAULT_STRATEGY.ALWAYS) return true;
         if (pageLanguage !== undefined) {
-            return pageLanguage !== targetLanguage
+            // AUTO only. An ALWAYS strategy above is the user naming this site,
+            // which outranks a global list — see main/strategy.ts, the pure
+            // twin of this function.
+            return autoNeedsTranslate()
         }
     }
 
@@ -1648,7 +1692,7 @@ export async function content() {
             let needs = needsTranslate()
             if (needs === undefined) {
                 pageLanguage = await detectLanguage(htmlElements)
-                needs = pageLanguage !== targetLanguage
+                needs = autoNeedsTranslate()
             }
             shouldTranslate = needs
         }
@@ -3096,6 +3140,42 @@ export async function content() {
         void translateUnits(fresh, undefined, errorScope, replacements)
     }
 
+    /** A unit's source text, as the language filter reads it. */
+    function unitSourceText(unit: TranslationUnit): string {
+        return getTextNodesAndTextOfNodes(unit.nodes).text
+    }
+
+    /**
+     * Does the no-translate-language filter apply to this batch?
+     *
+     * Not to an explicit single-paragraph gesture: the user pointed at that
+     * paragraph and asked for it, which is a stronger statement than a list
+     * they configured once. `staleOnly` repairs run under the same scope and
+     * are covered by the same reasoning — they only ever follow a paragraph the
+     * user translated by hand.
+     */
+    function noTranslateLanguageFilterApplies(errorScope: ERROR_SCOPE_VALUE): boolean {
+        return noTranslateLanguages.size > 0 && errorScope === ERROR_SCOPE.PAGE_TRANSLATE
+    }
+
+    /**
+     * Containers that lost every unit they had in this batch to the language
+     * filter are never coming back: the IntersectionObserver moved them to
+     * PENDING on the way in and only ever picks up ORIGINAL, and nothing
+     * downstream of the filter will see them again. Settle them here, exactly
+     * as translateParagraphElements settles a container whose units were all
+     * `skip` — otherwise they sit PENDING and observed for the page's life.
+     */
+    function settleLanguageFilteredContainers(excluded: TranslationUnit[], kept: TranslationUnit[]) {
+        if (excluded.length === 0) return
+        const keptContainers = new Set(kept.map(u => u.container))
+        for (const container of new Set(excluded.map(u => u.container))) {
+            if (keptContainers.has(container)) continue
+            paragraphElementMap.set(container, ELEMENT_STATUS.TRANSLATED)
+            unobserveContainer(intersectionObserver, container)
+        }
+    }
+
     /**
      * Translate the given logical-paragraph units. The only entry point that
      * actually talks to the provider and writes translations: the whole-container
@@ -3116,7 +3196,30 @@ export async function content() {
         let viewStrategyCopy = viewStrategy
         // A container whose guard is already set has a translation in flight —
         // drop its units so we never translate the same text twice.
-        const units = allUnits.filter(u => !ignoreMutationElements.has(u.container))
+        const guardedUnits = allUnits.filter(u => !ignoreMutationElements.has(u.container))
+        // "Do not translate these languages", pass 1: local (franc), free.
+        // Runs BEFORE the translating indicator is started, so a paragraph that
+        // never leaves this frame never flashes a spinner either.
+        //
+        // A unit being re-translated is exempt: it was vetted when it was first
+        // translated, and under SINGLE what stands in the page now is OUR
+        // OUTPUT — detecting a language from that would answer with the target
+        // language, not the paragraph's.
+        let units = guardedUnits
+        let undeterminedUnits: TranslationUnit[] = []
+        if (noTranslateLanguageFilterApplies(errorScope)) {
+            const candidates = replacements
+                ? guardedUnits.filter(u => !replacements.has(u))
+                : guardedUnits
+            const partition = partitionByLocalLanguage(candidates, unitSourceText, noTranslateLanguages)
+            // Rebuilt by subtraction rather than assembled from the partition,
+            // so the batch keeps its original order (the insertion loops walk
+            // it) and the exempt re-translations keep their place in it.
+            const dropped = new Set(partition.excluded)
+            units = guardedUnits.filter(u => !dropped.has(u))
+            undeterminedUnits = partition.undetermined
+            settleLanguageFilteredContainers(partition.excluded, units)
+        }
         if (units.length === 0) {
             return
         }
@@ -3168,9 +3271,54 @@ export async function content() {
                 if (sourceText.size > 0) sourceTextOf = (node) => sourceText.get(node)
             }
 
-            let translateResults = await getTranslateResult(service, units, targetLanguage, viewStrategyCopy, controller?.signal, sourceTextOf)
+            // "Do not translate these languages", pass 2: the provider's word
+            // on the paragraphs franc could not name.
+            //
+            // Google / Microsoft / DeepL report a source language per text, so
+            // their own reply answers and nothing extra is sent. Everyone else
+            // (Yandex answers per batch, the AI providers not at all) gets a
+            // Microsoft detect fired CONCURRENTLY with the translation — the
+            // texts are captured here, before any write-back touches them.
+            const filterLanguages = noTranslateLanguageFilterApplies(errorScope)
+            const companionUnits = filterLanguages && needsCompanionDetect(service)
+                ? undeterminedUnits
+                : []
+            const [translateResults, companionLangs] = await Promise.all([
+                getTranslateResult(service, units, targetLanguage, viewStrategyCopy, controller?.signal, sourceTextOf),
+                companionUnits.length > 0
+                    ? detectTextsLanguages(companionUnits.map(unitSourceText), controller?.signal)
+                    : Promise.resolve<string[]>([]),
+            ])
             if (!translateResults || translateResults.length === 0) {
                 return
+            }
+
+            if (filterLanguages) {
+                const companionLangOf = new Map<TranslationUnit, string>()
+                companionUnits.forEach((unit, i) => companionLangOf.set(unit, companionLangs[i] ?? ""))
+                const excluded: TranslationUnit[] = []
+                for (let i = translateResults.length - 1; i >= 0; i--) {
+                    const result = translateResults[i]
+                    const unit = result.unit
+                    // Re-translations stay exempt on this side too, for the same
+                    // reason they were exempt from the local pass.
+                    if (!unit || replacements?.has(unit)) continue
+                    // On the per-text path the reply carries an answer for
+                    // EVERY unit, including ones franc already cleared — it is
+                    // free and better informed, so it wins over the local guess
+                    // (and replaces it in the memo).
+                    const lang = needsCompanionDetect(service) ? companionLangOf.get(unit) : result.sourceLang
+                    if (!rejectByDetectedLanguage(unitSourceText(unit), lang, noTranslateLanguages)) continue
+                    excluded.push(unit)
+                    translateResults.splice(i, 1)
+                }
+                settleLanguageFilteredContainers(
+                    excluded,
+                    translateResults.map(r => r.unit).filter((u): u is TranslationUnit => !!u),
+                )
+                if (translateResults.length === 0) {
+                    return
+                }
             }
 
             // remove the unit whose language is same as targetLanguage

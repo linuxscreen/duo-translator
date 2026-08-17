@@ -216,6 +216,12 @@ export enum ACTION {
     // Provider-backed language detection (Microsoft detect endpoint), used when
     // local franc detection is inconclusive.
     DETECT_LANGUAGE = 'detectLanguage',
+    // Per-text language detection: answers one language PER input instead of
+    // one dominant language for the batch. Deliberately its own action rather
+    // than a flag on DETECT_LANGUAGE — the two have different return shapes and
+    // different fallbacks (this one has no franc tie-breaker to degrade to; a
+    // failure just means "unknown", i.e. translate it).
+    DETECT_TEXTS_LANGUAGES = 'detectTextsLanguages',
     STYLE_CHANGED = 'styleChanged',
     DOMAIN_STRATEGY_CHANGED = 'domainStrategyChanged',
     // The per-domain "translate all elements" switch was flipped in the popup.
@@ -333,6 +339,12 @@ export enum CONFIG_KEY {
     VIEW_STRATEGY = 'viewStrategy',
     TARGET_LANGUAGE = 'targetLanguage',
     SOURCE_LANGUAGE = 'sourceLanguage',
+    // Languages the user never wants translated, as a list of LANGUAGES values.
+    // Three consumers, all "do not translate BY DEFAULT" rather than a hard
+    // block: the page-level auto-translate decision (AUTO strategy only), the
+    // per-paragraph filter inside a page translation, and the YouTube caption
+    // track. An explicit single-paragraph gesture ignores it entirely.
+    NO_TRANSLATE_LANGUAGES = 'noTranslateLanguages',
     STYLE = 'style',
     BG_COLOR = 'bgColor',
     FONT_COLOR = 'fontColor',
@@ -588,6 +600,9 @@ export const DEFAULT_VALUE = {
     // utils/service.ts — which no static default could express, since the same
     // build ships to browsers that do and don't have it.
     DISABLED_TRANSLATE_SERVICES: ['deepl'],
+    // Module-level constant on purpose: `useConfig` resolves its default
+    // through here, and a fresh [] every render would loop useSyncExternalStore.
+    NO_TRANSLATE_LANGUAGES: [] as string[],
     AI_TARGET_LANGUAGE: 'en',
     THEME: 'system',
     DOUBLE_TAP_MODIFIER: 'ctrl',

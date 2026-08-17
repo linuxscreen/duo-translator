@@ -608,5 +608,13 @@
   "translateIndicatorDetails": "Translation failed — show details",
   "translateIndicatorRetry": "Retry",
   "translateIndicatorRetryAll": "Retry all failed paragraphs",
-  "translateIndicatorFailedCount": "Translation failed"
+  "translateIndicatorFailedCount": "Translation failed",
+  "noTranslateLanguages": "Do not translate these languages",
+  "noTranslateLanguagesHint": "Web pages, paragraphs and YouTube original captions in a selected language are not translated automatically.",
+  "videoSubtitleModeOriginalOnce": "Original only (this time)",
+  "select": "Select",
+  "remove": "Remove",
+  "clearAll": "Clear all",
+  "searchLanguage": "Search language…",
+  "noResults": "No results"
 }

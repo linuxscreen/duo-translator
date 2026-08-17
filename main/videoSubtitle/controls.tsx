@@ -45,6 +45,15 @@ export interface SubtitleControlsDeps {
      * track list is not a preference that can be replayed on another machine.
      */
     onPinnedSourceLanguage(languageCode: string): void;
+    /**
+     * "Original only (this time)" picked. Deliberately NOT a config write: the
+     * entry only exists because THIS video's captions are already in a language
+     * the user asked us not to translate, and that is not a preference to
+     * replay on the next video.
+     */
+    onOriginalOnlyOnce(): void;
+    /** Bilingual / translation-only picked — the normal, persisted path. */
+    onDisplayModePicked(): void;
     /** Build + save a subtitle file for the loaded track. */
     onDownload(kind: SubtitleDownloadKind): void;
     /** Cancel the running download job. */
@@ -60,6 +69,15 @@ export interface SubtitleControlsController {
     setSourceTracks(tracks: SourceTrackOption[]): void;
     /** The pinned language, or "" — session state pushed in by the controller. */
     setPinnedSourceLanguage(languageCode: string): void;
+    /**
+     * The no-translate-language rule for this video's caption track.
+     *
+     * `excluded` is sticky (the track's language is on the list, so the entry
+     * stays labelled "this time"); `active` is whether the rule is currently
+     * overriding the stored display mode. Both are pushed in rather than
+     * derived here, so a menu rebuilt mid-video cannot drift from the session.
+     */
+    setLanguageOverride(state: { excluded: boolean; active: boolean }): void;
     /**
      * Download progress / failure, or null when idle. Rendered OUTSIDE the menu
      * card, so closing the menu cannot hide a job that is still running.
@@ -153,12 +171,14 @@ export function mountSubtitleControls(deps: SubtitleControlsDeps): SubtitleContr
         setSourceTracks: (_: SourceTrackOption[]) => { },
         setPinnedSourceLanguage: (_: string) => { },
         setDownloadState: (_: SubtitleDownloadState | null) => { },
+        setLanguageOverride: (_: { excluded: boolean; active: boolean }) => { },
     };
     let pendingEnabled: boolean | undefined;
     let pendingAvailability: SubtitleAvailability | undefined;
     let pendingSourceTracks: SourceTrackOption[] | undefined;
     let pendingPinnedLang: string | undefined;
     let pendingDownloadState: SubtitleDownloadState | null | undefined;
+    let pendingLanguageOverride: { excluded: boolean; active: boolean } | undefined;
     let registered = false;
 
     root.render(
@@ -174,6 +194,7 @@ export function mountSubtitleControls(deps: SubtitleControlsDeps): SubtitleContr
                 api.setSourceTracks = fns.setSourceTracks;
                 api.setPinnedSourceLanguage = fns.setPinnedSourceLanguage;
                 api.setDownloadState = fns.setDownloadState;
+                api.setLanguageOverride = fns.setLanguageOverride;
                 setMenuOpenSignal = fns.setMenuOpen;
                 registered = true;
                 if (pendingEnabled !== undefined) fns.setEnabled(pendingEnabled);
@@ -181,6 +202,7 @@ export function mountSubtitleControls(deps: SubtitleControlsDeps): SubtitleContr
                 if (pendingSourceTracks !== undefined) fns.setSourceTracks(pendingSourceTracks);
                 if (pendingPinnedLang !== undefined) fns.setPinnedSourceLanguage(pendingPinnedLang);
                 if (pendingDownloadState !== undefined) fns.setDownloadState(pendingDownloadState);
+                if (pendingLanguageOverride !== undefined) fns.setLanguageOverride(pendingLanguageOverride);
             }}
         />,
     );
@@ -205,6 +227,10 @@ export function mountSubtitleControls(deps: SubtitleControlsDeps): SubtitleContr
         setDownloadState: (v) => {
             if (registered) api.setDownloadState(v);
             else pendingDownloadState = v;
+        },
+        setLanguageOverride: (v) => {
+            if (registered) api.setLanguageOverride(v);
+            else pendingLanguageOverride = v;
         },
         ensureButton,
         destroy: () => {
@@ -341,6 +367,7 @@ function SubtitleMenuApp({
         setSourceTracks(v: SourceTrackOption[]): void;
         setPinnedSourceLanguage(v: string): void;
         setDownloadState(v: SubtitleDownloadState | null): void;
+        setLanguageOverride(v: { excluded: boolean; active: boolean }): void;
         setMenuOpen(open: boolean): void;
     }) => void;
     isMenuOpenRef: { set(open: boolean): void };
@@ -354,6 +381,9 @@ function SubtitleMenuApp({
     const [pinnedLang, setPinnedSourceLanguage] = useState("");
     const [downloadState, setDownloadState] = useState<SubtitleDownloadState | null>(null);
     const [downloadOpen, setDownloadOpen] = useState(false);
+    // This video's captions are in a no-translate language (`excluded`), and
+    // whether that is currently overriding the stored display mode (`active`).
+    const [languageOverride, setLanguageOverride] = useState({ excluded: false, active: false });
     /**
      * Measured placement of the cluster and its flyout.
      *
@@ -397,6 +427,7 @@ function SubtitleMenuApp({
             setSourceTracks,
             setPinnedSourceLanguage,
             setDownloadState,
+            setLanguageOverride,
             setMenuOpen: (o) => {
                 setOpen(o);
                 if (!o) {
@@ -563,8 +594,28 @@ function SubtitleMenuApp({
                         <span className="text-ink-2">{t("videoSubtitleDisplayMode", "Display mode")}</span>
                         <select
                             className={selectCls}
-                            value={mode}
-                            onChange={(e) => void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_DISPLAY_MODE, e.target.value)}
+                            // While the language rule is in force the stored
+                            // mode is not what is on screen, so the picker has
+                            // to show the override — otherwise it would read
+                            // "Bilingual" over a monolingual video.
+                            value={languageOverride.active
+                                ? VIDEO_SUBTITLE_DISPLAY_MODE.ORIGINAL
+                                : mode}
+                            onChange={(e) => {
+                                const next = e.target.value;
+                                // "Original only (this time)": the entry exists
+                                // only because this track's language is on the
+                                // no-translate list, so it stays out of config.
+                                if (languageOverride.excluded
+                                    && next === VIDEO_SUBTITLE_DISPLAY_MODE.ORIGINAL) {
+                                    setLanguageOverride((s) => ({ ...s, active: true }));
+                                    deps.onOriginalOnlyOnce();
+                                    return;
+                                }
+                                setLanguageOverride((s) => ({ ...s, active: false }));
+                                deps.onDisplayModePicked();
+                                void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_DISPLAY_MODE, next);
+                            }}
                         >
                             <option value={VIDEO_SUBTITLE_DISPLAY_MODE.BILINGUAL}>
                                 {t("videoSubtitleModeBilingual", "Bilingual")}
@@ -573,7 +624,9 @@ function SubtitleMenuApp({
                                 {t("videoSubtitleModeTranslation", "Translation only")}
                             </option>
                             <option value={VIDEO_SUBTITLE_DISPLAY_MODE.ORIGINAL}>
-                                {t("videoSubtitleModeOriginal", "Original only")}
+                                {languageOverride.excluded
+                                    ? t("videoSubtitleModeOriginalOnce", "Original only (this time)")
+                                    : t("videoSubtitleModeOriginal", "Original only")}
                             </option>
                         </select>
                     </div>

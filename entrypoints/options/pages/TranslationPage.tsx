@@ -49,6 +49,7 @@ import { Switch } from '@/components/ui/switch';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { DomainListSection, type DomainItem } from '@/components/options/DomainListSection';
+import { NoTranslateLanguagesRow } from '@/components/options/NoTranslateLanguagesRow';
 import {
   buildStylePreview,
   styleColorFields,
@@ -112,6 +113,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   );
   const [translationCache, setTranslationCache] = useState(true);
   const [ttsService, setTtsService] = useState<string>(DEFAULT_VALUE.TTS_SERVICE);
+  const [noTranslateLanguages, setNoTranslateLanguages] = useState<string[]>([]);
   // Transient "cleared" state for the clear-cache button (resets after ~1.5s).
   const [cacheCleared, setCacheCleared] = useState(false);
   // Clear-cache confirmation dialog.
@@ -201,7 +203,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     let cancelled = false;
     (async () => {
       const [
-        bh, fb, fbs, si, ta, vs, tl, ts, ds, ms, lb, tc, tts,
+        bh, fb, fbs, si, ta, vs, tl, ts, ds, ms, lb, tc, tts, ntl,
         styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg, qbcCfg, qbcIdxCfg,
         hbCfg, hbIdxCfg, hfCfg, hfIdxCfg, hsCfg, hbcCfg, hbcIdxCfg,
       ] = await Promise.all([
@@ -218,6 +220,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS),
         getConfig(CONFIG_KEY.TRANSLATION_CACHE_SWITCH),
         getConfig(CONFIG_KEY.TTS_SERVICE),
+        getConfig(CONFIG_KEY.NO_TRANSLATE_LANGUAGES),
         getConfig(CONFIG_KEY.STYLE),
         getConfig(CONFIG_KEY.BG_COLOR),
         getConfig(CONFIG_KEY.BG_COLOR_INDEX),
@@ -261,6 +264,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
       );
       setTranslationCache(tc === undefined ? true : tc);
       setTtsService(typeof tts === 'string' && tts ? tts : DEFAULT_VALUE.TTS_SERVICE);
+      setNoTranslateLanguages(Array.isArray(ntl) ? ntl.filter((l): l is string => typeof l === 'string') : []);
       setViewStrategy(vs === undefined ? DEFAULT_VALUE.VIEW_STRATEGY : vs);
       tl && setTargetLang(tl);
       // Same flat list (translators + AI providers) and active-service
@@ -355,6 +359,15 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   const onTtsService = (v: string) => {
     setTtsService(v);
     void setConfig(CONFIG_KEY.TTS_SERVICE, v);
+  };
+
+  const onNoTranslateLanguages = (next: string[]) => {
+    setNoTranslateLanguages(next);
+    // No CONFIG_CHANGED broadcast: content reads this through the storage
+    // watcher and only applies it to the NEXT batch anyway (see the
+    // NO_TRANSLATE_LANGUAGES case in main/content.ts — an already-translated
+    // page is not retro-actively undone). Open tabs pick it up on reload.
+    void setConfig(CONFIG_KEY.NO_TRANSLATE_LANGUAGES, next);
   };
 
   const onClearCacheClick = async () => {
@@ -882,6 +895,10 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
               </SelectContent>
             </Select>
           }
+        />
+        <NoTranslateLanguagesRow
+          value={noTranslateLanguages}
+          onChange={onNoTranslateLanguages}
         />
         <SettingRow
           label={t('websiteTranslationRules', 'Website translation rules')}

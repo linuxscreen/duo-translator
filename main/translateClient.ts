@@ -631,6 +631,43 @@ export async function translateTexts(
 }
 
 /**
+ * Provider-backed language detection, ONE ANSWER PER TEXT (index-aligned).
+ *
+ * Used by the no-translate-language paragraph filter for the translators that
+ * cannot report a per-paragraph source language of their own (Yandex answers
+ * per batch, AI providers not at all). Issued concurrently with that
+ * translator's request, so it costs latency only when it is the slower of the
+ * two.
+ *
+ * Degrades to an empty array: "we could not tell" must mean "translate it", so
+ * a detection outage can never make paragraphs silently disappear. Reported
+ * `silent` for the same reason detectTextsLanguage is — the user has nothing to
+ * act on, and a real provider failure raises its own bubble.
+ */
+export async function detectTextsLanguages(
+    texts: string[],
+    signal?: AbortSignal | null,
+): Promise<string[]> {
+    if (texts.length === 0) return [];
+    try {
+        const res = await abortableRequest<{ langs?: string[] }>({
+            action: ACTION.DETECT_TEXTS_LANGUAGES,
+            abortAction: ACTION.TRANSLATE_TEXTS_ABORT,
+            data: { texts },
+            signal,
+            timeout: API_REQUEST_TIMEOUT,
+        });
+        return Array.isArray(res?.langs) ? res.langs : [];
+    } catch (e) {
+        reportRequestError(ERROR_SCOPE.PAGE_TRANSLATE, e, {
+            silent: true,
+            detail: { phase: "per-paragraph language detection" },
+        });
+        return [];
+    }
+}
+
+/**
  * Provider-backed language detection, used when local franc detection is
  * inconclusive. Returns "" when detection is unavailable.
  */

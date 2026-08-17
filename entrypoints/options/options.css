@@ -50,6 +50,26 @@ html[data-theme="light"] {
   --color-accent-ink: #ffffff;
 }
 
+/* Tells the UA to render its OWN widgets dark — scrollbars above all, but also
+   the native checkbox, date pickers and text-selection defaults. Our tokens
+   only reach what we paint ourselves, so without this a dark page gets a white
+   scrollbar down the side of every scrollable panel. Dark is the base exactly
+   like the color tokens are; the light override lives with them in
+   `html[data-theme="light"]` (an attribute selector, so it outranks this).
+
+   MUST stay on `html` ALONE — do not fold it into the `html, body` rule below.
+   `color-scheme` is inherited, and a value set directly on <body> beats what
+   <body> would inherit from <html>. The light override only targets <html>, so
+   a `html, body` version pins <body> to dark permanently: the page turns light
+   but every widget inside it — sidebar, checkboxes, inner scrollbars — stays
+   dark. (Been there.)
+
+   Do NOT make it follow `prefers-color-scheme` either: the page theme is
+   CONFIG_KEY.THEME, and the user can pin light on a dark OS or the reverse. */
+html {
+  color-scheme: dark;
+}
+
 html,
 body {
   margin: 0;

@@ -59,6 +59,13 @@ html[data-theme="light"] {
   --color-banner-glow-2: oklch(0.78 0.1 290 / 0.3);
 }
 
+/* The dark half of the pair whose light half sits in `html[data-theme="light"]`
+   — see the full note in options.css, including why this must stay on `html`
+   alone and never be folded into the `html, body` rule below. */
+html {
+  color-scheme: dark;
+}
+
 html,
 body {
   margin: 0;

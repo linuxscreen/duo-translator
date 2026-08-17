@@ -608,5 +608,13 @@
   "translateIndicatorDetails": "翻译失败 — 查看报错信息",
   "translateIndicatorRetry": "重试",
   "translateIndicatorRetryAll": "重试所有失败的段落",
-  "translateIndicatorFailedCount": "翻译失败"
+  "translateIndicatorFailedCount": "翻译失败",
+  "noTranslateLanguages": "不翻译语言",
+  "noTranslateLanguagesHint": "如果网页、段落、YouTube 原文字幕的语言是选中项，则默认不会自动翻译",
+  "videoSubtitleModeOriginalOnce": "仅原文（本次）",
+  "select": "选择",
+  "remove": "移除",
+  "clearAll": "清空",
+  "searchLanguage": "搜索语言…",
+  "noResults": "无匹配结果"
 }

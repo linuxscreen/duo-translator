@@ -479,6 +479,59 @@ export class MicrosoftTranslateService extends TranslateService {
         });
         return transferLanguageCode(maxLanguage);
     }
+
+    /**
+     * One language PER input text, index-aligned with `texts`.
+     *
+     * The same endpoint as `detectLanguage` — that one collapses the answers
+     * into a byte-weighted vote for "what language is this page", this one keeps
+     * them apart because the caller is asking about each paragraph separately
+     * (the no-translate-language filter). Kept as a separate method rather than
+     * a flag: they share a URL and nothing else, including their failure
+     * semantics.
+     *
+     * An entry we could not read answers "" — the caller translates those.
+     */
+    async detectTextsLanguages(texts: string[], signal?: AbortSignal | null): Promise<string[]> {
+        if (texts.length === 0) return [];
+        // Same chunking as translate: the endpoint caps both the array length
+        // and the total characters, and a paragraph batch can be a whole page.
+        const chunks: { index: number; text: string }[][] = [[]];
+        let charCount = 0;
+        let itemCount = 0;
+        texts.forEach((raw, index) => {
+            const text = raw.length > MS_BATCH_CHAR_LIMIT ? raw.substring(0, MS_BATCH_CHAR_LIMIT) : raw;
+            charCount += text.length;
+            itemCount++;
+            if (charCount > MS_BATCH_CHAR_LIMIT || itemCount > MS_BATCH_ITEM_LIMIT) {
+                chunks.push([]);
+                charCount = text.length;
+                itemCount = 1;
+            }
+            chunks[chunks.length - 1].push({ index, text });
+        });
+
+        const out: string[] = new Array(texts.length).fill("");
+        await Promise.all(chunks.map(async (chunk) => {
+            if (chunk.length === 0) return;
+            const response = await providerFetch(MS_DETECT_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                // Same body shape as `detectLanguage`/`translateText` above: a
+                // bare string array. MS_DETECT_URL is the TRANSLATE endpoint
+                // pinned to `to=en`, not a separate detect endpoint, so the
+                // per-item `detectedLanguage` rides along with a translation we
+                // throw away.
+                body: JSON.stringify(chunk.map((c) => c.text)),
+            }, signal);
+            if (response.status !== 200) throw providerHttpError("Microsoft Detect", MS_DETECT_URL, response);
+            const data: { detectedLanguage?: { language: string; score: number } }[] = await response.json();
+            chunk.forEach((c, i) => {
+                out[c.index] = transferLanguageCode(data[i]?.detectedLanguage?.language || "");
+            });
+        }));
+        return out;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -960,7 +1013,11 @@ export class AiTranslateService extends TranslateService {
 // ---------------------------------------------------------------------------
 
 export const googleTranslationService: TranslateService = new GoogleTranslateService();
-export const microsoftTranslationService: TranslateService = new MicrosoftTranslateService();
+// Typed as the concrete class, not `TranslateService`: it is the one provider
+// that can answer per-text detection (detectTextsLanguages), and the
+// no-translate-language filter calls it by name regardless of which translator
+// the user picked.
+export const microsoftTranslationService: MicrosoftTranslateService = new MicrosoftTranslateService();
 export const yandexTranslationService: TranslateService = new YandexTranslateService();
 export const deeplTranslationService: TranslateService = new DeepLTranslateService();
 export const builtinAiTranslationService: TranslateService = new BuiltinAiTranslateService();
@@ -1179,6 +1236,19 @@ export const translateMessageHandlers: Record<string, MessageHandler> = {
             const texts: string[] = message.data?.texts ?? [];
             return { lang: await detectDominantLanguage(texts) };
         }),
+
+    // Per-text detection for the no-translate-language paragraph filter. Always
+    // Microsoft, regardless of the active translator: this runs CONCURRENTLY
+    // with that translator's own request, so routing it to the same vendor
+    // would double that vendor's load for no gain — and the providers that need
+    // this path (Yandex, AI) are exactly the ones that cannot answer per text.
+    [ACTION.DETECT_TEXTS_LANGUAGES]: (message, sendResponse) => handleAbortable(
+        ABORT_SCOPE.TRANSLATE, 'Detect texts languages', message, sendResponse,
+        async (data, signal) => {
+            const texts: string[] = (data as { texts?: string[] })?.texts ?? [];
+            return { langs: await microsoftTranslationService.detectTextsLanguages(texts, signal) };
+        },
+    ),
 
     [ACTION.TRANSLATE_SERVICE_TEST]: (message, sendResponse) =>
         handleAsync('Translate service test', sendResponse, () => testTranslateService(message.data)),
