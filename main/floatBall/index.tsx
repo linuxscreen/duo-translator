@@ -62,6 +62,36 @@ const TOOLTIP_DELAY_MS = 350;
 // `scheduleAutoRetract`.
 const AUTO_RETRACT_DELAY_MS = 700;
 
+// ---------------------------------------------------------------------------
+// Docked-style secondary actions (settings / close), stacked under the ball.
+//
+// The two hit boxes are exactly `DOCKED_ACTION_SIZE` tall and stacked with NO
+// gap and NO negative margin, so neither box reaches over the other's glyph.
+// (They used to be 44px boxes pulled together by `-mt-4`, which made them
+// overlap by 14px: the region just below the settings glyph belonged to the
+// close button that painted on top of it, so each glyph sat off-centre in the
+// area that actually reacted to a click.)
+// ---------------------------------------------------------------------------
+// Keep in sync with the `h-8 w-8` on `auxBtnClass` (Tailwind needs the literal).
+const DOCKED_ACTION_SIZE = 32;
+const DOCKED_ACTIONS_HEIGHT = DOCKED_ACTION_SIZE * 2;
+// The ball's box is 44px but its switch is only 32px, so ~6px of empty padding
+// sits between the glyph and the box edge; pulling the stack back into the box
+// cancels most of that out (without it the first action reads as noticeably
+// further from the logo than the two actions are from each other).
+//
+// 2px is the largest inset that keeps the stack clear of the switch in BOTH
+// directions: the translated-state check badge hangs 4px past the switch, to
+// y=42 of the 44px box, and an action box overlapping it would paint on top and
+// swallow clicks meant for the toggle.
+const DOCKED_ACTIONS_INSET = 2;
+/** How far the stack reaches past the ball's box, in whichever direction it flips. */
+const DOCKED_ACTIONS_EXTENT = DOCKED_ACTIONS_HEIGHT - DOCKED_ACTIONS_INSET;
+// Extra room demanded before the stack is allowed to stay below the ball. Fitting
+// it flush against the viewport edge is technically possible and looks broken, so
+// a ball this close to the bottom flips the stack above itself instead.
+const DOCKED_ACTIONS_MARGIN = 16;
+
 /**
  * Whether a focus event should count as *keyboard* focus, i.e. the only kind
  * that may expand the ball on its own.
@@ -199,14 +229,11 @@ function FloatBallApp({
         deps.style,
     );
 
-    // Align the expanded toolbar away from a docked edge so its wider row never
-    // clips off-screen; centered when migrating an old free-floating position.
-    // A small inset keeps edge-side buttons off the viewport boundary.
-    const EDGE_INSET = 1;
-    const horizPlace: React.CSSProperties =
-        dock === "left" ? { left: EDGE_INSET }
-            : dock === "right" ? { right: EDGE_INSET }
-                : { left: "50%", transform: "translateX(-50%)" };
+    // The action stack is narrower than the ball's own box, which is always fully
+    // inside the viewport (see useDraggable's clamping), so centring it on the
+    // ball can never clip — and centring is what keeps each hit box concentric
+    // with the logo above it, whichever edge the ball is docked to.
+    const horizPlace: React.CSSProperties = { left: "50%", transform: "translateX(-50%)" };
 
     // Tooltip sits ABOVE the switch (never below, so it can't cover the
     // settings/close row). Aligned to whichever side keeps it on-screen: pinned
@@ -221,7 +248,7 @@ function FloatBallApp({
     //  - buttons flipped above (near bottom) → tooltip above the stack
     //  - near top (tooltipBelow) → below the stack
     //  - otherwise → just above the switch
-    const actionExtent = isDockedStyle ? 105 : 30;
+    const actionExtent = isDockedStyle ? DOCKED_ACTIONS_EXTENT + 6 : 30;
     const tooltipVert: React.CSSProperties =
         buttonsAbove ? { bottom: `calc(100% + ${actionExtent}px)` }
             : tooltipBelow ? { top: `calc(100% + ${actionExtent}px)` }
@@ -262,7 +289,7 @@ function FloatBallApp({
         cancelCollapse();
         const el = ballRef.current;
         const vh = getViewportSize().height;
-        const actionsHeight = isDockedStyle ? 104 : 30;
+        const actionsHeight = isDockedStyle ? DOCKED_ACTIONS_EXTENT + DOCKED_ACTIONS_MARGIN : 30;
         setButtonsAbove(!!el && vh - el.getBoundingClientRect().bottom < actionsHeight);
         setExpanded(true);
     };
@@ -379,7 +406,7 @@ function FloatBallApp({
     // Shared style for secondary actions. They remain compact, but their hit
     // areas are large enough for touch and imprecise pointer input.
     const auxBtnClass = isDockedStyle
-        ? "h-11 w-11 inline-flex items-center justify-center rounded-full bg-transparent text-ink-soft transition-[color,opacity,transform] duration-200 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#107CF3] active:scale-[0.94] motion-reduce:transition-none"
+        ? "h-8 w-8 inline-flex items-center justify-center rounded-full bg-transparent text-ink-soft transition-[color,opacity,transform] duration-200 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#107CF3] active:scale-[0.94] motion-reduce:transition-none"
         : "h-[18px] w-[18px] inline-flex items-center justify-center rounded-full text-[#BFBFBF] transition-colors";
 
     return (
@@ -441,8 +468,8 @@ function FloatBallApp({
                             position: "absolute",
                             // Extend over the stacked secondary actions so the
                             // pointer can move between the ball and actions.
-                            top: buttonsAbove ? `${isDockedStyle ? -104 : -30}px` : 0,
-                            bottom: buttonsAbove ? 0 : `${isDockedStyle ? -104 : -30}px`,
+                            top: buttonsAbove ? `${isDockedStyle ? -DOCKED_ACTIONS_EXTENT : -30}px` : 0,
+                            bottom: buttonsAbove ? 0 : `${isDockedStyle ? -DOCKED_ACTIONS_EXTENT : -30}px`,
                             left: isDockedStyle ? "-8px" : "-12px",
                             right: isDockedStyle ? "-8px" : "-12px",
                         }}
@@ -526,17 +553,23 @@ function FloatBallApp({
                     </button>
                 )}
 
-                {/* Settings stays above Close in a compact vertical stack,
-                    absolutely placed so the switch never shifts on expand. */}
+                {/* Settings and Close in a compact vertical stack, absolutely
+                    placed so the switch never shifts on expand. Mirrored (order
+                    included) when the stack flips above the ball. */}
                 {expanded && (
                     <div
-                        className={isDockedStyle ? "flex flex-col items-center gap-0.5" : "flex flex-row items-center gap-1.5"}
+                        className={isDockedStyle
+                            // Flipping above reverses the stack so Settings stays
+                            // the action adjacent to the ball in both directions
+                            // (the whole cluster is mirrored, not just moved).
+                            ? `flex ${buttonsAbove ? "flex-col-reverse" : "flex-col"} items-center`
+                            : "flex flex-row items-center gap-1.5"}
                         style={{
                             position: "absolute",
                             ...(isDockedStyle ? horizPlace : {}),
                             ...(buttonsAbove
-                                ? { bottom: isDockedStyle ? "calc(100% + 11px)" : "calc(100% + 5px)" }
-                                : { top: isDockedStyle ? "calc(100% - 1px)" : "calc(100% + 5px)" }),
+                                ? { bottom: isDockedStyle ? `calc(100% - ${DOCKED_ACTIONS_INSET}px)` : "calc(100% + 5px)" }
+                                : { top: isDockedStyle ? `calc(100% - ${DOCKED_ACTIONS_INSET}px)` : "calc(100% + 5px)" }),
                         }}
                     >
                         <button
@@ -556,7 +589,7 @@ function FloatBallApp({
                             title={t("aiClose", "Close")}
                             onClick={onCloseClick}
                             onMouseDown={(e) => e.stopPropagation()}
-                            className={`${auxBtnClass} ${isDockedStyle ? "-mt-4" : ""}`}
+                            className={auxBtnClass}
                         >
                             {isDockedStyle ? (
                                 <CircleSlash2 aria-hidden="true" className="h-4 w-4" />

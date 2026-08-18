@@ -17,10 +17,15 @@ import { isSelectionPopupOpen, watchSelectionPopupOpen } from "@/main/aiWriting/
  * is anchored to the player's bottom edge by a percentage — independent of
  * the native control bar, so showing/hiding the controls never moves it.
  *
- * Interaction: the box itself is never draggable (its whole surface must stay
- * available for text selection) — hovering it reveals a six-dot grip above it,
- * and dragging THAT moves the box vertically. Horizontal position is always
- * centered.
+ * Interaction: the box moves vertically by dragging its BLANK area — the
+ * padding ring, the band between the two lines, and the space beside the
+ * shorter one. The text itself is never a drag surface (it has to stay
+ * available for selection and for the hover dictionary), and horizontal
+ * position is always centered.
+ *
+ * This replaced a six-dot grip that floated above the box: the dictionary
+ * panel opens in exactly that band, so the two features fought over the same
+ * strip of screen — the grip had to be hidden whenever a word was looked up.
  *
  * The translate button that appears on a selection is NOT drawn here: it is
  * the extension-wide selection icon (main/selectionIcon), which already
@@ -51,22 +56,15 @@ const BOX_ID = "duo-video-subtitle-box";
 const MIN_BOTTOM_PCT = 0;
 /** Fallback ceiling used only while the box can't be measured (not yet laid out). */
 const MAX_BOTTOM_PCT = 88;
-/**
- * Keep this much clear of the player's top edge. Generous enough that the grip
- * at the topmost position still has room to be approached without the pointer
- * overshooting out of the player.
- */
+/** Keep this much clear of the player's top edge. */
 const EDGE_MARGIN_PX = 10;
-/** Visual gap between the drag grip and the subtitle box (transparent, hoverable). */
-const HANDLE_GAP_PX = 5;
-const HANDLE_PILL_PX = 18;
-/** Full vertical footprint the grip needs outside the box. */
-const HANDLE_TOTAL_PX = HANDLE_PILL_PX + HANDLE_GAP_PX;
 /**
- * Grace period before hiding the grip after the pointer leaves. Tolerates the
- * brief excursions a real pointer makes around the box/grip edges.
+ * How far the pointer must travel before a press on the blank area counts as a
+ * drag rather than a click. Below it the press is left to whatever sits under
+ * the box (see bindDrag) — with 0 the hand tremor in an ordinary click would
+ * move the subtitle by a pixel AND swallow the click.
  */
-const HANDLE_HIDE_DELAY_MS = 200;
+const DRAG_THRESHOLD_PX = 3;
 
 /** Reference player height the configured px font sizes are relative to. */
 const BASE_PLAYER_HEIGHT = 720;
@@ -126,14 +124,6 @@ export class SubtitleOverlay {
      */
     private originalText: HTMLSpanElement;
     private translationText: HTMLSpanElement;
-    /**
-     * Six-dot grip above the box — the only drag affordance. `dragHandle` is a
-     * transparent wrapper whose bottom padding bridges the visual gap to the
-     * box (see bindDrag); `handlePill` is the visible pill inside it.
-     */
-    private dragHandle: HTMLDivElement;
-    private handlePill: HTMLDivElement;
-    private handleHideTimer: number | null = null;
     private pauseOnSelect = false;
     /**
      * Whether the pause currently in effect is OURS. Playback is only resumed
@@ -212,12 +202,6 @@ export class SubtitleOverlay {
         this.translationText = document.createElement("span");
         this.originalLine.appendChild(this.originalText);
         this.translationLine.appendChild(this.translationText);
-        this.dragHandle = document.createElement("div");
-        this.handlePill = document.createElement("div");
-        this.dragHandle.appendChild(this.handlePill);
-        // A child of the box, so hovering the handle keeps the box "hovered"
-        // (mouseleave doesn't fire for descendants) and it travels with the box.
-        this.box.appendChild(this.dragHandle);
         this.box.appendChild(this.originalLine);
         this.box.appendChild(this.translationLine);
 
@@ -263,9 +247,8 @@ export class SubtitleOverlay {
      * Clamp a requested bottom-offset to what currently fits.
      *
      * The ceiling is measured, not a fixed percentage: the box has real height
-     * (1-2 lines, growing with font size and wrapping) and the grip needs room
-     * ABOVE it. A constant ceiling let a tall cue push the box past the
-     * player's top edge, clipping the text and putting the grip out of reach.
+     * (1-2 lines, growing with font size and wrapping). A constant ceiling let
+     * a tall cue push the box past the player's top edge, clipping the text.
      */
     private clampPct(v: number): number {
         const playerH = this.player.clientHeight || 0;
@@ -280,7 +263,7 @@ export class SubtitleOverlay {
 
             const boxH = this.box?.getBoundingClientRect().height ?? 0;
             if (boxH > 0) {
-                const reservedTop = boxH + HANDLE_TOTAL_PX + EDGE_MARGIN_PX;
+                const reservedTop = boxH + EDGE_MARGIN_PX;
                 max = ((playerH - reservedTop) / playerH) * 100;
             }
         }
@@ -325,20 +308,22 @@ export class SubtitleOverlay {
             borderRadius: "6px",
             textAlign: "center",
             // Above ALL player chrome. This must beat YouTube's top bar
-            // (.ytp-chrome-top, z-index 58): when the subtitle sits near the top
-            // of the player, that bar otherwise covers the drag grip's band, so
-            // the pointer moving up from the text lands on
-            // `.ytp-chrome-top-buttons` — not a descendant of this box — which
-            // fires `mouseleave` and makes the grip vanish mid-approach, and
-            // also swallows the click. Threading a value between the top (58)
-            // and bottom (59) bars was tried and did not hold in practice.
+            // (.ytp-chrome-top, z-index 58): a subtitle dragged near the top of
+            // the player otherwise ends up UNDER it, and everything the box
+            // owns — selecting a line, looking a word up, dragging it back down
+            // — is swallowed by `.ytp-chrome-top-buttons` instead. Threading a
+            // value between the top (58) and bottom (59) bars was tried and did
+            // not hold in practice.
             // Since this now also paints over the bottom bar, the progress bar
             // is protected by the measured floor in clampPct
             // (`reservedBottomPx`), not by stacking order.
             zIndex: "999",
-            cursor: "default",
+            // The blank area IS the drag affordance, so it has to be a hit
+            // target and it has to say so. The text spans below take the cursor
+            // back to `text`.
+            cursor: "move",
             userSelect: "none",
-            pointerEvents: "none",
+            pointerEvents: "auto",
             lineHeight: String(LINE_HEIGHT),
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
@@ -346,25 +331,23 @@ export class SubtitleOverlay {
                 '"YouTube Noto", Roboto, "PingFang SC", "Microsoft YaHei", Arial, sans-serif',
             textShadow: "0 1px 2px rgba(0,0,0,0.8)",
         } as Partial<CSSStyleDeclaration>);
-        // The box is a transparent sheet lying over someone else's UI, so it
-        // must not collect clicks it has no use for. It is drawn above ALL
-        // player chrome (see the zIndex note above), it is as wide as the
-        // subtitle, and it sits in the same band as the player's bottom-right
-        // action buttons — with `pointer-events: auto` it swallowed every press
-        // aimed at Like / Dislike / Comment in fullscreen, from an area the
-        // user perceives as empty.
+        // The box is a transparent sheet lying over someone else's UI. It is
+        // drawn above ALL player chrome (see the zIndex note above), it is as
+        // wide as the subtitle, and it sits in the same band as the player's
+        // bottom-right action buttons — so an area the user reads as empty
+        // covers Like / Dislike / Comment in fullscreen.
         //
-        // So: none from the box down, taken back only by the text spans. What
-        // stays click-through is the padding, the gaps around a short line and
-        // the blank tail of a wrapped one — the parts that look transparent and
-        // now behave that way. The drag grip re-enables itself the same way
-        // while it is visible (see setHandleVisible).
+        // Making the blank area draggable means it must capture the POINTER
+        // there. What it must still not capture is the CLICK: presses on the
+        // blank area are let through untouched, and only a press that turned
+        // into a real drag swallows the click it produced (bindDrag). So
+        // clicking "through" the subtitle keeps working exactly as it did when
+        // the whole box was `pointer-events: none`.
         //
-        // The box remains in the EVENT PATH of anything the spans dispatch —
-        // `pointer-events: none` stops an element being a hit target, it does
-        // not remove it from its descendants' propagation or hover chain — so
-        // `:hover`, mouseenter/mouseleave and the stopPropagation guards below
-        // all keep working unchanged.
+        // The lines stay `none` so the blank tail of a wrapped line, and the
+        // space beside the shorter one, fall through to the box and drag like
+        // the padding does. Only the text spans take hit-testing back, which is
+        // what keeps selection and the word dictionary theirs.
         for (const line of [this.originalLine, this.translationLine]) {
             Object.assign(line.style, {
                 pointerEvents: "none",
@@ -378,57 +361,6 @@ export class SubtitleOverlay {
             } as Partial<CSSStyleDeclaration>);
         }
 
-        // Drag grip, revealed on hover, sitting just above the box so it never
-        // overlaps the text the user is selecting.
-        //
-        // Always ABOVE the box — never flipped below, so the grip is where the
-        // user last saw it no matter how high the box is dragged. That is safe
-        // because clampPct reserves HANDLE_TOTAL_PX of headroom above the box,
-        // so there is always space for it inside the player.
-        //
-        // The wrapper is a transparent hover BRIDGE and must span the box's
-        // FULL width (`left:0; right:0`), with the visible pill centred inside
-        // it. A shrink-to-fit wrapper only covers the pill's own ~34px, so
-        // moving the pointer up from anywhere off-centre on a wide subtitle
-        // leaves the box into a strip owned by nobody — `mouseleave` fires and
-        // the grip vanishes while the pointer is still over the subtitle.
-        //
-        // It is also anchored FLUSH to the box's top edge (`bottom: 100%`),
-        // creating the visual gap with transparent bottom padding rather than
-        // `calc(100% + Npx)`, which would reintroduce the same dead strip
-        // vertically.
-        Object.assign(this.dragHandle.style, {
-            position: "absolute",
-            left: "0",
-            right: "0",
-            bottom: "100%",
-            paddingBottom: `${HANDLE_GAP_PX}px`,
-            display: "flex",
-            justifyContent: "center",
-            opacity: "0",
-            pointerEvents: "none",
-            transition: "opacity 0.12s ease",
-        } as Partial<CSSStyleDeclaration>);
-        this.dragHandle.setAttribute("aria-hidden", "true");
-        // Only the pill is grabbable — the rest of the wrapper is an invisible
-        // hover bridge, so neither its cursor nor a drag should extend there.
-        Object.assign(this.handlePill.style, {
-            width: "34px",
-            height: `${HANDLE_PILL_PX}px`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            borderRadius: "5px",
-            background: "rgba(28,28,28,0.85)",
-            boxShadow: "0 2px 6px rgba(0,0,0,0.45)",
-            cursor: "grab",
-        } as Partial<CSSStyleDeclaration>);
-        // Six dots (2 rows x 3), the conventional "drag me" affordance.
-        this.handlePill.innerHTML =
-            '<svg width="16" height="10" viewBox="0 0 16 10" fill="#d0d0d0" xmlns="http://www.w3.org/2000/svg">' +
-            '<circle cx="2" cy="2.5" r="1.5"/><circle cx="8" cy="2.5" r="1.5"/><circle cx="14" cy="2.5" r="1.5"/>' +
-            '<circle cx="2" cy="7.5" r="1.5"/><circle cx="8" cy="7.5" r="1.5"/><circle cx="14" cy="7.5" r="1.5"/>' +
-            "</svg>";
     }
 
     // ------------------------------------------------------------------
@@ -499,10 +431,6 @@ export class SubtitleOverlay {
 
     destroy(): void {
         this.disposed = true;
-        if (this.handleHideTimer !== null) {
-            clearTimeout(this.handleHideTimer);
-            this.handleHideTimer = null;
-        }
         this.disposers.forEach((d) => d());
         this.disposers = [];
         this.cancelPendingWord();
@@ -617,87 +545,95 @@ export class SubtitleOverlay {
     // Vertical drag
     // ------------------------------------------------------------------
 
-    private setHandleVisible(visible: boolean): void {
-        if (this.handleHideTimer !== null) {
-            clearTimeout(this.handleHideTimer);
-            this.handleHideTimer = null;
-        }
-        // The dictionary panel sits exactly where the grip does and paints over
-        // it. Hovering a word keeps the box hovered, so without this the grip
-        // would be revealed and then half-covered for as long as the panel is
-        // up. Restored by closeWordDict.
-        const show = visible && this.activeWord === null;
-        this.dragHandle.style.opacity = show ? "1" : "0";
-        this.dragHandle.style.pointerEvents = show ? "auto" : "none";
-    }
-
-    /** Hide after a grace period, unless the pointer comes back or a drag starts. */
-    private scheduleHandleHide(): void {
-        if (this.handleHideTimer !== null) clearTimeout(this.handleHideTimer);
-        this.handleHideTimer = window.setTimeout(() => {
-            this.handleHideTimer = null;
-            if (this.dragging) return;
-            if (this.box.matches(":hover")) return;
-            this.setHandleVisible(false);
-        }, HANDLE_HIDE_DELAY_MS);
-    }
-
     private bindDrag(): void {
-        // The grip only appears while the pointer is over the subtitle box (or
-        // while a drag is in flight, which can travel far outside it).
-        const onEnter = () => this.setHandleVisible(true);
-        const onLeave = () => {
-            if (!this.dragging) this.scheduleHandleHide();
+        // Presses on the TEXT must not reach the player — YouTube would toggle
+        // play/pause under a user who is selecting a line. Presses on the blank
+        // area are deliberately NOT swallowed: see applyBaseStyles for why the
+        // click has to stay the player's.
+        const swallow = (e: Event) => {
+            if (e.target !== this.box) e.stopPropagation();
         };
-        // Clicking the box must not reach the player, or YouTube toggles
-        // play/pause under the user while they select text. stopPropagation
-        // only — preventDefault would kill the selection itself.
-        const swallow = (e: Event) => e.stopPropagation();
 
-        const onHandleDown = (e: MouseEvent) => {
+        const onBoxDown = (e: MouseEvent) => {
             if (e.button !== 0) return;
-            e.preventDefault();
-            e.stopPropagation();
-            this.dragging = true;
-            this.setHandleVisible(true); // cancels any pending hide
-            this.handlePill.style.cursor = "grabbing";
+            // Blank area only. The text spans and the word tokens are hit
+            // targets of their own and belong to selection / lookup.
+            if (e.target !== this.box) return;
+            // No preventDefault and no stopPropagation here: whether this press
+            // is a drag or a click aimed at the player's UI underneath is not
+            // known yet, and everything down there reacts to the click. The
+            // decision is taken in onUp, where the answer exists.
             const startY = e.clientY;
             // Drag from where the box actually IS, not from an out-of-range
             // desired value, so pushing past the ceiling and coming back down
             // doesn't need the same overshoot in reverse.
             const startPct = this.bottomPct;
             const playerH = this.player.clientHeight || 1;
+            const playerCursor = this.player.style.cursor;
+            let moved = false;
             const onMove = (ev: MouseEvent) => {
+                if (!moved) {
+                    if (Math.abs(ev.clientY - startY) < DRAG_THRESHOLD_PX) return;
+                    moved = true;
+                    this.dragging = true;
+                    // The pointer leaves the box almost immediately on a real
+                    // drag; without this the cursor falls back to the player's
+                    // for the rest of the gesture.
+                    this.player.style.cursor = "move";
+                }
                 const deltaPct = ((startY - ev.clientY) / playerH) * 100;
                 this.setPosition(startPct + deltaPct);
             };
             const onUp = () => {
                 document.removeEventListener("mousemove", onMove, true);
                 document.removeEventListener("mouseup", onUp, true);
+                if (!moved) return;
                 this.dragging = false;
-                this.handlePill.style.cursor = "grab";
+                this.player.style.cursor = playerCursor;
                 // Collapse intent onto what is actually shown, then persist it.
                 this.desiredPct = this.bottomPct;
-                // Pointer may have ended up outside the box during the drag.
-                if (!this.box.matches(":hover")) this.scheduleHandleHide();
                 this.callbacks.onPositionChange(this.bottomPct);
+                this.swallowNextClick();
             };
             document.addEventListener("mousemove", onMove, true);
             document.addEventListener("mouseup", onUp, true);
         };
 
-        this.box.addEventListener("mouseenter", onEnter);
-        this.box.addEventListener("mouseleave", onLeave);
+        this.box.addEventListener("mousedown", onBoxDown);
         this.box.addEventListener("mousedown", swallow);
         this.box.addEventListener("click", swallow);
-        this.handlePill.addEventListener("mousedown", onHandleDown);
         this.disposers.push(() => {
-            this.box.removeEventListener("mouseenter", onEnter);
-            this.box.removeEventListener("mouseleave", onLeave);
+            this.box.removeEventListener("mousedown", onBoxDown);
             this.box.removeEventListener("mousedown", swallow);
             this.box.removeEventListener("click", swallow);
-            this.handlePill.removeEventListener("mousedown", onHandleDown);
         });
+    }
+
+    /**
+     * Eat the `click` a finished drag is about to produce.
+     *
+     * The press was let through in case it turned out to be a plain click on
+     * the player's own UI, so the player is still in line for a click it would
+     * read as play/pause. This is the first moment it is known that the pointer
+     * moved, and `click` has not been dispatched yet — it follows `mouseup`
+     * synchronously, which is also why a `setTimeout(0)` is enough to take the
+     * listener back off: a drag that ended with no click at all (pointer left
+     * the window) must not leave something behind that eats an unrelated click
+     * minutes later.
+     */
+    private swallowNextClick(): void {
+        let timer = 0;
+        const off = () => {
+            clearTimeout(timer);
+            document.removeEventListener("click", onClick, true);
+        };
+        const onClick = (e: MouseEvent) => {
+            e.stopPropagation();
+            e.preventDefault();
+            off();
+        };
+        document.addEventListener("click", onClick, true);
+        timer = window.setTimeout(off, 0);
     }
 
     // ------------------------------------------------------------------
@@ -993,7 +929,6 @@ export class SubtitleOverlay {
         this.highlightWord(this.activeWord, false);
         this.activeWord = word;
         this.highlightWord(word, true);
-        this.setHandleVisible(false);
         // Hold the video for as long as the panel is up — reading a definition
         // takes longer than the cue is on screen.
         this.pauseFor(PAUSE_HOVER);
@@ -1026,9 +961,6 @@ export class SubtitleOverlay {
         this.activeWord = null;
         this.dict?.hide();
         this.releasePause(PAUSE_HOVER);
-        // The grip was suppressed for the panel's sake; the pointer may well
-        // still be on the box, where it belongs.
-        if (!this.disposed && this.box.matches(":hover")) this.setHandleVisible(true);
     }
 
     /**

@@ -148,7 +148,7 @@ export default function App() {
                   type="button"
                   onClick={() => navigate({ tab: it.id, sub: null })}
                   className={cn(
-                    'group relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[13px]',
+                    'group relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[14px]',
                     'transition-colors duration-150',
                     active
                       ? 'bg-accent-soft text-accent'
