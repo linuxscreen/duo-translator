@@ -234,6 +234,7 @@
   "aiNoProvider": "कोई प्रदाता कॉन्फ़िगर नहीं किया गया है। शुरू करने के लिए एक प्रदाता जोड़ें।",
   "aiProviderName": "नाम",
   "aiProviderModel": "नमूना",
+  "aiCustomModelName": "एक कस्टम मॉडल नाम दर्ज करें",
   "aiProviderBaseUrl": "मूल यूआरएल (ओपनएआई के अनुकूल)",
   "aiProviderApiKey": "एपीआई कुंजी",
   "aiActive": "सक्रिय",
@@ -510,6 +511,8 @@
   "errScopeDictionary": "शब्दकोष",
   "selectionTranslateIcon": "चयन अनुवाद आइकन",
   "selectionTranslateIconHint": "टेक्स्ट चुनने के बाद अनुवाद आइकन दिखाएं",
+  "selectionIconTriggerClick": "अनुवाद करने के लिए क्लिक करें",
+  "selectionIconTriggerHover": "अनुवाद करने के लिए माउस को उस पर ले जाएं",
   "selectionIconDisabledWebsites": "चयन अनुवाद आइकन अक्षम वेबसाइटों",
   "disableSelectionIcon": "चयन अनुवाद आइकन अक्षम करें",
   "websiteTranslationRules": "वेबसाइट अनुवाद नियम",
@@ -608,5 +611,13 @@
   "translateIndicatorDetails": "अनुवाद विफल रहा — विवरण दिखाएँ",
   "translateIndicatorRetry": "पुन: प्रयास करें",
   "translateIndicatorRetryAll": "सभी असफल पैराग्राफों को पुनः प्रयास करें",
-  "translateIndicatorFailedCount": "अनुवाद विफल रहा"
+  "translateIndicatorFailedCount": "अनुवाद विफल रहा",
+  "noTranslateLanguages": "इन भाषाओं का अनुवाद न करें",
+  "noTranslateLanguagesHint": "चुनी हुई भाषा में मौजूद वेब पेज, पैराग्राफ और यूट्यूब के मूल कैप्शन का स्वचालित रूप से अनुवाद नहीं किया जाता है।",
+  "videoSubtitleModeOriginalOnce": "केवल मूल संस्करण (इस बार)",
+  "select": "चुनना",
+  "remove": "निकालना",
+  "clearAll": "सभी साफ करें",
+  "searchLanguage": "खोज भाषा…",
+  "noResults": "कोई परिणाम नहीं"
 }

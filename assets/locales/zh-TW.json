@@ -234,6 +234,7 @@
   "aiNoProvider": "還沒有配置服務商,新增一個開始使用。",
   "aiProviderName": "名稱",
   "aiProviderModel": "模型",
+  "aiCustomModelName": "輸入自定義模型名稱",
   "aiProviderBaseUrl": "Base URL (OpenAI 相容)",
   "aiProviderApiKey": "API Key",
   "aiActive": "當前使用",
@@ -510,6 +511,8 @@
   "errScopeDictionary": "詞典查詢",
   "selectionTranslateIcon": "劃詞翻譯圖示",
   "selectionTranslateIconHint": "選中文字後顯示翻譯圖示",
+  "selectionIconTriggerClick": "點選觸發翻譯",
+  "selectionIconTriggerHover": "懸浮觸發翻譯",
   "selectionIconDisabledWebsites": "已禁用劃詞翻譯圖示的網站",
   "disableSelectionIcon": "關閉劃詞翻譯圖示",
   "websiteTranslationRules": "網站翻譯規則",
@@ -608,5 +611,13 @@
   "translateIndicatorDetails": "翻譯失敗 — 檢視報錯資訊",
   "translateIndicatorRetry": "重試",
   "translateIndicatorRetryAll": "重試所有失敗的段落",
-  "translateIndicatorFailedCount": "翻譯失敗"
+  "translateIndicatorFailedCount": "翻譯失敗",
+  "noTranslateLanguages": "不翻譯語言",
+  "noTranslateLanguagesHint": "如果網頁、段落、YouTube 原文字幕的語言是選中項，則預設不會自動翻譯",
+  "videoSubtitleModeOriginalOnce": "僅原文（本次）",
+  "select": "選擇",
+  "remove": "移除",
+  "clearAll": "清空",
+  "searchLanguage": "搜尋語言…",
+  "noResults": "無匹配結果"
 }

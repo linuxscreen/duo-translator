@@ -234,6 +234,7 @@
   "aiNoProvider": "Поставщик не настроен. Добавьте его, чтобы начать.",
   "aiProviderName": "Имя",
   "aiProviderModel": "Модель",
+  "aiCustomModelName": "Введите пользовательское название модели",
   "aiProviderBaseUrl": "Базовый URL (совместимый с OpenAI)",
   "aiProviderApiKey": "Ключ API",
   "aiActive": "Активный",
@@ -510,6 +511,8 @@
   "errScopeDictionary": "Словарь",
   "selectionTranslateIcon": "Значок перевода выделения",
   "selectionTranslateIconHint": "После выделения текста отобразите значок перевода.",
+  "selectionIconTriggerClick": "Нажмите, чтобы перевести",
+  "selectionIconTriggerHover": "Наведите курсор мыши для перевода",
   "selectionIconDisabledWebsites": "Выбор значка перевода отключен на веб-сайтах",
   "disableSelectionIcon": "Отключить значок перевода выделения",
   "websiteTranslationRules": "Правила перевода веб-сайта",
@@ -608,5 +611,13 @@
   "translateIndicatorDetails": "Перевод не удался — показать подробности",
   "translateIndicatorRetry": "Повторить попытку",
   "translateIndicatorRetryAll": "Повторите попытку для всех абзацев, в которых произошла ошибка.",
-  "translateIndicatorFailedCount": "Перевод не удался"
+  "translateIndicatorFailedCount": "Перевод не удался",
+  "noTranslateLanguages": "Не переводите эти языки.",
+  "noTranslateLanguagesHint": "Веб-страницы, абзацы текста и оригинальные субтитры YouTube на выбранном языке не переводятся автоматически.",
+  "videoSubtitleModeOriginalOnce": "Только оригинал (на этот раз)",
+  "select": "Выбирать",
+  "remove": "Удалять",
+  "clearAll": "Очистить все",
+  "searchLanguage": "Язык поиска…",
+  "noResults": "Результаты отсутствуют"
 }

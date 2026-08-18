@@ -234,6 +234,7 @@
   "aiNoProvider": "プロバイダーが設定されていません。開始するには、プロバイダーを追加してください。",
   "aiProviderName": "名前",
   "aiProviderModel": "モデル",
+  "aiCustomModelName": "カスタムモデル名を入力してください",
   "aiProviderBaseUrl": "ベースURL（OpenAI互換）",
   "aiProviderApiKey": "APIキー",
   "aiActive": "アクティブ",
@@ -510,6 +511,8 @@
   "errScopeDictionary": "辞書",
   "selectionTranslateIcon": "選択翻訳アイコン",
   "selectionTranslateIconHint": "テキストを選択した後、翻訳アイコンを表示する",
+  "selectionIconTriggerClick": "クリックして翻訳",
+  "selectionIconTriggerHover": "カーソルを合わせて翻訳",
   "selectionIconDisabledWebsites": "選択翻訳アイコン無効のウェブサイト",
   "disableSelectionIcon": "選択を無効にする翻訳アイコン",
   "websiteTranslationRules": "ウェブサイトの翻訳ルール",
@@ -608,5 +611,13 @@
   "translateIndicatorDetails": "翻訳に失敗しました — 詳細を表示",
   "translateIndicatorRetry": "リトライ",
   "translateIndicatorRetryAll": "失敗した段落をすべて再試行します",
-  "translateIndicatorFailedCount": "翻訳に失敗しました"
+  "translateIndicatorFailedCount": "翻訳に失敗しました",
+  "noTranslateLanguages": "これらの言語は翻訳しないでください",
+  "noTranslateLanguagesHint": "選択した言語のウェブページ、段落、YouTubeのオリジナル字幕は自動翻訳されません。",
+  "videoSubtitleModeOriginalOnce": "オリジナルのみ（今回は）",
+  "select": "選択",
+  "remove": "取り除く",
+  "clearAll": "すべてクリア",
+  "searchLanguage": "検索言語…",
+  "noResults": "検索結果なし"
 }

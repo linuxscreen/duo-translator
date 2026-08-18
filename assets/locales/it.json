@@ -234,6 +234,7 @@
   "aiNoProvider": "Nessun provider configurato. Aggiungine uno per iniziare.",
   "aiProviderName": "Nome",
   "aiProviderModel": "Modello",
+  "aiCustomModelName": "Inserisci un nome modello personalizzato",
   "aiProviderBaseUrl": "URL di base (compatibile con OpenAI)",
   "aiProviderApiKey": "Chiave API",
   "aiActive": "Attivo",
@@ -510,6 +511,8 @@
   "errScopeDictionary": "Dizionario",
   "selectionTranslateIcon": "Icona di traduzione della selezione",
   "selectionTranslateIconHint": "Mostra un'icona di traduzione dopo aver selezionato il testo",
+  "selectionIconTriggerClick": "Fai clic per tradurre",
+  "selectionIconTriggerHover": "Passa il mouse sopra per tradurre",
   "selectionIconDisabledWebsites": "Selezione icona di traduzione siti web disabilitati",
   "disableSelectionIcon": "Disabilita la selezione icona di traduzione",
   "websiteTranslationRules": "Regole di traduzione del sito web",
@@ -608,5 +611,13 @@
   "translateIndicatorDetails": "Traduzione non riuscita — mostra i dettagli",
   "translateIndicatorRetry": "Riprova",
   "translateIndicatorRetryAll": "Riprova tutti i paragrafi non riusciti",
-  "translateIndicatorFailedCount": "Traduzione fallita"
+  "translateIndicatorFailedCount": "Traduzione fallita",
+  "noTranslateLanguages": "Non tradurre queste lingue",
+  "noTranslateLanguagesHint": "Le pagine web, i paragrafi e i sottotitoli originali di YouTube nella lingua selezionata non vengono tradotti automaticamente.",
+  "videoSubtitleModeOriginalOnce": "Solo l'originale (questa volta)",
+  "select": "Selezionare",
+  "remove": "Rimuovere",
+  "clearAll": "Cancella tutto",
+  "searchLanguage": "Lingua di ricerca…",
+  "noResults": "Nessun risultato"
 }

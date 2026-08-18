@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.2] - 2026-08-18
+
+### Added
+
+- Languages that are never auto-translated — the rule covers whole pages, individual paragraphs and YouTube subtitle tracks, and a video whose captions are on the list gains an "original only (this time)" entry in the subtitle menu
+- Model dropdown in the AI provider form, with a free-text field for models the list does not carry yet
+- Choice between click and hover to fire the selection-translate icon
+
+### Changed
+
+- Collections now sync item by item: adding an AI provider, a site rule or a subscription on one device no longer discards what another device added, and importing a backup keeps items only present locally
+- The video subtitle box is dragged by its blank area instead of the grip above it — the grip shared that strip of screen with the dictionary panel
+
+### Fixed
+
+- Content added to an already-translated paragraph is now translated, and translationOnly mode no longer resent every paragraph to the translator on each page change. A re-translated paragraph also keeps its previous translation on screen until the new one arrives
+- Buttons and other self-contained inline elements are translated on their own, so their labels are no longer folded into the surrounding sentence nor cloned into the bilingual output
+- Removed the last patch of a native browser method — a second Cloudflare verification failure traced back to it, since replacing native methods is what anti-bot checks look for. Shadow roots attached long after their element was inserted are no longer picked up right away; the next change nearby recovers them
+- Refreshing website rule subscriptions no longer overwrites a subscription added moments earlier
+- The docked floating ball stays expanded while the pointer rests on it, and its settings/close buttons no longer overlap each other's click areas
+- The AI writing dot no longer appears in web terminals and code editors (xterm.js-based panels, CodeMirror, Monaco, Ace) or in read-only fields, where writing back was never possible
+
 ## [2.2.1] - 2026-08-14
 
 ### Fixed

@@ -234,6 +234,7 @@
   "aiNoProvider": "설정된 공급자가 없습니다. 시작하려면 공급자를 추가하세요.",
   "aiProviderName": "이름",
   "aiProviderModel": "모델",
+  "aiCustomModelName": "사용자 지정 모델 이름을 입력하세요",
   "aiProviderBaseUrl": "기본 URL(OpenAI 호환)",
   "aiProviderApiKey": "API 키",
   "aiActive": "활동적인",
@@ -510,6 +511,8 @@
   "errScopeDictionary": "사전",
   "selectionTranslateIcon": "선택 번역 아이콘",
   "selectionTranslateIconHint": "텍스트를 선택한 후 번역 아이콘을 표시합니다.",
+  "selectionIconTriggerClick": "클릭하여 번역하세요",
+  "selectionIconTriggerHover": "마우스 커서를 올려놓으면 번역됩니다.",
   "selectionIconDisabledWebsites": "선택 번역 아이콘 비활성화된 웹사이트",
   "disableSelectionIcon": "선택 해제 번역 아이콘",
   "websiteTranslationRules": "웹사이트 번역 규칙",
@@ -608,5 +611,13 @@
   "translateIndicatorDetails": "번역에 실패했습니다. 자세히 보기",
   "translateIndicatorRetry": "다시 해 보다",
   "translateIndicatorRetryAll": "실패한 모든 단락을 다시 시도합니다.",
-  "translateIndicatorFailedCount": "번역 실패"
+  "translateIndicatorFailedCount": "번역 실패",
+  "noTranslateLanguages": "이 언어들을 번역하지 마세요",
+  "noTranslateLanguagesHint": "선택한 언어로 된 웹 페이지, 단락 및 YouTube 원본 자막은 자동으로 번역되지 않습니다.",
+  "videoSubtitleModeOriginalOnce": "이번에는 원본만 있습니다.",
+  "select": "선택하다",
+  "remove": "제거하다",
+  "clearAll": "모두 지우기",
+  "searchLanguage": "검색 언어…",
+  "noResults": "결과가 없습니다"
 }
