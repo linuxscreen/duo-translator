@@ -7,9 +7,10 @@
  *   - <input type=text> when it's clearly a long-text input (no maxlength,
  *     or maxlength > LONG_TEXT_MIN), and not a password/OTP/etc.
  *
- * Search boxes, credential fields, OTP inputs, and structured inputs (number,
- * date, color, ...) are intentionally excluded. Users can still summon the
- * workbench via shortcut or popup for those inputs.
+ * Credential fields, OTP inputs, structured inputs (number, date, color, ...),
+ * and the hidden input proxies of code editors / web terminals are
+ * intentionally excluded. Users can still summon the workbench via shortcut or
+ * popup for those inputs.
  */
 
 import { composedTarget, deepActiveElement, deepClosest, parentElementOrHost } from "@/main/dom/shadowTraversal";
@@ -29,7 +30,26 @@ const FORBIDDEN_AUTOCOMPLETE = new Set([
     "cc-number", "cc-csc", "cc-exp", "cc-exp-month", "cc-exp-year",
 ]);
 
-const SENSITIVE_TEXT = /(password|otp|2fa|captcha|verif|username|user_name|email|phone|identif|密码|验证|用户名|账号|身份|证件|手机|邮箱)/i;
+const SENSITIVE_TEXT = /(password|otp|2fa|captcha|verif|username|user_name|email|phone|identif|terminal|密码|验证|用户名|账号|身份|证件|手机|邮箱)/i;
+
+// Code editors (CodeMirror 5/6, Monaco, Ace) and web terminals (xterm.js —
+// which is what BT panel / fnOS / PVE / ttyd / wetty / code-server all embed — plus
+// jQuery Terminal, hterm, noVNC). Same shape in both cases: the focused node
+// is the app's *input proxy*, not its document — a hidden field that only
+// mirrors recent keystrokes while the real content lives in a canvas or a
+// virtualized row list. We can neither read the content nor write back, and on
+// a terminal a write-back would inject a synthetic paste into the live shell.
+//
+// Matching the container class is what makes this reliable. The `terminal`
+// keyword in SENSITIVE_TEXT only catches xterm because xterm happens to label
+// its proxy `aria-label="Terminal input"` — that label is not required by
+// anything, and a contentEditable-based terminal (hterm's `<x-screen>`,
+// jQuery Terminal's `.cmd`) never reaches the text probe at all, since
+// `isContentEditable` answers first. Keep the keyword as a cheap backstop.
+const PROXY_INPUT_HOST_SELECTOR = [
+    ".CodeMirror", ".cm-editor", ".monaco-editor", ".ace_editor",
+    ".xterm", ".terminal", ".hterm", "x-screen", ".noVNC_keyboardinput",
+].join(", ");
 
 export type AiTarget = HTMLElement;
 
@@ -41,16 +61,10 @@ export function isAiWritingTarget(el: Element | null | undefined): el is AiTarge
     // surfaces carry three different marker attributes, and `closest` could not
     // cross out of a surface's own shadow root to find one anyway.
     if (isInOwnUi(el)) return false;
-    // Code editors (CodeMirror 5/6, Monaco, Ace) — the focused element is the
-    // editor's input proxy, not the document: CM5 focuses a hidden textarea
-    // that only mirrors the selection / recent keystrokes (and its geometry
-    // sticks out of the editor, misplacing the dot), CM6/Monaco virtualize
-    // rendering so the DOM only holds the visible lines. We can neither read
-    // the full content nor write back safely without editor-specific APIs, so
-    // skip them entirely.
+    // Editors and terminals — see PROXY_INPUT_HOST_SELECTOR.
     // deepClosest: an editor mounted inside a web component keeps its wrapper
     // outside the input's own shadow tree, where plain `closest` cannot see it.
-    if (deepClosest(el, ".CodeMirror, .cm-editor, .monaco-editor, .ace_editor")) return false;
+    if (deepClosest(el, PROXY_INPUT_HOST_SELECTOR)) return false;
     // Visible?
     if (el.getClientRects().length === 0) return false;
 
@@ -58,6 +72,7 @@ export function isAiWritingTarget(el: Element | null | undefined): el is AiTarge
     if (el.isContentEditable) return true;
 
     if (el instanceof HTMLTextAreaElement) {
+        if (isUnwritableField(el)) return false;
         return !isSensitiveField(el);
     }
 
@@ -65,12 +80,41 @@ export function isAiWritingTarget(el: Element | null | undefined): el is AiTarge
         const type = (el.type || "text").toLowerCase();
         if (FORBIDDEN_INPUT_TYPES.has(type)) return false;
         // if (type !== "text" && type !== "") return false;
+        if (isUnwritableField(el)) return false;
         if (isSensitiveField(el)) return false;
         // Long-text heuristic: maxlength absent / large means body-style input.
         const max = el.maxLength;
         if (max > 0 && max < LONG_TEXT_MIN) return false;
         return true;
     }
+
+    return false;
+}
+
+/**
+ * A field we could not write back to, or that is not really a field the user
+ * types into. Two shapes, both of which the class list above cannot cover:
+ *
+ *  - readOnly / disabled: `applyText` would run and change nothing, so the dot
+ *    would sit there offering an action that silently does nothing. Log viewers
+ *    and command-output panes are usually readonly <textarea>s.
+ *  - the *invisible* input proxy. Terminal and remote-desktop apps that are not
+ *    in the selector list (Apache Guacamole's input sink, in-house SSH panels)
+ *    park a focusable field under the caret and paint it away: transparent, or
+ *    pushed off-screen (xterm uses `left: -9999em` while unfocused), or clipped
+ *    to a single character cell. A real writing surface is none of those.
+ */
+function isUnwritableField(el: HTMLInputElement | HTMLTextAreaElement): boolean {
+    if (el.readOnly || el.disabled) return true;
+
+    const rect = el.getBoundingClientRect();
+    if (rect.right <= 0 || rect.bottom <= 0) return true;
+    if (rect.left >= window.innerWidth || rect.top >= window.innerHeight) return true;
+    // A one-cell box. Deliberately well under any real single-line input.
+    if (rect.width < 24 || rect.height < 12) return true;
+
+    const style = getComputedStyle(el);
+    if (style.opacity === "0" || style.visibility === "hidden") return true;
 
     return false;
 }
