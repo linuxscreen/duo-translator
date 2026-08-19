@@ -849,15 +849,15 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
     // a page that scrolls under a live selection would otherwise leave the card
     // sitting where the text used to be. When the seed carried a live clone of
     // the selection range, re-measure it and re-run the placement. Skipped once
-    // the user has taken over the geometry (`manual`) or when the lookup was
-    // made inside the card itself (`keepPosition`) — then there is no page
-    // selection to chase. rAF-throttled, capture phase so nested scrollers are
-    // covered too.
+    // the user has taken over the geometry (`manual`), pinned the card, or when
+    // the lookup was made inside the card itself (`keepPosition`) — then there
+    // is no page selection to chase. rAF-throttled, capture phase so nested
+    // scrollers are covered too.
     const onViewportChange = useCallback(() => {
         if (viewportRafRef.current !== null) return;
         viewportRafRef.current = requestAnimationFrame(() => {
             viewportRafRef.current = null;
-            if (!open || manual || seed?.keepPosition) return;
+            if (!open || manual || pinned || seed?.keepPosition) return;
             const range = seed?.range;
             if (!range) return;
             let rect: DOMRect | null = null;
@@ -884,10 +884,10 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             lastAnchorRectRef.current = rect;
             setPlacement(computePlacement(rect));
         });
-    }, [open, manual, seed]);
+    }, [open, manual, pinned, seed]);
 
     useEffect(() => {
-        if (!open || manual || seed?.keepPosition || !seed?.range) return;
+        if (!open || manual || pinned || seed?.keepPosition || !seed?.range) return;
         window.addEventListener("scroll", onViewportChange, true);
         window.addEventListener("resize", onViewportChange);
         return () => {
@@ -898,7 +898,7 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
                 viewportRafRef.current = null;
             }
         };
-    }, [open, manual, seed, onViewportChange]);
+    }, [open, manual, pinned, seed, onViewportChange]);
 
     // After paint, re-clamp the card within the viewport in case the measured
     // size differs from the estimate (covers the all-four-corners edge cases).
