@@ -14,11 +14,18 @@
 // Storage layout (see CONFIG_KEY.SITE_RULE_* in main/constants.ts):
 //   config_siteRule*        — user rules, subscription list, on/off state. Cloud-synced.
 //   __site_rule_cache       — fetched package bodies, keyed by URL. NOT synced:
-//                             it does not carry a `config_`/`domain_`/`rule_`
-//                             prefix, so snapshot.ts's DATA_PREFIXES filter
-//                             leaves it out automatically (same trick as
-//                             __sync_meta). Re-fetchable data has no business
-//                             inflating a Drive/WebDAV snapshot.
+//                             no `config_`/`domain_`/`rule_` prefix, and
+//                             snapshot.ts gates every boundary on that
+//                             allow-list (same trick as __sync_meta).
+//                             Re-fetchable data has no business inflating a
+//                             Drive/WebDAV snapshot.
+//                             This was WRONG for a while — buildSnapshot took
+//                             all of storage.local minus a deny-list, so these
+//                             hundreds of rule bodies really were uploaded on
+//                             every sync while this very comment denied it.
+//                             Don't re-derive "it's excluded" from the prefix
+//                             alone; check that the path you care about
+//                             actually calls isSnapshotKey.
 // ---------------------------------------------------------------------------
 
 import { storage, type StorageItemKey } from 'wxt/utils/storage';

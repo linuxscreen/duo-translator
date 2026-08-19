@@ -9,6 +9,7 @@
 // wins, silently. A global lock serializes all syncs so the shared local
 // mtime can't be raced when several providers sync back-to-back.
 
+import { storage, type StorageItemKey } from 'wxt/utils/storage';
 import { APP_NAME_WITH_SUFFIX, CONFIG_KEY, SYNC_PROVIDER_ID } from '@/main/constants';
 import {
     buildSnapshot,
@@ -40,12 +41,36 @@ export function getAllProviders(): SyncProvider[] {
     return PROVIDERS;
 }
 
-export async function getAuthenticatedProviders(): Promise<SyncProvider[]> {
-    const out: SyncProvider[] = [];
-    for (const p of PROVIDERS) {
-        if (await p.isAuthenticated()) out.push(p);
-    }
-    return out;
+// Which provider sync actually targets. Device-local on purpose, and NOT a
+// CONFIG_KEY: putting it in the synced snapshot is a bootstrap trap — a device
+// with no WebDAV credentials would be handed "sync to WebDAV", stop syncing, and
+// therefore never receive the correction. "Where does THIS browser sync" is a
+// property of the browser, like the two gdrive keys next door.
+const ACTIVE_PROVIDER_KEY: StorageItemKey = 'local:__sync_active_provider';
+
+/**
+ * The one sync target. Only ever one — two connected remotes are well-defined
+ * under the per-key CRDT (they converge), but "which one restores me?" then has
+ * no answer, and that question is the whole point of the setting.
+ */
+export async function getActiveProviderId(): Promise<SYNC_PROVIDER_ID> {
+    const stored = await storage.getItem<SYNC_PROVIDER_ID>(ACTIVE_PROVIDER_KEY);
+    if (stored === SYNC_PROVIDER_ID.GDRIVE || stored === SYNC_PROVIDER_ID.WEBDAV) return stored;
+
+    // Never chosen — i.e. an install that predates this setting. One that is
+    // already syncing to WebDAV must keep syncing to WebDAV; defaulting it to
+    // Drive would silently strand its data on a remote nobody talks to any more.
+    const resolved = (await webdavProvider.isAuthenticated())
+        ? SYNC_PROVIDER_ID.WEBDAV
+        : SYNC_PROVIDER_ID.GDRIVE;
+    // Persist the resolution so it can't flip later: derived-on-every-read would
+    // silently move the target the moment the user disconnects WebDAV.
+    await setActiveProviderId(resolved);
+    return resolved;
+}
+
+export async function setActiveProviderId(id: SYNC_PROVIDER_ID): Promise<void> {
+    await storage.setItem(ACTIVE_PROVIDER_KEY, id);
 }
 
 // Global lock: only one sync runs at a time (any provider) so the local
@@ -110,16 +135,19 @@ export async function syncNow(id: SYNC_PROVIDER_ID): Promise<SyncResult> {
 }
 
 /**
- * Sync every connected provider sequentially. Fire-and-forget; failures just
- * log. Used by auto-sync (startup / debounce / periodic).
+ * Sync the active provider. Fire-and-forget; failures just log. Used by
+ * auto-sync (startup / debounce / periodic).
+ *
+ * This is where "one sync target" is enforced. A provider the user switched away
+ * from keeps its credentials — so switching back costs one click rather than a
+ * fresh setup — it simply stops being synced to.
  */
 export async function syncAll(reason = 'auto'): Promise<void> {
     try {
-        const providers = await getAuthenticatedProviders();
-        for (const provider of providers) {
-            const result = await withLock(() => runSync(provider));
-            console.log(APP_NAME_WITH_SUFFIX, 'sync', reason, provider.id, result);
-        }
+        const provider = providerById(await getActiveProviderId());
+        if (!(await provider.isAuthenticated())) return;
+        const result = await withLock(() => runSync(provider));
+        console.log(APP_NAME_WITH_SUFFIX, 'sync', reason, provider.id, result);
     } catch (e) {
         console.error(APP_NAME_WITH_SUFFIX, 'sync error', reason, e);
     }

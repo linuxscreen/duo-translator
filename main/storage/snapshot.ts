@@ -85,7 +85,15 @@ const DATA_PREFIXES = [STORAGE_PREFIX.CONFIG, STORAGE_PREFIX.DOMAIN, STORAGE_PRE
 /**
  * Whether a storage key participates in the synced snapshot — i.e. it's a
  * user-data key (config_/domain_/rule_) that isn't on the always-excluded list.
- * Used by the auto-sync watcher to decide if a storage change is sync-worthy.
+ *
+ * This is an ALLOW-list, and every snapshot boundary (build / merge / import)
+ * goes through it. That is deliberate and was not always so: `buildSnapshot`
+ * used to take all of `storage.local` minus `ALWAYS_EXCLUDED`, a deny-list —
+ * which silently uploaded every internal key nobody remembered to name there.
+ * `__site_rule_cache` (hundreds of re-fetchable subscription bodies) rode along
+ * that way for a while, with three separate comments claiming it did not,
+ * because they all reasoned about this function while the build path didn't use
+ * it. A new internal key must now be opted IN to sync, not out of it.
  */
 export function isSnapshotKey(key: string): boolean {
     if (ALWAYS_EXCLUDED.includes(key)) return false;
@@ -125,6 +133,10 @@ export async function buildSnapshot(opts: BuildOptions = {}): Promise<Snapshot> 
     const data: Record<string, unknown> = {};
     const meta: Record<string, number> = {};
     for (const [k, v] of Object.entries(raw)) {
+        // `raw` is the whole local area; only user-data keys belong in a
+        // snapshot. `exclude` above still matters — it holds config_-prefixed
+        // keys that pass this gate but must not sync (secrets, per-device prefs).
+        if (!isSnapshotKey(k)) continue;
         // Sync provider records but strip the apiKey field when not syncing
         // secrets — the records still propagate across devices.
         data[k] = !opts.includeSecrets && k === AI_PROVIDERS_KEY ? stripApiKeys(v) : v;
@@ -133,7 +145,7 @@ export async function buildSnapshot(opts: BuildOptions = {}): Promise<Snapshot> 
 
     const tombstones: Record<string, number> = {};
     for (const [k, ts] of Object.entries(syncMeta.tombstones)) {
-        if (exclude.has(k)) continue;
+        if (exclude.has(k) || !isSnapshotKey(k)) continue;
         tombstones[k] = ts;
     }
 
@@ -399,16 +411,22 @@ export function mergeSnapshots(local: Snapshot, remote: Snapshot): MergeResult {
     const lTomb = tombsOf(local);
     const rTomb = tombsOf(remote);
 
-    const keys = new Set<string>([
-        ...Object.keys(local.data),
-        ...Object.keys(remote.data),
-        ...Object.keys(lTomb),
-        ...Object.keys(rTomb),
-        // A collection key can be gone from data and tombstones on both sides
-        // and still owe the other device its element tombstones.
-        ...Object.keys(elementsOf(local)),
-        ...Object.keys(elementsOf(remote)),
-    ]);
+    // Filtered by isSnapshotKey: a remote written by a version that still
+    // uploaded internal keys keeps handing them back. Dropping them here means
+    // `merged` differs from `remote`, so the very next sync pushes the cleaned
+    // snapshot and the remote file shrinks on its own — no migration step.
+    const keys = new Set<string>(
+        [
+            ...Object.keys(local.data),
+            ...Object.keys(remote.data),
+            ...Object.keys(lTomb),
+            ...Object.keys(rTomb),
+            // A collection key can be gone from data and tombstones on both
+            // sides and still owe the other device its element tombstones.
+            ...Object.keys(elementsOf(local)),
+            ...Object.keys(elementsOf(remote)),
+        ].filter(isSnapshotKey),
+    );
 
     const out: MergeSink = { data: {}, meta: {}, tombstones: {}, elements: {} };
 
@@ -563,7 +581,10 @@ export async function applyImportedSnapshot(snap: Snapshot): Promise<void> {
     const sets: { key: StorageItemKey; value: unknown }[] = [];
     const touched: string[] = [];
     for (const [k, rawValue] of Object.entries(snap.data)) {
-        if (ALWAYS_EXCLUDED.includes(k)) continue;
+        // Same gate as build/merge: an old backup file can contain internal keys
+        // (a stale rule cache overwriting the current one, say), and touchKeys
+        // below would then give them a clock and start propagating them.
+        if (!isSnapshotKey(k)) continue;
         // Redacted pure secret: keep whatever this device has, and leave its
         // clock alone — nothing changed locally, so there is nothing to push.
         if (PURE_SECRET_KEYS.includes(k) && !rawValue) continue;

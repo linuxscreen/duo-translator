@@ -5,21 +5,37 @@ import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'node:path';
 import { inline } from '@floating-ui/dom';
 
+const GOOGLE_OAUTH_SCOPES = [
+    // Must stay in lock-step with SCOPE in main/storage/sync/googleDriveProvider.ts.
+    // Both are non-sensitive scopes; adding anything broader (drive.file, …)
+    // would drag the OAuth client into Google's verification queue.
+    'https://www.googleapis.com/auth/drive.appdata',
+    'email',
+];
+
 // See https://wxt.dev/api/config.html
 export default defineConfig({
-    manifest: {
+    manifest: ({ browser }) => ({
         name: '__MSG_extName__',
         description: '__MSG_extDescription__',
         default_locale: 'en',
-        permissions: ['storage', 'tabs', 'activeTab', 'contextMenus', 'alarms', 'webNavigation'], // 'identity'
+        // 'identity' powers Google Drive sync (launchWebAuthFlow everywhere,
+        // getAuthToken on Chrome). It shows no user-visible install warning.
+        permissions: ['storage', 'tabs', 'activeTab', 'contextMenus', 'alarms', 'webNavigation', 'identity'],
         host_permissions: [
             // firefox needs these (the firefox target is MV3 too -- see the
             // `--mv3` flag on the firefox scripts in package.json)
             // 'https://translate-pa.googleapis.com/*',
             // 'https://api.cognitive.microsofttranslator.com/*',
             // 'https://api-free.deepl.com/*',
-            // google drive
-            // 'https://www.googleapis.com/*', 'https://oauth2.googleapis.com/*', 'https://accounts.google.com/*'
+            //
+            // Google Drive sync: the Drive REST API + the userinfo endpoint,
+            // both called from the background. accounts.google.com and
+            // oauth2.googleapis.com are deliberately NOT here — the consent
+            // screen is a real browser navigation driven by launchWebAuthFlow
+            // (host permissions don't apply), and we never call the token
+            // endpoint at all (no client_secret, see googleDriveProvider.ts).
+            'https://www.googleapis.com/*',
             // Text-to-speech AND dictionary endpoints. Fetched from the
             // background service worker, which is subject to CORS for any origin
             // NOT listed here — and neither host sends CORS headers (Bing's
@@ -87,7 +103,31 @@ export default defineConfig({
                 },
             },
         },
-    },
+        // Chrome-only: the prerequisite for `identity.getAuthToken`, which is
+        // how Chrome (and ONLY Chrome — not Edge/Brave/Vivaldi) gets a Drive
+        // token without us ever touching a client_secret. Its client is of type
+        // "Chrome extension" and is bound to the extension id, so the id has to
+        // be stable: set CHROME_EXTENSION_KEY in .env for unpacked dev builds
+        // (the store assigns the id for published ones).
+        //
+        // The env read MUST stay inside this function: WXT calls its own
+        // `loadEnv()` (which is what copies .env into process.env) while
+        // resolving the config, i.e. AFTER this module has been imported. A
+        // module-level `const … = process.env.X` therefore captures undefined
+        // and the key silently vanishes from the manifest — no error, nothing
+        // in the build log, just a getAuthToken that never works.
+        ...(browser === 'chrome' && process.env.VITE_GOOGLE_CLIENT_ID_CHROME
+            ? {
+                oauth2: {
+                    client_id: process.env.VITE_GOOGLE_CLIENT_ID_CHROME,
+                    scopes: GOOGLE_OAUTH_SCOPES,
+                },
+            }
+            : {}),
+        ...(browser === 'chrome' && process.env.CHROME_EXTENSION_KEY
+            ? { key: process.env.CHROME_EXTENSION_KEY }
+            : {}),
+    }),
     imports: false, // auto import cause sourcemap error, unable to set breakpoint into function
     vite: () => ({
         plugins: [

@@ -29,12 +29,22 @@ import { synthesizeTts } from "@/main/ttsService";
 import { migrateFromPouchIfNeeded } from "@/main/storage/migrateFromPouch";
 import { buildSnapshot, applyImportedSnapshot, redactSecrets } from "@/main/storage/snapshot";
 import {
+    getActiveProviderId,
     getAllProviders,
     getProviderById,
+    setActiveProviderId,
     syncNow,
 } from "@/main/storage/sync/syncManager";
 import { registerAutoSyncListeners, startAutoSync, applyAutoSyncConfig } from "@/main/storage/sync/autoSync";
 import { getWebdavConfig, type WebDavCredentials } from "@/main/storage/sync/webdavProvider";
+import {
+    canUseBrowserAuth,
+    clearGoogleDriveAuthError,
+    getUseBrowserAuth,
+    googleDriveAuthState,
+    setUseBrowserAuth,
+    startGoogleDriveAuth,
+} from "@/main/storage/sync/googleDriveProvider";
 import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
 
 export async function background() {
@@ -255,23 +265,39 @@ export async function background() {
                 (async () => {
                     // Per-provider connection state — providers coexist, any
                     // number can be connected at once.
-                    const providers: Record<string, { authenticated: boolean; description: string | null }> = {};
+                    const providers: Record<string, { authenticated: boolean; description: string | null; needsReauth: boolean }> = {};
                     for (const provider of getAllProviders()) {
                         const authenticated = await provider.isAuthenticated();
                         const description = authenticated ? await provider.describe() : null;
-                        providers[provider.id] = { authenticated, description };
+                        // Connected but unable to renew silently — the Options row
+                        // shows "needs reconnect" instead of a healthy account.
+                        const needsReauth = authenticated && provider.needsReauth
+                            ? await provider.needsReauth()
+                            : false;
+                        providers[provider.id] = { authenticated, description, needsReauth };
                     }
-                    sendResponse({ status: STATUS_SUCCESS, data: { providers } });
+                    sendResponse({
+                        status: STATUS_SUCCESS,
+                        data: {
+                            providers,
+                            activeProvider: await getActiveProviderId(),
+                            gdriveBrowserAuth: await getUseBrowserAuth(),
+                            gdriveCanUseBrowserAuth: canUseBrowserAuth(),
+                            gdriveAuth: googleDriveAuthState(),
+                        },
+                    });
                 })().catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
                 return true
             }
             case SYNC_ACTION.AUTH_GDRIVE: {
-                (async () => {
-                    const provider = getProviderById(SYNC_PROVIDER_ID.GDRIVE);
-                    await provider.authenticate();
-                    const description = await provider.describe();
-                    sendResponse({ status: STATUS_SUCCESS, data: { description } });
-                })().catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
+                // Deliberately NOT awaited — see startGoogleDriveAuth. The flow
+                // can hang forever; the UI watches SYNC_STATUS instead.
+                sendResponse({ status: STATUS_SUCCESS, data: startGoogleDriveAuth() });
+                return true
+            }
+            case SYNC_ACTION.GDRIVE_AUTH_ERROR_CLEAR: {
+                clearGoogleDriveAuthError();
+                sendResponse({ status: STATUS_SUCCESS, data: null });
                 return true
             }
             case SYNC_ACTION.AUTH_WEBDAV: {
@@ -317,6 +343,18 @@ export async function background() {
                     if (provider.deleteRemote) await provider.deleteRemote();
                     sendResponse({ status: STATUS_SUCCESS, data: null });
                 })().catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
+                return true
+            }
+            case SYNC_ACTION.ACTIVE_PROVIDER_SET: {
+                setActiveProviderId(message.data?.id as SYNC_PROVIDER_ID).then(() => {
+                    sendResponse({ status: STATUS_SUCCESS, data: null });
+                }).catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
+                return true
+            }
+            case SYNC_ACTION.GDRIVE_BROWSER_AUTH_SET: {
+                setUseBrowserAuth(!!message.data?.value).then(() => {
+                    sendResponse({ status: STATUS_SUCCESS, data: null });
+                }).catch((e) => sendResponse({ status: STATUS_FAIL, data: e?.message || String(e) }));
                 return true
             }
             case SYNC_ACTION.WEBDAV_CONFIG_GET: {

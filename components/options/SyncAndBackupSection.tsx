@@ -14,16 +14,19 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { browser } from 'wxt/browser';
 import { sendMessageToBackground, sendMessageToBackgroundOrThrow } from '@/utils/message';
 import { getConfig, setConfig } from '@/utils/db';
-import { ACTION, APP_NAME, APP_NAME_KEBAB_CASE, APP_NAME_PASCAL_CASE, CONFIG_KEY, DB_ACTION, SYNC_ACTION, SYNC_PROVIDER_ID } from '@/main/constants';
+import { ACTION, APP_NAME, APP_NAME_KEBAB_CASE, APP_NAME_PASCAL_CASE, CONFIG_KEY, DB_ACTION, IS_PROD, SYNC_ACTION, SYNC_PROVIDER_ID } from '@/main/constants';
 
-const SYNC_INTERVAL_OPTIONS = [5, 10, 15, 20, 30, 45, 60];
+const SYNC_INTERVAL_OPTIONS = IS_PROD ? [5, 10, 15, 20, 30, 45, 60] : [0.1, 0.5, 1, 3, 5, 10, 15, 20, 30, 45, 60];
 
 type ProviderState = {
     authenticated: boolean;
     description: string | null;
+    /** Connected, but this device can no longer renew the credentials silently. */
+    needsReauth: boolean;
 };
 
 type StatusInfo = Record<SYNC_PROVIDER_ID, ProviderState>;
@@ -34,7 +37,7 @@ type RemoteBackupInfo = {
     modifiedTime: number | null;
 };
 
-const EMPTY_PROVIDER: ProviderState = { authenticated: false, description: null };
+const EMPTY_PROVIDER: ProviderState = { authenticated: false, description: null, needsReauth: false };
 
 function formatSize(bytes: number | null): string {
     if (bytes == null) return '—';
@@ -57,6 +60,33 @@ export function SyncAndBackupSection() {
         [SYNC_PROVIDER_ID.WEBDAV]: EMPTY_PROVIDER,
     });
     const [busy, setBusy] = useState(false);
+
+    // A connect flow is running in the background. Not `busy`: connecting no
+    // longer blocks this section at all, because the flow can outlive any
+    // reasonable timeout (see startGoogleDriveAuth).
+    const [authInProgress, setAuthInProgress] = useState(false);
+    // Set on the click, cleared once the outcome has been reported. Distinct
+    // from `authInProgress`, which is the background's view — it can stay true
+    // forever when the browser never answers, and we must not toast about a
+    // flow this page did not start.
+    const [watchingAuth, setWatchingAuth] = useState(false);
+
+    // The one sync target. Everything below renders for this provider only; the
+    // other keeps its credentials and simply isn't synced to.
+    const [activeId, setActiveId] = useState<SYNC_PROVIDER_ID>(SYNC_PROVIDER_ID.GDRIVE);
+
+    // Chrome-only: use identity.getAuthToken rather than the web sign-in flow.
+    // Device-local (not a CONFIG_KEY, so it never enters the sync snapshot) —
+    // see googleDriveProvider.ts. Default on; the real value arrives with the
+    // first status refresh.
+    const [gdriveBrowserAuth, setGdriveBrowserAuth] = useState(true);
+
+
+    // Whether the Chrome path is usable at all here — decided by the provider
+    // (`canUseBrowserAuth`), never re-derived locally. If this view disagreed
+    // with the provider, hiding the checkbox would strand the user on a connect
+    // error telling them to untick something they cannot see.
+    const [canUseBrowserAuth, setCanUseBrowserAuth] = useState(false);
 
     // WebDAV config dialog + form state
     const [configOpen, setConfigOpen] = useState(false);
@@ -97,7 +127,31 @@ export function SyncAndBackupSection() {
                 [SYNC_PROVIDER_ID.GDRIVE]: s.providers[SYNC_PROVIDER_ID.GDRIVE] ?? EMPTY_PROVIDER,
                 [SYNC_PROVIDER_ID.WEBDAV]: s.providers[SYNC_PROVIDER_ID.WEBDAV] ?? EMPTY_PROVIDER,
             });
+            if (typeof s.gdriveBrowserAuth === 'boolean') setGdriveBrowserAuth(s.gdriveBrowserAuth);
+            setCanUseBrowserAuth(!!s.gdriveCanUseBrowserAuth);
+            setAuthInProgress(!!s.gdriveAuth?.inProgress);
+            if (s.activeProvider) setActiveId(s.activeProvider);
         }
+        // Returned so the auth watcher can read the same payload it just applied
+        // instead of issuing a second round-trip.
+        return s;
+    };
+
+    const onChangeMethod = async (value: string) => {
+        const id = value as SYNC_PROVIDER_ID;
+        setActiveId(id);
+        await sendMessageToBackground({ action: SYNC_ACTION.ACTIVE_PROVIDER_SET, data: { id } });
+        // The row about to render belongs to the other provider — pull its state
+        // rather than showing the previous one's for a frame.
+        await refreshStatus();
+    };
+
+    const onToggleGdriveBrowserAuth = async (next: boolean) => {
+        setGdriveBrowserAuth(next);
+        await sendMessageToBackground({
+            action: SYNC_ACTION.GDRIVE_BROWSER_AUTH_SET,
+            data: { value: next },
+        });
     };
 
     // Pull the persisted WebDAV credentials into the form. The credentials
@@ -131,6 +185,42 @@ export function SyncAndBackupSection() {
         })();
     }, []);
 
+    // Watch the background's auth state instead of awaiting the flow: it may
+    // never end (closing Chrome's sign-in tab produces no token AND no error).
+    // Polling is bounded by `watchingAuth`, which only this page's own click
+    // sets, and by the flow ending. Returning to the tab checks immediately —
+    // that is when the user has usually just finished or abandoned it.
+    useEffect(() => {
+        if (!watchingAuth) return;
+        let stopped = false;
+
+        const check = async () => {
+            if (stopped || document.visibilityState === 'hidden') return;
+            const s = await refreshStatus();
+            if (stopped || !s) return;
+            const auth = s.gdriveAuth;
+            if (auth?.inProgress) return; // still out there; keep waiting
+            stopped = true;
+            setWatchingAuth(false);
+            if (auth?.lastError) {
+                fail(new Error(auth.lastError));
+                void sendMessageToBackground({ action: SYNC_ACTION.GDRIVE_AUTH_ERROR_CLEAR });
+            } else if (s.providers?.[SYNC_PROVIDER_ID.GDRIVE]?.authenticated) {
+                toast(t('syncConnected', 'Connected'));
+            }
+        };
+
+        const timer = window.setInterval(check, 2000);
+        window.addEventListener('focus', check);
+        document.addEventListener('visibilitychange', check);
+        return () => {
+            stopped = true;
+            window.clearInterval(timer);
+            window.removeEventListener('focus', check);
+            document.removeEventListener('visibilitychange', check);
+        };
+    }, [watchingAuth]);
+
     const onToggleSyncSecrets = async (next: boolean) => {
         setSyncSecrets(next);
         await setConfig(CONFIG_KEY.SYNC_INCLUDE_SECRETS, next);
@@ -150,15 +240,20 @@ export function SyncAndBackupSection() {
     };
 
     const onConnectGdrive = async () => {
-        setBusy(true);
+        setAuthInProgress(true);
+        setWatchingAuth(true);
         try {
-            await sendMessageToBackgroundOrThrow({ action: SYNC_ACTION.AUTH_GDRIVE }, 60_000);
-            await refreshStatus();
-            toast(t('syncConnected', 'Connected'));
+            const r = await sendMessageToBackgroundOrThrow({ action: SYNC_ACTION.AUTH_GDRIVE }, 10_000);
+            if (r?.alreadyRunning) {
+                // Chrome queues concurrent getAuthToken calls for the same
+                // scopes, so a second flow would open no UI and wait behind the
+                // first. Say that, rather than appearing to do nothing.
+                toast(t('syncAuthAlreadyRunning', 'A sign-in is already open — finish it in that tab.'), 'error');
+            }
         } catch (err: any) {
+            setWatchingAuth(false);
+            setAuthInProgress(false);
             fail(err);
-        } finally {
-            setBusy(false);
         }
     };
 
@@ -238,7 +333,13 @@ export function SyncAndBackupSection() {
         try {
             const r = await sendMessageToBackground({ action: SYNC_ACTION.SYNC_NOW, data: { id } }, 60_000);
             if (!r) return fail();
-            if (!r.ok) return toast(r.error || t('syncStatusFailed', 'Sync failed'), 'error');
+            if (!r.ok) {
+                // A sync can fail *because* the credentials went stale, which is
+                // a state change: without this the row keeps showing the account
+                // as healthy while the toast says otherwise.
+                await refreshStatus();
+                return toast(r.error || t('syncStatusFailed', 'Sync failed'), 'error');
+            }
             if (r.direction === 'upload') toast(t('syncStatusUploaded', 'Uploaded to remote'));
             else if (r.direction === 'download') toast(t('syncStatusDownloaded', 'Downloaded from remote'));
             else if (r.direction === 'merge') toast(t('syncStatusMerged', 'Merged with remote'));
@@ -411,87 +512,188 @@ export function SyncAndBackupSection() {
 
     return (
         <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
-            {/* todo next version support google drive */}
-            {/* Google Drive row */}
-            {/* <SettingRow
-                label={t('syncProviderGoogleDrive', 'Google Drive')}
-                hint={
-                    gdrive.authenticated
-                        ? gdrive.description ?? t('syncConnected', 'Connected')
-                        : t('syncNotConnected', 'Not connected')
-                }
-                control={
-                    gdrive.authenticated ? (
-                        <div className="flex items-center gap-2">
-                            <Button size="sm" onClick={() => onSyncNow(SYNC_PROVIDER_ID.GDRIVE)} disabled={busy}>
-                                {t('syncNow', 'Sync now')}
-                            </Button>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => openManage(SYNC_PROVIDER_ID.GDRIVE)}
-                                disabled={busy}
-                            >
-                                {t('manageSyncedFile', 'Manage synced file')}
-                            </Button>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => onDisconnect(SYNC_PROVIDER_ID.GDRIVE)}
-                                disabled={busy}
-                            >
-                                {t('syncDisconnect', 'Disconnect')}
-                            </Button>
-                        </div>
-                    ) : (
-                        <Button variant="outline" size="sm" onClick={onConnectGdrive} disabled={busy}>
-                            {t('syncConnect', 'Connect')}
-                        </Button>
-                    )
-                }
-            /> */}
-
-            {/* WebDAV row */}
+            {/* Sync method — the single target. Two remotes converge fine under
+                the per-key CRDT, but then "which one restores me?" has no
+                answer, and that is the question this setting exists to answer.
+                Switching does NOT drop the other's credentials, so coming back
+                is one click. */}
             <SettingRow
-                label={t('syncProviderWebdav', 'WebDAV')}
-                hint={
-                    webdav.authenticated
-                        ? webdav.description ?? t('syncConnected', 'Connected')
-                        : t('syncNotConnected', 'Not connected')
-                }
+                label={t('syncMethod', 'Sync method')}
+                // hint={t('syncMethodHint', 'This device only — the choice itself is not synced.')}
                 control={
-                    webdav.authenticated ? (
-                        <div className="flex items-center gap-2">
-                            <Button size="sm" onClick={() => onSyncNow(SYNC_PROVIDER_ID.WEBDAV)} disabled={busy}>
-                                {t('syncNow', 'Sync now')}
-                            </Button>
+                    <Select value={activeId} onValueChange={onChangeMethod}>
+                        <SelectTrigger className="min-w-[160px]">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value={SYNC_PROVIDER_ID.GDRIVE}>
+                                {t('syncProviderGoogleDrive', 'Google Drive')}
+                            </SelectItem>
+                            <SelectItem value={SYNC_PROVIDER_ID.WEBDAV}>
+                                {t('syncProviderWebdav', 'WebDAV')}
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
+                }
+            />
+
+            {activeId === SYNC_PROVIDER_ID.GDRIVE ? (
+                <>
+                    <SettingRow
+                        label={t('syncProviderGoogleDrive', 'Google Drive')}
+                        hint={
+                            gdrive.authenticated
+                                ? gdrive.needsReauth
+                                    // Credentials are still on file but can't be
+                                    // renewed without the user. Saying "Connected"
+                                    // here is how sync silently stops for weeks
+                                    // unnoticed.
+                                    ? t('syncNeedsReauth', 'Needs reconnect — sign in again to resume syncing')
+                                    : gdrive.description ?? t('syncConnected', 'Connected')
+                                : t('syncNotConnected', 'Not connected')
+                        }
+                        control={
+                            gdrive.authenticated ? (
+                                <div className="flex items-center gap-2">
+                                    {gdrive.needsReauth ? (
+                                        <Button
+                                            size="sm"
+                                            onClick={() => onConnectGdrive()}
+                                            disabled={busy || authInProgress}
+                                        >
+                                            {authInProgress
+                                                ? t('syncAuthorizing', 'Authorizing…')
+                                                : t('syncReconnect', 'Reconnect')}
+                                        </Button>
+                                    ) : (
+                                        <Button size="sm" onClick={() => onSyncNow(SYNC_PROVIDER_ID.GDRIVE)} disabled={busy}>
+                                            {t('syncNow', 'Sync now')}
+                                        </Button>
+                                    )}
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => openManage(SYNC_PROVIDER_ID.GDRIVE)}
+                                        disabled={busy}
+                                    >
+                                        {t('manageSyncedFile', 'Manage synced file')}
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => onDisconnect(SYNC_PROVIDER_ID.GDRIVE)}
+                                        disabled={busy}
+                                    >
+                                        {t('syncDisconnect', 'Disconnect')}
+                                    </Button>
+                                </div>
+                            ) : (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => onConnectGdrive()}
+                                    disabled={busy || authInProgress}
+                                >
+                                    {authInProgress
+                                        ? t('syncAuthorizing', 'Authorizing…')
+                                        : t('syncConnect', 'Connect')}
+                                </Button>
+                            )
+                        }
+                    />
+
+                    {/* Chrome build only (see canUseBrowserAuth): everywhere
+                        else the Chrome path cannot work, and offering a choice
+                        that always fails is worse than offering none. Shown
+                        while disconnected too — it decides which flow the
+                        Connect button will take. */}
+                    {canUseBrowserAuth && (
+                        <SettingRow
+                            label={t('syncGdriveBrowserAuth', 'Authorize through Chrome')}
+                            hint={t(
+                                'syncGdriveBrowserAuthHint',
+                                'Recommended. Requires the account you want to sync with to be signed in to Chrome. Unchecked uses web sign-in instead, which has no such requirement.',
+                            )}
+                            control={
+                                // Locked while connected. The setting only takes
+                                // effect at connect time, so letting it be
+                                // toggled here would leave the box saying one
+                                // thing and the live connection being another —
+                                // with no way to tell, since the two paths look
+                                // identical until one of them expires.
+                                gdrive.authenticated ? (
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            {/* The span is the trigger, not the
+                                                input: a disabled control fires
+                                                no pointer events, so a tooltip
+                                                bound to it never opens. */}
+                                            <span className="inline-flex">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={gdriveBrowserAuth}
+                                                    disabled
+                                                    readOnly
+                                                />
+                                            </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            {t('syncGdriveBrowserAuthLocked', 'Disconnect Google Drive first')}
+                                        </TooltipContent>
+                                    </Tooltip>
+                                ) : (
+                                    <input
+                                        type="checkbox"
+                                        checked={gdriveBrowserAuth}
+                                        onChange={(e) => onToggleGdriveBrowserAuth(e.target.checked)}
+                                    />
+                                )
+                            }
+                        />
+                    )}
+                </>
+            ) : (
+                <SettingRow
+                    label={t('syncProviderWebdav', 'WebDAV')}
+                    hint={
+                        webdav.authenticated
+                            ? webdav.description ?? t('syncConnected', 'Connected')
+                            : t('syncNotConnected', 'Not connected')
+                    }
+                    control={
+                        webdav.authenticated ? (
+                            <div className="flex items-center gap-2">
+                                <Button size="sm" onClick={() => onSyncNow(SYNC_PROVIDER_ID.WEBDAV)} disabled={busy}>
+                                    {t('syncNow', 'Sync now')}
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={openConfig} disabled={busy}>
+                                    {t('webdavConfigure', 'Configure')}
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => openManage(SYNC_PROVIDER_ID.WEBDAV)}
+                                    disabled={busy}
+                                >
+                                    {t('manageSyncedFile', 'Manage synced file')}
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => onDisconnect(SYNC_PROVIDER_ID.WEBDAV)}
+                                    disabled={busy}
+                                >
+                                    {t('syncDisconnect', 'Disconnect')}
+                                </Button>
+                            </div>
+                        ) : (
                             <Button variant="outline" size="sm" onClick={openConfig} disabled={busy}>
                                 {t('webdavConfigure', 'Configure')}
                             </Button>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => openManage(SYNC_PROVIDER_ID.WEBDAV)}
-                                disabled={busy}
-                            >
-                                {t('manageSyncedFile', 'Manage synced file')}
-                            </Button>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => onDisconnect(SYNC_PROVIDER_ID.WEBDAV)}
-                                disabled={busy}
-                            >
-                                {t('syncDisconnect', 'Disconnect')}
-                            </Button>
-                        </div>
-                    ) : (
-                        <Button variant="outline" size="sm" onClick={openConfig} disabled={busy}>
-                            {t('webdavConfigure', 'Configure')}
-                        </Button>
-                    )
-                }
-            />
+                        )
+                    }
+                />
+            )}
 
             {/* Auto sync */}
             <SettingRow

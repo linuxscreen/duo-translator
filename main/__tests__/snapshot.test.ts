@@ -41,13 +41,19 @@ vi.mock("@/main/storage/configStore", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/main/storage/configStore")>();
     return {
         ...actual,
-        getSyncMeta: vi.fn(async () => ({ clocks: {}, tombstones: {} })),
+        getSyncMeta: vi.fn(async () => ({ clocks: {}, tombstones: {}, elements: {} })),
         setSyncMeta: vi.fn(async () => {}),
         touchKeys,
     };
 });
 
-import { applyImportedSnapshot, redactSecrets, type Snapshot } from "@/main/storage/snapshot";
+import {
+    applyImportedSnapshot,
+    buildSnapshot,
+    mergeSnapshots,
+    redactSecrets,
+    type Snapshot,
+} from "@/main/storage/snapshot";
 import { STORAGE_PREFIX } from "@/main/storage/configStore";
 import { APP_NAME_KEBAB_CASE, CONFIG_KEY } from "@/main/constants";
 
@@ -172,5 +178,54 @@ describe("applyImportedSnapshot — envelope", () => {
         await expect(applyImportedSnapshot({ app: "nope" } as any)).rejects.toThrow(
             "Invalid snapshot envelope",
         );
+    });
+});
+
+// Internal keys must not ride along in a snapshot. This is not hypothetical:
+// buildSnapshot used to take all of storage.local minus an explicit deny-list,
+// so `__site_rule_cache` (hundreds of re-fetchable subscription bodies) was
+// uploaded on every sync while three separate comments claimed it was not. The
+// gate is now an allow-list (isSnapshotKey) applied at all three boundaries.
+describe("snapshot boundaries — internal keys never sync", () => {
+    const CACHE_KEY = "__site_rule_cache";
+    const GDRIVE_PREF = "__sync_gdrive_use_browser_auth";
+
+    it("buildSnapshot omits internal keys but keeps user data", async () => {
+        store[TARGET_LANG_KEY] = "ja";
+        store[CACHE_KEY] = [{ id: "r1" }, { id: "r2" }];
+        store[GDRIVE_PREF] = true;
+        store["domain_example.com"] = { strategy: "always" };
+
+        const snap = await buildSnapshot();
+
+        expect(Object.keys(snap.data)).toEqual(
+            expect.arrayContaining([TARGET_LANG_KEY, "domain_example.com"]),
+        );
+        expect(snap.data).not.toHaveProperty(CACHE_KEY);
+        expect(snap.data).not.toHaveProperty(GDRIVE_PREF);
+    });
+
+    it("merge drops internal keys a legacy remote still carries, and says so", () => {
+        const local = snapshot({ [TARGET_LANG_KEY]: "ja" });
+        const remote = snapshot({ [TARGET_LANG_KEY]: "ja", [CACHE_KEY]: [{ id: "r1" }] });
+
+        const { merged, remoteChanged } = mergeSnapshots(local, remote);
+
+        expect(merged.data).not.toHaveProperty(CACHE_KEY);
+        expect(merged.data[TARGET_LANG_KEY]).toBe("ja");
+        // remoteChanged is what makes the cleaned snapshot get pushed, which is
+        // the only thing that ever shrinks an already-bloated remote file.
+        expect(remoteChanged).toBe(true);
+    });
+
+    it("import skips internal keys instead of writing a stale cache back", async () => {
+        store[CACHE_KEY] = [{ id: "current" }];
+        await applyImportedSnapshot(
+            snapshot({ [CACHE_KEY]: [{ id: "stale" }], [TARGET_LANG_KEY]: "ja" }),
+        );
+
+        expect(store[CACHE_KEY]).toEqual([{ id: "current" }]);
+        expect(store[TARGET_LANG_KEY]).toBe("ja");
+        expect(touchKeys.mock.calls[0][0]).not.toContain(CACHE_KEY);
     });
 });

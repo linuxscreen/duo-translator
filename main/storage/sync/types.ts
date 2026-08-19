@@ -28,6 +28,16 @@ export interface SyncProvider {
     describe(): Promise<string | null>;
 
     /**
+     * Optional: still configured, but this device can no longer obtain
+     * credentials without the user (an OAuth session that can't be renewed
+     * silently). Distinct from `isAuthenticated() === false`, which means "never
+     * connected / disconnected". Providers that can't go stale may omit it.
+     *
+     * Purely device-local — never enters the sync snapshot.
+     */
+    needsReauth?(): Promise<boolean>;
+
+    /**
      * Metadata about the remote backup file for the "manage backups" UI.
      * Optional — providers that can't cheaply report it may omit it.
      * Returns null when no remote backup exists yet.

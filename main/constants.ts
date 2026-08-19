@@ -40,6 +40,12 @@ export const AI_PREFIX = "ai:";
 export const AI_REQUEST_TIMEOUT = 120_000;
 export const API_REQUEST_TIMEOUT = 30_000;
 export const IS_FIREFOX = import.meta.env.FIREFOX;
+// Build-target macro (`browser === 'chrome'`), tree-shaken like IS_FIREFOX.
+// Deliberately the SAME condition that gates the `oauth2` manifest key in
+// wxt.config.ts — `identity.getAuthToken` needs that key, so any other target
+// cannot use it no matter what the runtime API probe says (Edge is Chromium and
+// exposes the method).
+export const IS_CHROME = import.meta.env.CHROME;
 
 export const EXTENSION_INVALID_CONTEXT_MSG = "Extension context invalidated"
 
@@ -93,6 +99,14 @@ export enum SYNC_ACTION {
     // pre-filled (the options page is part of the extension, so exposing the
     // locally-stored password to it is fine).
     WEBDAV_CONFIG_GET = 'getWebdavConfig',
+    // Chrome-only Options checkbox: use identity.getAuthToken instead of the web
+    // sign-in flow. There is no matching GET — SYNC_STATUS already carries it,
+    // and it is read at exactly the same moment.
+    GDRIVE_BROWSER_AUTH_SET = 'setGdriveBrowserAuth',
+    // Which provider auto-sync targets. Read through SYNC_STATUS, same as above.
+    ACTIVE_PROVIDER_SET = 'setActiveSyncProvider',
+    // Acknowledge the last Google Drive connect failure once it's been shown.
+    GDRIVE_AUTH_ERROR_CLEAR = 'clearGdriveAuthError',
 }
 
 export enum SYNC_PROVIDER_ID {

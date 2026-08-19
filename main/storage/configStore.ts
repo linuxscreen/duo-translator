@@ -11,13 +11,21 @@
 //   domain_<host>   →  { strategy?, viewStrategy?, aiWritingDisabled?, aiWritingEnabled? }
 //   rule_<host>     →  string[]
 //
-// Internal book-keeping keys (filtered out of snapshots, see snapshot.ts):
-//   __migration_v1_done       — set after the one-shot PouchDB → storage migration
-//   __sync_meta               — per-key LWW clocks + tombstones (see SyncMeta)
-//   __sync_active_provider    — legacy single-provider selector (no longer written)
-//   __sync_gdrive_tokens      — OAuth tokens
-//   __sync_gdrive_file_id     — cached Drive fileId
-//   __sync_webdav_creds       — { baseUrl, username, password, basePath }
+// Internal book-keeping keys. They carry no data prefix, which is what keeps
+// them out of snapshots — `isSnapshotKey` in snapshot.ts is an allow-list over
+// the three prefixes above, applied at every snapshot boundary:
+//   __migration_v1_done              — set after the one-shot PouchDB → storage migration
+//   __sync_meta                      — per-key LWW clocks + tombstones (see SyncMeta)
+//   __sync_active_provider           — the "sync method" selector; which provider
+//                                      auto-sync targets (syncManager.ts)
+//   __sync_gdrive_tokens             — OAuth tokens
+//   __sync_gdrive_file_id            — cached Drive fileId
+//   __sync_gdrive_needs_reauth       — credentials went stale on THIS device
+//   __sync_gdrive_use_browser_auth   — Chrome-only: getAuthToken vs the web flow
+//   __sync_webdav_creds              — { baseUrl, username, password, basePath }
+//   __sync_webdav_disconnected       — disconnected but keeping the credentials
+//   __site_rule_cache                — fetched subscription bodies (re-fetchable)
+//   __site_rule_official             — the official subscription package
 
 import { storage, type StorageItemKey } from 'wxt/utils/storage';
 import {
@@ -35,6 +43,10 @@ export const STORAGE_PREFIX = {
     RULE: 'rule_',
 } as const;
 
+// Internal, device-local storage keys. Since `isSnapshotKey` became the gate on
+// every snapshot boundary these are excluded by their lack of a data prefix
+// anyway; naming them here is belt-and-braces and, more usefully, the one place
+// that states which keys are deliberately device-local.
 export const INTERNAL_STORAGE_KEYS = [
     '__migration_v1_done',
     '__sync_meta',
@@ -42,8 +54,14 @@ export const INTERNAL_STORAGE_KEYS = [
     '__sync_active_provider',
     '__sync_gdrive_tokens',
     '__sync_gdrive_file_id',
+    '__sync_gdrive_needs_reauth',
+    '__sync_gdrive_use_browser_auth',
     '__sync_webdav_creds',
     '__sync_webdav_disconnected',
+    // Re-fetchable subscription bodies. Hundreds of rules; nothing here that a
+    // refresh can't rebuild, so there is no reason to carry it in every sync.
+    '__site_rule_cache',
+    '__site_rule_official',
 ] as const;
 
 export type DomainDoc = {
