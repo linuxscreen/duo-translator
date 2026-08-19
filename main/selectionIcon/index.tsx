@@ -74,6 +74,11 @@ interface IconAnchor {
     /** Bounding rect of the selection — the popup anchors to it, not to us. */
     rect: DOMRect | null;
     /**
+     * Live clone of the selection range. The popup re-measures it on scroll so
+     * it follows the text instead of staying at the viewport spot it opened on.
+     */
+    range: Range;
+    /**
      * The selection lives inside the selection-translate popup. Translating it
      * reuses that card in place instead of re-anchoring it to `rect`, which
      * would point the card at its own body.
@@ -306,6 +311,7 @@ function startController(domain: string): () => void {
             y,
             text,
             rect: bounding.width > 0 || bounding.height > 0 ? bounding : null,
+            range: range.cloneRange(),
             inPopup,
         };
     };
@@ -588,9 +594,9 @@ function SelectionIconApp({
     const onTranslate = () => {
         if (firedRef.current) return;
         firedRef.current = true;
-        const { text, rect, inPopup } = anchor;
+        const { text, rect, range, inPopup } = anchor;
         dismiss();
-        if (text !== "") openSelectionTranslate({ text, rect, keepPosition: inPopup });
+        if (text !== "") openSelectionTranslate({ text, rect, range, keepPosition: inPopup });
     };
 
     const onPick = async (choice: "session" | "site" | "forever") => {

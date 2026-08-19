@@ -51,6 +51,14 @@ export interface SelectionSeed {
     /** Viewport rect of the selection, used to anchor the popup. */
     rect: DOMRect | null;
     /**
+     * Live clone of the selected range. Lets the card re-anchor to the text on
+     * scroll / resize — a snapshot rect alone would leave it pinned to the
+     * viewport position the selection had when it opened. Optional: surfaces
+     * that only have a snapshot rect (a detached range, the centered fallback)
+     * simply stay put.
+     */
+    range?: Range;
+    /**
      * Reuse the card exactly where it already is instead of re-anchoring it to
      * `rect`. Set when the selection came from inside the card itself: the
      * anchor is then a few pixels of the card's own body, so honoring it would
@@ -485,6 +493,9 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
     const cardRef = useRef<HTMLDivElement>(null);
     const pinnedRef = useRef(false);
     pinnedRef.current = pinned;
+    // rAF throttle + last measured rect for the scroll-follow (see below).
+    const viewportRafRef = useRef<number | null>(null);
+    const lastAnchorRectRef = useRef<DOMRect | null>(null);
 
     const close = () => {
         if (abortRef.current) abortRef.current();
@@ -622,6 +633,7 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         registerOpen((s) => {
             tts.stop();
             setSeed(s);
+            lastAnchorRectRef.current = null;
             setOpen(true);
             setOrigExpanded(false);
             setOrigLang(getTextLanguage(s.text) || "und");
@@ -830,6 +842,63 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         ro.observe(el);
         return () => ro.disconnect();
     }, [open]);
+
+    // Follow the selection on scroll / resize.
+    //
+    // The card is viewport-positioned from a SNAPSHOT of the selection rect, so
+    // a page that scrolls under a live selection would otherwise leave the card
+    // sitting where the text used to be. When the seed carried a live clone of
+    // the selection range, re-measure it and re-run the placement. Skipped once
+    // the user has taken over the geometry (`manual`) or when the lookup was
+    // made inside the card itself (`keepPosition`) — then there is no page
+    // selection to chase. rAF-throttled, capture phase so nested scrollers are
+    // covered too.
+    const onViewportChange = useCallback(() => {
+        if (viewportRafRef.current !== null) return;
+        viewportRafRef.current = requestAnimationFrame(() => {
+            viewportRafRef.current = null;
+            if (!open || manual || seed?.keepPosition) return;
+            const range = seed?.range;
+            if (!range) return;
+            let rect: DOMRect | null = null;
+            try {
+                const r = range.getBoundingClientRect();
+                if (r && (r.width > 0 || r.height > 0)) rect = r;
+            } catch {
+                return; // detached range — leave the card where it is
+            }
+            if (!rect) return;
+            // Scrolling the card's OWN body fires a scroll here too, and the
+            // page range's rect is unchanged then — re-anchoring would just be
+            // a needless re-render.
+            const last = lastAnchorRectRef.current;
+            if (
+                last &&
+                last.left === rect.left &&
+                last.top === rect.top &&
+                last.right === rect.right &&
+                last.bottom === rect.bottom
+            ) {
+                return;
+            }
+            lastAnchorRectRef.current = rect;
+            setPlacement(computePlacement(rect));
+        });
+    }, [open, manual, seed]);
+
+    useEffect(() => {
+        if (!open || manual || seed?.keepPosition || !seed?.range) return;
+        window.addEventListener("scroll", onViewportChange, true);
+        window.addEventListener("resize", onViewportChange);
+        return () => {
+            window.removeEventListener("scroll", onViewportChange, true);
+            window.removeEventListener("resize", onViewportChange);
+            if (viewportRafRef.current !== null) {
+                cancelAnimationFrame(viewportRafRef.current);
+                viewportRafRef.current = null;
+            }
+        };
+    }, [open, manual, seed, onViewportChange]);
 
     // After paint, re-clamp the card within the viewport in case the measured
     // size differs from the estimate (covers the all-four-corners edge cases).

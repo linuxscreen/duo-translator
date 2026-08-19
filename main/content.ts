@@ -1415,14 +1415,20 @@ export async function content() {
 
     function translateSelection(text: string, selection: Selection | null, keepPosition = false) {
         let rect: DOMRect | null = null
+        let range: Range | undefined
         try {
             if (selection && selection.rangeCount > 0) {
-                const r = selection.getRangeAt(0).getBoundingClientRect()
-                if (r && (r.width > 0 || r.height > 0)) rect = r
+                const r = selection.getRangeAt(0)
+                // Live clone: the selection collapses once the popup's click-away
+                // handler runs, but a clone keeps its endpoints, so a page scroll
+                // can still re-anchor the card to the text.
+                range = r.cloneRange()
+                const rr = r.getBoundingClientRect()
+                if (rr && (rr.width > 0 || rr.height > 0)) rect = rr
             }
         } catch { /* detached range — fall back to centered placement */ }
 
-        openSelectionTranslate({ text, rect, keepPosition })
+        openSelectionTranslate({ text, rect, range, keepPosition })
     }
 
     function scheduleMutationProcess() {
