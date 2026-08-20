@@ -330,6 +330,17 @@ export default defineContentScript({
                 // no-op. A source language pinned in our own menu broke that
                 // assumption: it is routinely a different track.)
                 if (!wasOn) {
+                    // Clearing the track FIRST, then unloading. `unloadModule`
+                    // alone only takes the captions off this screen, while the
+                    // SELECT above has already been recorded as the viewer's
+                    // own caption preference — which is why captions used to
+                    // come back on the NEXT video and after a reload, long
+                    // after this "restore" had run. An empty track object is
+                    // what the player itself reports when captions are off
+                    // (see `getOption` above), so setting it goes through the
+                    // same path the CC button does and puts the stored
+                    // preference back to off.
+                    try { player.setOption("captions", "track", {}); } catch { /* noop */ }
                     try { player.unloadModule("captions"); } catch { /* noop */ }
                 } else if (previousTrack && typeof previousTrack.languageCode === "string") {
                     const sameTrack =

@@ -578,7 +578,11 @@ function SubtitleMenuApp({
                         </span>
                         <MenuSwitch checked={enabled && !unavailable} />
                     </button>
-                    {availability === "loading" && (
+                    {/* Only while something is actually loading: with the
+                        subtitles switched off no track is fetched at all (that
+                        would turn the site's own captions back on), so the
+                        hint would be a standing lie. */}
+                    {availability === "loading" && enabled && (
                         <div className="px-3 pb-1 -mt-1 text-[11px] text-ink-soft">
                             {t("videoSubtitleLoading", "Loading captions…")}
                         </div>
@@ -699,7 +703,12 @@ function SubtitleMenuApp({
                         type="button"
                         aria-expanded={downloadOpen}
                         aria-haspopup="menu"
-                        disabled={availability !== "available" || downloading}
+                        // Not gated on "available": a video whose captions have
+                        // not been fetched yet — always the case while the
+                        // subtitles are off — still downloads fine, the
+                        // controller loads the track on demand. Only "this
+                        // video has no captions" rules it out.
+                        disabled={unavailable || downloading}
                         onClick={() => setDownloadOpen((v) => !v)}
                         className={`${rowCls} w-full text-left hover:bg-hover-2 text-ink disabled:opacity-45 disabled:hover:bg-transparent ${downloadOpen ? "bg-hover-2" : ""}`}
                     >
@@ -826,7 +835,7 @@ function SubtitleMenuApp({
                             key={item.kind}
                             role="menuitem"
                             type="button"
-                            disabled={availability !== "available" || downloading}
+                            disabled={unavailable || downloading}
                             onClick={() => {
                                 setDownloadOpen(false);
                                 deps.onDownload(item.kind);
