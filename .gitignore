@@ -29,6 +29,7 @@ web-ext.config.ts
 .env.*.local
 .env.development
 .env.production
+.env.submit
 
 # AI
 CLAUDE.local.md

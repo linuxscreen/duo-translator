@@ -1,0 +1,225 @@
+name: Publish to stores
+
+# Manual-only: submits an already-built release to the three extension stores.
+#
+# The ZIPs are NOT rebuilt here — they are downloaded from the GitHub Release
+# created by `duo-translator` (.github/workflows/build.yaml), so the bytes on
+# the store are byte-identical to the bytes on the release page. Run that
+# workflow first; this one fails loudly if the release or an asset is missing.
+#
+# Required secrets in the `production` environment:
+#   Chrome  CHROME_EXTENSION_ID CHROME_CLIENT_ID CHROME_CLIENT_SECRET CHROME_REFRESH_TOKEN
+#   Edge    EDGE_PRODUCT_ID EDGE_CLIENT_ID EDGE_API_KEY
+#   Firefox FIREFOX_EXTENSION_ID FIREFOX_JWT_ISSUER FIREFOX_JWT_SECRET
+# A store is only contacted when its checkbox is ticked, so the three can be
+# configured one at a time.
+#
+# `pnpm submit init` generates the Edge and Firefox values interactively, but
+# its Chrome branch is DEAD — it mints the refresh token through
+# `urn:ietf:wg:oauth:2.0:oob`, which Google blocked on 2022-10-03. Follow
+# https://developer.chrome.com/docs/webstore/using-api#setup instead: a "Web
+# application" OAuth client with `https://developers.google.com/oauthplayground`
+# as an authorized redirect URI, scope
+# `https://www.googleapis.com/auth/chromewebstore`, then paste the refresh token
+# in by hand. Only the token minting is affected — at runtime the tool uses a
+# plain refresh_token grant, where the `oob` redirect_uri it still sends is
+# ignored by the token endpoint.
+#
+# Use a DEDICATED GCP project for that client, not the one behind the extension's
+# Google Drive sync: refresh-token lifetime and verification status are properties
+# of the project's consent screen, not of the client, so sharing one couples the
+# publishing credential's lifetime to the user-facing app's review status.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to submit. Leave empty to use v<version> from package.json.'
+        required: false
+        type: string
+        default: ''
+      chrome:
+        description: 'Submit to Chrome Web Store'
+        required: false
+        type: boolean
+        default: true
+      edge:
+        description: 'Submit to Edge Add-ons'
+        required: false
+        type: boolean
+        default: true
+      firefox:
+        description: 'Submit to Firefox Add-ons (AMO)'
+        required: false
+        type: boolean
+        default: true
+      submit_for_review:
+        description: 'Submit for review. Uncheck to only upload a draft (Chrome/Edge only — AMO always reviews).'
+        required: false
+        type: boolean
+        default: true
+      dry_run:
+        description: 'Dry run: verify credentials and ZIPs, upload nothing'
+        required: false
+        type: boolean
+        default: false
+
+# Never let two submissions of the same repo overlap — the stores reject a
+# second upload while the first is still processing.
+concurrency:
+  group: publish-stores
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    name: Submit to stores
+    runs-on: ubuntu-latest
+    # Store credentials live here, next to the ones build.yaml uses.
+    environment: production
+    permissions:
+      # `write`, not `read`, on purpose: the GitHub API only lists *draft*
+      # releases to tokens with push access, and build.yaml creates drafts by
+      # default. Nothing here writes to the repo.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs deps so `wxt submit` (alias for publish-browser-extension) is
+      # available. No build runs — the ZIPs come from the release.
+      - uses: ./.github/actions/setup
+
+      - name: Resolve release tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          TAG="$INPUT_TAG"
+          if [ -z "$TAG" ]; then
+            TAG="v$(node -p "require('./package.json').version")"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Submitting release $TAG"
+
+      # Fail before touching any store if a selected store is missing secrets —
+      # publish-extension would otherwise report it only after the download.
+      - name: Check store credentials
+        env:
+          CHROME: ${{ inputs.chrome }}
+          EDGE: ${{ inputs.edge }}
+          FIREFOX: ${{ inputs.firefox }}
+          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+          EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+          FIREFOX_EXTENSION_ID: ${{ secrets.FIREFOX_EXTENSION_ID }}
+          FIREFOX_JWT_ISSUER: ${{ secrets.FIREFOX_JWT_ISSUER }}
+          FIREFOX_JWT_SECRET: ${{ secrets.FIREFOX_JWT_SECRET }}
+        run: |
+          missing=""
+          require() { for n in "$@"; do [ -n "${!n}" ] || missing="$missing $n"; done; }
+          [ "$CHROME" = "true" ]  && require CHROME_EXTENSION_ID CHROME_CLIENT_ID CHROME_CLIENT_SECRET CHROME_REFRESH_TOKEN
+          [ "$EDGE" = "true" ]    && require EDGE_PRODUCT_ID EDGE_CLIENT_ID EDGE_API_KEY
+          [ "$FIREFOX" = "true" ] && require FIREFOX_EXTENSION_ID FIREFOX_JWT_ISSUER FIREFOX_JWT_SECRET
+          if [ "$CHROME$EDGE$FIREFOX" = "falsefalsefalse" ]; then
+            echo "::error::No store selected — nothing to submit."
+            exit 1
+          fi
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets in the 'production' environment:$missing"
+            exit 1
+          fi
+
+      - name: Download release ZIPs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          mkdir -p dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.zip' --dir dist
+          ls -lh dist
+
+      # Resolves each store's ZIP by suffix rather than by a hardcoded name, so
+      # renaming the extension can't silently submit the wrong file.
+      - name: Resolve ZIP paths
+        id: zips
+        env:
+          CHROME: ${{ inputs.chrome }}
+          EDGE: ${{ inputs.edge }}
+          FIREFOX: ${{ inputs.firefox }}
+        run: |
+          pick() {
+            # `|| true`: with `set -eo pipefail` a failing `ls` in a command
+            # substitution kills the step before the message below can print.
+            f=$(ls dist/*-"$1".zip 2>/dev/null | head -1 || true)
+            if [ -z "$f" ]; then
+              echo "::error::No *-$1.zip in the release assets — run the build workflow for this tag first."
+              exit 1
+            fi
+            echo "$2=$f" >> "$GITHUB_OUTPUT"
+            echo "$2 = $f"
+          }
+          [ "$CHROME" = "true" ]  && pick chrome  chrome
+          [ "$EDGE" = "true" ]    && pick edge    edge
+          # AMO requires the sources ZIP because the bundle is minified.
+          if [ "$FIREFOX" = "true" ]; then pick firefox firefox; pick sources sources; fi
+          exit 0
+
+      - name: Submit
+        env:
+          CHROME: ${{ inputs.chrome }}
+          EDGE: ${{ inputs.edge }}
+          FIREFOX: ${{ inputs.firefox }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REVIEW: ${{ inputs.submit_for_review }}
+          CHROME_ZIP_PATH: ${{ steps.zips.outputs.chrome }}
+          EDGE_ZIP_PATH: ${{ steps.zips.outputs.edge }}
+          FIREFOX_ZIP_PATH: ${{ steps.zips.outputs.firefox }}
+          SOURCES_ZIP_PATH: ${{ steps.zips.outputs.sources }}
+          # publish-browser-extension reads every flag as an UPPER_SNAKE_CASE
+          # env var; only the per-store ZIP flag decides whether a store is
+          # included at all, so the credentials below are inert when its
+          # `--*-zip` flag is absent.
+          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CHROME_CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CHROME_CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          CHROME_REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
+          EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+          EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+          FIREFOX_EXTENSION_ID: ${{ secrets.FIREFOX_EXTENSION_ID }}
+          FIREFOX_JWT_ISSUER: ${{ secrets.FIREFOX_JWT_ISSUER }}
+          FIREFOX_JWT_SECRET: ${{ secrets.FIREFOX_JWT_SECRET }}
+        run: |
+          args=()
+          [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+          if [ "$CHROME" = "true" ]; then
+            args+=(--chrome-zip "$CHROME_ZIP_PATH")
+            [ "$REVIEW" = "true" ] || args+=(--chrome-skip-submit-review)
+          fi
+          if [ "$EDGE" = "true" ]; then
+            args+=(--edge-zip "$EDGE_ZIP_PATH")
+            [ "$REVIEW" = "true" ] || args+=(--edge-skip-submit-review)
+          fi
+          if [ "$FIREFOX" = "true" ]; then
+            args+=(--firefox-zip "$FIREFOX_ZIP_PATH" --firefox-sources-zip "$SOURCES_ZIP_PATH")
+          fi
+          pnpm exec wxt submit "${args[@]}"
+
+      - name: Summary
+        if: ${{ always() }}
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          {
+            echo "### Store submission — \`$TAG\`"
+            echo ""
+            echo "| Store | Selected |"
+            echo "| --- | --- |"
+            echo "| Chrome Web Store | ${{ inputs.chrome }} |"
+            echo "| Edge Add-ons | ${{ inputs.edge }} |"
+            echo "| Firefox Add-ons | ${{ inputs.firefox }} |"
+            echo ""
+            echo "Dry run: \`${{ inputs.dry_run }}\` · Submit for review: \`${{ inputs.submit_for_review }}\` · Result: \`${{ job.status }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
