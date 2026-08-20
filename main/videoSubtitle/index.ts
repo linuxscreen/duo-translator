@@ -191,6 +191,12 @@ export function initVideoSubtitle(): VideoSubtitleController {
     let featureOn: boolean | null = null;
     /** Per-tab user override from the player menu; null = follow auto-enable. */
     let sessionEnabled: boolean | null = null;
+    /**
+     * Load this video's captions even though the overlay is off, because the
+     * user asked for the one thing that needs the track anyway: an SRT
+     * download. Reset per video — a new one has nothing pending.
+     */
+    let captionsRequested = false;
     let session: VideoSession | null = null;
     let player: HTMLElement | null = null;
     let video: HTMLVideoElement | null = null;
@@ -446,6 +452,8 @@ export function initVideoSubtitle(): VideoSubtitleController {
             segmenting: false,
             segFailures: 0,
         };
+        captionsRequested = false;
+        pendingDownloadKind = null;
         controls?.setAvailability("loading");
         // The load itself is driven by the tick loop, which holds it back while
         // an ad is playing.
@@ -462,7 +470,16 @@ export function initVideoSubtitle(): VideoSubtitleController {
         const exhausted = s.loadAttempts >= MAX_LOAD_ATTEMPTS;
         s.loadState = exhausted ? "gaveup" : "pending";
         s.nextRetryAt = Date.now() + LOAD_RETRY_MS;
-        if (exhausted) console.warn("duo video subtitle: giving up on captions —", reason);
+        if (exhausted) {
+            console.warn("duo video subtitle: giving up on captions —", reason);
+            // A queued download would otherwise wait forever on a track that is
+            // never coming.
+            if (pendingDownloadKind) {
+                const queued = pendingDownloadKind;
+                pendingDownloadKind = null;
+                publishDownloadState({ kind: queued, percent: 0, error: reason });
+            }
+        }
         controls?.setAvailability(exhausted ? "unavailable" : "loading");
     };
 
@@ -526,6 +543,11 @@ export function initVideoSubtitle(): VideoSubtitleController {
                 }
                 s.loadState = "ready";
                 controls?.setAvailability("available");
+                if (pendingDownloadKind) {
+                    const queued = pendingDownloadKind;
+                    pendingDownloadKind = null;
+                    void startDownload(queued);
+                }
                 // Get the first chunk / the first translations moving now rather
                 // than on the next tick.
                 void ensureSegmentedAhead(nowMs());
@@ -617,16 +639,21 @@ export function initVideoSubtitle(): VideoSubtitleController {
      * subtitles on while native captions are off would be undone within the
      * tick, every time.
      *
-     * Only while the captions are loaded: fetching a track makes the bridge
-     * drive the player's caption module (and restore it afterwards), which
-     * flickers the very button this reads.
+     * Never WHILE a track is being fetched: that makes the bridge drive the
+     * player's caption module (and restore it afterwards), which flickers the
+     * very button this reads. Before the load is another matter — it has to
+     * work there, because an overlay that is off no longer loads anything at
+     * all (see the tick), so waiting for `ready` would leave this setting with
+     * nothing to observe on precisely the videos it exists for. Reading the
+     * button early is also what keeps the follow honest: native captions off
+     * now means our subtitles stay off, and no track is fetched.
      */
     const followNativeCaptions = (followEnabled: boolean) => {
         if (!followEnabled) {
             lastNativeCcOn = null;
             return;
         }
-        if (!player || !adapter.nativeCaptionsOn || session?.loadState !== "ready") return;
+        if (!player || !adapter.nativeCaptionsOn || session?.loadState === "loading") return;
         const on = adapter.nativeCaptionsOn(player);
         if (on === null || on === lastNativeCcOn) return;
         lastNativeCcOn = on;
@@ -835,6 +862,12 @@ export function initVideoSubtitle(): VideoSubtitleController {
     }
     let downloadJob: DownloadJob | null = null;
     /**
+     * A download asked for before the track was in — either it is still
+     * loading, or nothing had started it because the overlay is off. Runs as
+     * soon as the captions land.
+     */
+    let pendingDownloadKind: SubtitleDownloadKind | null = null;
+    /**
      * Last state pushed into the menu, kept here too: the controls are rebuilt
      * whenever YouTube re-renders its player, and the job outlives that.
      */
@@ -843,7 +876,15 @@ export function initVideoSubtitle(): VideoSubtitleController {
     /** Bigger batches than playback uses: nobody is waiting on a first cue. */
     const DOWNLOAD_BATCH = 20;
 
-    const abortDownload = () => downloadJob?.abort.abort();
+    const abortDownload = () => {
+        // A queued download has no job to abort yet, and its panel is only
+        // taken down here (the job's `finally` is what clears a running one).
+        if (pendingDownloadKind) {
+            pendingDownloadKind = null;
+            publishDownloadState(null);
+        }
+        downloadJob?.abort.abort();
+    };
 
     const publishDownloadState = (state: SubtitleDownloadState | null) => {
         downloadState = state;
@@ -853,7 +894,18 @@ export function initVideoSubtitle(): VideoSubtitleController {
     const startDownload = async (kind: SubtitleDownloadKind) => {
         if (downloadJob) return;
         const s = session;
-        if (!s || s.loadState !== "ready" || s.words.length === 0) return;
+        if (!s || s.loadState === "gaveup") return;
+        if (s.loadState !== "ready") {
+            // The captions are not in. Ask for them — this is the one request
+            // that loads a track with the overlay switched off — and let the
+            // load's own completion start the job. The panel goes up now so the
+            // click is not silently swallowed, and so Cancel is reachable.
+            pendingDownloadKind = kind;
+            captionsRequested = true;
+            publishDownloadState({ kind, percent: 0 });
+            return;
+        }
+        if (s.words.length === 0) return;
         const job: DownloadJob = { kind, abort: new AbortController() };
         downloadJob = job;
         publishDownloadState({ kind, percent: 0 });
@@ -976,20 +1028,6 @@ export function initVideoSubtitle(): VideoSubtitleController {
         }
         const sessionAtStart = session;
 
-        // Kick off the caption load — and retry a failed one — but never while
-        // an ad is playing: the player then reports the ad's video, so every
-        // attempt is doomed and would just burn the retry budget. This is also
-        // why the load is driven from here rather than from startSession: a
-        // video that opens on a pre-roll must still pick up its captions once
-        // the ad is over.
-        if (
-            (session!.loadState === "pending") &&
-            !isAdShowing() &&
-            Date.now() >= session!.nextRetryAt
-        ) {
-            loadCaptions(session!);
-        }
-
         // Live style / mode / position / enabled updates from Options. One
         // batch, so the whole group is applied against a single overlay
         // instance — reading them one await at a time could straddle a
@@ -1014,6 +1052,32 @@ export function initVideoSubtitle(): VideoSubtitleController {
         // from `sessionEnabled` needs no further await.
         followNativeCaptions(followNativeCc);
         const enabledNow = sessionEnabled ?? autoEnable;
+
+        // Kick off the caption load — and retry a failed one — but never while
+        // an ad is playing: the player then reports the ad's video, so every
+        // attempt is doomed and would just burn the retry budget. This is also
+        // why the load is driven from here rather than from startSession: a
+        // video that opens on a pre-roll must still pick up its captions once
+        // the ad is over.
+        //
+        // ONLY WHEN THE SUBTITLES ARE ACTUALLY WANTED, which is why this sits
+        // after `enabledNow` rather than at the top of the tick. Fetching a
+        // track is not a read: the bridge makes the player SELECT it, and
+        // YouTube records that as the viewer's own caption preference — it
+        // survives the bridge's `unloadModule` restore, so it comes back on the
+        // next video and on the next page load. Loading captions for an overlay
+        // that is switched off therefore turns the site's native captions on
+        // for good, which is exactly what the user did not ask for.
+        // `captionsRequested` is the one escape hatch: an SRT download needs
+        // the track whether or not anything is on screen.
+        if (
+            (enabledNow || captionsRequested) &&
+            session!.loadState === "pending" &&
+            !isAdShowing() &&
+            Date.now() >= session!.nextRetryAt
+        ) {
+            loadCaptions(session!);
+        }
 
         const styleJson = JSON.stringify(style);
         if (styleJson !== lastStyleJson) {
