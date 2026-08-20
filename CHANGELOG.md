@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.3] - 2026-08-20
+
+### Added
+
+- Safari support (beta). The release asset is the raw extension rather than a double-click install: on Safari 18.4 and later it is loaded from its folder through Settings → Developer → Add Temporary Extension, which lasts for the session — see the README for the steps. Google Drive sync and the built-in on-device AI translator are not available there; WebDAV and every other service are
+- Google Drive as a sync target next to WebDAV, with a sync-method picker — one target at a time, chosen per device. Chrome can authorize through the browser itself; the other builds use web sign-in, and an expired session now asks to reconnect instead of quietly reading as never connected
+- The selection translate icon inside `<input>` and `<textarea>`: text selected in an input box gets the same icon as the rest of the page, placed on the selection itself
+
+### Changed
+
+- The selection popup follows the selected text while the page scrolls; a pinned card stays where it was put
+- Errors in the settings page stay on screen until dismissed, can be selected and carry a copy button, and a repeated error counts up instead of stacking — success messages still disappear on their own
+- Shortcuts are written with the macOS symbols on a Mac, and the double-tap modifier is labelled Control / Option there
+
+### Fixed
+
+- YouTube's own captions coming back on. Loading a bilingual subtitle track makes the player select it, which YouTube records as the viewer's caption preference, so native captions returned on the next video and after every reload. No track is loaded while the overlay is off (subtitle download still works, it asks for one explicitly), and the track is cleared again when it goes off
+- The selection translate icon appearing for a selection that had been scrolled out of view
+- Text selected inside web components (shadow DOM) on Firefox and Safari: the selection reported no position, so the icon never appeared and the translation card opened in the middle of the screen
+- Dropdowns in the popup closing themselves the moment they opened on Safari — the same auto-resizing-popup problem fixed for Firefox earlier, which had been tied to the browser's name instead of the behaviour
+- Bilingual sentence highlighting leaving its colours on screen after the pointer left the paragraph on Safari
+- Recording a Control+key shortcut on macOS installed Command+key instead
+- WebDAV servers and rule subscriptions on a non-standard port: the permission was asked for with the port in it, which Safari rejects outright and Firefox grants without it taking effect — surfacing much later as a network error
+- The sync file no longer carries the cached contents of website-rule subscriptions, which are re-fetchable and had been inflating every sync; remote files that already contain them shrink on their own at the next sync
+
 ## [2.2.2] - 2026-08-18
 
 ### Added

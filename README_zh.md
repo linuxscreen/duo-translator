@@ -32,6 +32,23 @@ AI驱动的翻译和写作助手。支持网页翻译、划词翻译、写作增
 
 或者您可以通过zip文件手动安装。
 
+<details>
+<summary><b>Safari（beta）—— 手动安装</b></summary>
+
+要求 **macOS 上的 Safari 18.4 或更高版本**。
+
+1. 从 [Releases](https://github.com/linuxscreen/duo-translator/releases) 下载 `duo-translator-<版本号>-safari-beta.zip` 并解压，含有 `manifest.json` 的那个目录就是扩展本体 —— 请放在一个固定位置，Safari 是就地读取它的。
+2. 打开 Safari 的 **设置 → 高级**，勾选 **显示网页开发者功能**，设置窗口里会多出一个 **开发者** 标签页。
+3. 进入 **设置 → 开发者**，打开 **允许未签名的扩展**。
+4. 点击 **添加临时扩展…**，用 Mac 密码或触控 ID 确认，然后选择第 1 步里那个目录（含 `manifest.json` 的那一层）。
+5. 打开 **设置 → 扩展**，勾选 **DuoTranslator**，并把网站访问权限设为「在所有网站上允许」—— 扩展是在页面上原地改写内容的，需要访问您浏览的网站。
+
+**临时扩展只在当前这次 Safari 会话中有效。** 退出 Safari 就会被卸载，下次启动要重做第 3–5 步。商店版本目前还未上架。
+
+快捷键从 Safari 26 起才能修改，入口在 Safari → 设置 → 扩展。
+
+</details>
+
 ## 社区
 
 - [Discord](https://discord.gg/VSjWP752JV)

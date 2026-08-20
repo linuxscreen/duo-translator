@@ -53,9 +53,8 @@ jobs:
           VITE_WEBSITE=${{ vars.VITE_WEBSITE || 'https://duotranslator.com' }}
           VITE_GITHUB_URL=${{ vars.VITE_GITHUB_URL || 'https://github.com/linuxscreen/duo-translator' }}
           VITE_GOOGLE_API_KEY=${{ secrets.VITE_GOOGLE_API_KEY }}
-          VITE_GOOGLE_CLIENT_ID=${{ secrets.VITE_GOOGLE_CLIENT_ID }}
-          VITE_GOOGLE_CLIENT_SECRET=${{ secrets.VITE_GOOGLE_CLIENT_SECRET }}
-          VITE_TOKEN_BROKER_URL=${{ secrets.VITE_TOKEN_BROKER_URL }}
+          VITE_GOOGLE_CLIENT_ID_CHROME=${{ secrets.VITE_GOOGLE_CLIENT_ID_CHROME }}
+          VITE_GOOGLE_CLIENT_ID_WEB=${{ secrets.VITE_GOOGLE_CLIENT_ID_WEB }}
           EOF
 
       - name: Install dependencies
@@ -66,6 +65,17 @@ jobs:
 
       - name: Build & zip (Firefox)
         run: pnpm zip:firefox
+
+      - name: Build & zip (Safari, beta)
+        run: |
+          pnpm zip:safari
+          # "beta" is in the filename because this artifact is NOT installable on
+          # its own: it is the raw web extension, and Safari only loads one that
+          # has been wrapped into an app with `xcrun safari-web-extension-converter`
+          # and signed, which needs Xcode on a Mac. Naming it like the Chrome and
+          # Firefox zips would promise a double-click install that does not exist.
+          mv ".output/duo-translator-$VERSION-safari.zip" \
+             ".output/duo-translator-$VERSION-safari-beta.zip"
 
       - name: Zip (Edge, reuse Chrome build)
         run: cp .output/duo-translator-$VERSION-chrome.zip .output/duo-translator-$VERSION-edge.zip
@@ -113,6 +123,7 @@ jobs:
             .output/duo-translator-${{ env.VERSION }}-chrome.zip
             .output/duo-translator-${{ env.VERSION }}-firefox.zip
             .output/duo-translator-${{ env.VERSION }}-edge.zip
+            .output/duo-translator-${{ env.VERSION }}-safari-beta.zip
             .output/duo-translator-${{ env.VERSION }}-sources.zip
           draft: ${{ inputs.draft }}
           prerelease: false
