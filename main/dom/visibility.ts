@@ -1,4 +1,6 @@
-// "Would the reader actually see this text?" — used by LANGUAGE DETECTION ONLY.
+// "Would the reader actually see this text?" — `isVisibleForDetect` is used by
+// LANGUAGE DETECTION ONLY. (`isParkedOffDocument`, one of its tiers, is also
+// used by the selection icon — see its own comment.)
 //
 // Pages routinely park long text where nobody reads it: SEO/alternate-language
 // blocks at `left:-9999px`, `.sr-only` screen-reader copies, `font-size:0`
@@ -55,10 +57,24 @@ const MIN_VISIBLE_PX = 2;
 export function classifyRect(rect: RectLike, scrollX: number, scrollY: number): RectVerdict {
     if (rect.width === 0 && rect.height === 0) return "no-box";
     if (rect.width < MIN_VISIBLE_PX || rect.height < MIN_VISIBLE_PX) return "hidden";
-    // Parked left of / above the document origin (`left:-9999px`,
-    // `text-indent:-9999px`, `top:-9999px`).
-    if (rect.right + scrollX <= 0 || rect.bottom + scrollY <= 0) return "hidden";
+    if (isParkedOffDocument(rect, scrollX, scrollY)) return "hidden";
     return "visible";
+}
+
+/**
+ * Parked left of / above the document origin — `left:-9999px`,
+ * `text-indent:-9999px`, `top:-9999px`.
+ *
+ * `scrollX`/`scrollY` lift the viewport-relative rect into DOCUMENT
+ * coordinates, which is what separates "parked where nobody can reach it" from
+ * "merely scrolled out of view".
+ *
+ * Shared with the selection icon (`main/selectionIcon`), which must not offer
+ * to translate a selection the user cannot see: pages keep an offscreen span as
+ * a copy buffer, and helpers that put a URL there SELECT it programmatically.
+ */
+export function isParkedOffDocument(rect: RectLike, scrollX: number, scrollY: number): boolean {
+    return rect.right + scrollX <= 0 || rect.bottom + scrollY <= 0;
 }
 
 /**

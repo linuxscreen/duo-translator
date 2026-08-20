@@ -8,6 +8,7 @@ import { sendMessageToBackground } from "@/utils/message";
 import { attachOwnShadow, isInOwnUi } from "@/main/dom/shadowRoots";
 import { deepContains, deepSelection } from "@/main/dom/shadowTraversal";
 import { isInSelectableSurface } from "@/main/dom/selectableSurfaces";
+import { isParkedOffDocument } from "@/main/dom/visibility";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
 import { loadTailwindIntoShadow } from "@/main/aiWriting/shadowStyle";
 import { bindThemeToElement } from "@/utils/theme";
@@ -286,6 +287,14 @@ function startController(domain: string): () => void {
     ): IconAnchor | null => {
         const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 || r.height > 0);
         const bounding = range.getBoundingClientRect();
+        // A selection nobody can see gets no affordance. Pages park text off the
+        // document as a copy/SEO buffer (`left:-9999em`), and helpers that put a
+        // URL in such a span SELECT it programmatically on hover — YouTube's
+        // masthead logo does exactly that. The clamps below then have to pull the
+        // pill back on screen, so it landed in the top-left corner pointing at
+        // nothing. Document coordinates, so text merely scrolled out of view
+        // still counts as real and keeps the pill glued to it.
+        if (isParkedOffDocument(bounding, window.scrollX, window.scrollY)) return null;
         const spot = (focus && caretRectOf(focus)) ?? rects[rects.length - 1] ?? bounding;
         // A selection with no geometry at all (collapsed, display:none, or a
         // detached range) has nothing to point at.

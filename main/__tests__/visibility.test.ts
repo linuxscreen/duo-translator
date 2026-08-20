@@ -3,7 +3,7 @@
 // has no layout, so every real rect it produces is 0×0 — the DOM wrapper's
 // behaviour on real boxes belongs to e2e (translate.hidden-text.spec.ts).
 import { describe, it, expect } from "vitest";
-import { classifyRect, rectsOverlap, type RectLike } from "@/main/dom/visibility";
+import { classifyRect, isParkedOffDocument, rectsOverlap, type RectLike } from "@/main/dom/visibility";
 
 /** A rect from its top-left corner and size, the way layout reports one. */
 function rect(left: number, top: number, width: number, height: number): RectLike {
@@ -47,6 +47,28 @@ describe("classifyRect", () => {
     it("reports no-box for a 0x0 rect so the caller can re-ask with the content rect", () => {
         // display:contents — no principal box, but its text is laid out.
         expect(classifyRect(rect(0, 0, 0, 0), 0, 0)).toBe("no-box");
+    });
+});
+
+// The one tier the selection icon shares: a selection parked off the document
+// must not get a pill (a "copy link on hover" helper selects such a span, and
+// the pill's edge clamps would plant it in the top-left corner).
+describe("isParkedOffDocument", () => {
+    it("reports the left:-9999em copy buffer", () => {
+        expect(isParkedOffDocument(rect(-99990, 0, 143, 14), 0, 0)).toBe(true);
+    });
+
+    it("reports a top:-9999px buffer", () => {
+        expect(isParkedOffDocument(rect(0, -9999, 300, 20), 0, 0)).toBe(true);
+    });
+
+    it("does not report text merely scrolled out of view", () => {
+        // Scrolled down 4000px: viewport-negative, document-positive.
+        expect(isParkedOffDocument(rect(0, -3000, 600, 20), 0, 4000)).toBe(false);
+    });
+
+    it("does not report text below the fold", () => {
+        expect(isParkedOffDocument(rect(0, 5000, 600, 20), 0, 0)).toBe(false);
     });
 });
 
