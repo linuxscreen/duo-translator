@@ -89,6 +89,7 @@
   "specifyAreasNotToBeTranslated": "specify areas not to be translated",
   "default": "default",
   "pleaseModifyInBrowserSettings": "Please modify in browser settings",
+  "modifyShortcutsInSafariSettings": "Safari 26 and later: Safari > Settings > Extensions > DuoTranslator.",
   "name": "Name",
   "description": "Description",
   "typeToSearch": "Type to search",

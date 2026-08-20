@@ -513,13 +513,25 @@ export async function background() {
                 return true
             }
             case ACTION.OPEN_POPUP:
-                // Opens the toolbar action popup anchored to the extension icon
-                // (Chrome 127+). Must target the sender's window so it pops over
-                // the page the float ball lives on.
+                // Opens the toolbar action popup anchored to the extension icon.
+                // Must target the sender's window so it pops over the page the
+                // float ball lives on.
+                //
+                // `browser.action` is the MV3 namespace (MV2 calls it
+                // `browserAction`, and @wxt-dev/browser is the bare
+                // browser/chrome global — it aliases neither onto the other).
+                // No MV2 fallback here ON PURPOSE: every target we ship is MV3,
+                // Safari included (`-b safari` defaults to MV2, so its scripts
+                // carry `--mv3` like the Firefox ones). A fallback would let an
+                // accidental MV2 build look healthy while `world: "MAIN"` is
+                // silently dropped, taking the YouTube subtitle and closed
+                // shadow-root bridges with it — a far worse failure than this
+                // one throwing.
                 (async () => {
                     try {
                         const windowId = sender?.tab?.windowId
-                        // openPopup is Chrome 127+; the polyfill may not type it.
+                        // openPopup is Chrome 127+ / Firefox 109+ / Safari 16+;
+                        // the polyfill may not type it.
                         const action = (browser as any).action
                         await action.openPopup(windowId !== undefined ? { windowId } : undefined)
                         sendResponse({ status: STATUS_SUCCESS, data: null })

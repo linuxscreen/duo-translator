@@ -243,3 +243,135 @@ describe("deepSelection", () => {
         expect(deepSelection()).toBeNull();
     });
 });
+
+// ---------------------------------------------------------------------------
+// deepSelection — the standard `Selection.getComposedRanges` path
+//
+// This is the ONLY path outside Chrome: `ShadowRoot.getSelection` is a
+// Chrome-only extension, so on Safari/Firefox everything below is what makes a
+// selection inside a shadow tree visible at all. jsdom has neither API, so the
+// engine side is stubbed — but faithfully: `expressIn` implements the spec's
+// retargeting (a root that was NOT passed in collapses onto its host), which is
+// precisely the behaviour the descent has to unwind.
+// ---------------------------------------------------------------------------
+
+/** Where a boundary point lands once roots outside `roots` are retargeted. */
+function expressIn(node: Node, offset: number, roots: ShadowRoot[]): [Node, number] {
+    let n = node;
+    let o = offset;
+    for (let i = 0; i < 32; i++) {
+        const root = n.getRootNode();
+        if (!isShadowRoot(root) || roots.includes(root as ShadowRoot)) return [n, o];
+        const host = (root as ShadowRoot).host;
+        const parent = host.parentNode!;
+        o = Array.prototype.indexOf.call(parent.childNodes, host);
+        n = parent;
+    }
+    return [n, o];
+}
+
+interface ComposedStubOpts {
+    /** Refuse the spec's options-dict form, like the engines that shipped the
+     *  variadic shape first. */
+    variadicOnly?: boolean;
+    direction?: string;
+}
+
+function selectionWithComposedRanges(
+    start: [Node, number],
+    end: [Node, number],
+    opts: ComposedStubOpts = {},
+): Selection {
+    const [adjNode, adjOffset] = expressIn(start[0], start[1], []);
+    const getComposedRanges = (...args: unknown[]): StaticRange[] => {
+        let roots: ShadowRoot[] = [];
+        const first = args[0];
+        if (Array.isArray((first as { shadowRoots?: ShadowRoot[] })?.shadowRoots)) {
+            if (opts.variadicOnly) throw new TypeError("expects shadow roots");
+            roots = (first as { shadowRoots: ShadowRoot[] }).shadowRoots;
+        } else {
+            roots = args.filter(isShadowRoot) as ShadowRoot[];
+        }
+        const [sc, so] = expressIn(start[0], start[1], roots);
+        const [ec, eo] = expressIn(end[0], end[1], roots);
+        return [{
+            startContainer: sc,
+            startOffset: so,
+            endContainer: ec,
+            endOffset: eo,
+            collapsed: sc === ec && so === eo,
+        } as StaticRange];
+    };
+    return {
+        anchorNode: adjNode,
+        anchorOffset: adjOffset,
+        focusNode: adjNode,
+        focusOffset: adjOffset,
+        rangeCount: 1,
+        direction: opts.direction,
+        getComposedRanges,
+    } as unknown as Selection;
+}
+
+describe("deepSelection — getComposedRanges fallback", () => {
+    it("reaches a nested root's own text node with no ShadowRoot.getSelection anywhere", () => {
+        const { leafText } = buildNested();
+        stubWindowSelection(selectionWithComposedRanges([leafText, 0], [leafText, 4]));
+        const sel = deepSelection()!;
+        // Two levels down: the roots list has to name BOTH or the answer stays
+        // retargeted at the outer host.
+        expect(sel.anchorNode).toBe(leafText);
+        expect(sel.anchorOffset).toBe(0);
+        expect(sel.focusNode).toBe(leafText);
+        expect(sel.focusOffset).toBe(4);
+        expect(sel.toString()).toBe("text");
+        expect(sel.rangeCount).toBe(1);
+        expect(sel.getRangeAt(0).startContainer).toBe(leafText);
+    });
+
+    it("retries with the variadic call shape when the options dict is refused", () => {
+        const { leafText } = buildNested();
+        stubWindowSelection(
+            selectionWithComposedRanges([leafText, 0], [leafText, 4], { variadicOnly: true }),
+        );
+        expect(deepSelection()!.anchorNode).toBe(leafText);
+    });
+
+    it("swaps the ends for a backward drag so the pill anchors where it finished", () => {
+        const { leafText } = buildNested();
+        stubWindowSelection(
+            selectionWithComposedRanges([leafText, 1], [leafText, 3], { direction: "backward" }),
+        );
+        const sel = deepSelection()!;
+        expect(sel.anchorOffset).toBe(3);
+        expect(sel.focusOffset).toBe(1);
+    });
+
+    it("keeps the window selection when the child under the anchor is a host by coincidence", () => {
+        // The selection sits in the light DOM next to the component, so the
+        // composed answer is the same position it started from.
+        const { light } = buildNested();
+        const sel = selectionWithComposedRanges([light, 0], [light, 1]);
+        stubWindowSelection(sel);
+        expect(deepSelection()).toBe(sel);
+    });
+
+    it("keeps the window selection for a selection that escapes the root", () => {
+        // Start inside the component, end in the page: no single tree holds both
+        // ends, so a Range cannot express it.
+        const { light, leafText } = buildNested();
+        const sel = selectionWithComposedRanges([leafText, 0], [light, 1]);
+        stubWindowSelection(sel);
+        expect(deepSelection()).toBe(sel);
+    });
+
+    it("prefers ShadowRoot.getSelection where it exists (Chrome keeps the live object)", () => {
+        const { outerRoot, innerRoot, mid, leafText } = buildNested();
+        const sel = selectionWithComposedRanges([leafText, 0], [leafText, 4]);
+        stubWindowSelection(sel);
+        stubRootSelection(outerRoot, fakeSelection(mid, 0));
+        const real = fakeSelection(leafText, 2);
+        stubRootSelection(innerRoot, real);
+        expect(deepSelection()).toBe(real);
+    });
+});

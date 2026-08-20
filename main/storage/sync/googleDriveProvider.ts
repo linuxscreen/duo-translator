@@ -299,6 +299,15 @@ async function launchImplicitFlow(
     if (!GOOGLE_CLIENT_ID_WEB) {
         throw new Error('Google Drive is not configured (missing VITE_GOOGLE_CLIENT_ID_WEB)');
     }
+    // Reached only through a stale message or an old token record — the Safari
+    // build offers WebDAV only. Without this the failure is
+    // `undefined is not an object (evaluating 'browser.identity.getRedirectURL')`,
+    // which names neither the cause nor the way out.
+    if (typeof browser.identity?.launchWebAuthFlow !== 'function') {
+        throw new Error(
+            'Google Drive sync is unavailable in this browser: it has no extension identity API. Use WebDAV instead.',
+        );
+    }
     const redirectUri = browser.identity.getRedirectURL();
     const state = randomString(16);
 

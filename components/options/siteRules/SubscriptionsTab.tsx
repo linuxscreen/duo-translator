@@ -10,6 +10,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { SiteRule, SiteRuleBundle, SiteRuleSubscription } from '@/main/siteRules/types';
 import { refKey, subSource } from '@/main/siteRules/types';
 import { RuleTable } from './RuleTable';
+import { hostPermissionPattern } from '@/utils/url';
 
 type Props = {
   subscriptions: SiteRuleSubscription[];
@@ -42,12 +43,12 @@ type Props = {
  * raw.githubusercontent.com.
  */
 function requestOriginPermission(url: string): Promise<boolean> {
-  try {
-    const origin = `${new URL(url).origin}/*`;
-    return browser.permissions.request({ origins: [origin] }).catch(() => false);
-  } catch {
-    return Promise.resolve(false);
-  }
+  // Port-less pattern (see hostPermissionPattern): a self-hosted subscription
+  // served on a non-default port would otherwise throw here on Safari and be
+  // granted-but-inert on Firefox.
+  const origin = hostPermissionPattern(url);
+  if (!origin) return Promise.resolve(false);
+  return browser.permissions.request({ origins: [origin] }).catch(() => false);
 }
 
 export function SubscriptionsTab({

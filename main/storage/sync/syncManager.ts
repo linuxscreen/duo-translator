@@ -10,7 +10,7 @@
 // mtime can't be raced when several providers sync back-to-back.
 
 import { storage, type StorageItemKey } from 'wxt/utils/storage';
-import { APP_NAME_WITH_SUFFIX, CONFIG_KEY, SYNC_PROVIDER_ID } from '@/main/constants';
+import { APP_NAME_WITH_SUFFIX, CONFIG_KEY, IS_SAFARI, SYNC_PROVIDER_ID } from '@/main/constants';
 import {
     buildSnapshot,
     mergeSnapshots,
@@ -22,7 +22,12 @@ import type { SyncProvider, SyncResult, SyncDirection } from './types';
 import { googleDriveProvider } from './googleDriveProvider';
 import { webdavProvider } from './webdavProvider';
 
-const PROVIDERS: SyncProvider[] = [googleDriveProvider, webdavProvider];
+// Google Drive is absent from the Safari build entirely — not disabled, absent.
+// It has no working credential path there (see IS_SAFARI), and a provider that
+// can only ever fail is worse than one that isn't offered.
+const PROVIDERS: SyncProvider[] = IS_SAFARI
+    ? [webdavProvider]
+    : [googleDriveProvider, webdavProvider];
 
 function providerById(id: SYNC_PROVIDER_ID): SyncProvider {
     switch (id) {
@@ -54,6 +59,10 @@ const ACTIVE_PROVIDER_KEY: StorageItemKey = 'local:__sync_active_provider';
  * no answer, and that question is the whole point of the setting.
  */
 export async function getActiveProviderId(): Promise<SYNC_PROVIDER_ID> {
+    // Not just a default — the only possible answer on Safari, including for a
+    // profile that synced its way here holding `gdrive` from another device.
+    if (IS_SAFARI) return SYNC_PROVIDER_ID.WEBDAV;
+
     const stored = await storage.getItem<SYNC_PROVIDER_ID>(ACTIVE_PROVIDER_KEY);
     if (stored === SYNC_PROVIDER_ID.GDRIVE || stored === SYNC_PROVIDER_ID.WEBDAV) return stored;
 

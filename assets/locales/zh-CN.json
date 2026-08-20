@@ -89,6 +89,7 @@
   "specifyAreasNotToBeTranslated": "指定不翻译的区域",
   "default": "默认",
   "pleaseModifyInBrowserSettings": "请在浏览器设置中修改",
+  "modifyShortcutsInSafariSettings": "Safari 26 及以上版本：Safari > 设置 > 扩展 > DuoTranslator。",
   "name": "名称",
   "description": "描述",
   "typeToSearch": "输入以搜索",

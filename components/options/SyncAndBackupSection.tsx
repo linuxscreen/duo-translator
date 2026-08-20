@@ -18,7 +18,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { browser } from 'wxt/browser';
 import { sendMessageToBackground, sendMessageToBackgroundOrThrow } from '@/utils/message';
 import { getConfig, setConfig } from '@/utils/db';
-import { ACTION, APP_NAME, APP_NAME_KEBAB_CASE, APP_NAME_PASCAL_CASE, CONFIG_KEY, DB_ACTION, IS_PROD, SYNC_ACTION, SYNC_PROVIDER_ID } from '@/main/constants';
+import { ACTION, APP_NAME, APP_NAME_KEBAB_CASE, APP_NAME_PASCAL_CASE, CONFIG_KEY, DB_ACTION, IS_PROD, IS_SAFARI, SYNC_ACTION, SYNC_PROVIDER_ID } from '@/main/constants';
+import { hostPermissionPattern } from '@/utils/url';
 
 const SYNC_INTERVAL_OPTIONS = IS_PROD ? [5, 10, 15, 20, 30, 45, 60] : [0.1, 0.5, 1, 3, 5, 10, 15, 20, 30, 45, 60];
 
@@ -73,7 +74,12 @@ export function SyncAndBackupSection() {
 
     // The one sync target. Everything below renders for this provider only; the
     // other keeps its credentials and simply isn't synced to.
-    const [activeId, setActiveId] = useState<SYNC_PROVIDER_ID>(SYNC_PROVIDER_ID.GDRIVE);
+    // Seeded from the build target rather than a fixed default: on Safari the
+    // real value is always WebDAV, and defaulting to Drive would flash its row
+    // for one render before the status arrives.
+    const [activeId, setActiveId] = useState<SYNC_PROVIDER_ID>(
+        IS_SAFARI ? SYNC_PROVIDER_ID.WEBDAV : SYNC_PROVIDER_ID.GDRIVE,
+    );
 
     // Chrome-only: use identity.getAuthToken rather than the web sign-in flow.
     // Device-local (not a CONFIG_KEY, so it never enters the sync snapshot) —
@@ -270,10 +276,10 @@ export function SyncAndBackupSection() {
         // handler, so request the host permission here (synchronously in the
         // click, before any other await) instead of in the background — the
         // background then just verifies it via permissions.contains.
-        let origin: string;
-        try {
-            origin = new URL(wdUrl.trim()).origin + '/*';
-        } catch {
+        // No port in the pattern — see hostPermissionPattern. The background's
+        // permissions.contains uses the same builder; the two must agree.
+        const origin = hostPermissionPattern(wdUrl.trim());
+        if (!origin) {
             fail(new Error(t('invalidDomain', 'Invalid website.')));
             return;
         }
@@ -516,7 +522,14 @@ export function SyncAndBackupSection() {
                 the per-key CRDT, but then "which one restores me?" has no
                 answer, and that is the question this setting exists to answer.
                 Switching does NOT drop the other's credentials, so coming back
-                is one click. */}
+                is one click.
+
+                The guard covers the SELECTOR ONLY — the provider row below must
+                keep rendering, or Safari loses WebDAV too (it did once). Safari
+                has no extension identity API, so Google Drive has no credential
+                path there at all (see IS_SAFARI) and WebDAV is the only target;
+                a selector with one option is a question with no answer. */}
+            {!IS_SAFARI && (
             <SettingRow
                 label={t('syncMethod', 'Sync method')}
                 // hint={t('syncMethodHint', 'This device only — the choice itself is not synced.')}
@@ -536,6 +549,7 @@ export function SyncAndBackupSection() {
                     </Select>
                 }
             />
+            )}
 
             {activeId === SYNC_PROVIDER_ID.GDRIVE ? (
                 <>

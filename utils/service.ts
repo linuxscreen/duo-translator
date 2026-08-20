@@ -1,5 +1,5 @@
 import { AiProvider, normalizeProvider } from "@/main/aiProvider";
-import { ACTION, AI_PREFIX, CONFIG_KEY, IS_FIREFOX, TRANSLATE_SERVICE, TRANSLATE_SERVICES, TranslateServiceMeta } from "@/main/constants";
+import { ACTION, AI_PREFIX, CONFIG_KEY, IS_FIREFOX, IS_SAFARI, TRANSLATE_SERVICE, TRANSLATE_SERVICES, TranslateServiceMeta } from "@/main/constants";
 import { builtinAiApiAvailable } from "@/main/builtinAi/capability";
 import { getConfig } from "./db";
 import { parseTranslateServiceKey } from "@/main/aiWriting/translateRunner";
@@ -158,7 +158,7 @@ export async function getAiTranslateService(configValue: string | undefined): Pr
  */
 export function listTranslateServices(): TranslateServiceMeta[] {
     const all = Array.from(TRANSLATE_SERVICES.values());
-    return IS_FIREFOX ? all.filter((s) => s.value !== TRANSLATE_SERVICE.BUILTIN) : all;
+    return IS_FIREFOX || IS_SAFARI ? all.filter((s) => s.value !== TRANSLATE_SERVICE.BUILTIN) : all;
 }
 
 /**

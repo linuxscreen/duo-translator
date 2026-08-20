@@ -10,6 +10,12 @@
          about:addons (throws "may only be called from a user input handler"),
          which breaks the WebDAV host-permission prompt. A real tab fixes it. -->
     <meta name="manifest.open_in_tab" content="true" />
+    <!-- Opt in to both color schemes so UA-rendered bits (scrollbars, native
+         controls) follow the theme instead of always rendering light — the dark
+         token set is the base and never declared `color-scheme`. Mirrors the
+         popup, where the same tag is load-bearing for a Safari bug; see the
+         comment in entrypoints/popup/index.html. -->
+    <meta name="color-scheme" content="light dark" />
     <!-- Fonts are self-hosted in public/fonts and declared in assets/fonts.css
          (imported by options.css) — no fonts.googleapis.com request. -->
   </head>

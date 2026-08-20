@@ -13,6 +13,15 @@ const GOOGLE_OAUTH_SCOPES = [
     'email',
 ];
 
+// Safari's background is a page, not a service worker — see the hooks below.
+const SAFARI_BACKGROUND_PAGE = 'background.html';
+const SAFARI_BACKGROUND_HTML = `<!doctype html>
+<html>
+<head><meta charset="utf-8"></head>
+<body><script src="background.js"></script></body>
+</html>
+`;
+
 // See https://wxt.dev/api/config.html
 export default defineConfig({
     manifest: ({ browser }) => ({
@@ -52,10 +61,20 @@ export default defineConfig({
         // origin via `browser.permissions.request` on connect. <all_urls> here
         // is what we ask for at runtime, not granted at install time.
         optional_host_permissions: ['<all_urls>'],
+        // `mac` is spelled out even though it repeats `default`, because the
+        // interesting fact is what it is NOT: Chrome silently rewrites `Ctrl`
+        // to `Command` on macOS, and Command+S / +W / +Q / +A are Save / Close
+        // window / Quit / Select all — all four of our letters are taken. Alt
+        // (the Option key, which is what the settings page now labels it) is
+        // the only modifier left that is free on every platform, so the mac
+        // bindings are deliberately identical to the default ones. Leaving the
+        // key out would work the same but invites someone to "fix" it later by
+        // mapping to Command.
         commands: {
             "shortcut-translate-restore-page": {
                 "suggested_key": {
                     "default": "Alt+S",
+                    "mac": "Alt+S",
                     "linux": "Alt+S"
                 },
                 "description": '__MSG_shortcutTranslateRestorePage__'
@@ -69,6 +88,7 @@ export default defineConfig({
             "shortcut-ai-workbench": {
                 "suggested_key": {
                     "default": "Alt+W",
+                    "mac": "Alt+W",
                     "linux": "Alt+W"
                 },
                 "description": '__MSG_shortcutAiWorkbench__'
@@ -76,6 +96,7 @@ export default defineConfig({
             "shortcut-translate-restore-paragraph": {
                 "suggested_key": {
                     "default": "Alt+Q",
+                    "mac": "Alt+Q",
                     "linux": "Alt+Q"
                 },
                 "description": '__MSG_shortcutTranslateRestoreParagraph__'
@@ -83,6 +104,7 @@ export default defineConfig({
             "shortcut-translate-selection-input": {
                 "suggested_key": {
                     "default": "Alt+A",
+                    "mac": "Alt+A",
                     "linux": "Alt+A"
                 },
                 "description": '__MSG_shortcutTranslateSelectionInput__'
@@ -189,6 +211,58 @@ export default defineConfig({
         //     }
         // }
     }),
+    hooks: {
+        // Safari: ship the background as a non-persistent background PAGE
+        // instead of a service worker. Still MV3 — Safari accepts both forms,
+        // and this is the same shape the Firefox MV3 target already uses.
+        //
+        // Reason it is worth a special case: with `background.service_worker`,
+        // Safari lists the background NOWHERE in the Develop menu — not under
+        // "Web Extension Background Content" (that submenu is for background
+        // pages) and not under "Service Workers" either. There is no console,
+        // and a service worker's network requests are not recorded in the Web
+        // Inspector's Network tab, so the background is completely opaque:
+        // every provider request, every sync run, every error we deliberately
+        // log is invisible on the one browser whose quirks need the most
+        // digging. Chrome / Edge / Firefox all inspect theirs fine.
+        //
+        // Applied unconditionally rather than only in development: if the two
+        // modes ran different background shapes, anything specific to one of
+        // them could not be reproduced in the other, which defeats the point.
+        //
+        // Safe because nothing in the background depends on being a service
+        // worker — no skipWaiting / importScripts / clients / install +
+        // activate handlers — and the code already runs as an event page on
+        // Firefox, so the "listeners must be registered in the first
+        // synchronous round" rule (see CLAUDE.local.md) is already honored.
+        // The page has to be ours rather than the one the browser generates from
+        // `background.scripts`, and the reason is one line of it: <meta charset>.
+        // background.js carries the bundled zh-CN locale, i.e. ~376k raw UTF-8
+        // sequences. A classic script takes its encoding from the HTTP charset,
+        // then its own charset attribute, then THE DOCUMENT'S — and the document
+        // Safari generates for `scripts` does not declare UTF-8, so every
+        // Chinese string in the background decodes as mojibake (first seen in
+        // the context menu). Service workers never hit this because SW scripts
+        // are decoded as UTF-8 unconditionally, which is why switching away from
+        // one surfaced it. Forcing ASCII-only codegen instead is not available:
+        // Vite 8 bundles with rolldown, which ignores `esbuild.charset` (tried)
+        // and has no ASCII option of its own; terser's `ascii_only` would only
+        // cover production, and the Safari workflow builds with --mode
+        // development.
+        //
+        // `persistent` is deliberately absent: MDN BCD marks it "Manifest V2
+        // only" for Safari, so in MV3 it is noise at best.
+        'build:publicAssets': (wxt, files) => {
+            if (wxt.config.browser !== 'safari') return;
+            files.push({ relativeDest: SAFARI_BACKGROUND_PAGE, contents: SAFARI_BACKGROUND_HTML });
+        },
+        'build:manifestGenerated': (wxt, manifest) => {
+            if (wxt.config.browser !== 'safari') return;
+            const background = manifest.background as { service_worker?: string } | undefined;
+            if (!background?.service_worker) return;
+            manifest.background = { page: SAFARI_BACKGROUND_PAGE } as typeof manifest.background;
+        },
+    },
     outDir: process.env.WXT_OUTDIR || '.output',
     zip: {
         excludeSources: ['CLAUDE.local.md', 'AGENTS.md']

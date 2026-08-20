@@ -128,26 +128,80 @@ export function isPointOverRange(x: number, y: number, range: Range): boolean {
 // one would wipe the nested one's highlight.
 let activeOwner: object | null = null;
 
+/**
+ * The two highlights are created ONCE and mutated in place from then on; the
+ * registry is only ever written at creation. Every transition — paint, switch
+ * sentence, clear — is therefore a change to a registered `Highlight`'s own
+ * range set, never a registry swap.
+ *
+ * That is not a style preference, it is the only shape WebKit repaints.
+ * Measured on the real engine with the highlight visibly stuck on screen:
+ *
+ *   registry.delete(name)                  → pixels stay
+ *   registry.set(name, new Highlight())    → pixels stay
+ *   registeredHighlight.clear()            → repaints
+ *
+ * (The stuck state also reports an EMPTY registry from the console, which is
+ * what proves our side had already cleared and only the paint survived — and
+ * why deactivating the window, i.e. forcing a full repaint, appeared to "fix"
+ * it.) So the invalidation hook is on the Highlight object's setlike mutations,
+ * not on the registry map. Swapping in a fresh object per paint — which is what
+ * this used to do — never invalidates the area the PREVIOUS range covered, so
+ * it left stale pixels behind on switch as well as on clear.
+ *
+ * Rejected alternatives, all of which also un-paint but cost more:
+ *   - `CSS.highlights.clear()`: the registry is document-global and we are a
+ *     guest in someone else's page — it would wipe highlights the page itself
+ *     registered (search, editors).
+ *   - keep the ranges, mute `::highlight()` via a class on <html>: mutates the
+ *     page's root element and keeps live Ranges pinning page nodes.
+ *   - force a repaint by toggling inline `opacity` on the paragraph: writes to
+ *     the page's own inline styles, which this codebase avoids on purpose (see
+ *     the in-memory paragraph marks), and briefly creates a stacking context.
+ *
+ * Doing it this way also needs no browser gate: mutating a registered
+ * highlight's ranges is the spec'd repaint trigger and works everywhere.
+ */
+let originalHighlight: Highlight | null = null;
+let translationHighlight: Highlight | null = null;
+
+/** Register the pair on first use; null where the API is unavailable. */
+function ensureHighlights(): { original: Highlight; translation: Highlight } | null {
+    const highlights = registry();
+    if (!highlights) return null;
+    if (!originalHighlight || !translationHighlight) {
+        originalHighlight = new Highlight();
+        translationHighlight = new Highlight();
+        highlights.set(HIGHLIGHT_ORIGINAL, originalHighlight);
+        highlights.set(HIGHLIGHT_TRANSLATION, translationHighlight);
+    }
+    return { original: originalHighlight, translation: translationHighlight };
+}
+
+/** Replace a highlight's contents in place — the repainting mutation. */
+function setRange(highlight: Highlight, range: Range | null): void {
+    highlight.clear();
+    if (range) highlight.add(range);
+}
+
 export function showSentenceHighlight(
     owner: object,
     original: Range | null,
     translation: Range | null,
 ): void {
-    const highlights = registry();
-    if (!highlights) return;
+    const pair = ensureHighlights();
+    if (!pair) return;
     activeOwner = owner;
-    if (original) highlights.set(HIGHLIGHT_ORIGINAL, new Highlight(original));
-    else highlights.delete(HIGHLIGHT_ORIGINAL);
-    if (translation) highlights.set(HIGHLIGHT_TRANSLATION, new Highlight(translation));
-    else highlights.delete(HIGHLIGHT_TRANSLATION);
+    setRange(pair.original, original);
+    setRange(pair.translation, translation);
 }
 
 /** Clear the paint, but only if `owner` is the paragraph that set it. */
 export function clearSentenceHighlight(owner: object): void {
     if (activeOwner !== owner) return;
-    const highlights = registry();
     activeOwner = null;
-    if (!highlights) return;
-    highlights.delete(HIGHLIGHT_ORIGINAL);
-    highlights.delete(HIGHLIGHT_TRANSLATION);
+    const pair = ensureHighlights();
+    if (!pair) return;
+    pair.original.clear();
+    pair.translation.clear();
 }

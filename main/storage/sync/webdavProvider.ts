@@ -13,7 +13,8 @@
 
 import { storage, type StorageItemKey } from 'wxt/utils/storage';
 import { browser } from 'wxt/browser';
-import { APP_NAME_KEBAB_CASE, APP_NAME_WITH_SUFFIX, SYNC_PROVIDER_ID } from '@/main/constants';
+import { APP_NAME_KEBAB_CASE, APP_NAME_WITH_SUFFIX, IS_CHROMIUM, SYNC_PROVIDER_ID } from '@/main/constants';
+import { hostPermissionPattern, legacyHostPermissionPattern } from '@/utils/url';
 import type { Snapshot } from '@/main/storage/snapshot';
 import { isValidSnapshot } from '@/main/storage/snapshot';
 import type { SyncProvider, RemoteBackupInfo } from './types';
@@ -129,12 +130,31 @@ class WebDavProviderImpl implements SyncProvider {
             throw new Error('Plain HTTP is blocked. Enable "I understand the risk" to proceed.');
         }
 
-        const origin = parsed.origin + '/*';
         // The host permission must already be granted by the UI before we get
         // here: Firefox only allows permissions.request() from a user-input
         // handler, which the background service worker is not. So the options
-        // page requests it inside the click handler and we merely verify here.
-        const granted = await browser.permissions.contains({ origins: [origin] });
+        // page requests it inside the click handler and we merely verify here —
+        // which means this MUST build the pattern exactly the way the requester
+        // does, or the grant can never satisfy the check.
+        const origin = hostPermissionPattern(creds.baseUrl);
+        if (!origin) {
+            throw new Error('Invalid WebDAV URL');
+        }
+        let granted = await browser.permissions.contains({ origins: [origin] });
+        if (!granted && IS_CHROMIUM) {
+            // Compatibility: earlier builds asked for `URL.origin + '/*'`, i.e.
+            // with the port. Chromium honours that form, so those users hold a
+            // working grant that the port-less pattern above does not match —
+            // without this they would be silently cut off until they reconnect.
+            //
+            // Chromium-ONLY on purpose. On Firefox the same stored grant also
+            // answers `contains` with true while matching no URL at all (see
+            // legacyHostPermissionPattern), so accepting it there would wave the
+            // request past this gate straight into a CORS failure whose error
+            // message says nothing about permissions.
+            const legacy = legacyHostPermissionPattern(creds.baseUrl);
+            if (legacy) granted = await browser.permissions.contains({ origins: [legacy] });
+        }
         if (!granted) {
             throw new Error('Host permission was denied');
         }

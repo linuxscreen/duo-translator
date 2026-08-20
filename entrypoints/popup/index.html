@@ -4,6 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="manifest.type" content="browser_action" />
+    <!-- Required for `prefers-color-scheme` to answer truthfully in Safari's
+         extension popover: WebKit needs an explicit color-scheme opt-in, and
+         without one the popup reports light no matter the OS setting, so
+         resolveTheme('system') in utils/theme.ts always picked light here while
+         the options tab (ordinary web content, unaffected) picked dark.
+         `light dark` = "we support both, report the real preference" — do NOT
+         narrow it to a single value. -->
+    <meta name="color-scheme" content="light dark" />
     <!-- Fonts are self-hosted in public/fonts and declared in assets/fonts.css
          (imported by popup.css) — no fonts.googleapis.com request. -->
   </head>

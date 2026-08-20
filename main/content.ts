@@ -62,7 +62,7 @@ import {
 } from "@/main/dom/paragraphMarks";
 import { isSegmentBoundary, segmentParagraph, type TranslationUnit, type UnitContainer, type UnitRange } from "@/main/dom/segments";
 import { containersFor, observeContainer, resetObserveTargets, unobserveContainer } from "@/main/dom/observeTargets";
-import { composedTarget, deepActiveElement, deepContains, deepElementFromPoint, deepSelection, isShadowRoot, parentOrHost } from "@/main/dom/shadowTraversal";
+import { composedTarget, deepActiveElement, deepContains, deepElementFromPoint, deepSelection, isShadowRoot, parentOrHost, type DeepSelection } from "@/main/dom/shadowTraversal";
 import { partitionRules, resolveRulePaths } from "@/main/dom/ruleSelector";
 import {
     removeShadowCss,
@@ -1404,7 +1404,7 @@ export async function content() {
      * which is exactly the centered placement, so the card landed in the middle
      * of the screen instead of at the text.
      */
-    function currentTranslateSelection(): { selection: Selection | null; text: string; inPopup: boolean } {
+    function currentTranslateSelection(): { selection: DeepSelection | null; text: string; inPopup: boolean } {
         const selection = deepSelection()
         return {
             selection,
@@ -1413,7 +1413,7 @@ export async function content() {
         }
     }
 
-    function translateSelection(text: string, selection: Selection | null, keepPosition = false) {
+    function translateSelection(text: string, selection: DeepSelection | null, keepPosition = false) {
         let rect: DOMRect | null = null
         let range: Range | undefined
         try {
@@ -2939,6 +2939,11 @@ export async function content() {
         // mouseleave does not bubble, so this only fires when the pointer
         // actually exits the whole paragraph (original + translation).
         const onMouseLeave = () => {
+            // Cancel first: a resolve() queued by the last mousemove INSIDE the
+            // paragraph would otherwise run after this and repaint from the
+            // stale coordinates, i.e. re-highlight what we just cleared.
+            if (frame) cancelAnimationFrame(frame)
+            frame = 0
             current = null
             pointerInTranslation = false
             clearSentenceHighlight(container)
@@ -2950,8 +2955,6 @@ export async function content() {
         container.addEventListener("mousemove", onMove)
         container.addEventListener("mouseleave", onMouseLeave)
         return () => {
-            if (frame) cancelAnimationFrame(frame)
-            frame = 0
             onMouseLeave()
             container.removeEventListener("mousemove", onMove)
             container.removeEventListener("mouseleave", onMouseLeave)

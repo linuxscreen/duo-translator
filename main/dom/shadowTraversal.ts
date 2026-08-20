@@ -127,6 +127,35 @@ export function deepActiveElement(): Element | null {
 }
 
 /**
+ * The read-only slice of `Selection` this codebase consumes.
+ *
+ * A real `Selection` satisfies it structurally, so the Chrome path below still
+ * hands back the live object. The standard fallback cannot: `getComposedRanges`
+ * answers with `StaticRange`s, never with a `Selection`, so that path returns a
+ * view built over them. Callers must not reach past these members — anything
+ * that MUTATES the selection has to keep using `selectionForNode`.
+ */
+export interface DeepSelection {
+    readonly anchorNode: Node | null;
+    readonly anchorOffset: number;
+    readonly focusNode: Node | null;
+    readonly focusOffset: number;
+    readonly rangeCount: number;
+    getRangeAt(index: number): Range;
+    toString(): string;
+}
+
+interface BoundaryProbe {
+    anchorNode: Node | null;
+    anchorOffset: number;
+}
+
+type SelectionExtras = {
+    getComposedRanges?: (...args: unknown[]) => StaticRange[] | undefined;
+    direction?: string;
+};
+
+/**
  * The selection, read from inside the shadow tree it actually lives in.
  *
  * `window.getSelection()` shadow-adjusts its positions to the DOCUMENT's tree
@@ -138,23 +167,47 @@ export function deepActiveElement(): Element | null {
  * so it never appears, and the translate card reads "no measurable rect" as "no
  * anchor" and places itself dead centre.
  *
- * `ShadowRoot.getSelection()` answers in that root's own scope. Descending from
- * the adjusted anchor costs one hop per nesting level, deliberately NOT a sweep
- * over every known root — a component-heavy page has hundreds and this runs on
- * every `selectionchange`.
+ * TWO ways down, tried in that order:
  *
- * Falls back to the window selection unchanged for plain light DOM, for
- * browsers without the scoped accessor (Firefox, whose window selection already
- * carries the real shadow nodes), and for a selection that spans a shadow
- * boundary, where no single root owns both ends.
+ * 1. `ShadowRoot.getSelection()` — non-standard and **Chrome-only** (Firefox and
+ *    Safari have never shipped it).
+ * 2. `Selection.getComposedRanges({shadowRoots})` — the standardized answer
+ *    (Safari 17+, Chrome 137+, Firefox 142+), which is what makes any of this
+ *    work outside Chrome at all. Relying on (1) alone meant that on Safari and
+ *    Firefox the pill never appeared for a selection inside ANY shadow tree —
+ *    a page's own components as much as our selection-translate card, so
+ *    looking a word up from inside a result was a dead end there.
+ *
+ * Both descend from the adjusted anchor, one hop per nesting level, deliberately
+ * NOT a sweep over every known root — a component-heavy page has hundreds and
+ * this runs on every `selectionchange`. The descent is also what supplies the
+ * `shadowRoots` list (2) needs: a root that is not passed in stays retargeted to
+ * its host, so the list has to name every level down to the one that owns the
+ * position, and finding them from the DOM keeps this file free of any registry
+ * import (see the header).
+ *
+ * Falls back to the window selection unchanged for plain light DOM, for browsers
+ * with neither accessor, and for a selection that spans a shadow boundary, where
+ * no single root owns both ends.
  */
-export function deepSelection(): Selection | null {
-    let sel = window.getSelection();
-    for (let depth = 0; depth < MAX_PIERCE_DEPTH && sel; depth++) {
-        // An adjusted position points *at* the host, so the root to descend
-        // into is the one on the child sitting at that offset.
-        const host = sel.anchorNode?.childNodes?.[sel.anchorOffset];
-        const root = (host as HTMLElement | undefined)?.shadowRoot;
+export function deepSelection(): DeepSelection | null {
+    const sel = window.getSelection();
+    if (!sel) return null;
+    const scoped = descendScoped(sel);
+    if (scoped !== sel) return scoped;
+    return descendComposed(sel) ?? sel;
+}
+
+/** The shadow root an adjusted position points *at*, if any. */
+function hostRootAt(pos: BoundaryProbe): ShadowRoot | null {
+    const host = pos.anchorNode?.childNodes?.[pos.anchorOffset];
+    return (host as HTMLElement | undefined)?.shadowRoot ?? null;
+}
+
+function descendScoped(sel: Selection): Selection {
+    let cur = sel;
+    for (let depth = 0; depth < MAX_PIERCE_DEPTH; depth++) {
+        const root = hostRootAt(cur);
         if (!root) break;
         const scoped = scopedSelectionOf(root);
         // `getSelection()` is scoped, not filtered: a root that does not hold
@@ -162,9 +215,9 @@ export function deepSelection(): Selection | null {
         // an answer that lands inside the root is a real descent — anything
         // else means the child under the anchor was a host by coincidence.
         if (!scoped || !deepContains(root, scoped.anchorNode)) break;
-        sel = scoped;
+        cur = scoped;
     }
-    return sel;
+    return cur;
 }
 
 function scopedSelectionOf(root: ShadowRoot): Selection | null {
@@ -178,6 +231,79 @@ function scopedSelectionOf(root: ShadowRoot): Selection | null {
     }
 }
 
+function descendComposed(sel: Selection): DeepSelection | null {
+    if (typeof (sel as Selection & SelectionExtras).getComposedRanges !== "function") return null;
+    const roots: ShadowRoot[] = [];
+    let pos: BoundaryProbe = { anchorNode: sel.anchorNode, anchorOffset: sel.anchorOffset };
+    let composed: StaticRange | null = null;
+    for (let depth = 0; depth < MAX_PIERCE_DEPTH; depth++) {
+        const root = hostRootAt(pos);
+        if (!root) break;
+        roots.push(root);
+        const next = composedRangeIn(sel, roots);
+        if (!next) break;
+        composed = next;
+        pos = { anchorNode: next.startContainer, anchorOffset: next.startOffset };
+    }
+    return composed ? viewOfComposed(sel, composed) : null;
+}
+
+/**
+ * The composed range, expressed inside the deepest of `roots` — or null when the
+ * answer is still retargeted, which covers both "this engine ignored the
+ * argument" and the "host by coincidence" case the scoped path guards against.
+ */
+function composedRangeIn(sel: Selection, roots: ShadowRoot[]): StaticRange | null {
+    const fn = (sel as Selection & SelectionExtras).getComposedRanges;
+    if (typeof fn !== "function") return null;
+    const deepest = roots[roots.length - 1];
+    // Two call shapes are in the wild: the spec's options dict, and the variadic
+    // form WebKit shipped first. An engine that only knows the other one ignores
+    // the argument entirely and answers with the retargeted position, which the
+    // containment test below rejects — so trying both is safe, not a guess.
+    const shapes: unknown[][] = [[{ shadowRoots: roots }], roots];
+    for (const args of shapes) {
+        try {
+            const range = fn.apply(sel, args)?.[0];
+            if (range && deepContains(deepest, range.startContainer)) return range;
+        } catch {
+            // Wrong shape for this engine — try the other one.
+        }
+    }
+    return null;
+}
+
+function viewOfComposed(sel: Selection, sr: StaticRange): DeepSelection | null {
+    // A range cannot hold boundary points from two different trees, and a
+    // selection that escapes the root is exactly the case the doc comment sends
+    // back to the window selection.
+    if (sr.startContainer.getRootNode() !== sr.endContainer.getRootNode()) return null;
+    const range = document.createRange();
+    try {
+        range.setStart(sr.startContainer, sr.startOffset);
+        range.setEnd(sr.endContainer, sr.endOffset);
+    } catch {
+        return null;
+    }
+    // `getComposedRanges` answers in DOCUMENT order, dropping which end the drag
+    // finished on — and that end is what the selection pill anchors to.
+    // `Selection.direction` puts it back; it ships alongside getComposedRanges
+    // everywhere (Safari 17 / Firefox 126 / Chrome 137), and where it is missing
+    // the forward assumption costs a backward drag nothing but the pill's
+    // place-at-the-caret refinement.
+    const backward = (sel as Selection & SelectionExtras).direction === "backward";
+    const text = range.toString();
+    return {
+        anchorNode: backward ? sr.endContainer : sr.startContainer,
+        anchorOffset: backward ? sr.endOffset : sr.startOffset,
+        focusNode: backward ? sr.startContainer : sr.endContainer,
+        focusOffset: backward ? sr.startOffset : sr.endOffset,
+        rangeCount: 1,
+        getRangeAt: () => range,
+        toString: () => text,
+    };
+}
+
 /**
  * The Selection to use when reading or writing a caret around `node`.
  *
@@ -187,6 +313,12 @@ function scopedSelectionOf(root: ShadowRoot): Selection | null {
  * range then edit the wrong part of the page. Chrome exposes a per-root
  * `ShadowRoot.getSelection()` that answers in the root's own coordinates; where
  * it is missing (Firefox, Safari) we fall back, which is no worse than today.
+ *
+ * NOT the same fix as {@link deepSelection}'s: `getComposedRanges` reads, it
+ * does not write. Callers here go on to MUTATE the selection (`removeAllRanges`
+ * / `addRange`, `deleteContents`), and a `StaticRange` gives no way to do that,
+ * so this stays a read-the-live-object path. Worth revisiting only with a
+ * caret-writing API that crosses roots.
  */
 export function selectionForNode(node: Node | null | undefined): Selection | null {
     const root = node?.getRootNode?.();

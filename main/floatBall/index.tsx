@@ -350,7 +350,9 @@ function FloatBallApp({
         if (!guardExtensionAlive()) return;
         // Open the toolbar action popup anchored to the extension icon — same
         // surface/position as clicking the icon. Background calls
-        // chrome.action.openPopup() (must run there, not in the content script).
+        // browser.action.openPopup() (must run there, not in the content
+        // script); that namespace only exists under MV3, which every target we
+        // ship is built as — see the MV3 note in main/background.ts.
         notifyBackground({ action: ACTION.OPEN_POPUP });
         // Same rule as the toggle: only get out of the way once the pointer has
         // actually left the ball.

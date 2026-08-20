@@ -29,7 +29,17 @@
   --color-banner-glow-2: oklch(0.6 0.2 290 / 0.3);
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  /* `-apple-system` sits between JetBrains Mono and the monospace fallbacks on
+     purpose. Font matching is per character, and the bundled JetBrains Mono
+     subsets are latin + latin-ext only — so the macOS modifier symbols
+     (⌃ U+2303, ⌥ U+2325, ⇧ U+21E7, ⌘ U+2318, which Chrome returns from
+     commands.getAll() on that platform) miss it and fall through. The generic
+     monospace families resolve to a font whose glyphs for these are drawn at
+     roughly half the letter height; the system UI font draws them at text size,
+     which is what Chrome's own shortcuts page shows. Nothing else changes:
+     every character JetBrains Mono covers still matches it first, and CJK
+     already fell past both entries to the system CJK font. */
+  --font-mono: "JetBrains Mono", -apple-system, BlinkMacSystemFont, ui-monospace, monospace;
 }
 
 /* Light theme — token overrides only; the dark values above stay the base.

@@ -6,7 +6,7 @@ import { getConfig, setConfig } from "@/utils/db";
 import { useConfig } from "@/utils/reactiveConfig";
 import { sendMessageToBackground } from "@/utils/message";
 import { attachOwnShadow, isInOwnUi } from "@/main/dom/shadowRoots";
-import { deepActiveElement, deepContains, deepSelection } from "@/main/dom/shadowTraversal";
+import { deepActiveElement, deepContains, deepSelection, type DeepSelection } from "@/main/dom/shadowTraversal";
 import { isSelectableTextControl } from "@/main/aiWriting/inputDetector";
 import {
     textControlCaretRect,
@@ -215,7 +215,7 @@ function surfaceOf(node: Node | null | undefined): Surface {
 }
 
 interface ResolvedSelection {
-    sel: Selection;
+    sel: DeepSelection;
     text: string;
     /** Lives inside the selection-translate popup — re-use the card in place. */
     inPopup: boolean;

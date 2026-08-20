@@ -46,6 +46,16 @@ export const IS_FIREFOX = import.meta.env.FIREFOX;
 // cannot use it no matter what the runtime API probe says (Edge is Chromium and
 // exposes the method).
 export const IS_CHROME = import.meta.env.CHROME;
+// Safari has NO `identity` namespace at all (MDN BCD: hard `false`, not a version
+// gate), and `safari-web-extension://` is rejected as an OAuth redirect target —
+// so Google Drive sync cannot work there in any form. WebDAV is the sync target
+// on Safari. See .ai/plans/google-drive-safari.md.
+export const IS_SAFARI = import.meta.env.SAFARI;
+// Chromium family (chrome / edge / opera builds). Defined by exclusion rather
+// than by listing targets, so a new Chromium target does not silently fall into
+// the standards-following branch. Used where Chromium ACCEPTS something the
+// WebExtensions grammar does not — see `legacyHostPermissionPattern`.
+export const IS_CHROMIUM = !import.meta.env.FIREFOX && !import.meta.env.SAFARI;
 
 export const EXTENSION_INVALID_CONTEXT_MSG = "Extension context invalidated"
 
