@@ -92,6 +92,34 @@ export function isAiWritingTarget(el: Element | null | undefined): el is AiTarge
 }
 
 /**
+ * A text control whose SELECTED text may be offered for translation.
+ *
+ * Deliberately not `isAiWritingTarget`: that one answers "can we write here?",
+ * so it turns down readonly log viewers and short inputs — both of which are
+ * perfectly ordinary things to select a phrase in and want translated. What
+ * survives is only the two rules that are about the content itself: never send
+ * credentials or one-time codes anywhere, and ignore the input proxies of code
+ * editors / terminals, whose value is a keystroke buffer rather than text
+ * anybody selected.
+ */
+export function isSelectableTextControl(
+    el: Element | null | undefined,
+): el is HTMLInputElement | HTMLTextAreaElement {
+    if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement)) return false;
+    if (!el.isConnected) return false;
+    // Our own surfaces (the workbench composer) are not page content.
+    if (isInOwnUi(el)) return false;
+    if (deepClosest(el, PROXY_INPUT_HOST_SELECTOR)) return false;
+    if (el.getClientRects().length === 0) return false;
+    if (el instanceof HTMLInputElement) {
+        // Also the gate that keeps `selectionStart` from throwing: the types
+        // that reject it (number, email, date, …) are all in this set.
+        if (FORBIDDEN_INPUT_TYPES.has((el.type || "text").toLowerCase())) return false;
+    }
+    return !isSensitiveField(el);
+}
+
+/**
  * A field we could not write back to, or that is not really a field the user
  * types into. Two shapes, both of which the class list above cannot cover:
  *

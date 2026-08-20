@@ -6,7 +6,14 @@ import { getConfig, setConfig } from "@/utils/db";
 import { useConfig } from "@/utils/reactiveConfig";
 import { sendMessageToBackground } from "@/utils/message";
 import { attachOwnShadow, isInOwnUi } from "@/main/dom/shadowRoots";
-import { deepContains, deepSelection } from "@/main/dom/shadowTraversal";
+import { deepActiveElement, deepContains, deepSelection } from "@/main/dom/shadowTraversal";
+import { isSelectableTextControl } from "@/main/aiWriting/inputDetector";
+import {
+    textControlCaretRect,
+    textControlSelection,
+    textControlSelectionRect,
+    type TextControl,
+} from "@/main/dom/textControlCaret";
 import { isInSelectableSurface } from "@/main/dom/selectableSurfaces";
 import { isParkedOffDocument } from "@/main/dom/visibility";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
@@ -77,8 +84,12 @@ interface IconAnchor {
     /**
      * Live clone of the selection range. The popup re-measures it on scroll so
      * it follows the text instead of staying at the viewport spot it opened on.
+     *
+     * Absent for a selection inside an `<input>`/`<textarea>`: no Range can
+     * address the inside of a text control, so that card stays at the spot it
+     * opened on. The popup already handles a missing range that way.
      */
-    range: Range;
+    range?: Range;
     /**
      * The selection lives inside the selection-translate popup. Translating it
      * reuses that card in place instead of re-anchoring it to `rect`, which
@@ -247,6 +258,27 @@ function startController(domain: string): () => void {
     /** Whether the tracked selection is the popup's own — see {@link IconAnchor}. */
     let anchorInPopup = false;
     /**
+     * The text control the tracked selection lives inside, if any. Mutually
+     * exclusive with `anchorRange`: a text control's selection has no Range, so
+     * re-measuring it on scroll means asking the control again.
+     */
+    let anchorControl: TextControl | null = null;
+    /**
+     * The text-control selection the user already acted on.
+     *
+     * A page selection is GONE by the time the card is up — the click that
+     * opened it collapses it — so the DOM path needs nothing like this. A text
+     * control's selection survives everything instead: the pill prevents its own
+     * mousedown precisely so the words stay selected, and opening the card makes
+     * the control announce them again (an observed `select` event about a frame
+     * later, without focus ever moving). Without this the pill re-appeared on
+     * top of the card it had just opened.
+     *
+     * Compared by identity + offsets, so re-selecting the same words — or
+     * extending the selection by one character — offers the pill again.
+     */
+    let dismissedControl: { el: TextControl; start: number; end: number } | null = null;
+    /**
      * Whether the last press landed inside one of our reading surfaces. While
      * it is set, only THAT kind of selection counts.
      *
@@ -266,27 +298,53 @@ function startController(domain: string): () => void {
         anchorRange = null;
         anchorFocus = null;
         anchorInPopup = false;
+        anchorControl = null;
         pendingAnchor = null;
         hideSignal?.();
     };
-    controllerDismiss = hide;
 
     /**
-     * Place the pill just under the line the pointer finished on — the caret at
-     * the selection's focus, falling back to the selection's document-order end
-     * when that caret can't be measured. Every edge is handled: the pill flips
+     * The user ACTED on the pill (translated, or picked a way to close it), as
+     * opposed to the selection going away underneath it. Only this path records
+     * the selection as spent — see `dismissedControl`.
+     */
+    const dismissCurrent = () => {
+        const el = anchorControl;
+        const sel = el ? textControlSelection(el) : null;
+        dismissedControl = el && sel ? { el, start: sel.start, end: sel.end } : null;
+        hide();
+    };
+    controllerDismiss = dismissCurrent;
+
+    /**
+     * The React root is built on the first selection of the page's life, which
+     * happens in the same tick as this call — before the effect that publishes
+     * `showSignal` has run, hence the parking slot.
+     */
+    const show = (anchor: IconAnchor) => {
+        ensureMounted(domain);
+        if (showSignal) showSignal(anchor);
+        else pendingAnchor = anchor;
+    };
+
+    /**
+     * Place the pill under `spot` — the one line box it should point at, which
+     * is the line the pointer finished on. Every edge is handled: the pill flips
      * above that same line when it would fall off the bottom, and its left is
      * clamped against both side edges using the pill's WIDEST state so
      * revealing the close button can never push it off-screen.
+     *
+     * Shared by the two ways a selection can be measured — a DOM Range, and the
+     * inside of a text control, which has no Range at all — so the clamps and
+     * the visibility gate below can only ever be written once.
      */
-    const anchorFor = (
-        range: Range,
+    const place = (
+        spot: DOMRect | null | undefined,
+        bounding: DOMRect,
         text: string,
-        focus: FocusPoint | null,
+        range: Range | undefined,
         inPopup: boolean,
     ): IconAnchor | null => {
-        const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 || r.height > 0);
-        const bounding = range.getBoundingClientRect();
         // A selection nobody can see gets no affordance. Pages park text off the
         // document as a copy/SEO buffer (`left:-9999em`), and helpers that put a
         // URL in such a span SELECT it programmatically on hover — YouTube's
@@ -295,7 +353,6 @@ function startController(domain: string): () => void {
         // nothing. Document coordinates, so text merely scrolled out of view
         // still counts as real and keeps the pill glued to it.
         if (isParkedOffDocument(bounding, window.scrollX, window.scrollY)) return null;
-        const spot = (focus && caretRectOf(focus)) ?? rects[rects.length - 1] ?? bounding;
         // A selection with no geometry at all (collapsed, display:none, or a
         // detached range) has nothing to point at.
         if (!spot || (spot.width === 0 && spot.height === 0)) return null;
@@ -320,14 +377,75 @@ function startController(domain: string): () => void {
             y,
             text,
             rect: bounding.width > 0 || bounding.height > 0 ? bounding : null,
-            range: range.cloneRange(),
+            range,
             inPopup,
         };
+    };
+
+    /** Anchor for a DOM selection — the caret at its focus, see `caretRectOf`. */
+    const anchorFor = (
+        range: Range,
+        text: string,
+        focus: FocusPoint | null,
+        inPopup: boolean,
+    ): IconAnchor | null => {
+        const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 || r.height > 0);
+        const bounding = range.getBoundingClientRect();
+        const spot = (focus && caretRectOf(focus)) ?? rects[rects.length - 1] ?? bounding;
+        return place(spot, bounding, text, range.cloneRange(), inPopup);
+    };
+
+    /**
+     * Anchor for a selection inside an `<input>`/`<textarea>`, whose geometry
+     * has to be reconstructed — see main/dom/textControlCaret.ts. The caret at
+     * the selection's END is the same choice the DOM path makes.
+     */
+    const anchorForControl = (el: TextControl, text: string): IconAnchor | null => {
+        const bounding = textControlSelectionRect(el);
+        if (!bounding) return null;
+        return place(textControlCaretRect(el), bounding, text, undefined, false);
+    };
+
+    /**
+     * The selection inside the focused `<input>`/`<textarea>`, if that is where
+     * the user just selected something.
+     *
+     * A text control's selection is INVISIBLE to the Selection API — the
+     * platform reports it only as character offsets on the control, and
+     * `getSelection()` answers with the (usually empty) page selection — so it
+     * has to be asked for separately, before the DOM path concludes there is
+     * nothing selected.
+     */
+    const resolveTextControl = (): { el: TextControl; text: string } | null => {
+        const el = deepActiveElement();
+        if (!isSelectableTextControl(el)) return null;
+        const sel = textControlSelection(el);
+        const text = sel?.text.trim() ?? "";
+        if (!sel || text === "") return null;
+        if (dismissedControl
+            && dismissedControl.el === el
+            && dismissedControl.start === sel.start
+            && dismissedControl.end === sel.end) return null;
+        return { el, text };
     };
 
     /** Re-evaluate the current selection and show/hide accordingly. */
     const sync = () => {
         if (disposed || sessionHidden) return;
+        // While the pointer is working inside one of our reading surfaces only
+        // that kind of selection counts, and those are DOM selections by nature.
+        if (!pointerInOwnSurface) {
+            const control = resolveTextControl();
+            const anchor = control && anchorForControl(control.el, control.text);
+            if (control && anchor) {
+                anchorRange = null;
+                anchorFocus = null;
+                anchorInPopup = false;
+                anchorControl = control.el;
+                show(anchor);
+                return;
+            }
+        }
         const resolved = resolveSelection(pointerInOwnSurface);
         if (!resolved) {
             if (!menuOpen) hide();
@@ -355,9 +473,8 @@ function startController(domain: string): () => void {
         anchorRange = range.cloneRange();
         anchorFocus = focus;
         anchorInPopup = inPopup;
-        ensureMounted(domain);
-        if (showSignal) showSignal(anchor);
-        else pendingAnchor = anchor;
+        anchorControl = null;
+        show(anchor);
     };
 
     /** Selection is only final after the event that changed it has finished. */
@@ -377,6 +494,9 @@ function startController(domain: string): () => void {
         const where = surfaceOf(e.composedPath()[0] as Node);
         if (where === "pill" || where === "other") return;
         pointerInOwnSurface = where === "popup" || where === "readable";
+        // A press anywhere else is a fresh interaction, so a text-control
+        // selection the user already translated becomes offerable again.
+        dismissedControl = null;
         if (!menuOpen) hide();
         // Hold off re-showing for the length of a drag — the pill would
         // otherwise chase the pointer across the paragraph.
@@ -416,11 +536,27 @@ function startController(domain: string): () => void {
      * matters most on the one surface that scrolls under a live selection.
      */
     const onViewportChange = () => {
-        if (!anchorRange) return;
+        if (!anchorRange && !anchorControl) return;
         if (rafId !== null) return;
         rafId = requestAnimationFrame(() => {
             rafId = null;
-            if (disposed || !anchorRange) return;
+            if (disposed) return;
+            if (anchorControl) {
+                // Re-measured rather than offset: the control's own scrollbar is
+                // one of the things this listener fires for, and that moves the
+                // caret inside a rect that did not move at all. A control that
+                // lost focus no longer shows its selection either.
+                const el = anchorControl;
+                const live = resolveTextControl();
+                const anchor = live?.el === el ? anchorForControl(el, live.text) : null;
+                if (!anchor) {
+                    if (!menuOpen) hide();
+                    return;
+                }
+                show(anchor);
+                return;
+            }
+            if (!anchorRange) return;
             const resolved = resolveSelection(pointerInOwnSurface);
             if (!resolved) return;
             const anchor = anchorFor(anchorRange, resolved.text, anchorFocus, anchorInPopup);
@@ -428,14 +564,19 @@ function startController(domain: string): () => void {
                 if (!menuOpen) hide();
                 return;
             }
-            if (showSignal) showSignal(anchor);
-            else pendingAnchor = anchor;
+            show(anchor);
         });
     };
 
     document.addEventListener("mousedown", onMouseDown, true);
     document.addEventListener("mouseup", onMouseUp, true);
     document.addEventListener("selectionchange", onSelectionChange);
+    // `select` is the text controls' own announcement, and it bubbles — one
+    // document listener covers every input on the page. Kept alongside
+    // `selectionchange` rather than instead of it: engines disagree about
+    // whether a text control's selection reaches the document at all, and this
+    // one is spec'd for exactly that case since forever.
+    document.addEventListener("select", onSelectionChange, true);
     // Capture, so nested scrollers are covered too.
     window.addEventListener("scroll", onViewportChange, true);
     window.addEventListener("resize", onViewportChange);
@@ -449,6 +590,7 @@ function startController(domain: string): () => void {
         document.removeEventListener("mousedown", onMouseDown, true);
         document.removeEventListener("mouseup", onMouseUp, true);
         document.removeEventListener("selectionchange", onSelectionChange);
+        document.removeEventListener("select", onSelectionChange, true);
         window.removeEventListener("scroll", onViewportChange, true);
         window.removeEventListener("resize", onViewportChange);
         window.removeEventListener("blur", onWindowBlur);
