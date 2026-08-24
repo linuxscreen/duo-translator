@@ -11,7 +11,7 @@ import {
     isParagraph,
     isMixedParagraph,
     closestParagraph,
-    cleanupParagraphMarks,
+    sweepDetachedParagraphMarks,
     clearParagraphMarks,
     paragraphsUnder,
 } from "@/main/dom/paragraphMarks";
@@ -46,33 +46,51 @@ describe("markParagraph — mixed flag", () => {
     });
 });
 
-describe("cleanupParagraphMarks — nesting-aware", () => {
-    it("removing a pure mark leaves sibling marks intact", () => {
+describe("sweepDetachedParagraphMarks", () => {
+    it("drops a removed mark and leaves its still-attached siblings alone", () => {
         const wrap = el("<div><p>a</p><p>b</p></div>");
         const [a, b] = Array.from(wrap.children) as HTMLElement[];
         markParagraph(a, true);
         markParagraph(b, true);
-        cleanupParagraphMarks(a);
+        a.remove();
+        sweepDetachedParagraphMarks();
         expect(isParagraph(a)).toBe(false);
         expect(isParagraph(b)).toBe(true);
     });
 
-    it("removing a mixed mark also sweeps marks nested under it", () => {
+    // The pure/mixed distinction used to decide whether the cleanup had to look
+    // underneath the removed node. isConnected is answered per entry, so
+    // nesting no longer enters into it at all.
+    it("sweeps marks nested under a removed container, pure or mixed", () => {
         const div = el("<div>intro<ul><li>item</li></ul></div>");
         const li = div.querySelector("li") as HTMLElement;
         markParagraph(div, true, true);
         markParagraph(li, true);
-        cleanupParagraphMarks(div);
+        div.remove();
+        sweepDetachedParagraphMarks();
         expect(isParagraph(div)).toBe(false);
         expect(isParagraph(li)).toBe(false);
     });
 
-    it("removing an unmarked ancestor still sweeps marks under it", () => {
+    it("sweeps marks under a removed ancestor that was never marked itself", () => {
         const wrap = el("<div><section><p>a</p></section></div>");
         const p = wrap.querySelector("p") as HTMLElement;
         markParagraph(p, true);
-        cleanupParagraphMarks(wrap.querySelector("section") as HTMLElement);
+        (wrap.querySelector("section") as HTMLElement).remove();
+        sweepDetachedParagraphMarks();
         expect(isParagraph(p)).toBe(false);
+    });
+
+    // The one deliberate behaviour change: the old per-removed-node cleanup ran
+    // from the MutationObserver and dropped the mark before the page could put
+    // the node back. A sweep asks isConnected, so a reparent keeps its records.
+    it("keeps the mark of a node the page removed and re-inserted", () => {
+        const wrap = el("<div><p>a</p><aside></aside></div>");
+        const p = wrap.querySelector("p") as HTMLElement;
+        markParagraph(p, true);
+        (wrap.querySelector("aside") as HTMLElement).append(p);
+        sweepDetachedParagraphMarks();
+        expect(isParagraph(p)).toBe(true);
     });
 });
 
@@ -112,16 +130,17 @@ describe("across shadow boundaries", () => {
         expect(anyParagraphUnder(host)).toBe(true);
     });
 
-    it("cleanupParagraphMarks sweeps a removed host's shadow marks", () => {
+    it("sweeping a removed host also drops its shadow marks", () => {
         const { host, root, leaf } = build();
-        // `mixed` is what the marking scan records for a host WITH a root, and
-        // it is exactly what stops the pure-mark early return from stranding
-        // everything inside it.
         markParagraph(host as HTMLElement, true, true);
         markParagraph(root, true);
         markParagraph(leaf, true);
 
-        cleanupParagraphMarks(host as HTMLElement);
+        host.remove();
+        // isConnected is false for a ShadowRoot and everything in it once the
+        // host leaves the document — which is what makes the flat sweep able to
+        // answer for shadow trees at all.
+        sweepDetachedParagraphMarks();
 
         expect(isParagraph(host)).toBe(false);
         expect(isParagraph(root)).toBe(false);

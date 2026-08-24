@@ -157,16 +157,8 @@ export function isKnownRoot(root: ShadowRoot): boolean {
  * keeps an SPA navigation from leaking detached trees through this Set.
  */
 export function knownRoots(): ShadowRoot[] {
-    const out: ShadowRoot[] = [];
-    for (const root of pageRoots) {
-        if (!root.isConnected) {
-            pageRoots.delete(root);
-            handlers.onRootRemoved?.(root);
-            continue;
-        }
-        out.push(root);
-    }
-    return out;
+    forgetDisconnectedRoots();
+    return Array.from(pageRoots);
 }
 
 /** Drop a root we know is gone (removal is observable before disconnection). */
@@ -176,14 +168,20 @@ export function forgetRoot(root: ShadowRoot): void {
 }
 
 /**
- * Drop every root under `removed` (inclusive). Called from the MutationObserver
- * while the removed subtree is still identifiable — `root.isConnected` has
- * already flipped by then, but the tree is still walkable.
+ * Drop every root whose host has left the document. Called once per mutation
+ * batch from content.ts, and by `knownRoots()` on its way past.
+ *
+ * This replaced a `forgetRootsUnder(removed)` called once per removed node,
+ * which tested `deepContains(removed, root.host)` against the whole registry —
+ * the same O(removed x registry x depth) shape that made the marks sweep cost
+ * seconds per keystroke (see the note on `deepContains`). `isConnected` has
+ * already flipped by the time the observer runs, so it was always the cheaper
+ * question to ask, and it is the one `knownRoots()` has asked all along.
  */
-export function forgetRootsUnder(removed: Node): void {
+export function forgetDisconnectedRoots(): void {
     if (pageRoots.size === 0) return;
     for (const root of Array.from(pageRoots)) {
-        if (deepContains(removed, root.host)) forgetRoot(root);
+        if (!root.isConnected) forgetRoot(root);
     }
 }
 

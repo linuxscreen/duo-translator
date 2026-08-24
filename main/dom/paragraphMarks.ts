@@ -19,9 +19,9 @@
 //   - translation units never overlap: every text node belongs to at most one
 //     unit (a mixed container's units cover only its qualifying inline runs).
 //
-// Lifecycle: content.ts's MutationObserver calls `cleanupParagraphMarks` for
-// removed subtrees; enumeration helpers additionally sweep disconnected
-// entries so SPA navigations can't leak detached elements through this Map.
+// Lifecycle: content.ts sweeps detached entries once per mutation batch
+// (`sweepDetachedParagraphMarks`); the enumeration helpers sweep as they go
+// too, so SPA navigations can't leak detached elements through this Map.
 //
 // Keys are `UnitContainer`, so a `ShadowRoot` can be marked directly. Element
 // identity works the same across trees and `isConnected` is true for a node
@@ -114,23 +114,26 @@ export function anyParagraphUnder(root: Node): boolean {
 }
 
 /**
- * Drop marks for `removed` and everything under it. Called from the
- * MutationObserver while the removed subtree is still identifiable.
+ * Drop the marks of every container the page has detached. Called once per
+ * mutation batch from content.ts.
+ *
+ * This replaced a `cleanupParagraphMarks(removed)` called once per removed
+ * node, which walked the whole map testing `deepContains(removed, mark)` —
+ * O(removed x marks x depth), and the depth factor was a JS ancestor climb paid
+ * on every mark that was *not* under `removed`, i.e. nearly all of them. On a
+ * page whose framework re-renders a list on every keystroke that came to
+ * seconds of blocked main thread per character typed (see the note on
+ * `deepContains` for the measurement).
+ *
+ * `isConnected` is the better identification anyway: one native boolean read,
+ * false forever once it flips, and already what `allParagraphs()` uses to
+ * self-heal. The one behavioural difference is that a node the page *moves*
+ * (removed and re-inserted within a batch) keeps its mark instead of losing it,
+ * which is the right answer rather than a regression to tolerate.
  */
-export function cleanupParagraphMarks(removed: Node): void {
-    if (marks.size === 0) return;
-    // A *pure* mark cannot contain other marks, so removing one is a
-    // single-entry cleanup. A mixed mark (or an unmarked ancestor) may have
-    // marks nested beneath it — sweep the subtree. A host whose shadow root
-    // holds marks is recorded as mixed for exactly this reason, so the
-    // early-return can never strand them.
-    const mark = marks.get(removed as UnitContainer);
-    if (mark) {
-        marks.delete(removed as UnitContainer);
-        if (!mark.mixed) return;
-    }
+export function sweepDetachedParagraphMarks(): void {
     for (const el of marks.keys()) {
-        if (deepContains(removed, el)) marks.delete(el);
+        if (!el.isConnected) marks.delete(el);
     }
 }
 

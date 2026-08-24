@@ -112,6 +112,32 @@ describe("deepContains", () => {
         expect(deepContains(leaf, outer)).toBe(false);
         expect(deepContains(outer, null)).toBe(false);
     });
+
+    // The hop is `node.getRootNode() -> host`, and a ShadowRoot's own root node
+    // is itself — so a root passed as `node` has to climb out of its tree just
+    // like any of its children. Marks and unit containers can BE roots, so this
+    // is a live shape, not a curiosity.
+    it("answers for a ShadowRoot passed as the node", () => {
+        const { outer, outerRoot, innerRoot, light } = buildNested();
+        expect(deepContains(outer, outerRoot)).toBe(true);
+        expect(deepContains(light, innerRoot)).toBe(true);
+        expect(deepContains(outerRoot, outerRoot)).toBe(true);
+        expect(deepContains(innerRoot, outerRoot)).toBe(false);
+    });
+
+    // A detached node's root is the top of its own fragment, never a
+    // ShadowRoot, so the hop loop must terminate on the first check instead of
+    // climbing anywhere.
+    it("rejects a detached node without walking", () => {
+        const { light, leaf } = buildNested();
+        const orphan = document.createElement("p");
+        expect(deepContains(light, orphan)).toBe(false);
+        expect(deepContains(orphan, leaf)).toBe(false);
+        // ...but a detached subtree still contains its own children.
+        const child = document.createElement("span");
+        orphan.append(child);
+        expect(deepContains(orphan, child)).toBe(true);
+    });
 });
 
 describe("deepClosest", () => {

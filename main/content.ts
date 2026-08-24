@@ -49,7 +49,6 @@ import { isEditable, isNotMarkElement, isNotTranslateElement, isOwnNoTranslateEl
 import { getTextNodesAndText, getTextNodesAndTextOfNodes, isContainsValidTextElement, removeDuoClassAndAttribute, removeTextNodes } from "@/main/dom/textNodes";
 import {
     allParagraphs,
-    cleanupParagraphMarks,
     clearParagraphMarks,
     closestNeedsTranslate,
     closestParagraph,
@@ -59,10 +58,11 @@ import {
     markParagraph,
     needsTranslateParagraphs,
     resetNoTranslateMarks,
+    sweepDetachedParagraphMarks,
 } from "@/main/dom/paragraphMarks";
 import { isSegmentBoundary, segmentParagraph, type TranslationUnit, type UnitContainer, type UnitRange } from "@/main/dom/segments";
 import { containersFor, observeContainer, resetObserveTargets, unobserveContainer } from "@/main/dom/observeTargets";
-import { composedTarget, deepActiveElement, deepContains, deepElementFromPoint, deepSelection, isShadowRoot, parentOrHost, type DeepSelection } from "@/main/dom/shadowTraversal";
+import { composedTarget, deepActiveElement, deepElementFromPoint, deepSelection, isShadowRoot, parentOrHost, type DeepSelection } from "@/main/dom/shadowTraversal";
 import { partitionRules, resolveRulePaths } from "@/main/dom/ruleSelector";
 import {
     flushShadowRootStyles,
@@ -74,7 +74,7 @@ import {
 } from "@/main/dom/shadowCss";
 import {
     deepQuerySelector,
-    forgetRootsUnder,
+    forgetDisconnectedRoots,
     knownRoots,
     noteElement,
     resetShadowRoots,
@@ -357,7 +357,7 @@ export async function content() {
     // unit is derived data with no object identity to key on, and its only
     // stable identity is (container, exclusive anchors) — which is exactly this
     // shape. Container keys are also load-bearing elsewhere:
-    // cleanupRemovedSubtree sweeps by `removed.contains(key)`, ignoreMutation
+    // sweepDetachedBookkeeping sweeps by `key.isConnected`, ignoreMutation
     // walks real nodes, IntersectionObserver takes elements, and the highlight
     // binding is one-per-container by design.
     interface DuoUnitRecord {
@@ -565,6 +565,10 @@ export async function content() {
     let pendingMarkRoots = new Set<UnitContainer>();
     let pendingProcessTimer: number | null = null;
     let processingActive = false;
+    // "The page detached something since we last looked." Set by the observer,
+    // consumed by sweepDetachedBookkeeping() — the observer no longer cleans up
+    // per removed node, see that function.
+    let detachSweepPending = false;
 
     // ===== Observer state =====
     //
@@ -642,7 +646,7 @@ export async function content() {
             // <html>/<head> level are otherwise not page content: only re-root
             // marking when a fresh <body> is added, and never mark <head>.
             if (target === document.documentElement || target.nodeName === 'HEAD') {
-                mutation.removedNodes.forEach(cleanupRemovedSubtree);
+                if (mutation.removedNodes.length > 0) detachSweepPending = true;
                 mutation.addedNodes.forEach(node => {
                     if (node.nodeName === 'BODY') pendingMarkRoots.add(node as HTMLElement);
                 });
@@ -653,12 +657,13 @@ export async function content() {
             if (isIgnoreMutationElement(target)) continue;
             // console.log('mutation target', target);
             // console.log('start mutation');
-            // Removal cleanup must happen now while removed nodes are still
-            // identifiable; it touches only Map entries, no DOM scan.
-            mutation.removedNodes.forEach(cleanupRemovedSubtree);
+            // Removals are only *flagged* here. Cleaning them up per removed
+            // node was the single most expensive thing this extension did — see
+            // sweepDetachedBookkeeping.
+            if (mutation.removedNodes.length > 0) detachSweepPending = true;
             pendingMarkRoots.add(target);
         }
-        if (pendingMarkRoots.size > 0) scheduleMutationProcess();
+        if (pendingMarkRoots.size > 0 || detachSweepPending) scheduleMutationProcess();
     });
 
     const intersectionObserver = new IntersectionObserver(items => {
@@ -1461,9 +1466,18 @@ export async function content() {
                 syncSiteRuleCss();
             }
             // console.log("processPendingMutations ", pendingMarkRoots.size);
-            // Drain in waves: roots added during our async work get picked up
-            // on the next iteration of the outer loop.
-            while (pendingMarkRoots.size > 0) {
+            // Drain in waves: roots added — and removals flagged — during our
+            // async work get picked up on the next iteration of the outer loop.
+            // Both conditions are re-read here rather than latched, and nothing
+            // awaits between leaving this loop and clearing `processingActive`,
+            // so the observer can never flag a sweep that no one comes back for.
+            while (detachSweepPending || pendingMarkRoots.size > 0) {
+                if (detachSweepPending) {
+                    // Before the scan, not after: it is what makes the roots
+                    // this wave is about to skip cheap to skip.
+                    detachSweepPending = false;
+                    sweepDetachedBookkeeping();
+                }
                 const roots = Array.from(pendingMarkRoots);
                 pendingMarkRoots.clear();
                 for (const root of roots) {
@@ -1530,40 +1544,52 @@ export async function content() {
         }
     }
 
-    function cleanupRemovedSubtree(removedNode: Node) {
-        if (removedNode.nodeType !== Node.ELEMENT_NODE) return;
-        const removed = removedNode as HTMLElement;
-        // Shadow roots hosted anywhere in the removed subtree go with it. Done
-        // first: the observations and injected stylesheets they own must be
-        // released whether or not the subtree held any marks.
-        forgetRootsUnder(removed);
-        if (isParagraph(removed)) {
-            duoTranslatedElementMap.delete(removed);
-            translatedElementMap.delete(removed);
-            paragraphElementMap.delete(removed);
-            // The listeners go with the detached node, but the highlight paint is
-            // document-global — drop it if this paragraph is the one holding it.
-            clearSentenceHighlight(removed);
-            highlightDisposers.delete(removed);
-            cleanupParagraphMarks(removed);
-            return;
-        }
-        cleanupParagraphMarks(removed);
-        // Walk our own tracking map instead of querySelectorAll on the removed
-        // subtree — the map is much smaller than a re-scan of the whole subtree.
-        if (paragraphElementMap.size === 0) return;
-        for (const tracked of Array.from(paragraphElementMap.keys())) {
-            // deepContains, not contains: a container inside a removed host's
-            // shadow tree is invisible to the native test, and would be left
-            // behind in all four maps forever.
-            if (deepContains(removed, tracked)) {
-                duoTranslatedElementMap.delete(tracked);
-                translatedElementMap.delete(tracked);
-                paragraphElementMap.delete(tracked);
-                clearSentenceHighlight(tracked);
-                highlightDisposers.delete(tracked);
-            }
-        }
+    /**
+     * Drop every piece of bookkeeping whose container the page has detached.
+     * One pass per mutation batch, run from processPendingMutations.
+     *
+     * It replaced a cleanupRemovedSubtree(removed) called once per removed node,
+     * which asked `deepContains(removed, key)` of every mark, every registered
+     * shadow root and every tracked container — O(removed x bookkeeping x depth),
+     * with the depth factor being a JS ancestor climb paid on every key that was
+     * *not* under `removed`, which is nearly all of them. A Zen profile of
+     * ui.shadcn.com had 70% of the whole tab thread inside that shape, and each
+     * keystroke in the docs search blocked the main thread for over a second
+     * (the list re-render removes hundreds of nodes per character). Chrome pays
+     * the same complexity with a cheaper constant; Firefox's Xray wrappers make
+     * every step of the climb a cross-compartment property read.
+     *
+     * `isConnected` asks the same question with one native boolean read, and
+     * stays false once it flips — so this can also be deferred out of the
+     * observer callback into the debounced processor, where it costs one pass
+     * per 50 ms window rather than one per removed node.
+     *
+     * Two behavioural differences, both wanted: a container the page *moves*
+     * keeps its records instead of losing them, and a removal under a container
+     * we are mid-write on (`ignoreMutationElements`, which used to skip cleanup
+     * entirely) is no longer stranded.
+     */
+    function sweepDetachedBookkeeping() {
+        sweepDetachedParagraphMarks();
+        // Shadow roots go too: the observations and injected stylesheets they
+        // own have to be released whether or not the tree held any marks.
+        forgetDisconnectedRoots();
+        const drop = (el: UnitContainer) => {
+            duoTranslatedElementMap.delete(el);
+            translatedElementMap.delete(el);
+            paragraphElementMap.delete(el);
+            // The listeners went with the detached node, but the highlight paint
+            // is document-global — drop it if this container is holding it.
+            clearSentenceHighlight(el);
+            highlightDisposers.delete(el);
+        };
+        for (const el of paragraphElementMap.keys()) if (!el.isConnected) drop(el);
+        // The translation maps are written alongside paragraphElementMap, so the
+        // loop above covers them in practice — sweep them anyway rather than
+        // depend on that, since a stranded record makes its container read as
+        // "already translated" forever.
+        for (const el of duoTranslatedElementMap.keys()) if (!el.isConnected) drop(el);
+        for (const el of translatedElementMap.keys()) if (!el.isConnected) drop(el);
     }
 
     function isIgnoreMutationElement(element: Node) {
@@ -2892,14 +2918,15 @@ export async function content() {
                 const seg = segmentParagraph(el);
                 // An existing mark is kept alive even when the element momentarily
                 // has no qualifying run (its text may be mid-mutation): dropping it
-                // would strand the bookkeeping keyed by this container, and
-                // refreshing `mixed` is what lets cleanupParagraphMarks sweep the
-                // marks nested underneath it.
+                // would strand the bookkeeping keyed by this container. Refreshing
+                // `mixed` keeps the ancestor walk above honest — it is what tells
+                // that walk a mutation under this container may belong to a deeper
+                // unit rather than to one of the container's own inline runs.
                 if (seg.units.length > 0 || isParagraph(el)) {
                     // A host with a shadow root counts as *mixed* even when it has
                     // no block children of its own: marks can live inside the root,
-                    // and cleanupParagraphMarks' pure-mark early-return would
-                    // otherwise strand every one of them.
+                    // and a pure mark would make the walk stop here and translate
+                    // the whole host as one unit.
                     markParagraph(el, !nt && inc, seg.descendChildren.length > 0 || shadow !== null);
                     if (!nt && inc && seg.units.some(needsTranslation)) collectElements.push(el);
                 }

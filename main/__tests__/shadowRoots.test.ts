@@ -11,7 +11,7 @@ import {
     deepQuerySelector,
     deepQuerySelectorAll,
     forgetRoot,
-    forgetRootsUnder,
+    forgetDisconnectedRoots,
     isInOwnUi,
     isKnownRoot,
     isOwnHost,
@@ -150,7 +150,7 @@ describe("discovery", () => {
         expect(onRootRemoved).toHaveBeenCalledTimes(1);
     });
 
-    it("forgetRootsUnder drops roots inside a removed subtree", () => {
+    it("forgetDisconnectedRoots drops roots inside a removed subtree", () => {
         document.body.innerHTML = "<section id='wrap'></section>";
         const wrap = document.getElementById("wrap")!;
         const { host: inside, root: insideRoot } = pageHost("inside", "<p>a</p>", wrap);
@@ -158,9 +158,10 @@ describe("discovery", () => {
         noteElement(inside);
         noteElement(outside);
 
-        // Native contains cannot see into the root, which is why the registry
-        // uses the deep test — the host itself is what lives under `wrap`.
-        forgetRootsUnder(wrap);
+        // A root's isConnected follows its host, so removing the wrapper is
+        // enough — no walk of the removed subtree is involved.
+        wrap.remove();
+        forgetDisconnectedRoots();
 
         expect(isKnownRoot(insideRoot)).toBe(false);
         expect(isKnownRoot(outsideRoot)).toBe(true);

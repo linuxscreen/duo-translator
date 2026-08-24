@@ -65,14 +65,35 @@ export function parentElementOrHost(node: Node | null | undefined): HTMLElement 
  * Shadow-including descendant test — `Node.contains` semantics (inclusive of
  * `root` itself), but crossing host boundaries.
  *
- * The native call is kept as a fast path: it is a C++ tree walk and answers for
- * the overwhelming majority of nodes, which all live in the same tree.
+ * Both steps are the native `contains()`; the JS only picks which trees to run
+ * it on. A composed descendant that is not a plain one must live inside a
+ * shadow tree, so once the first call says no, the only remaining candidates
+ * are reached by hopping tree → host — one hop per boundary crossed, none at
+ * all on a page with no shadow DOM.
+ *
+ * This used to fall through to a `parentOrHost` climb instead, and that made it
+ * the most expensive function in the extension. The climb runs all the way to
+ * the top of the document on every *miss*, and a miss is the answer for nearly
+ * every call: the marks sweep asked it once per mark per removed node. In
+ * Firefox every step of that climb is an Xray property read (`parentNode` on a
+ * page node crosses a compartment, and the terminating `isShadowRoot` probes
+ * `.host` on an element that does not have it — the slowest lookup of the
+ * lot). Measured on a Zen profile of ui.shadcn.com while typing: 69% of the
+ * whole tab thread was inside here, 93% of that in the climb and 1% in the
+ * native call it had already made.
  */
 export function deepContains(root: Node, node: Node | null | undefined): boolean {
     if (!node) return false;
     if (root.contains(node)) return true;
-    for (let cur: Node | null = node; cur; cur = parentOrHost(cur)) {
-        if (cur === root) return true;
+    // getRootNode() answers with the ShadowRoot for anything inside a shadow
+    // tree — and with a ShadowRoot itself, so a root passed as `node` climbs
+    // out of its own tree exactly like any of its children would.
+    let tree: Node = node.getRootNode();
+    for (let depth = 0; depth < MAX_PIERCE_DEPTH; depth++) {
+        if (!isShadowRoot(tree)) return false;
+        const host = tree.host;
+        if (host === root || root.contains(host)) return true;
+        tree = host.getRootNode();
     }
     return false;
 }
