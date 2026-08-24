@@ -65,10 +65,11 @@ import { containersFor, observeContainer, resetObserveTargets, unobserveContaine
 import { composedTarget, deepActiveElement, deepContains, deepElementFromPoint, deepSelection, isShadowRoot, parentOrHost, type DeepSelection } from "@/main/dom/shadowTraversal";
 import { partitionRules, resolveRulePaths } from "@/main/dom/ruleSelector";
 import {
+    flushShadowRootStyles,
+    queueShadowRootStyle,
     removeShadowCss,
     resetShadowCss,
     setShadowCss,
-    styleShadowRoot,
     unstyleShadowRoot,
 } from "@/main/dom/shadowCss";
 import {
@@ -164,7 +165,11 @@ export async function content() {
     let shadowPipelineReady = false;
     startShadowDiscovery({
         onRootAdded: (root) => {
-            styleShadowRoot(root);
+            // Queued, not styled: this fires from inside the marking scan, and
+            // injecting a stylesheet between two of its `getComputedStyle` calls
+            // costs a forced style recalc every time. Flushed when the scan ends
+            // and at the top of translateUnits — see main/dom/shadowCss.ts.
+            queueShadowRootStyle(root);
             if (!shadowPipelineReady) return;
             // No scan to queue: the only caller is the marking scan itself, and
             // the root it just found is already on its DFS stack.
@@ -1467,7 +1472,34 @@ export async function content() {
                     if (!root.isConnected) continue;
                     if (isIgnoreMutationElement(root)) continue;
                     // console.log("processPendingMutations root");
-                    const collected = await markParagraphElement(root);
+                    //
+                    // Hand containers to the IntersectionObserver as the scan
+                    // finds them, not only when it finishes. A Reddit post page
+                    // takes ~200 ms of chunked scanning, and waiting for all of
+                    // it means the first paragraph — which the scan reaches in
+                    // its first chunk — sits untranslated for that whole time,
+                    // for no reason: the observer already gates on visibility,
+                    // and the containers below the fold would not be translated
+                    // any sooner if it had them.
+                    //
+                    // `handed` is not an optimization, it is what keeps a
+                    // container from being translated twice: the sink sees each
+                    // one at a chunk boundary AND again in the final list, and
+                    // re-setting a container that the observer has already moved
+                    // to PENDING back to ORIGINAL would queue it a second time.
+                    // Feeding the full list at the end is what covers a switch
+                    // that was flipped ON midway through the scan.
+                    const handed = new Set<UnitContainer>();
+                    const observeCollected = (batch: UnitContainer[]) => {
+                        if (!translateStatus) return;
+                        for (const ele of batch) {
+                            if (handed.has(ele)) continue;
+                            handed.add(ele);
+                            paragraphElementMap.set(ele, ELEMENT_STATUS.ORIGINAL);
+                            observeContainer(intersectionObserver, ele);
+                        }
+                    };
+                    const collected = await markParagraphElement(root, observeCollected);
                     if (!translateStatus) {
                         // Page translation is off, so nothing here may START
                         // translating. One exception: a container the user
@@ -1487,10 +1519,7 @@ export async function content() {
                         if (stale.length > 0) trackParagraphTranslation(stale, true)
                         continue
                     }
-                    for (const ele of collected) {
-                        paragraphElementMap.set(ele, ELEMENT_STATUS.ORIGINAL);
-                        observeContainer(intersectionObserver, ele);
-                    }
+                    observeCollected(collected);
                 }
             }
         } finally {
@@ -1556,16 +1585,44 @@ export async function content() {
         return false
     }
 
-    // Yield to the browser between work chunks. Prefer requestIdleCallback so
-    // we don't fight a busy main thread; fall back to setTimeout(0) elsewhere.
+    /**
+     * Yield to the browser between work chunks of the marking scan.
+     *
+     * This used to be `requestIdleCallback({timeout: 50})`, on the reasoning
+     * that idle time is the polite place for a background scan. Measured, that
+     * reasoning inverts: idle time is exactly what a page under load does not
+     * have, so the scan only ever ran on the timeout path — and even then it
+     * queued behind whatever the page was doing. On a Reddit SPA route change
+     * the six yields of one scan waited **139 / 58 / 42 / 68 / 54 / 19 ms** for
+     * 191 ms of actual work: 380 ms of pure waiting, two thirds of the scan's
+     * wall time, on the one kind of page where the user is most likely to
+     * notice translation lagging behind the content.
+     *
+     * `scheduler.yield()` is the primitive built for this: it ends the current
+     * task (so the browser can style, lay out and paint — including the shadow
+     * root stylesheets flushed just before us) but puts the continuation ahead
+     * of ordinary queued tasks, so we resume at the next opportunity instead of
+     * waiting for one that never comes. `postTask` at user-visible priority is
+     * the same bargain without the continuation boost. `setTimeout(0)` is the
+     * floor, and is still far better here than idle-callback scheduling.
+     *
+     * Responsiveness is bounded by `MARK_BUDGET_MS`, not by the yield: a chunk
+     * is capped at 20 ms whichever primitive resumes it. What changes is the
+     * gap between chunks, not their length.
+     */
     function yieldToBrowser(): Promise<void> {
-        return new Promise<void>((resolve) => {
-            if (typeof (window as any).requestIdleCallback === 'function') {
-                (window as any).requestIdleCallback(() => resolve(), { timeout: 50 });
-            } else {
-                setTimeout(resolve, 0);
-            }
-        });
+        const scheduler = (window as any).scheduler;
+        if (typeof scheduler?.yield === 'function') {
+            // Can reject if the frame's task is aborted — resolve either way,
+            // the scan re-checks `isConnected` at every boundary anyway.
+            return scheduler.yield().catch(() => undefined);
+        }
+        if (typeof scheduler?.postTask === 'function') {
+            return scheduler
+                .postTask(() => undefined, { priority: 'user-visible' })
+                .catch(() => undefined);
+        }
+        return new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
 
     /**
@@ -2647,6 +2704,12 @@ export async function content() {
     /**
      * search paragraph elements and record them as in-memory paragraph marks
      * @param element
+     * @param onCollected optional sink for containers found so far, called at
+     *   every yield boundary and once more when the walk ends. Lets a caller
+     *   start translating the top of the page while the bottom is still being
+     *   scanned — see the note in processPendingMutations. The return value is
+     *   still the COMPLETE list, so callers that ignore the sink are unaffected;
+     *   ones that use it must dedupe (they will see each container twice).
      * @returns the elements that need to translate
      */
     // Async + iterative to avoid blocking the main thread on large subtrees.
@@ -2654,7 +2717,10 @@ export async function content() {
     // input still mark-completes without freezing the page. Behaviour matches
     // the previous recursive version (depth limit, text-node→duo-span wrapping,
     // mutation suppression around our own DOM writes).
-    async function markParagraphElement(element: UnitContainer): Promise<UnitContainer[]> {
+    async function markParagraphElement(
+        element: UnitContainer,
+        onCollected?: (batch: UnitContainer[]) => void,
+    ): Promise<UnitContainer[]> {
         let notTranslate = false;
         const rawElement = element;
         const collectElements: UnitContainer[] = [];
@@ -2739,97 +2805,126 @@ export async function content() {
         type Frame = { node: UnitContainer; notTranslate: boolean; inInclude: boolean; depth: number };
         const stack: Frame[] = [{ node: rawElement, notTranslate, inInclude, depth: 0 }];
         let chunkStart = performance.now();
+        let handedOff = 0;
+        const drain = () => {
+            if (!onCollected || collectElements.length === handedOff) return;
+            const batch = collectElements.slice(handedOff);
+            handedOff = collectElements.length;
+            onCollected(batch);
+        };
 
-        while (stack.length > 0) {
-            if (performance.now() - chunkStart >= MARK_BUDGET_MS) {
-                await yieldToBrowser();
-                chunkStart = performance.now();
-            }
-            const frame = stack.pop()!;
-            const el = frame.node;
-            let nt = frame.notTranslate;
-            let inc = frame.inInclude;
-            const depth = frame.depth;
-
-            if (depth > MARK_MAX_DEPTH) continue;
-            // Page may have removed the node while we were yielding.
-            if (!el.isConnected) continue;
-
-            // The page-owned shadow root of this element, registered on first
-            // sight. One property read per visited element — see
-            // main/dom/shadowRoots.ts for why the scan is one of the three
-            // discovery sources.
-            let shadow: ShadowRoot | null = null;
-            if (isShadowRoot(el)) {
-                // A root has no tag, no class list, no selector identity and
-                // cannot be editable, so every per-element predicate is skipped.
-                // The inherited notTranslate / inInclude flags carry across the
-                // boundary unchanged — the component sits inside whatever region
-                // its host sits in.
-            } else {
-                if (isNotMarkElement(el)) continue;
-                if (!nt && noTranslateOf(el)) nt = true;
-                if (!nt && matchesSelector(el, excludeSelector)) {
-                    // Cache the positive rule match so re-scans of this
-                    // subtree short-circuit via isNotTranslateElement.
-                    markNoTranslate(el);
-                    nt = true
+        try {
+            while (stack.length > 0) {
+                if (performance.now() - chunkStart >= MARK_BUDGET_MS) {
+                    // Style the roots this chunk discovered before handing the
+                    // thread back: injecting into a root dirties its tree scope,
+                    // and doing it here means the browser's own rendering step
+                    // absorbs the recalc instead of the scan's next
+                    // `getComputedStyle` paying for it. One recalc per chunk
+                    // rather than one per root — see main/dom/shadowCss.ts.
+                    // Deliberately NOT flushing the shadow-root stylesheets here.
+                    // Doing it per chunk dirties a batch of tree scopes that the
+                    // next chunk's first `getComputedStyle` then has to recalc:
+                    // measured on a Reddit post page, a 5-chunk scan cost 94.5 ms
+                    // of CPU with a flush per chunk and 67.9 ms with one flush at
+                    // the end (a 3-chunk scan: 65.8 → 24.3 ms). The guarantee
+                    // "a root is styled before anything is written into it" is
+                    // kept at the single write site instead — translateUnits.
+                    drain();
+                    await yieldToBrowser();
+                    chunkStart = performance.now();
                 }
-                if (!nt && shadowRuleTargets.size > 0 && shadowRuleTargets.has(el)) {
-                    markNoTranslate(el);
-                    nt = true
+                const frame = stack.pop()!;
+                const el = frame.node;
+                let nt = frame.notTranslate;
+                let inc = frame.inInclude;
+                const depth = frame.depth;
+
+                if (depth > MARK_MAX_DEPTH) continue;
+                // Page may have removed the node while we were yielding.
+                if (!el.isConnected) continue;
+
+                // The page-owned shadow root of this element, registered on first
+                // sight. One property read per visited element — see
+                // main/dom/shadowRoots.ts for why the scan is one of the three
+                // discovery sources.
+                let shadow: ShadowRoot | null = null;
+                if (isShadowRoot(el)) {
+                    // A root has no tag, no class list, no selector identity and
+                    // cannot be editable, so every per-element predicate is skipped.
+                    // The inherited notTranslate / inInclude flags carry across the
+                    // boundary unchanged — the component sits inside whatever region
+                    // its host sits in.
+                } else {
+                    if (isNotMarkElement(el)) continue;
+                    if (!nt && noTranslateOf(el)) nt = true;
+                    if (!nt && matchesSelector(el, excludeSelector)) {
+                        // Cache the positive rule match so re-scans of this
+                        // subtree short-circuit via isNotTranslateElement.
+                        markNoTranslate(el);
+                        nt = true
+                    }
+                    if (!nt && shadowRuleTargets.size > 0 && shadowRuleTargets.has(el)) {
+                        markNoTranslate(el);
+                        nt = true
+                    }
+                    // The positive gate. NOT a `continue` when still outside: the
+                    // include root may be further down, so the walk keeps descending
+                    // and only withholds the needs-translate flag on the way.
+                    if (!inc && matchesSelector(el, includeSelector)) inc = true;
+
+                    if (isEditable(el)) continue;
+
+                    shadow = noteElement(el);
                 }
-                // The positive gate. NOT a `continue` when still outside: the
-                // include root may be further down, so the walk keeps descending
-                // and only withholds the needs-translate flag on the way.
-                if (!inc && matchesSelector(el, includeSelector)) inc = true;
 
-                if (isEditable(el)) continue;
-
-                shadow = noteElement(el);
-            }
-
-            // One segmentation decides everything about this element. There is
-            // no separate "is this a paragraph?" gate any more: an element is a
-            // unit container iff segmentParagraph finds a qualifying run in it,
-            // and `descendChildren` is exactly what the scan should visit next
-            // (block-ish children, unwrapped lone inline wrappers, and the
-            // elements of runs holding no translatable text).
-            //
-            // Re-segmenting on every visit — including already-marked elements —
-            // is deliberate: structural mutations change an element's runs and
-            // block children, so the mixed flag, the collect decision and the
-            // descent list all have to be recomputed from the live DOM.
-            const seg = segmentParagraph(el);
-            // An existing mark is kept alive even when the element momentarily
-            // has no qualifying run (its text may be mid-mutation): dropping it
-            // would strand the bookkeeping keyed by this container, and
-            // refreshing `mixed` is what lets cleanupParagraphMarks sweep the
-            // marks nested underneath it.
-            if (seg.units.length > 0 || isParagraph(el)) {
-                // A host with a shadow root counts as *mixed* even when it has
-                // no block children of its own: marks can live inside the root,
-                // and cleanupParagraphMarks' pure-mark early-return would
-                // otherwise strand every one of them.
-                markParagraph(el, !nt && inc, seg.descendChildren.length > 0 || shadow !== null);
-                if (!nt && inc && seg.units.some(needsTranslation)) collectElements.push(el);
-            }
-            // Push in reverse so pop order = forward visit. Skip children the
-            // page detached while we were yielding. `parentNode`, not
-            // `parentElement`: the parent of a ShadowRoot container's child IS
-            // the root, and parentElement would reject every one of them.
-            for (let j = seg.descendChildren.length - 1; j >= 0; j--) {
-                const child = seg.descendChildren[j];
-                if (child.parentNode === el) {
-                    stack.push({ node: child, notTranslate: nt, inInclude: inc, depth: depth + 1 });
+                // One segmentation decides everything about this element. There is
+                // no separate "is this a paragraph?" gate any more: an element is a
+                // unit container iff segmentParagraph finds a qualifying run in it,
+                // and `descendChildren` is exactly what the scan should visit next
+                // (block-ish children, unwrapped lone inline wrappers, and the
+                // elements of runs holding no translatable text).
+                //
+                // Re-segmenting on every visit — including already-marked elements —
+                // is deliberate: structural mutations change an element's runs and
+                // block children, so the mixed flag, the collect decision and the
+                // descent list all have to be recomputed from the live DOM.
+                const seg = segmentParagraph(el);
+                // An existing mark is kept alive even when the element momentarily
+                // has no qualifying run (its text may be mid-mutation): dropping it
+                // would strand the bookkeeping keyed by this container, and
+                // refreshing `mixed` is what lets cleanupParagraphMarks sweep the
+                // marks nested underneath it.
+                if (seg.units.length > 0 || isParagraph(el)) {
+                    // A host with a shadow root counts as *mixed* even when it has
+                    // no block children of its own: marks can live inside the root,
+                    // and cleanupParagraphMarks' pure-mark early-return would
+                    // otherwise strand every one of them.
+                    markParagraph(el, !nt && inc, seg.descendChildren.length > 0 || shadow !== null);
+                    if (!nt && inc && seg.units.some(needsTranslation)) collectElements.push(el);
+                }
+                // Push in reverse so pop order = forward visit. Skip children the
+                // page detached while we were yielding. `parentNode`, not
+                // `parentElement`: the parent of a ShadowRoot container's child IS
+                // the root, and parentElement would reject every one of them.
+                for (let j = seg.descendChildren.length - 1; j >= 0; j--) {
+                    const child = seg.descendChildren[j];
+                    if (child.parentNode === el) {
+                        stack.push({ node: child, notTranslate: nt, inInclude: inc, depth: depth + 1 });
+                    }
+                }
+                // Pushed last so it pops first: for a component, the shadow tree is
+                // usually *the* content, and visiting it before the host's light
+                // children keeps the scan's output in rendering order.
+                if (shadow) {
+                    stack.push({ node: shadow, notTranslate: nt, inInclude: inc, depth: depth + 1 });
                 }
             }
-            // Pushed last so it pops first: for a component, the shadow tree is
-            // usually *the* content, and visiting it before the host's light
-            // children keeps the scan's output in rendering order.
-            if (shadow) {
-                stack.push({ node: shadow, notTranslate: nt, inInclude: inc, depth: depth + 1 });
-            }
+        } finally {
+            // The last chunk's discoveries, plus anything still queued if the
+            // walk threw: a root left unstyled would render its translations
+            // (and its `::highlight()` paint) with no CSS at all.
+            flushShadowRootStyles();
         }
         return collectElements;
     }
@@ -3203,6 +3298,14 @@ export async function content() {
         replacements?: Map<TranslationUnit, UnitReplacement>,
     ) {
         let viewStrategyCopy = viewStrategy
+        // Every page shadow root discovered so far gets its stylesheet now.
+        // This is the guarantee the marking scan deliberately stops making at
+        // its chunk boundaries (see the note there): the scan streams containers
+        // to the IntersectionObserver as it finds them, so a translation can be
+        // written into a root while the scan that discovered it is still
+        // running. One flush per batch, and it early-returns once the queue is
+        // empty — not one per chunk, which is what made it expensive.
+        flushShadowRootStyles()
         // A container whose guard is already set has a translation in flight —
         // drop its units so we never translate the same text twice.
         const guardedUnits = allUnits.filter(u => !ignoreMutationElements.has(u.container))

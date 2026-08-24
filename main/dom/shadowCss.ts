@@ -16,6 +16,19 @@
 // path would need a second hook there anyway), the Chrome cost is one array push
 // of a *shared* sheet, and lazy delivery would mean threading this through every
 // write site — translateUnits, the restore sweeps, and both highlight painters.
+//
+// Eager, but BATCHED — see `queueShadowRootStyle` / `flushShadowRootStyles`.
+// Discovery happens inside the marking scan, one root at a time, interleaved
+// with the `getComputedStyle` calls that classify each element. Adding a sheet
+// to a root is a "Style rule change" for that tree scope, so the very next
+// computed-style read pays a forced recalc of the dirty tree — write, read,
+// write, read. Measured on a Reddit post page (391 page roots, each already
+// carrying Reddit's own 266 KB sheet): 2.9 ms per root interleaved, ~1.0 s of
+// forced `UpdateLayoutTree` in a 5 s window, which is where the delay between
+// an SPA route change and the first translated line went. The same 50 roots
+// styled back-to-back and read ONCE cost 4.2 ms instead of 140.3 — 33x less —
+// because the cost is one document-wide recalc pass, not a per-scope rule-set
+// rebuild.
 import { IS_FIREFOX } from "@/main/constants";
 
 /**
@@ -31,6 +44,8 @@ const sheets = new Map<Slot, CSSStyleSheet>();
 /** Firefox / fallback: one <style> per (root, slot). */
 const carriers = new Map<ShadowRoot, Map<Slot, HTMLStyleElement>>();
 const styledRoots = new Set<ShadowRoot>();
+/** Discovered but not yet styled — drained by `flushShadowRootStyles`. */
+const pendingRoots = new Set<ShadowRoot>();
 
 /**
  * Whether the constructable-stylesheet path is usable for a *page-created* root.
@@ -107,15 +122,53 @@ function applySlot(root: ShadowRoot, slot: Slot): void {
     if (el) el.textContent = css;
 }
 
-/** Apply every current slot to a newly discovered root. */
-export function styleShadowRoot(root: ShadowRoot): void {
+function styleShadowRoot(root: ShadowRoot): void {
     styledRoots.add(root);
     for (const slot of cssText.keys()) applySlot(root, slot);
+}
+
+/**
+ * Register a newly discovered root, to be styled at the next flush.
+ *
+ * Callers are inside the marking scan, which reads computed style constantly —
+ * styling here would make every discovery cost a forced recalc (see the note at
+ * the top of this file). Two flush sites keep the queue from stranding a root:
+ * the scan's own `finally`, and the top of `translateUnits` — the single place
+ * translations are written, and the one that actually needs the guarantee,
+ * since the scan streams containers to the IntersectionObserver as it goes and
+ * a translation can land while the scan that found the root is still running.
+ *
+ * Flushing per scan chunk was tried and reverted: it dirties a batch of tree
+ * scopes that the next chunk's first `getComputedStyle` then recalcs, which
+ * doubled the CPU of a mid-size scan (53 → 26 ms) and blew the scan's 20 ms
+ * chunk budget out to 35 ms.
+ */
+export function queueShadowRootStyle(root: ShadowRoot): void {
+    if (styledRoots.has(root)) return;
+    pendingRoots.add(root);
+}
+
+/**
+ * Style every root queued since the last flush, in one go.
+ *
+ * Roots that left the page while queued are dropped — the sheet would be
+ * attached to a detached tree nobody will ever look at, and `unstyleShadowRoot`
+ * has already stopped tracking them.
+ */
+export function flushShadowRootStyles(): void {
+    if (pendingRoots.size === 0) return;
+    const roots = Array.from(pendingRoots);
+    pendingRoots.clear();
+    for (const root of roots) {
+        if (!root.isConnected) continue;
+        styleShadowRoot(root);
+    }
 }
 
 /** Drop everything we injected into `root` (it left the page, or we shut down). */
 export function unstyleShadowRoot(root: ShadowRoot): void {
     styledRoots.delete(root);
+    pendingRoots.delete(root);
     const bySlot = carriers.get(root);
     if (bySlot) {
         for (const el of bySlot.values()) el.remove();
@@ -178,6 +231,7 @@ export function removeShadowCss(slot: Slot): void {
 export function resetShadowCss(): void {
     for (const root of Array.from(styledRoots)) unstyleShadowRoot(root);
     styledRoots.clear();
+    pendingRoots.clear();
     carriers.clear();
     sheets.clear();
     cssText.clear();

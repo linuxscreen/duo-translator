@@ -24,7 +24,7 @@ const SAFARI_BACKGROUND_HTML = `<!doctype html>
 
 // See https://wxt.dev/api/config.html
 export default defineConfig({
-    manifest: ({ browser }) => ({
+    manifest: ({ browser, mode }) => ({
         name: '__MSG_extName__',
         description: '__MSG_extDescription__',
         default_locale: 'en',
@@ -119,7 +119,15 @@ export default defineConfig({
         // ]
         browser_specific_settings: {
             gecko: {
-                id: 'duo-translator@duotranslator.com',
+                // Dev builds get their own add-on ID so a test build installs
+                // side by side with the released add-on instead of taking over
+                // its ID (and its stored config). `wxt build` / `wxt zip`
+                // default to mode "production" and keep the real ID; the dev
+                // server, the e2e build (`--mode development`) and the Safari
+                // debug build all fall to the -dev ID.
+                id: mode === 'production'
+                    ? 'duo-translator@duotranslator.com'
+                    : 'duo-translator-dev@duotranslator.com',
                 data_collection_permissions: {
                     required: ['websiteContent'],
                 },
