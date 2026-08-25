@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.4] - 2026-08-25
+
+### Changed
+
+- Translations show up about twice as fast after an in-page navigation on single-page sites: shadow-DOM style sheets are injected in one batch instead of one at a time, the paragraph scan yields to the browser in a way that gets it scheduled back right away, and paragraphs are handed to the translator as the scan finds them rather than only once the whole page has been scanned. Measured on a Reddit thread, the first translated line went from about 1.1 s to about 0.5 s after the page content was ready
+
+### Fixed
+
+- The selection translate icon landing far away from the selected text — sometimes a thousand pixels off. It was placed at the caret, which is not always where the highlight ends: releasing the mouse over something that cannot be selected (a button), a selection ending exactly at a line wrap, or one ending on an element edge all sent it elsewhere. It now follows the end of the visible highlight, on whichever end the drag finished
+- The translation card opening in the wrong place after a selection that crossed several paragraphs: screen-reader-only text parked far outside the page was measured as part of the selection, so the card was positioned against a box nobody can see
+- Pages freezing while typing when the site rebuilds a list on every keystroke — a documentation search box, a virtual list, a route change. Every removed node made the extension walk its entire bookkeeping, right inside the change callback; on Firefox a single keystroke could hold the tab for over a second. That work is now batched and no longer walks the page tree. The pause was worst on Firefox but present everywhere
+
 ## [2.2.3] - 2026-08-20
 
 ### Added
