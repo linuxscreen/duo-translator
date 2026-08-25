@@ -16,6 +16,7 @@ import {
 } from "@/main/dom/textControlCaret";
 import { isInSelectableSurface } from "@/main/dom/selectableSurfaces";
 import { isParkedOffDocument } from "@/main/dom/visibility";
+import { visibleSelectionEdge } from "@/main/dom/selectionEdge";
 import { keepHostMounted } from "@/main/dom/keepHostMounted";
 import { loadTailwindIntoShadow } from "@/main/aiWriting/shadowStyle";
 import { bindThemeToElement } from "@/utils/theme";
@@ -169,12 +170,17 @@ interface FocusPoint {
 /**
  * Line box of the caret at a selection's focus point.
  *
- * This is what makes the pill land near the pointer regardless of drag
- * direction. `getClientRects()` on the range itself is in DOCUMENT order, so
- * its last rect is the selection's rightmost/lowest end — for a right-to-left
- * (backward) drag that is where the pointer STARTED, and the pill appeared at
- * the far side of the selection from the cursor. The focus boundary is the
- * moving end of a drag in either direction.
+ * SECOND choice now, behind `visibleSelectionEdge` — the caret is where the drag
+ * ended, which is not always where the highlight ends (a release over a
+ * `user-select: none` button, a stop at a soft-wrap boundary; see that module).
+ * It stays as the fallback because it is the only answer that needs no layout
+ * of its own, so it still covers the cases the walk cannot measure.
+ *
+ * Both keep the same property, and it is why neither is `getClientRects()` on
+ * the range: those come in DOCUMENT order, so the last one is the selection's
+ * rightmost/lowest end — for a right-to-left (backward) drag that is where the
+ * pointer STARTED, and the pill appeared at the far side of the selection from
+ * the cursor.
  *
  * Returns null when the caret has no geometry (an element-node boundary, a
  * detached node), leaving the caller on its document-order fallback.
@@ -184,14 +190,36 @@ function caretRectOf(focus: FocusPoint): DOMRect | null {
         const r = document.createRange();
         r.setStart(focus.node, focus.offset);
         r.collapse(true);
-        // A caret at a soft-wrap boundary reports two rects (end of one line,
-        // start of the next); the first matches where the range itself ends.
         const rect = r.getClientRects()[0] ?? r.getBoundingClientRect();
         // A caret is zero-WIDTH by definition, so only height decides here.
         return rect && rect.height > 0 ? rect : null;
     } catch {
         return null;
     }
+}
+
+/**
+ * Did the drag end at the range's START? `getRangeAt` always answers in document
+ * order, so the focus boundary is either exactly its start (backward) or exactly
+ * its end (forward) — identity is enough, and it beats carrying one more piece
+ * of state through the anchor and its re-measure on scroll.
+ */
+function isBackward(range: Range, focus: FocusPoint | null): boolean {
+    return !!focus
+        && focus.node === range.startContainer
+        && focus.offset === range.startOffset;
+}
+
+/** Enclosing box of rects already filtered down to the ones worth pointing at. */
+function unionRects(rects: DOMRect[]): DOMRect {
+    let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+    for (const r of rects) {
+        left = Math.min(left, r.left);
+        top = Math.min(top, r.top);
+        right = Math.max(right, r.right);
+        bottom = Math.max(bottom, r.bottom);
+    }
+    return new DOMRect(left, top, right - left, bottom - top);
 }
 
 /** Which surface a pointer event landed on — each one is handled differently. */
@@ -357,9 +385,9 @@ function startController(domain: string): () => void {
         // detached range) has nothing to point at.
         if (!spot || (spot.width === 0 && spot.height === 0)) return null;
 
-        // `right` is the caret itself on the focus path and the selection's end
-        // on the fallback; centring the icon on it puts the pill under the
-        // pointer either way.
+        // `right` is a zero-width edge on both measured paths (the last visible
+        // character, or the caret) and the selection's end on the fallback;
+        // centring the icon on it puts the pill under the pointer either way.
         let x = spot.right - ICON_PX / 2;
         x = Math.max(MARGIN_PX, Math.min(x, window.innerWidth - PILL_MAX_W - MARGIN_PX));
 
@@ -382,16 +410,32 @@ function startController(domain: string): () => void {
         };
     };
 
-    /** Anchor for a DOM selection — the caret at its focus, see `caretRectOf`. */
+    /**
+     * Anchor for a DOM selection — the visible end of the highlight on the side
+     * the drag finished, see `visibleSelectionEdge`, with the focus caret and
+     * then the document-order rects behind it.
+     */
     const anchorFor = (
         range: Range,
         text: string,
         focus: FocusPoint | null,
         inPopup: boolean,
     ): IconAnchor | null => {
-        const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0 || r.height > 0);
-        const bounding = range.getBoundingClientRect();
-        const spot = (focus && caretRectOf(focus)) ?? rects[rects.length - 1] ?? bounding;
+        const { scrollX, scrollY } = window;
+        // Parked rects are dropped here rather than in `place`: an `.sr-only`
+        // copy caught inside the selection would otherwise stretch `bounding`
+        // ten thousand px wide, and that box is both the pill's last-resort spot
+        // and the anchor the translate card opens against.
+        const rects = Array.from(range.getClientRects()).filter(
+            (r) => (r.width > 0 || r.height > 0) && !isParkedOffDocument(r, scrollX, scrollY),
+        );
+        // The raw box when EVERY rect is parked, so `place`'s own gate still
+        // recognises a selection nobody can see and offers nothing.
+        const bounding = rects.length ? unionRects(rects) : range.getBoundingClientRect();
+        const spot = visibleSelectionEdge(range, isBackward(range, focus))
+            ?? (focus && caretRectOf(focus))
+            ?? rects[rects.length - 1]
+            ?? bounding;
         return place(spot, bounding, text, range.cloneRange(), inPopup);
     };
 
