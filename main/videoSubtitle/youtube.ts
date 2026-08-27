@@ -266,9 +266,28 @@ export class YoutubeAdapter implements VideoSiteAdapter {
 
 /**
  * Parse YouTube's `fmt=json3` timedtext payload into a flat timed word stream.
- * ASR tracks: one event per caption line, one seg per word with `tOffsetMs`.
- * Manual tracks: one seg per cue (no offsets) — becomes one "word" with
- * `cueEnd` set so the segmenter can use cue edges as break candidates.
+ *
+ * A `seg` is NOT a word — it is however much text the source happened to ship
+ * in one timed chunk, and the three shapes in the wild differ by an order of
+ * magnitude:
+ *   - ASR tracks: one seg per word, each carrying its leading space
+ *     (`"you're"`, `" about"`, `" to"`).
+ *   - Manual tracks: one seg per cue, no offsets — the whole line at once.
+ *   - Broadcast closed-caption tracks ("English - CC1" / "- DTVCC1", i.e.
+ *     CEA-608/708 relayed from a TV feed, common on live streams): **two
+ *     characters per seg**, one per video frame, because 608 encodes exactly
+ *     two characters per control byte pair. Measured on a live feed: 33,668
+ *     segs, 29,016 of length 2 and 4,652 of length 1, none longer.
+ *
+ * So words are recovered by splitting on WHITESPACE, not by trusting the seg
+ * boundaries. The whitespace inside a seg is the only record of where the real
+ * word boundaries are: trimming each seg and letting `joinWords` re-insert a
+ * space between every one of them turned "and as you can see in the" into
+ * "an d as y ou c an s ee i n th e" on the CC tracks above.
+ *
+ * A word's `startMs` comes from the seg it starts in and its `endMs` from the
+ * one it ends in; `cueEnd` lands on the last word of each event so the
+ * segmenter can still use source cue edges as break candidates.
  */
 export function parseJson3(json: any): SubtitleWord[] {
     const events: any[] = Array.isArray(json?.events) ? json.events : [];
@@ -281,22 +300,35 @@ export function parseJson3(json: any): SubtitleWord[] {
         if (ev.aAppend) continue;
         const base = typeof ev.tStartMs === "number" ? ev.tStartMs : 0;
         const dur = typeof ev.dDurMs === "number" ? ev.dDurMs : 0;
+        const firstOfEvent = words.length;
+        let open: SubtitleWord | null = null;
         for (let i = 0; i < segs.length; i++) {
             const raw = typeof segs[i]?.utf8 === "string" ? (segs[i].utf8 as string) : "";
-            const text = raw.replace(/\n/g, " ").trim();
-            if (text === "") continue;
+            if (raw === "") continue;
             const start = base + (typeof segs[i].tOffsetMs === "number" ? segs[i].tOffsetMs : 0);
             const nextOffset = segs
                 .slice(i + 1)
                 .find((s) => typeof s?.tOffsetMs === "number")?.tOffsetMs as number | undefined;
             const end = nextOffset !== undefined ? base + nextOffset : base + dur;
-            words.push({
-                startMs: start,
-                endMs: Math.max(end, start),
-                text,
-                cueEnd: i === segs.length - 1,
-            });
+            // A newline is a line wrap inside one cue — a word boundary, same
+            // as a space. Runs of either close the word being built.
+            for (const part of raw.match(/\s+|\S+/g) ?? []) {
+                if (/^\s/.test(part)) {
+                    open = null;
+                    continue;
+                }
+                if (open) {
+                    open.text += part;
+                    open.endMs = Math.max(end, open.startMs);
+                } else {
+                    open = { startMs: start, endMs: Math.max(end, start), text: part };
+                    words.push(open);
+                }
+            }
         }
+        // The source cue ends after whatever word came last. Not `i === last`:
+        // a trailing whitespace-only seg would leave the whole event unmarked.
+        if (words.length > firstOfEvent) words[words.length - 1].cueEnd = true;
     }
     words.sort((a, b) => a.startMs - b.startMs);
     // Some manual tracks ship events with no `dDurMs` at all (observed live),
