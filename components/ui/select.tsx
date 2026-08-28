@@ -31,7 +31,10 @@ export const SelectTrigger = forwardRef<ElementRef<typeof SelectPrimitive.Trigge
         'data-[state=open]:border-accent',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40',
         'disabled:cursor-not-allowed disabled:opacity-50',
-        '[&>span]:flex-1 [&>span]:truncate [&>span]:text-left',
+        // min-w-0 too: the value span is a flex item, and a flex item's
+        // automatic minimum size is its content, so without this it refuses to
+        // shrink and `truncate` never gets to draw its ellipsis.
+        '[&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>span]:text-left',
         className,
       )}
       {...props}
@@ -61,7 +64,13 @@ export const SelectContent = forwardRef<ElementRef<typeof SelectPrimitive.Conten
           'relative z-[2147483700] max-h-60 overflow-hidden rounded-lg border border-line bg-surface p-1 text-ink shadow-[0_12px_28px_-8px_rgba(0,0,0,.6),0_0_0_0.5px_rgba(255,255,255,.04)]',
           'data-[state=open]:animate-in data-[state=closed]:animate-out',
           'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
-          position === 'popper' && 'w-[var(--radix-select-trigger-width)]',
+          // The dropdown grows to fit its longest item rather than being
+          // pinned to the trigger's width — a narrow trigger (the popup's
+          // half-width pickers) must not force its options to be cut off.
+          // Capped to the viewport so it can never overflow the popup; the
+          // per-item `truncate` remains the fallback past that cap.
+          position === 'popper' &&
+            'min-w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-16px)]',
           className,
         )}
         {...props}
@@ -88,7 +97,7 @@ export const SelectItem = forwardRef<ElementRef<typeof SelectPrimitive.Item>, It
       )}
       {...props}
     >
-      <span className="flex-1 truncate text-left">
+      <span className="min-w-0 flex-1 truncate text-left">
         <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
       </span>
       <SelectPrimitive.ItemIndicator>

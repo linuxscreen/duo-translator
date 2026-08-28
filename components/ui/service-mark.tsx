@@ -4,8 +4,8 @@ type Brand = {
   ch: string;
 };
 
-export function ServiceMark({ id }: { id: string }) {
+export function ServiceMark({ id, size = 24 }: { id: string; size?: number }) {
   return (
-    <img width={24} height={24} src={'/services/' + id + '.svg?url'} />
+    <img width={size} height={size} src={'/services/' + id + '.svg?url'} />
   );
 }
