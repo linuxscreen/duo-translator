@@ -546,6 +546,24 @@ export enum CONFIG_KEY {
     // last-fetch metadata. The fetched rule text itself is NOT here (and not
     // synced): it lives under the `__site_rule_cache` internal key.
     SITE_RULE_SUBSCRIPTIONS = 'siteRuleSubscriptions',
+
+    // --- Customization (main/customShortcut/) -------------------------------
+    // Master switch for the custom-gesture card. Off by default and strictly
+    // opt-in: these gestures claim keys and mouse buttons the page may use
+    // itself (a middle-button gesture has to suppress autoscroll / open-in-new-
+    // tab to be usable at all). They COEXIST with the browser `commands`
+    // shortcuts and the double-tap modifier — nothing is replaced.
+    CUSTOM_SHORTCUT_SWITCH = 'customShortcutSwitch',
+    // CustomShortcut[] — the user's own gesture definitions. The built-in
+    // gestures are NOT stored here; bindings reference them by id (see
+    // BUILTIN_SHORTCUTS in main/customShortcut/types.ts) so their labels stay
+    // in the current interface language.
+    CUSTOM_SHORTCUT_LIST = 'customShortcutList',
+    // ShortcutBinding[] — which gesture runs which action.
+    CUSTOM_SHORTCUT_BINDINGS = 'customShortcutBindings',
+    // Customization › selection-translate popup. Reserved: the card and its
+    // switch exist and persist, the settings inside it are not designed yet.
+    CUSTOM_SELECTION_POPUP_SWITCH = 'customSelectionPopupSwitch',
 }
 
 /** Visual variants for the page floating translation control. */
@@ -680,6 +698,12 @@ export const DEFAULT_VALUE = {
     SITE_RULE_USER: [] as unknown[],
     SITE_RULE_DISABLED_IDS: [] as string[],
     SITE_RULE_SUBSCRIPTIONS: [] as unknown[],
+    CUSTOM_SHORTCUT_SWITCH: false,
+    CUSTOM_SELECTION_POPUP_SWITCH: false,
+    // Module-level constants, same reason as the three keys above: `useConfig`
+    // feeds its default straight into useSyncExternalStore.
+    CUSTOM_SHORTCUT_LIST: [] as unknown[],
+    CUSTOM_SHORTCUT_BINDINGS: [] as unknown[],
 } as const;
 
 export const IS_PROD = import.meta.env.PROD;

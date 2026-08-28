@@ -23,8 +23,20 @@ import { detectLanguage, getElementTextContent } from "@/main/lang";
 import { parseTranslateServiceKey, startTranslate, TranslateServiceChoice } from "./aiWriting/translateRunner";
 import { applyTextToTarget } from "./aiWriting/applyText";
 import { getElementText } from "@/utils/dom";
-import { readConfig } from "@/utils/reactiveConfig";
+import { readConfig, watchConfig } from "@/utils/reactiveConfig";
 import { getDomainWithPortFromUrl } from "@/utils/url";
+import { createGestureEngine } from "@/main/customShortcut/gestureEngine";
+import {
+    CUSTOM_SHORTCUT_ACTION,
+    MOUSE_MIDDLE_KEY,
+    actionsForGesture,
+    gestureKeyOf,
+    normalizeBindings,
+    normalizeCustomShortcuts,
+    resolveGestures,
+    type CustomShortcut,
+    type ShortcutBinding,
+} from "@/main/customShortcut/types";
 import { getAiTranslateService, getTranslateService } from "@/utils/service";
 import { buildTranslationCss } from "@/main/css";
 import { TRANSLATE_INDICATOR_CSS } from "@/main/translateIndicator/indicatorCss";
@@ -228,6 +240,68 @@ export async function content() {
             lastModifierTapTime = now;
         }
     }, true);
+
+    // Customization › custom shortcuts. A second, independent gesture layer
+    // that COEXISTS with the double-tap above and with the browser commands —
+    // it never consumes their input, and it ships off.
+    //
+    // Recognition is synchronous (timing is the whole point) and only the
+    // ACTION waits for `startupReady`, exactly like the double-tap block. The
+    // watch list is a live view of config, so saving in Options arms or
+    // disarms a gesture on already-open pages with no reload.
+    let customShortcutBindings: ShortcutBinding[] = []
+    const customShortcuts = createGestureEngine((shortcutId) => {
+        void runCustomShortcutGesture(shortcutId)
+    })
+    {
+        let enabled = false
+        let list: CustomShortcut[] = []
+        const refresh = () => {
+            customShortcuts.setGestures(enabled ? resolveGestures(list, customShortcutBindings) : [])
+        }
+        watchConfig<boolean>(CONFIG_KEY.CUSTOM_SHORTCUT_SWITCH, (v) => { enabled = !!v; refresh() })
+        watchConfig<unknown[]>(CONFIG_KEY.CUSTOM_SHORTCUT_LIST, (v) => { list = normalizeCustomShortcuts(v); refresh() })
+        watchConfig<unknown[]>(CONFIG_KEY.CUSTOM_SHORTCUT_BINDINGS, (v) => { customShortcutBindings = normalizeBindings(v); refresh() })
+    }
+    // Set when a middle-button press was claimed by a gesture, so the auxclick
+    // that follows can be suppressed too — open-link-in-new-tab is dispatched
+    // from auxclick, which a preventDefault on mousedown does NOT cancel.
+    let middleClaimed = false
+    document.addEventListener('keydown', (e) => {
+        // Auto-repeat is not a second press. Every key is forwarded, part of a
+        // configured combo or not: a key from outside the combo is precisely
+        // what has to end it, which is how real shortcuts (Ctrl+C) stay out of
+        // the recognizer.
+        if (e.repeat) return
+        customShortcuts.press(gestureKeyOf(e), e)
+    }, true);
+    document.addEventListener('keyup', (e) => {
+        customShortcuts.release(gestureKeyOf(e), e)
+    }, true);
+    document.addEventListener('mousedown', (e) => {
+        if (e.button !== 1) return
+        // Suppress the browser's own middle-button behaviour — autoscroll on
+        // Windows, primary-selection paste on Linux — but ONLY for a press that
+        // actually completes a configured combo. Asking about the whole combo
+        // rather than the button alone is what lets a `Ctrl+middle` gesture
+        // leave a plain middle-click doing what the page expects.
+        if (!customShortcuts.wouldActivate(MOUSE_MIDDLE_KEY, e)) return
+        e.preventDefault()
+        middleClaimed = true
+        customShortcuts.press(MOUSE_MIDDLE_KEY, e)
+    }, true);
+    document.addEventListener('mouseup', (e) => {
+        if (e.button !== 1) return
+        customShortcuts.release(MOUSE_MIDDLE_KEY, e)
+    }, true);
+    document.addEventListener('auxclick', (e) => {
+        if (e.button !== 1 || !middleClaimed) return
+        middleClaimed = false
+        e.preventDefault()
+    }, true);
+    // A press whose release happens outside the page (alt-tab, a native menu)
+    // would otherwise stay latched and pair with the next press.
+    window.addEventListener('blur', () => customShortcuts.reset());
 
     // add 'Translate/Restore this paragraph' menu when mouse is over the text of
     // a paragraph element and right mouse clicked
@@ -1212,6 +1286,51 @@ export async function content() {
         if (doParagraph) {
             toggleTranslateParagraph();
         }
+    }
+
+    /**
+     * A custom gesture fired. Runs the actions bound to it in the order the
+     * user arranged them, stopping at the first whose precondition holds — the
+     * same "one action per gesture" rule as the double-tap handler, except the
+     * priority is the user's row order rather than a fixed one. A gesture bound
+     * only once (the normal case) therefore just runs that action.
+     */
+    async function runCustomShortcutGesture(shortcutId: string) {
+        const actions = actionsForGesture(shortcutId, customShortcutBindings)
+        if (actions.length === 0) return
+        // The gesture is recognized immediately; only the action waits for the
+        // pipeline, so a gesture on a still-initializing page acts as soon as
+        // it can instead of doing nothing.
+        await startupReady
+        if (startupAborted) return
+        for (const action of actions) {
+            if (runCustomShortcutAction(action)) return
+        }
+    }
+
+    /** @returns whether the action's precondition was met and it actually ran. */
+    function runCustomShortcutAction(action: CUSTOM_SHORTCUT_ACTION): boolean {
+        switch (action) {
+            case CUSTOM_SHORTCUT_ACTION.TRANSLATE_SELECTION: {
+                const { selection, text, inPopup } = currentTranslateSelection();
+                if (!text) return false
+                translateSelection(text, selection, inPopup);
+                return true
+            }
+            case CUSTOM_SHORTCUT_ACTION.TRANSLATE_INPUT: {
+                const active = deepActiveElement();
+                if (!(active instanceof HTMLElement) || !IsEditableElement(active)) return false
+                lastEditableElement = active;
+                void translateInputBox();
+                return true
+            }
+            case CUSTOM_SHORTCUT_ACTION.TOGGLE_PARAGRAPH:
+                // Always "runs": it falls back to whole-container behaviour when
+                // the pointer is over no unit, so it never silently does nothing.
+                toggleTranslateParagraph();
+                return true
+        }
+        return false
     }
 
     function translateSelectionInputBox() {

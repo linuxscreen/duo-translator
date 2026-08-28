@@ -63,6 +63,11 @@ function ensureRegistry(): Record<string, ElementIdentity> {
         [cfg(CONFIG_KEY.SITE_RULE_DISABLED_IDS)]: bySelf,
         [cfg(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES)]: bySelf,
         [cfg(CONFIG_KEY.NO_TRANSLATE_LANGUAGES)]: bySelf,
+        // Custom gesture definitions and their action bindings — both plain
+        // arrays of `{id, ...}` records, so two devices each adding one keeps
+        // both instead of the later write replacing the array wholesale.
+        [cfg(CONFIG_KEY.CUSTOM_SHORTCUT_LIST)]: byField('id'),
+        [cfg(CONFIG_KEY.CUSTOM_SHORTCUT_BINDINGS)]: byField('id'),
     };
     PREFIX = [
         // rule_<host> — per-domain no-translate CSS selectors (string[]).

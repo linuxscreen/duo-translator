@@ -1,4 +1,4 @@
-import { ExternalLink, Globe, KeyRound, Languages, SlidersHorizontal, Sparkles, Component, Captions } from 'lucide-react';
+import { ExternalLink, Globe, KeyRound, Languages, SlidersHorizontal, Sparkles, Component, Captions, Wand2 } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Translation, useTranslation } from 'react-i18next';
 import { cn } from '@/lib/cn';
@@ -12,9 +12,10 @@ import { AiWritingPage } from './pages/AiWritingPage';
 import { VideoSubtitlePage } from './pages/VideoSubtitlePage';
 import { browser } from 'wxt/browser';
 import { ServicesPage } from './pages/ServicesPage';
+import { CustomizationPage } from './pages/CustomizationPage';
 import { APP_NAME, APP_NAME_PASCAL_CASE } from '@/main/constants';
 
-type TabId = 'settings' | 'services' | 'translation' | 'aiWriting' | 'videoSubtitle' | 'shortcuts';
+type TabId = 'settings' | 'services' | 'translation' | 'aiWriting' | 'videoSubtitle' | 'shortcuts' | 'customization';
 
 type Tab = {
   id: TabId;
@@ -22,7 +23,7 @@ type Tab = {
   icon: ReactNode;
 };
 
-const VALID_TABS: TabId[] = ['settings', 'services', 'translation', 'aiWriting', 'videoSubtitle', 'shortcuts'];
+const VALID_TABS: TabId[] = ['settings', 'services', 'translation', 'aiWriting', 'videoSubtitle', 'shortcuts', 'customization'];
 
 /** Sub-pages, addressed as `#<tab>/<sub>`. Only the Translation tab has one so far. */
 type SubId = 'siteRules';
@@ -99,6 +100,11 @@ export default function App() {
       id: 'shortcuts',
       label: t('shortcuts', 'Shortcuts'),
       icon: <KeyRound className="h-4 w-4" strokeWidth={1.6} />,
+    },
+    {
+      id: 'customization',
+      label: t('customization', 'Customization'),
+      icon: <Wand2 className="h-4 w-4" strokeWidth={1.6} />,
     },
   ];
 
@@ -191,6 +197,7 @@ export default function App() {
           {tab === 'aiWriting' && <AiWritingPage />}
           {tab === 'videoSubtitle' && <VideoSubtitlePage />}
           {tab === 'shortcuts' && <ShortcutsPage />}
+          {tab === 'customization' && <CustomizationPage />}
         </main>
       </div>
     </div>
