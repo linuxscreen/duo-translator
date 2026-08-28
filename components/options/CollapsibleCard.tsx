@@ -13,6 +13,13 @@ type Props = {
   onEnabledChange: (v: boolean) => void;
   /** Collapsed unless told otherwise — the Customization cards all start closed. */
   defaultOpen?: boolean;
+  /**
+   * Control shown in the header, left of the switch, ONLY while the card is
+   * open. Meant for actions that operate on what the card contains (e.g.
+   * "Restore defaults"): offering one next to a collapsed card would ask the
+   * user to act on settings they cannot see.
+   */
+  action?: ReactNode;
   children: ReactNode;
 };
 
@@ -35,6 +42,7 @@ export function CollapsibleCard({
   enabled,
   onEnabledChange,
   defaultOpen = false,
+  action,
   children,
 }: Props) {
   const { t } = useTranslation();
@@ -65,6 +73,10 @@ export function CollapsibleCard({
             {hint && <span className="mt-0.5 block text-[12px] text-ink-soft">{hint}</span>}
           </span>
         </button>
+        {/* A sibling of the toggle button, not inside it — nesting an action in
+            the header's own <button> would make every click on it collapse the
+            card as well. */}
+        {open && action}
         <Switch checked={enabled} onCheckedChange={onEnabledChange} />
       </div>
 

@@ -1,27 +1,25 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { Check, ChevronRight, Copy, Loader2, Pin, Volume2, X } from "lucide-react";
 import { loadTailwindIntoShadow } from "./shadowStyle";
 import { attachOwnShadow, isInOwnUi } from "@/main/dom/shadowRoots";
 import { isInSelectableSurface } from "@/main/dom/selectableSurfaces";
 import { deepContains } from "@/main/dom/shadowTraversal";
 import { bindThemeToElement } from "@/utils/theme";
 import { t, useLang } from "./i18n";
-import { useCopyFeedback } from "./useCopyFeedback";
 import { useTts } from "./useTts";
+import { SelectionCard, type TranslationRun } from "./SelectionCard";
 import {
-    startTranslate,
-    parseTranslateServiceKey,
-    buildTranslateServiceKey,
-    type TranslateServiceChoice,
-} from "./translateRunner";
+    loadSelectionPopupPrefs,
+    resolveSelectionServices,
+    useSelectionPopupPrefs,
+    type SelectionPopupPrefs,
+} from "./selectionPopupPrefs";
+import { startTranslate, parseTranslateServiceKey } from "./translateRunner";
 import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
-import { browserTargetLanguage, CONFIG_KEY, LANGUAGES, LANGUAGES_MAP } from "@/main/constants";
+import { browserTargetLanguage, CONFIG_KEY, LANGUAGES_MAP } from "@/main/constants";
 import { getTextLanguage } from "@/main/lang";
 import { getConfig, setConfig } from "@/utils/db";
 import { buildServiceOptions, getTranslateService, type ServiceOption } from "@/utils/service";
-import { DUO_LOGO_SVG } from "@/main/floatBall/logo";
-import { DictView } from "./DictView";
 import { lookupDict } from "@/main/dict/dictClient";
 import { chooseDictEntry, dictProvidersFor, isDictWord } from "@/main/dict/select";
 import type { DictEntry, DictProvider } from "@/main/dict/types";
@@ -284,18 +282,6 @@ interface ManualBox {
     height: number | null;
 }
 
-/** The eight resize handles, keyed by the compass directions they move. */
-const RESIZE_HANDLES: { dir: string; className: string; cursor: string }[] = [
-    { dir: "n", className: "top-0 left-2 right-2 h-1.5", cursor: "ns-resize" },
-    { dir: "s", className: "bottom-0 left-2 right-2 h-1.5", cursor: "ns-resize" },
-    { dir: "w", className: "left-0 top-2 bottom-2 w-1.5", cursor: "ew-resize" },
-    { dir: "e", className: "right-0 top-2 bottom-2 w-1.5", cursor: "ew-resize" },
-    { dir: "nw", className: "top-0 left-0 h-2.5 w-2.5", cursor: "nwse-resize" },
-    { dir: "se", className: "bottom-0 right-0 h-2.5 w-2.5", cursor: "nwse-resize" },
-    { dir: "ne", className: "top-0 right-0 h-2.5 w-2.5", cursor: "nesw-resize" },
-    { dir: "sw", className: "bottom-0 left-0 h-2.5 w-2.5", cursor: "nesw-resize" },
-];
-
 /**
  * Apply one pointer delta to a resize, keeping the box inside the viewport and
  * above the minimums. The edge being dragged is the one that moves: pushing a
@@ -334,127 +320,46 @@ function resizeBox(
 }
 
 // ---------------------------------------------------------------------------
-// One-line vs multi-line — which layout a text block gets
-// ---------------------------------------------------------------------------
-
-/**
- * Width the inline play+copy cluster takes off a row: two 24px buttons with a
- * 2px gap, plus the 8px gap to the text.
- */
-const INLINE_ACTIONS_W = 58;
-
-/**
- * Does `text` need more than one line at the width it would have with the
- * buttons sitting inline next to it?
- *
- * Measured on an INVISIBLE one-line probe, not on the rendered text. The answer
- * decides the layout, and the layout decides the rendered text's width — so
- * measuring the real element lets the two chase each other: the buttons move to
- * their own row, the text gets ~58px wider, now it fits on one line, the
- * buttons come back inline, it overflows again… An absolutely positioned
- * `white-space: pre` copy has the text's natural single-line width regardless
- * of which layout is currently on screen, which breaks that loop.
- *
- * `cardWidth` is a dependency because the card is resizable; the probe itself
- * is width-independent, but the row it is compared against is not.
- */
-function useNeedsOwnRow(text: string, cardWidth: number) {
-    const rowRef = useRef<HTMLDivElement>(null);
-    const probeRef = useRef<HTMLSpanElement>(null);
-    const [needsOwnRow, setNeedsOwnRow] = useState(false);
-    useLayoutEffect(() => {
-        const row = rowRef.current;
-        const probe = probeRef.current;
-        if (!row || !probe || text === "") {
-            setNeedsOwnRow(false);
-            return;
-        }
-        // `clientWidth` is the padding box, so the row's own padding has to come
-        // off before comparing — otherwise every text gets 24px of slack it
-        // does not actually have.
-        const cs = getComputedStyle(row);
-        const available =
-            row.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - INLINE_ACTIONS_W;
-        // An explicit newline is multi-line whatever the width says — the probe
-        // is `pre`, so it would only report the longest line.
-        setNeedsOwnRow(text.includes("\n") || probe.getBoundingClientRect().width > available);
-    }, [text, cardWidth]);
-    return { rowRef, probeRef, needsOwnRow };
-}
-
-/** The hidden measuring copy — see {@link useNeedsOwnRow}. */
-function LineProbe({ text, probeRef }: { text: string; probeRef: React.RefObject<HTMLSpanElement> }) {
-    return (
-        <span
-            ref={probeRef}
-            aria-hidden="true"
-            // The probe is a one-line `pre` copy, so its box is as wide as the
-            // whole text — which is exactly what makes it measurable, and also
-            // what would hand the scrolling body a horizontal scrollbar. It
-            // must NOT be shrunk (a zero-width box measures zero): the row it
-            // sits in is `relative overflow-hidden`, so it is its containing
-            // block AND clips it, and the overflow never reaches the body.
-            className="invisible absolute left-0 top-0 whitespace-pre pointer-events-none text-[13px] leading-normal"
-        >
-            {text}
-        </span>
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-
-/** Small play + copy button cluster shared by the original / translation rows. */
-function AudioActions({
-    ttsKey,
-    text,
-    lang,
-    tts,
-}: {
-    ttsKey: string;
-    text: string;
-    lang: string;
-    tts: ReturnType<typeof useTts>;
-}) {
-    const [copied, copy] = useCopyFeedback();
-    const playing = tts.playingKey === ttsKey;
-    const disabled = !text.trim();
-    const iconBtn =
-        "h-6 w-6 inline-flex items-center justify-center rounded hover:bg-hover-3 disabled:opacity-40 disabled:hover:bg-transparent";
-    return (
-        <div className="flex items-center gap-0.5 shrink-0">
-            <button
-                type="button"
-                disabled={disabled}
-                onClick={() => tts.toggle(ttsKey, text, lang)}
-                title={playing ? t("selectionStopSpeech", "Stop") : t("selectionPlaySpeech", "Play")}
-                aria-label={playing ? t("selectionStopSpeech", "Stop") : t("selectionPlaySpeech", "Play")}
-                className={`${iconBtn} ${playing ? "text-accent" : "text-ink-soft"}`}
-            >
-                <Volume2 className="h-3.5 w-3.5" />
-            </button>
-            <button
-                type="button"
-                disabled={disabled}
-                onClick={() => copy(text)}
-                title={copied ? t("aiCopied", "Copied") : t("aiCopy", "Copy")}
-                aria-label={copied ? t("aiCopied", "Copied") : t("aiCopy", "Copy")}
-                className={`${iconBtn} ${copied ? "text-success" : "text-ink-soft"}`}
-            >
-                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            </button>
-        </div>
-    );
-}
 
 function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionSeed) => void) => void }) {
     useLang();
     const [open, setOpen] = useState(false);
-    const [output, setOutput] = useState("");
-    const [running, setRunning] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    /**
+     * One entry per service being asked. Single-service mode is a list of one,
+     * so there is exactly one rendering path — the alternative (a scalar plus a
+     * list) would have meant two of everything: two abort paths, two error
+     * paths, two places to forget the streaming state.
+     */
+    const [runs, setRuns] = useState<TranslationRun[]>([]);
     const [pinned, setPinned] = useState(false);
+    /**
+     * The card's settings, in two forms that have to be kept apart.
+     *
+     * `livePrefs` (the hook) cannot await, so it answers with the SHIPPED
+     * DEFAULTS until storage has hydrated. That is fine for reacting to a later
+     * edit and wrong for the first paint: the very first popup of a page load
+     * would draw the stock card — original row, one service, no dictionary
+     * switch honoured — and then snap into the user's actual layout a frame
+     * later. So `prefs` is the awaited answer, seeded at mount, refreshed on
+     * every open, and thereafter kept in step with the hook (which, by the time
+     * it can CHANGE, has certainly been read).
+     *
+     * `prefsRef` mirrors it for the stable `registerOpen` closure and the
+     * header handlers, which must not capture a stale value.
+     */
+    const livePrefs = useSelectionPopupPrefs();
+    const [prefs, setPrefs] = useState<SelectionPopupPrefs | null>(null);
+    const prefsRef = useRef<SelectionPopupPrefs>(livePrefs);
+    /** Has an AWAITED read landed yet? Gates adopting the hook's value. */
+    const prefsResolvedRef = useRef(false);
+
+    const adoptPrefs = useCallback((next: SelectionPopupPrefs) => {
+        prefsResolvedRef.current = true;
+        prefsRef.current = next;
+        setPrefs(next);
+    }, []);
     const [placement, setPlacement] = useState<Placement>({ left: -9999, top: -9999, maxHeight: MIN_HEIGHT });
     // Set once the user moves or resizes the card; cleared on every open.
     const [manual, setManual] = useState<ManualBox | null>(null);
@@ -487,9 +392,13 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
     langOverrideRef.current = langOverride;
 
     const tts = useTts();
-    // Abort handle for the in-flight translate stream; also acts as a run token
-    // so a superseded stream's finally-block can't clobber a newer run's state.
-    const abortRef = useRef<(() => void) | null>(null);
+    // Abort handles for the in-flight streams (one per service), plus a run
+    // token so a superseded batch's deltas and finally-blocks cannot clobber a
+    // newer one's state. The token is what makes this safe with N streams:
+    // comparing against a single stored abort function no longer identifies
+    // "my run" once there is more than one.
+    const abortsRef = useRef<(() => void)[]>([]);
+    const runTokenRef = useRef(0);
     const cardRef = useRef<HTMLDivElement>(null);
     const pinnedRef = useRef(false);
     pinnedRef.current = pinned;
@@ -497,11 +406,16 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
     const viewportRafRef = useRef<number | null>(null);
     const lastAnchorRectRef = useRef<DOMRect | null>(null);
 
+    /** Stop every in-flight stream and invalidate whatever they still deliver. */
+    const abortAll = useCallback(() => {
+        runTokenRef.current++;
+        for (const abort of abortsRef.current) abort();
+        abortsRef.current = [];
+    }, []);
+
     const close = () => {
-        if (abortRef.current) abortRef.current();
-        abortRef.current = null;
+        abortAll();
         tts.stop();
-        setRunning(false);
         setOpen(false);
     };
 
@@ -516,15 +430,27 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         return next;
     }, []);
 
+    // Adopt later edits. Gated on an awaited read having landed: this effect
+    // also runs on mount, when the hook is still on the shipped defaults, and
+    // taking those would reintroduce exactly the first-paint problem the pair
+    // above exists to avoid.
+    useEffect(() => {
+        if (prefsResolvedRef.current) adoptPrefs(livePrefs);
+    }, [livePrefs, adoptPrefs]);
+
     // Load the page defaults / service picker list once, plus the persisted
     // header overrides so a previously chosen service / language is restored.
+    // The card's own settings are seeded here too, so the first open normally
+    // finds them already resolved instead of waiting on storage.
     useEffect(() => {
         (async () => {
-            const [, svc, lng] = await Promise.all([
+            const [, svc, lng, cardPrefs] = await Promise.all([
                 refreshPageDefaults(),
                 getConfig(CONFIG_KEY.SELECTION_TRANSLATE_SERVICE),
                 getConfig(CONFIG_KEY.SELECTION_TARGET_LANGUAGE),
+                loadSelectionPopupPrefs(),
             ]);
+            adoptPrefs(cardPrefs);
             const svcVal = typeof svc === "string" && svc ? svc : null;
             const lngVal = typeof lng === "string" && lng ? lng : null;
             serviceOverrideRef.current = svcVal;
@@ -532,48 +458,78 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             setServiceOverride(svcVal);
             setLangOverride(lngVal);
         })();
-    }, [refreshPageDefaults]);
+    }, [refreshPageDefaults, adoptPrefs]);
 
-    // Run (or re-run) the translation for the given text/lang/service.
-    const runTranslate = useCallback((text: string, targetLang: string, choice: TranslateServiceChoice) => {
-        if (abortRef.current) { abortRef.current(); abortRef.current = null; }
-        setOutput("");
-        setError(null);
-        if (!text.trim()) { setRunning(false); return; }
-        setRunning(true);
-        // Regular translators report the detected source language — far more
-        // reliable than franc on a short selection (which can pick a variant
-        // with no Bing voice, silently falling TTS back to Google). Use it for
-        // the original-text playback language when available.
-        const { stream, abort } = startTranslate(text, targetLang, choice, (src) => {
-            if (src && src !== "und") setOrigLang(src);
-        });
-        abortRef.current = abort;
-        const myAbort = abort;
-        (async () => {
-            try {
-                for await (const delta of stream) {
-                    if (abortRef.current !== myAbort) return; // superseded
-                    setOutput((prev) => prev + delta);
-                }
-            } catch (e: any) {
-                if (abortRef.current === myAbort) setError(e?.message || String(e));
-                // `silent`: the popup renders the reason inline (see `error`
-                // below). Only the full console line — incl. the background
-                // stack — is added here, so the failure stays diagnosable after
-                // the popup is closed without double-reporting it on screen.
-                reportRequestError(ERROR_SCOPE.SELECTION_TRANSLATE, e, {
-                    silent: true,
-                    detail: { service: buildTranslateServiceKey(choice), targetLang },
-                });
-            } finally {
-                if (abortRef.current === myAbort) {
-                    setRunning(false);
-                    abortRef.current = null;
-                }
+    /**
+     * Run (or re-run) the translation, once per requested service.
+     *
+     * Every service is asked CONCURRENTLY and each answer lands in its own
+     * slot, so a slow or broken provider neither delays nor hides the others —
+     * the failure is drawn in that one block and the rest keep streaming.
+     */
+    const runTranslate = useCallback(
+        (text: string, targetLang: string, keys: string[], options: ServiceOption[]) => {
+            abortAll();
+            const token = runTokenRef.current;
+            const label = (key: string) => {
+                const o = options.find((x) => x.value === key);
+                return o ? (o.i18nKey ? t(o.i18nKey, o.label) : o.label) : key;
+            };
+            const seedRuns: TranslationRun[] = keys.map((key) => ({
+                key,
+                label: label(key),
+                output: "",
+                running: true,
+                error: null,
+            }));
+            if (!text.trim() || keys.length === 0) {
+                setRuns(seedRuns.map((r) => ({ ...r, running: false })));
+                return;
             }
-        })();
-    }, []);
+            setRuns(seedRuns);
+            // Index rather than key: two entries can never share a key (the
+            // picker is a set), but an index is stable against a re-render that
+            // arrives mid-stream.
+            const patch = (i: number, fn: (r: TranslationRun) => TranslationRun) => {
+                if (runTokenRef.current !== token) return;
+                setRuns((prev) => (prev.length === keys.length ? prev.map((r, j) => (j === i ? fn(r) : r)) : prev));
+            };
+            keys.forEach((key, i) => {
+                // Regular translators report the detected source language — far
+                // more reliable than franc on a short selection (which can pick
+                // a variant with no Bing voice, silently falling TTS back to
+                // Google). Only the FIRST service's answer is taken: with
+                // several of them reporting, the last to arrive would otherwise
+                // win, which is nobody's idea of a preference order.
+                const { stream, abort } = startTranslate(text, targetLang, parseTranslateServiceKey(key), (src) => {
+                    if (i === 0 && src && src !== "und" && runTokenRef.current === token) setOrigLang(src);
+                });
+                abortsRef.current.push(abort);
+                (async () => {
+                    try {
+                        for await (const delta of stream) {
+                            if (runTokenRef.current !== token) return; // superseded
+                            patch(i, (r) => ({ ...r, output: r.output + delta }));
+                        }
+                    } catch (e: any) {
+                        patch(i, (r) => ({ ...r, error: e?.message || String(e) }));
+                        // `silent`: the popup renders the reason inline (in that
+                        // service's own block). Only the full console line —
+                        // incl. the background stack — is added here, so the
+                        // failure stays diagnosable after the popup is closed
+                        // without double-reporting it on screen.
+                        reportRequestError(ERROR_SCOPE.SELECTION_TRANSLATE, e, {
+                            silent: true,
+                            detail: { service: key, targetLang },
+                        });
+                    } finally {
+                        patch(i, (r) => ({ ...r, running: false }));
+                    }
+                })();
+            });
+        },
+        [abortAll],
+    );
 
     /**
      * Look the selection up, when it is a single word.
@@ -639,6 +595,7 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
             setOrigLang(getTextLanguage(s.text) || "und");
             setDictEntries({});
             setDictError(null);
+            setDictLoading(false);
             // A lookup started from inside the card keeps the card's own box:
             // same top-left, same width, height back to auto so it shrink-wraps
             // the new result instead of inheriting the old one's. Freezing the
@@ -667,31 +624,70 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
                 // Re-read the page defaults so a service / language changed in
                 // Options since the last open is picked up. Only awaited to
                 // start the run — the card is already on screen with a spinner.
-                const page = await refreshPageDefaults();
+                //
+                // The card's own settings are read the same way, and NOT taken
+                // from the `prefs` hook: that one answers with the shipped
+                // defaults until storage has hydrated, so the first popup of a
+                // page load would quietly ask one service and skip the
+                // dictionary regardless of what the user configured.
+                const [page, cardPrefs] = await Promise.all([
+                    refreshPageDefaults(),
+                    loadSelectionPopupPrefs(),
+                ]);
+                adoptPrefs(cardPrefs);
                 // Honor the persisted header overrides (null ⇒ follow the page).
-                const svc = serviceOverrideRef.current;
-                const lng = langOverrideRef.current;
-                runTranslate(s.text, lng ?? page.lang, parseTranslateServiceKey(svc ?? page.service));
-                runDict(s.text, lng ?? page.lang);
+                const lng = langOverrideRef.current ?? page.lang;
+                const keys = resolveSelectionServices(
+                    cardPrefs,
+                    page.service,
+                    page.options,
+                    serviceOverrideRef.current,
+                );
+                runTranslate(s.text, lng, keys, page.options);
+                if (cardPrefs.dict) runDict(s.text, lng);
             })();
         });
-    }, [registerOpen, runTranslate, refreshPageDefaults, runDict]);
+    }, [registerOpen, runTranslate, refreshPageDefaults, runDict, adoptPrefs]);
 
     // Mirror the open flag out to whoever spawned the card — see publishOpen.
     useEffect(() => {
         publishOpen(open);
     }, [open]);
 
+    /** Services currently being asked — the picker's checked set, resolved. */
+    const selectedServices = resolveSelectionServices(
+        prefs ?? prefsRef.current,
+        pageDefaults.service,
+        pageDefaults.options,
+        serviceOverride,
+    );
+    const effectiveTargetLang = langOverride ?? pageDefaults.lang;
+
+    /** Single-service mode: `""` restores "follow the page". */
     const onServiceChange = (value: string) => {
         const next = value || null;
         setServiceOverride(next);
         void setConfig(CONFIG_KEY.SELECTION_TRANSLATE_SERVICE, value);
         if (!seed) return;
-        runTranslate(
-            seed.text,
-            langOverride ?? pageDefaults.lang,
-            parseTranslateServiceKey(next ?? pageDefaults.service),
-        );
+        runTranslate(seed.text, effectiveTargetLang, [next ?? pageDefaults.service], pageDefaults.options);
+    };
+
+    /**
+     * Multi-service mode: add / remove one service and re-ask.
+     *
+     * Unchecking the last one is refused rather than allowed and worked around
+     * downstream — a card with no answer in it looks broken, and the resolver
+     * would immediately put the page default back anyway, so the checkbox would
+     * appear to do nothing.
+     */
+    const onToggleService = (key: string) => {
+        const next = selectedServices.includes(key)
+            ? selectedServices.filter((k) => k !== key)
+            : [...selectedServices, key];
+        if (next.length === 0) return;
+        void setConfig(CONFIG_KEY.SELECTION_POPUP_SERVICES, next);
+        if (!seed) return;
+        runTranslate(seed.text, effectiveTargetLang, next, pageDefaults.options);
     };
 
     const onLangChange = (value: string) => {
@@ -699,14 +695,11 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         setLangOverride(next);
         void setConfig(CONFIG_KEY.SELECTION_TARGET_LANGUAGE, value);
         if (!seed) return;
-        runTranslate(
-            seed.text,
-            next ?? pageDefaults.lang,
-            parseTranslateServiceKey(serviceOverride ?? pageDefaults.service),
-        );
+        const lng = next ?? pageDefaults.lang;
+        runTranslate(seed.text, lng, selectedServices, pageDefaults.options);
         // The target language picks the dictionary provider as well as the
         // language its glosses are written in, so this is a fresh lookup.
-        runDict(seed.text, next ?? pageDefaults.lang);
+        if (prefsRef.current.dict) runDict(seed.text, lng);
     };
 
     // Esc always closes (even when pinned).
@@ -755,21 +748,10 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         };
     }, [open]);
 
-    // ---- Text block layout -------------------------------------------------
-    // Both blocks put the play/copy buttons inline while their text fits on one
-    // line, and give them a row of their own once it doesn't.
+    // The card is resizable, and every text block's one-line/multi-line decision
+    // is made against the current width — see useNeedsOwnRow in SelectionCard.
     const origText = seed?.text ?? "";
     const cardWidth = manual?.width ?? POPUP_WIDTH;
-    const {
-        rowRef: origRow,
-        probeRef: origProbe,
-        needsOwnRow: origNeedsOwnRow,
-    } = useNeedsOwnRow(origText, cardWidth);
-    const {
-        rowRef: transRow,
-        probeRef: transProbe,
-        needsOwnRow: transNeedsOwnRow,
-    } = useNeedsOwnRow(output, cardWidth);
 
     // ---- Move / resize -----------------------------------------------------
     //
@@ -926,7 +908,11 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         setPlacement({ left, top, maxHeight: placement.maxHeight });
     }, [open, manual, placement, sizeTick]);
 
-    if (!open) return null;
+    // Also gated on `prefs`: see the two-form comment above — the card's whole
+    // shape depends on them, so it waits for the real answer rather than
+    // painting a stock card it is about to replace. Only ever a wait on the
+    // first open of a page; later reads resolve from the warm cache.
+    if (!open || !prefs) return null;
 
     const style: React.CSSProperties = manual
         ? {
@@ -952,202 +938,50 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
         };
 
     // "Follow page" labels for the first option of each header dropdown.
-    const followKey = pageDefaults.service;
-    const followServiceOpt = pageDefaults.options.find((o) => o.value === followKey);
+    const followServiceOpt = pageDefaults.options.find((o) => o.value === pageDefaults.service);
     const followServiceName = followServiceOpt
         ? (followServiceOpt.i18nKey ? t(followServiceOpt.i18nKey, followServiceOpt.label) : followServiceOpt.label)
-        : followKey;
+        : pageDefaults.service;
     const followLangMeta = LANGUAGES_MAP.get(pageDefaults.lang);
     const followLangName = followLangMeta ? t(followLangMeta.title, followLangMeta.name) : pageDefaults.lang;
-    const followWith = (name: string) =>
-        t("selectionFollowWeb", "Follow page ({{name}})").replace("{{name}}", name);
 
-    const effectiveTargetLang = langOverride ?? pageDefaults.lang;
     // Whose dictionary entry to show. Decided HERE rather than before the
     // requests: by now the providers have answered and the translation has
     // reported its detected source language, so the choice is made on a known
     // language instead of a guess. `origLang` is the translation's detection
     // (falling back to the local one), used only when Google returned nothing.
     const dictEntry = chooseDictEntry(dictEntries, origLang, effectiveTargetLang);
-    const translationBody = error ? (
-        <span className="text-error">{error}</span>
-    ) : running && !output ? (
-        <span className="inline-flex items-center gap-1.5 text-ink-soft">
-            <Loader2 className="h-3 w-3 animate-spin" /> {t("aiStreaming", "Streaming...")}
-        </span>
-    ) : (
-        output
-    );
-    const selectCls =
-        // Fixed width, NOT `flex-1`: the card is resizable, and a stretching
-        // picker would turn every widening into a pair of ever-longer boxes.
-        // Still shrinkable (`min-w-0`, no `shrink-0`) — at the minimum card
-        // width two rigid 150px boxes would push pin/close out of the header.
-        "h-6 w-[150px] min-w-0 rounded border border-line-strong bg-surface px-1.5 text-[11px] text-ink-2 outline-none focus:border-accent";
 
     return (
-        <div
-            ref={cardRef}
-            className="relative flex flex-col rounded-xl bg-surface/97 border border-line-strong shadow-[0_16px_44px_rgba(0,0,0,0.55)] backdrop-blur-md overflow-hidden"
+        <SelectionCard
+            prefs={prefs}
+            origText={origText}
+            origLang={origLang}
+            origExpanded={origExpanded}
+            onToggleOrigExpanded={() => setOrigExpanded((v) => !v)}
+            runs={runs}
+            targetLang={effectiveTargetLang}
+            dictEntry={dictEntry}
+            dictLoading={dictLoading}
+            dictError={dictError}
+            serviceOptions={pageDefaults.options}
+            serviceValue={serviceOverride ?? ""}
+            onServiceChange={onServiceChange}
+            followServiceLabel={followServiceName}
+            selectedServices={selectedServices}
+            onToggleService={onToggleService}
+            langValue={langOverride ?? ""}
+            onLangChange={onLangChange}
+            followLangLabel={followLangName}
+            pinned={pinned}
+            onTogglePin={() => setPinned((v) => !v)}
+            onClose={close}
+            tts={tts}
+            cardWidth={cardWidth}
+            cardRef={cardRef}
             style={style}
-            onMouseDown={(e) => e.stopPropagation()}
-        >
-            {/* Resize handles — thin strips inset on each edge and corner. They
-                sit above the body so the bottom-right one is grabbable even
-                where the scrollbar is. */}
-            {RESIZE_HANDLES.map((h) => (
-                <div
-                    key={h.dir}
-                    onMouseDown={onResizeMouseDown(h.dir)}
-                    className={`absolute z-20 ${h.className}`}
-                    style={{ cursor: h.cursor }}
-                />
-            ))}
-
-            {/* Header — logo, service + language pickers, then pin/close. Its
-                empty space is the drag surface (hence `cursor-move`). */}
-            <div
-                className="flex items-center gap-1.5 px-3 py-2 border-b border-line-2 bg-surface-2 cursor-move select-none"
-                onMouseDown={onHeaderMouseDown}
-            >
-                <span
-                    aria-hidden="true"
-                    className="block h-4 w-4 shrink-0 mr-2"
-                    // Inlined SVG rather than <img src=chrome-extension://…>:
-                    // the icon files are not in `web_accessible_resources`, so
-                    // a host page cannot load them. Same reason as the float
-                    // ball, which is where this constant comes from.
-                    dangerouslySetInnerHTML={{ __html: DUO_LOGO_SVG }}
-                />
-                <select
-                    value={serviceOverride ?? ""}
-                    onChange={(e) => onServiceChange(e.target.value)}
-                    title={t("translateService", "Translate service")}
-                    className={selectCls}
-                >
-                    <option value="">{followWith(followServiceName)}</option>
-                    {pageDefaults.options.map((o) => (
-                        <option key={o.value} value={o.value}>
-                            {o.i18nKey ? t(o.i18nKey, o.label) : o.label}
-                        </option>
-                    ))}
-                </select>
-                <select
-                    value={langOverride ?? ""}
-                    onChange={(e) => onLangChange(e.target.value)}
-                    title={t("targetLanguage", "Target language")}
-                    className={selectCls}
-                >
-                    <option value="">{followWith(followLangName)}</option>
-                    {LANGUAGES.map((l) => (
-                        <option key={l.value} value={l.value}>
-                            {t(l.title, l.name)}
-                        </option>
-                    ))}
-                </select>
-                <div className="flex items-center gap-0.5 shrink-0 ml-auto">
-                    <button
-                        type="button"
-                        onClick={() => setPinned((v) => !v)}
-                        title={pinned ? t("selectionUnpin", "Unpin") : t("selectionPin", "Pin")}
-                        aria-label={pinned ? t("selectionUnpin", "Unpin") : t("selectionPin", "Pin")}
-                        className={`h-6 w-6 inline-flex items-center justify-center rounded hover:bg-hover-3 ${pinned ? "text-accent" : "text-ink-soft"}`}
-                    >
-                        <Pin className="h-3.5 w-3.5" fill={pinned ? "currentColor" : "none"} />
-                    </button>
-                    <button
-                        type="button"
-                        onClick={close}
-                        title={t("aiClose", "Close")}
-                        aria-label={t("aiClose", "Close")}
-                        className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-hover-3 text-ink-soft"
-                    >
-                        <X className="h-3.5 w-3.5" />
-                    </button>
-                </div>
-            </div>
-
-            {/* Body */}
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-                {/* Original text — always shown. A multi-line original is
-                    clipped to one line with an ellipsis and gets a chevron; a
-                    one-line original keeps the buttons beside it. */}
-                <div ref={origRow} className="relative overflow-hidden px-3 py-2 border-b border-line">
-                    <LineProbe text={origText} probeRef={origProbe} />
-                    {origNeedsOwnRow ? (
-                        <>
-                            <div className="flex items-center gap-1">
-                                <button
-                                    type="button"
-                                    onClick={() => setOrigExpanded((v) => !v)}
-                                    title={origExpanded ? t("collapse", "Collapse") : t("expand", "Expand")}
-                                    aria-label={origExpanded ? t("collapse", "Collapse") : t("expand", "Expand")}
-                                    aria-expanded={origExpanded}
-                                    className="h-6 w-6 inline-flex items-center justify-center rounded text-ink-soft hover:bg-hover-3 hover:text-ink-2"
-                                >
-                                    <ChevronRight
-                                        className={`h-3.5 w-3.5 transition-transform ${origExpanded ? "rotate-90" : ""}`}
-                                    />
-                                </button>
-                                <div className="ml-auto">
-                                    <AudioActions ttsKey="orig" text={origText} lang={origLang} tts={tts} />
-                                </div>
-                            </div>
-                            <div
-                                className={`text-[13px] leading-normal text-ink-2 ${origExpanded ? "whitespace-pre-wrap wrap-break-word" : "truncate"}`}
-                            >
-                                {origText}
-                            </div>
-                        </>
-                    ) : (
-                        <div className="flex items-center gap-2">
-                            <div className="flex-1 min-w-0 truncate text-[13px] leading-normal text-ink-2">
-                                {origText}
-                            </div>
-                            <AudioActions ttsKey="orig" text={origText} lang={origLang} tts={tts} />
-                        </div>
-                    )}
-                </div>
-
-                {/* Translation */}
-                <div ref={transRow} className="relative overflow-hidden px-3 py-2.5">
-                    <LineProbe text={output} probeRef={transProbe} />
-                    {transNeedsOwnRow ? (
-                        <>
-                            <div className="flex justify-end">
-                                <AudioActions ttsKey="trans" text={output} lang={effectiveTargetLang} tts={tts} />
-                            </div>
-                            <div className="text-[13px] leading-normal text-ink whitespace-pre-wrap wrap-break-word">
-                                {translationBody}
-                            </div>
-                        </>
-                    ) : (
-                        <div className="flex items-start gap-2">
-                            <div className="flex-1 min-w-0 text-[13px] leading-normal text-ink whitespace-pre-wrap wrap-break-word">
-                                {translationBody}
-                            </div>
-                            <AudioActions ttsKey="trans" text={output} lang={effectiveTargetLang} tts={tts} />
-                        </div>
-                    )}
-                </div>
-
-                {/* Dictionary — only for single-word selections. Renders nothing
-                    at all when the word has no entry, so ordinary prose
-                    selections look exactly as they did before. */}
-                {(dictLoading || dictError || dictEntry) && (
-                    <DictView
-                        entry={dictEntry}
-                        loading={dictLoading}
-                        error={dictError}
-                        wordLang={origLang}
-                        audio={{
-                            playingKey: tts.playingKey,
-                            playUrl: tts.toggleUrl,
-                            speak: tts.toggle,
-                        }}
-                    />
-                )}
-            </div>
-        </div>
+            onHeaderMouseDown={onHeaderMouseDown}
+            onResizeMouseDown={onResizeMouseDown}
+        />
     );
 }

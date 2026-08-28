@@ -563,7 +563,36 @@ export enum CONFIG_KEY {
     CUSTOM_SHORTCUT_BINDINGS = 'customShortcutBindings',
     // Customization › selection-translate popup. Reserved: the card and its
     // switch exist and persist, the settings inside it are not designed yet.
+    // Customization › selection-translate popup. The card's master switch:
+    // OFF makes every key below inert and the popup renders exactly as it
+    // always has — a master switch that only half-reverts would be worse than
+    // none. The individual defaults reproduce the stock popup too, so the two
+    // agree; the gate exists so a user who configured things can get the stock
+    // card back in one click.
     CUSTOM_SELECTION_POPUP_SWITCH = 'customSelectionPopupSwitch',
+    // Show every selected translate service's answer at once, each labelled.
+    // Turning this on also drops the "Follow page" entry from the picker: the
+    // chosen SET is the answer, and "follow" is a single value.
+    SELECTION_POPUP_MULTI_SERVICE = 'selectionPopupMultiService',
+    // string[] of service keys for the multi-service mode. Its own key rather
+    // than a widened SELECTION_TRANSLATE_SERVICE: that one stores "" for
+    // "follow the page", which has no meaning here, and switching the mode off
+    // must not lose either choice.
+    SELECTION_POPUP_SERVICES = 'selectionPopupServices',
+    // Dictionary panel, and its examples sub-switch. Examples only matter when
+    // the panel itself is shown, hence the nesting in the UI.
+    SELECTION_POPUP_DICT = 'selectionPopupDict',
+    SELECTION_POPUP_DICT_EXAMPLES = 'selectionPopupDictExamples',
+    // The original-text row above the translation.
+    SELECTION_POPUP_SHOW_ORIGINAL = 'selectionPopupShowOriginal',
+    // The four per-row action buttons, independently switchable.
+    SELECTION_POPUP_TRANSLATION_TTS = 'selectionPopupTranslationTts',
+    SELECTION_POPUP_TRANSLATION_COPY = 'selectionPopupTranslationCopy',
+    SELECTION_POPUP_ORIGINAL_TTS = 'selectionPopupOriginalTts',
+    SELECTION_POPUP_ORIGINAL_COPY = 'selectionPopupOriginalCopy',
+    // Move the service / target-language pickers out of the header and behind a
+    // gear button next to the pin.
+    SELECTION_POPUP_HIDE_HEADER_CONFIG = 'selectionPopupHideHeaderConfig',
 }
 
 /** Visual variants for the page floating translation control. */
@@ -700,6 +729,19 @@ export const DEFAULT_VALUE = {
     SITE_RULE_SUBSCRIPTIONS: [] as unknown[],
     CUSTOM_SHORTCUT_SWITCH: false,
     CUSTOM_SELECTION_POPUP_SWITCH: false,
+    // These reproduce the stock popup, so the card's master switch being off
+    // and every option sitting at its default describe the same card.
+    SELECTION_POPUP_MULTI_SERVICE: false,
+    SELECTION_POPUP_DICT: true,
+    SELECTION_POPUP_DICT_EXAMPLES: true,
+    SELECTION_POPUP_SHOW_ORIGINAL: true,
+    SELECTION_POPUP_TRANSLATION_TTS: true,
+    SELECTION_POPUP_TRANSLATION_COPY: true,
+    SELECTION_POPUP_ORIGINAL_TTS: true,
+    SELECTION_POPUP_ORIGINAL_COPY: true,
+    SELECTION_POPUP_HIDE_HEADER_CONFIG: false,
+    // Module-level constant (see NO_TRANSLATE_LANGUAGES).
+    SELECTION_POPUP_SERVICES: [] as string[],
     // Module-level constants, same reason as the three keys above: `useConfig`
     // feeds its default straight into useSyncExternalStore.
     CUSTOM_SHORTCUT_LIST: [] as unknown[],

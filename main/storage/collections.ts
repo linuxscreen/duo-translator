@@ -68,6 +68,8 @@ function ensureRegistry(): Record<string, ElementIdentity> {
         // both instead of the later write replacing the array wholesale.
         [cfg(CONFIG_KEY.CUSTOM_SHORTCUT_LIST)]: byField('id'),
         [cfg(CONFIG_KEY.CUSTOM_SHORTCUT_BINDINGS)]: byField('id'),
+        // Selection-popup multi-service picks — a set of service keys.
+        [cfg(CONFIG_KEY.SELECTION_POPUP_SERVICES)]: bySelf,
     };
     PREFIX = [
         // rule_<host> — per-domain no-translate CSS selectors (string[]).

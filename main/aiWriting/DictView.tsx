@@ -29,6 +29,7 @@ export function DictView({
     wordLang,
     audio,
     standalone = false,
+    showExamples = true,
 }: {
     entry: DictEntry | null;
     loading: boolean;
@@ -42,6 +43,12 @@ export function DictView({
      * would otherwise double up with the card's own border.
      */
     standalone?: boolean;
+    /**
+     * Draw the example sentences. Switchable from Options › Customization for
+     * the selection popup; the subtitle hover panel leaves it at the default,
+     * so that surface is unaffected by the popup's setting.
+     */
+    showExamples?: boolean;
 }) {
     // Standalone: no top separator (the card has its own border) and room on
     // the right for the close button floating over the first row.
@@ -67,7 +74,7 @@ export function DictView({
     }
     if (!entry) return null;
 
-    const examples = entry.examples.slice(0, MAX_EXAMPLES);
+    const examples = showExamples ? entry.examples.slice(0, MAX_EXAMPLES) : [];
     // Providers without recordings (Google) still get a speaker button, driven
     // by the configured TTS voice — the same one the translation rows use.
     const speakFallback = () => audio.speak("dict-word", entry.word, wordLang);

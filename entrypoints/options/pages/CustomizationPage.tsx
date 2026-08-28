@@ -1,7 +1,12 @@
-import { Keyboard, MousePointerClick } from 'lucide-react';
+import { Keyboard, MousePointerClick, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@/components/ui/button';
 import { CollapsibleCard } from '@/components/options/CollapsibleCard';
 import { CustomShortcutCard } from '@/components/options/customization/CustomShortcutCard';
+import {
+  SelectionPopupCard,
+  useSelectionPopupDefaults,
+} from '@/components/options/customization/SelectionPopupCard';
 import { CONFIG_KEY } from '@/main/constants';
 import { setConfig } from '@/utils/db';
 import { useConfig } from '@/utils/reactiveConfig';
@@ -15,6 +20,7 @@ export function CustomizationPage() {
   const { t } = useTranslation();
   const shortcutsOn = useConfig<boolean>(CONFIG_KEY.CUSTOM_SHORTCUT_SWITCH);
   const selectionPopupOn = useConfig<boolean>(CONFIG_KEY.CUSTOM_SELECTION_POPUP_SWITCH);
+  const selectionPopupDefaults = useSelectionPopupDefaults();
 
   return (
     <div className="flex flex-col gap-4">
@@ -30,14 +36,23 @@ export function CustomizationPage() {
 
       <CollapsibleCard
         title={t('customSelectionPopup', 'Selection translate popup')}
-        hint={t('customSelectionPopupHint', 'Customize the card shown after selecting text')}
+        // hint={t('customSelectionPopupHint', 'Customize the card shown after selecting text')}
         icon={<MousePointerClick className="h-3.5 w-3.5" strokeWidth={1.6} />}
         enabled={selectionPopupOn}
         onEnabledChange={(v) => void setConfig(CONFIG_KEY.CUSTOM_SELECTION_POPUP_SWITCH, v)}
+        action={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={selectionPopupDefaults.restore}
+            disabled={!selectionPopupDefaults.dirty}
+          >
+            <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.8} />
+            {t('restoreDefaults', 'Restore defaults')}
+          </Button>
+        }
       >
-        <p className="text-[12px] text-ink-soft">
-          {t('customSelectionPopupReserved', 'Settings for this card are not available yet.')}
-        </p>
+        <SelectionPopupCard />
       </CollapsibleCard>
     </div>
   );
