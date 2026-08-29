@@ -593,6 +593,21 @@ export enum CONFIG_KEY {
     // Move the service / target-language pickers out of the header and behind a
     // gear button next to the pin.
     SELECTION_POPUP_HIDE_HEADER_CONFIG = 'selectionPopupHideHeaderConfig',
+
+    // Customization › extension popup UI. Master switch for the card; OFF makes
+    // every key below inert and the popup shows everything, same contract as
+    // CUSTOM_SELECTION_POPUP_SWITCH.
+    CUSTOM_POPUP_UI_SWITCH = 'customPopupUiSwitch',
+    // Which pieces of the toolbar popup are surfaced. All default true — these
+    // hide UI, they never change what the underlying setting is: hiding the
+    // global switch does not turn the extension off, it only stops offering the
+    // control there (Options still has it).
+    POPUP_SHOW_THEME = 'popupShowTheme',
+    POPUP_SHOW_HELP = 'popupShowHelp',
+    POPUP_SHOW_GLOBAL_SWITCH = 'popupShowGlobalSwitch',
+    POPUP_SHOW_DEFAULT_STRATEGY = 'popupShowDefaultStrategy',
+    POPUP_SHOW_BILINGUAL_HIGHLIGHT = 'popupShowBilingualHighlight',
+    POPUP_SHOW_AI_WRITING = 'popupShowAiWriting',
 }
 
 /** Visual variants for the page floating translation control. */
@@ -740,6 +755,13 @@ export const DEFAULT_VALUE = {
     SELECTION_POPUP_ORIGINAL_TTS: true,
     SELECTION_POPUP_ORIGINAL_COPY: true,
     SELECTION_POPUP_HIDE_HEADER_CONFIG: false,
+    CUSTOM_POPUP_UI_SWITCH: false,
+    POPUP_SHOW_THEME: true,
+    POPUP_SHOW_HELP: true,
+    POPUP_SHOW_GLOBAL_SWITCH: true,
+    POPUP_SHOW_DEFAULT_STRATEGY: true,
+    POPUP_SHOW_BILINGUAL_HIGHLIGHT: true,
+    POPUP_SHOW_AI_WRITING: true,
     // Module-level constant (see NO_TRANSLATE_LANGUAGES).
     SELECTION_POPUP_SERVICES: [] as string[],
     // Module-level constants, same reason as the three keys above: `useConfig`

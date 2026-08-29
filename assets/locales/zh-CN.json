@@ -684,5 +684,7 @@
   "selectionPopupSectionTranslation": "译文",
   "selectionPopupShowDict": "显示字典",
   "selectionPopupPlayButton": "朗读按钮",
-  "selectionPopupCopyButton": "复制按钮"
+  "selectionPopupCopyButton": "复制按钮",
+  "customPopupUi": "扩展弹窗界面",
+  "customPopupUiHint": "点击扩展图标之后弹出的界面"
 }

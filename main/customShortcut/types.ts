@@ -108,6 +108,7 @@ export type ShortcutBinding = {
  */
 export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
     { id: 'holdCtrl', key: 'Control', trigger: GESTURE_TRIGGER.HOLD, count: 0, interval: 0, holdMs: HOLD_MS.def },
+    { id: 'holdAlt', key: 'Alt', trigger: GESTURE_TRIGGER.HOLD, count: 0, interval: 0, holdMs: HOLD_MS.def },
     { id: 'middleClick', key: MOUSE_MIDDLE_KEY, trigger: GESTURE_TRIGGER.CLICK, count: 0, interval: 0, holdMs: 0 },
     { id: 'holdMiddle', key: MOUSE_MIDDLE_KEY, trigger: GESTURE_TRIGGER.HOLD, count: 0, interval: 0, holdMs: HOLD_MS.def },
     { id: 'doubleMiddle', key: MOUSE_MIDDLE_KEY, trigger: GESTURE_TRIGGER.MULTI, count: 2, interval: MULTI_INTERVAL_MS.def, holdMs: 0 },

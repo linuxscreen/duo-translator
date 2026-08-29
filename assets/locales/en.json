@@ -684,5 +684,7 @@
   "selectionPopupSectionTranslation": "Translation",
   "selectionPopupShowDict": "Show dictionary",
   "selectionPopupPlayButton": "Play button",
-  "selectionPopupCopyButton": "Copy button"
+  "selectionPopupCopyButton": "Copy button",
+  "customPopupUi": "Extension popup",
+  "customPopupUiHint": "The panel that opens when you click the extension icon"
 }

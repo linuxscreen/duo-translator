@@ -1,4 +1,4 @@
-import { Keyboard, MousePointerClick, RotateCcw } from 'lucide-react';
+import { AppWindow, Keyboard, MousePointerClick, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { CollapsibleCard } from '@/components/options/CollapsibleCard';
@@ -7,6 +7,7 @@ import {
   SelectionPopupCard,
   useSelectionPopupDefaults,
 } from '@/components/options/customization/SelectionPopupCard';
+import { PopupUiCard, usePopupUiDefaults } from '@/components/options/customization/PopupUiCard';
 import { CONFIG_KEY } from '@/main/constants';
 import { setConfig } from '@/utils/db';
 import { useConfig } from '@/utils/reactiveConfig';
@@ -21,6 +22,18 @@ export function CustomizationPage() {
   const shortcutsOn = useConfig<boolean>(CONFIG_KEY.CUSTOM_SHORTCUT_SWITCH);
   const selectionPopupOn = useConfig<boolean>(CONFIG_KEY.CUSTOM_SELECTION_POPUP_SWITCH);
   const selectionPopupDefaults = useSelectionPopupDefaults();
+  const popupUiOn = useConfig<boolean>(CONFIG_KEY.CUSTOM_POPUP_UI_SWITCH);
+  const popupUiDefaults = usePopupUiDefaults();
+
+  /** The header action shared by the cards that have restorable settings. */
+  function restoreButton({ dirty, restore }: { dirty: boolean; restore: () => void }) {
+    return (
+      <Button variant="outline" size="sm" onClick={restore} disabled={!dirty}>
+        <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.8} />
+        {t('restoreDefaults', 'Restore defaults')}
+      </Button>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -40,19 +53,20 @@ export function CustomizationPage() {
         icon={<MousePointerClick className="h-3.5 w-3.5" strokeWidth={1.6} />}
         enabled={selectionPopupOn}
         onEnabledChange={(v) => void setConfig(CONFIG_KEY.CUSTOM_SELECTION_POPUP_SWITCH, v)}
-        action={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={selectionPopupDefaults.restore}
-            disabled={!selectionPopupDefaults.dirty}
-          >
-            <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.8} />
-            {t('restoreDefaults', 'Restore defaults')}
-          </Button>
-        }
+        action={restoreButton(selectionPopupDefaults)}
       >
         <SelectionPopupCard />
+      </CollapsibleCard>
+
+      <CollapsibleCard
+        title={t('customPopupUi', 'Extension popup')}
+        hint={t('customPopupUiHint', 'The panel that opens when you click the extension icon')}
+        icon={<AppWindow className="h-3.5 w-3.5" strokeWidth={1.6} />}
+        enabled={popupUiOn}
+        onEnabledChange={(v) => void setConfig(CONFIG_KEY.CUSTOM_POPUP_UI_SWITCH, v)}
+        action={restoreButton(popupUiDefaults)}
+      >
+        <PopupUiCard />
       </CollapsibleCard>
     </div>
   );

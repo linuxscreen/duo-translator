@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AirplayIcon, Ban, Check, ChevronDown, Globe, HelpCircle, Monitor, Moon, PenLine, ScanText, Settings as SettingsIcon, Sparkles, Sun } from 'lucide-react';
 
@@ -35,6 +35,8 @@ import { Button } from '@/components/ui/button';
 import { use } from 'i18next';
 import { buildServiceOptions, getAiTranslateService, getTranslateService, resolveActiveService, type ServiceOption } from '@/utils/service';
 import { THEME_OPTIONS, useResolvedTheme, useThemeSetting, type ThemeSetting } from '@/utils/theme';
+import { loadPopupUiPrefs, usePopupUiPrefs, type PopupUiPrefs } from '@/utils/popupUiPrefs';
+import { cachedPopupHeight, rememberPopupHeight } from './popupHeight';
 
 const getConfig = (name: string) =>
   sendMessageToBackground({ action: DB_ACTION.CONFIG_GET, data: { name } });
@@ -70,8 +72,60 @@ function summarizeServices(keys: string[]): { key: string; count: number }[] {
   return groups;
 }
 
-export default function App() {
+type AppProps = {
+  /**
+   * Rendered inside another page (the Options preview) rather than as the
+   * toolbar popup itself. Only measurement cares: an embedded copy sits in a
+   * page whose height it does not control, so recording it would hand the real
+   * popup a height it never had.
+   */
+  embedded?: boolean;
+};
+
+export default function App({ embedded = false }: AppProps = {}) {
   const { t } = useTranslation();
+  /**
+   * Which pieces of this popup the user chose to surface — Options ›
+   * Customization › Extension popup. Everything is shown by default, and the
+   * switches only hide controls: none of them changes the setting behind one.
+   *
+   * Two forms, and they must not be collapsed into one. `livePopupUi` (the
+   * hook) answers with the defaults until storage hydrates, which the popup
+   * cannot paint with: its window is sized to its content, so drawing every
+   * section once and then dropping the hidden ones snaps the window from full
+   * height down to the trimmed height in front of the user. `ui` is therefore
+   * the AWAITED answer, resolved as part of the hydration below and gating the
+   * first paint; the hook only feeds later edits back in.
+   */
+  const livePopupUi = usePopupUiPrefs();
+  const [ui, setUi] = useState<PopupUiPrefs | null>(null);
+  const uiResolvedRef = useRef(false);
+  // Gated on an awaited read having landed — this effect also runs on mount,
+  // when the hook is still on the defaults, and taking those would put the
+  // flash straight back.
+  useEffect(() => {
+    if (uiResolvedRef.current) setUi(livePopupUi);
+  }, [livePopupUi]);
+
+  /**
+   * How tall the placeholder above is, and where the next open gets its answer.
+   *
+   * Read once per open, before rendering: `cachedPopupHeight` is a synchronous
+   * localStorage read precisely because nothing async can inform a first paint.
+   * See popupHeight.ts for why the placeholder needs a height at all.
+   */
+  const [placeholderHeight] = useState(cachedPopupHeight);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const heightRecorded = useRef(false);
+  // Layout effect, not a plain one: it reads a laid-out box, and doing that
+  // after paint would mean recording a height the user has already seen change.
+  useLayoutEffect(() => {
+    if (embedded || heightRecorded.current) return;
+    const el = rootRef.current;
+    if (!el) return;
+    heightRecorded.current = true;
+    rememberPopupHeight(el.offsetHeight);
+  });
 
   const [globalOn, setGlobalOn] = useState(true);
   const [mode, setMode] = useState<VIEW_STRATEGY>(VIEW_STRATEGY.DOUBLE);
@@ -162,9 +216,10 @@ export default function App() {
     browser.runtime.onMessage.addListener(listener);
 
     (async () => {
-      const [gs, vs, tl, ts, ds, bh, d, id, selSvc, aiSvc, vidSvc]: [
+      const [gs, vs, tl, ts, ds, bh, d, id, selSvc, aiSvc, vidSvc, popupUi]: [
         boolean, VIEW_STRATEGY, string | undefined, string | undefined, DEFAULT_STRATEGY, boolean,
-        string | undefined, number | undefined, string | undefined, string | undefined, string | undefined
+        string | undefined, number | undefined, string | undefined, string | undefined, string | undefined,
+        PopupUiPrefs
       ] = await Promise.all([
         getConfig(CONFIG_KEY.GLOBAL_SWITCH),
         getConfig(CONFIG_KEY.VIEW_STRATEGY),
@@ -177,6 +232,7 @@ export default function App() {
         getConfig(CONFIG_KEY.SELECTION_TRANSLATE_SERVICE),
         getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
         getConfig(CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE),
+        loadPopupUiPrefs(),
       ]);
       tabId = id
       let { activeService, enabledTranslateServices, enabledAiProviders, aiUsedForTranslatePage } = await getTranslateService(ts);
@@ -185,6 +241,10 @@ export default function App() {
       const aiCtx = await getAiTranslateService(aiSvc);
 
       if (cancelled) return;
+
+      // Before `ready`: the layout has to be final on the first painted frame.
+      uiResolvedRef.current = true;
+      setUi(popupUi);
 
       setOtherAiProviders(aiCtx.enabledAiProviders);
       // Selection keeps "" (follow the page); the other two are resolved so a
@@ -458,12 +518,15 @@ export default function App() {
   const version =
     browser.runtime?.getManifest?.()?.version || '';
 
-  if (!ready) {
-    return <div className="w-95 min-h-120 bg-bg" />;
+  // `ui` is part of the same gate as `ready`, not an extra one: both are set by
+  // the single hydration below, and the placeholder holds the window steady
+  // until the real layout — the whole real layout — can be drawn at once.
+  if (!ready || !ui) {
+    return <div className="w-95 bg-bg" style={{ minHeight: placeholderHeight }} />;
   }
 
   return (
-    <div className="relative w-[380px] overflow-hidden bg-bg text-ink before:pointer-events-none before:absolute before:inset-0 before:opacity-50 before:bg-[radial-gradient(ellipse_80%_30%_at_50%_0%,var(--color-accent-soft),transparent_70%)]">
+    <div ref={rootRef} className="relative w-[380px] overflow-hidden bg-bg text-ink before:pointer-events-none before:absolute before:inset-0 before:opacity-50 before:bg-[radial-gradient(ellipse_80%_30%_at_50%_0%,var(--color-accent-soft),transparent_70%)]">
       {/* Header */}
       {/* z-20 (above the z-10 body): the theme menu drops down over the body,
           and the header's own stacking context caps its children's z-index —
@@ -494,46 +557,50 @@ export default function App() {
           </button> */}
           {/* Theme switcher — sun/moon reflects the resolved theme; the menu
               picks the setting (System / Light / Dark). */}
-          <div ref={themeMenuRef} className="relative">
-            <button
-              type="button"
-              className={iconBtnCls}
-              onClick={() => setThemeMenuOpen((v) => !v)}
-              title={t('theme', 'Theme')}
-            >
-              {resolvedTheme === 'light' ? (
-                <Sun className="h-4 w-4" strokeWidth={1.6} />
-              ) : (
-                <Moon className="h-4 w-4" strokeWidth={1.6} />
+          {ui.theme && (
+            <div ref={themeMenuRef} className="relative">
+              <button
+                type="button"
+                className={iconBtnCls}
+                onClick={() => setThemeMenuOpen((v) => !v)}
+                title={t('theme', 'Theme')}
+              >
+                {resolvedTheme === 'light' ? (
+                  <Sun className="h-4 w-4" strokeWidth={1.6} />
+                ) : (
+                  <Moon className="h-4 w-4" strokeWidth={1.6} />
+                )}
+              </button>
+              {themeMenuOpen && (
+                <div className="absolute right-0 top-full z-30 mt-1.5 min-w-[150px] overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-lg">
+                  {THEME_OPTIONS.map((opt) => {
+                    const Icon = opt.value === 'system' ? Monitor : opt.value === 'light' ? Sun : Moon;
+                    const active = themeSetting === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        className={cn(
+                          'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] transition-colors hover:bg-hover',
+                          active ? 'text-accent' : 'text-ink-soft hover:text-ink',
+                        )}
+                        onClick={() => onThemeChange(opt.value)}
+                      >
+                        <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
+                        <span className="flex-1">{t(opt.i18nKey, opt.fallback)}</span>
+                        {active && <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />}
+                      </button>
+                    );
+                  })}
+                </div>
               )}
+            </div>
+          )}
+          {ui.help && (
+            <button type="button" className={iconBtnCls} onClick={openHelpPage} title={t('helpDocument', 'Help')}>
+              <HelpCircle className="h-4 w-4" strokeWidth={1.6} />
             </button>
-            {themeMenuOpen && (
-              <div className="absolute right-0 top-full z-30 mt-1.5 min-w-[150px] overflow-hidden rounded-lg border border-line bg-surface py-1 shadow-lg">
-                {THEME_OPTIONS.map((opt) => {
-                  const Icon = opt.value === 'system' ? Monitor : opt.value === 'light' ? Sun : Moon;
-                  const active = themeSetting === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      className={cn(
-                        'flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] transition-colors hover:bg-hover',
-                        active ? 'text-accent' : 'text-ink-soft hover:text-ink',
-                      )}
-                      onClick={() => onThemeChange(opt.value)}
-                    >
-                      <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
-                      <span className="flex-1">{t(opt.i18nKey, opt.fallback)}</span>
-                      {active && <Check className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          <button type="button" className={iconBtnCls} onClick={openHelpPage} title={t('helpDocument', 'Help')}>
-            <HelpCircle className="h-4 w-4" strokeWidth={1.6} />
-          </button>
+          )}
           <button
             type="button"
             className={iconBtnCls}
@@ -542,8 +609,14 @@ export default function App() {
           >
             <SettingsIcon className="h-4 w-4" strokeWidth={1.6} />
           </button>
-          <span className="mx-0.5 h-4 w-px bg-line-strong" />
-          <Switch title={t('globalSwitch', 'global switch')} checked={globalOn} onCheckedChange={onGlobalSwitchToggle} size="sm" />
+          {/* The rule exists to separate the icon buttons from the switch, so
+              it goes with it — on its own it would be a line ending nothing. */}
+          {ui.globalSwitch && (
+            <>
+              <span className="mx-0.5 h-4 w-px bg-line-strong" />
+              <Switch title={t('globalSwitch', 'global switch')} checked={globalOn} onCheckedChange={onGlobalSwitchToggle} size="sm" />
+            </>
+          )}
         </div>
       </div>
 
@@ -673,7 +746,7 @@ export default function App() {
             </button>
 
             {otherOpen && (
-              <div className="absolute right-0 top-full z-30 mt-1.5 w-[340px] rounded-lg border border-line bg-surface p-2.5 shadow-lg">
+              <div className="absolute right-0 top-full z-30 mt-1.5 w-[356px] rounded-lg border border-line bg-surface p-2.5 shadow-lg">
                 <div className="mb-2 px-0.5 text-[11px] text-ink-mute">
                   {t('otherTranslationServices', 'Other translation services')}
                 </div>
@@ -681,16 +754,22 @@ export default function App() {
                   {otherServiceRows.map((row) => (
                     <div key={row.key} className="flex items-center justify-between gap-2">
                       <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{row.label}</span>
-                      <div className="w-[150px] shrink-0">
+                      <div className="w-[170px] shrink-0">
                         <Select value={row.value} onValueChange={row.onChange}>
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
-                          {/* SelectContent grows past the 150px trigger on
-                              its own (min-w + max-w in components/ui/select),
-                              which is what keeps "Follow page (Microsoft
-                              Translate)" — the longest label here — intact. */}
-                          <SelectContent>
+                          {/* `align="end"` is load-bearing, not cosmetic. These
+                              triggers sit against the right edge of a panel that
+                              is itself against the right edge of a 380px window,
+                              so a start-aligned dropdown has ~170px of room to
+                              its right and Radix never shifts sideways to find
+                              more (see the note in components/ui/select). Ending
+                              it at the trigger's right edge lets it grow left
+                              across the whole popup instead, which is what keeps
+                              a long provider name — or "Follow page (Microsoft
+                              Translate)" — readable. */}
+                          <SelectContent align="end">
                             {row.follow && (
                               <SelectItem value={FOLLOW_PAGE}>
                                 <span className="truncate">
@@ -751,19 +830,21 @@ export default function App() {
         </div>
 
         {/* Default translate strategy */}
-        <Card>
-          <CardTitle>{t('defaultTranslateStrategy', 'Default translate strategy')}</CardTitle>
-          <RadioGroup value={defaultStrategy} onValueChange={(v) => onDefaultStrategyChange(v as DEFAULT_STRATEGY)}>
-            {DEFAULT_STRATEGY_OPTIONS.map((opt) => (
-              <RadioGroupItem
-                key={opt.value}
-                value={opt.value}
-                label={t(opt.title, opt.fallback)}
-              />
-            )
-            )}
-          </RadioGroup>
-        </Card>
+        {ui.defaultStrategy && (
+          <Card>
+            <CardTitle>{t('defaultTranslateStrategy', 'Default translate strategy')}</CardTitle>
+            <RadioGroup value={defaultStrategy} onValueChange={(v) => onDefaultStrategyChange(v as DEFAULT_STRATEGY)}>
+              {DEFAULT_STRATEGY_OPTIONS.map((opt) => (
+                <RadioGroupItem
+                  key={opt.value}
+                  value={opt.value}
+                  label={t(opt.title, opt.fallback)}
+                />
+              )
+              )}
+            </RadioGroup>
+          </Card>
+        )}
 
         {/* For this website */}
         <Card>
@@ -792,62 +873,70 @@ export default function App() {
               size="sm"
             />
           </div>
-          <CardDivider />
-          <div className="flex items-center justify-between gap-3 px-2 py-1.5">
-            <div className="min-w-0">
-              <div className="text-[12.5px] text-ink">
-                {t('bilingualHighlighting', 'Bilingual sentence-by-sentence highlighting')}
+          {/* The divider belongs to this row: it separates it from the two
+              per-site switches above, and would end nothing without it. */}
+          {ui.bilingualHighlight && (
+            <>
+              <CardDivider />
+              <div className="flex items-center justify-between gap-3 px-2 py-1.5">
+                <div className="min-w-0">
+                  <div className="text-[12.5px] text-ink">
+                    {t('bilingualHighlighting', 'Bilingual sentence-by-sentence highlighting')}
+                  </div>
+                  <div className="mt-px text-[11px] text-ink-soft">
+                    {t('bilingualHighlightingHint', 'Highlight original and translation sentence by sentence')}
+                  </div>
+                </div>
+                <Switch checked={highlight} onCheckedChange={onHighlightToggle} size="sm" />
               </div>
-              <div className="mt-px text-[11px] text-ink-soft">
-                {t('bilingualHighlightingHint', 'Highlight original and translation sentence by sentence')}
-              </div>
-            </div>
-            <Switch checked={highlight} onCheckedChange={onHighlightToggle} size="sm" />
-          </div>
+            </>
+          )}
         </Card>
 
         {/* AI Writing */}
-        <button
-          onClick={aiWritingClick}
-          type="button"
-          className={cn(
-            'group relative flex w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-[10px] border border-line-strong px-3 py-2.5 text-left',
-            'bg-gradient-to-br from-banner-1 to-banner-2',
-            'transition-[transform,box-shadow,border-color] duration-200',
-            'hover:-translate-y-px hover:border-accent hover:shadow-[0_0_0_1px_var(--color-accent-soft),0_8px_24px_-8px_var(--color-accent-glow)]',
-          )}
-        >
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-0 opacity-60"
-            style={{
-              background:
-                'radial-gradient(circle at 90% 50%, var(--color-accent-glow), transparent 50%), radial-gradient(circle at 10% 100%, var(--color-banner-glow-2), transparent 55%)',
-            }}
-          />
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-0 opacity-60"
-            style={{
-              backgroundImage:
-                'linear-gradient(var(--color-banner-grid) 1px, transparent 1px), linear-gradient(90deg, var(--color-banner-grid) 1px, transparent 1px)',
-              backgroundSize: '14px 14px',
-              maskImage: 'linear-gradient(135deg, transparent 50%, #000 100%)',
-              WebkitMaskImage: 'linear-gradient(135deg, transparent 50%, #000 100%)',
-            }}
-          />
-          <span className="relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line-strong bg-banner-chip text-accent">
-            <PenLine className="h-3.5 w-3.5" strokeWidth={1.6} />
-          </span>
-          <span className="relative z-10 flex flex-1 flex-col gap-px">
-            <span className="text-[13px] font-semibold tracking-[-0.005em] text-ink">
-              {t('aiWriting', 'AI Writing')}
+        {ui.aiWriting && (
+          <button
+            onClick={aiWritingClick}
+            type="button"
+            className={cn(
+              'group relative flex w-full cursor-pointer items-center gap-2.5 overflow-hidden rounded-[10px] border border-line-strong px-3 py-2.5 text-left',
+              'bg-gradient-to-br from-banner-1 to-banner-2',
+              'transition-[transform,box-shadow,border-color] duration-200',
+              'hover:-translate-y-px hover:border-accent hover:shadow-[0_0_0_1px_var(--color-accent-soft),0_8px_24px_-8px_var(--color-accent-glow)]',
+            )}
+          >
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-0 opacity-60"
+              style={{
+                background:
+                  'radial-gradient(circle at 90% 50%, var(--color-accent-glow), transparent 50%), radial-gradient(circle at 10% 100%, var(--color-banner-glow-2), transparent 55%)',
+              }}
+            />
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-0 opacity-60"
+              style={{
+                backgroundImage:
+                  'linear-gradient(var(--color-banner-grid) 1px, transparent 1px), linear-gradient(90deg, var(--color-banner-grid) 1px, transparent 1px)',
+                backgroundSize: '14px 14px',
+                maskImage: 'linear-gradient(135deg, transparent 50%, #000 100%)',
+                WebkitMaskImage: 'linear-gradient(135deg, transparent 50%, #000 100%)',
+              }}
+            />
+            <span className="relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-line-strong bg-banner-chip text-accent">
+              <PenLine className="h-3.5 w-3.5" strokeWidth={1.6} />
             </span>
-            <span className="text-[11px] text-ink-soft">
-              {t('aiWritingSub', 'Rewrite, polish, translate as you type')}
+            <span className="relative z-10 flex flex-1 flex-col gap-px">
+              <span className="text-[13px] font-semibold tracking-[-0.005em] text-ink">
+                {t('aiWriting', 'AI Writing')}
+              </span>
+              <span className="text-[11px] text-ink-soft">
+                {t('aiWritingSub', 'Rewrite, polish, translate as you type')}
+              </span>
             </span>
-          </span>
-        </button>
+          </button>
+        )}
       </div>
 
       {/* Footer */}

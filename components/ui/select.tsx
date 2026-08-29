@@ -51,26 +51,44 @@ SelectTrigger.displayName = 'SelectTrigger';
 type ContentProps = ComponentPropsWithoutRef<typeof SelectPrimitive.Content>;
 
 export const SelectContent = forwardRef<ElementRef<typeof SelectPrimitive.Content>, ContentProps>(
-  ({ className, children, position = 'popper', ...props }, ref) => (
+  ({ className, children, position = 'popper', collisionPadding = 8, ...props }, ref) => (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Content
         ref={ref}
         position={position}
         sideOffset={4}
+        // Keeps the dropdown off the window edge, and — because Radix feeds the
+        // same padding into the `size` middleware — is also what the
+        // available-width/height caps below are measured against.
+        collisionPadding={collisionPadding}
         className={cn(
           // Sits above the Dialog overlay (z=2147483600) — Select renders
           // into its own portal at document.body, so a low z-index would
           // otherwise put the dropdown BEHIND the dialog's dim backdrop.
-          'relative z-[2147483700] max-h-60 overflow-hidden rounded-lg border border-line bg-surface p-1 text-ink shadow-[0_12px_28px_-8px_rgba(0,0,0,.6),0_0_0_0.5px_rgba(255,255,255,.04)]',
+          'relative z-[2147483700] overflow-hidden rounded-lg border border-line bg-surface p-1 text-ink shadow-[0_12px_28px_-8px_rgba(0,0,0,.6),0_0_0_0.5px_rgba(255,255,255,.04)]',
+          // Height capped by what the placement ACTUALLY has room for, not by a
+          // fixed 15rem. In the toolbar popup the window is only as tall as its
+          // content, so a dropdown that asks for more than fits is not scrolled
+          // or flipped — it is painted outside the window and cut off. The
+          // fallback covers the frame before Radix has positioned it once.
+          'max-h-[min(15rem,var(--radix-select-content-available-height,15rem))]',
           'data-[state=open]:animate-in data-[state=closed]:animate-out',
           'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
           // The dropdown grows to fit its longest item rather than being
           // pinned to the trigger's width — a narrow trigger (the popup's
           // half-width pickers) must not force its options to be cut off.
-          // Capped to the viewport so it can never overflow the popup; the
-          // per-item `truncate` remains the fallback past that cap.
+          //
+          // The cap is the space this placement really has, NOT the viewport:
+          // Radix's popper runs `shift({ mainAxis: true, crossAxis: false })`,
+          // so it never slides sideways to make room. With the default
+          // `align="start"` the content's left edge is pinned to the trigger's
+          // and it grows rightward; anything past the window edge is simply
+          // clipped. A viewport-sized cap therefore made wide dropdowns worse
+          // rather than better — it let them ask for width that does not exist.
+          // `align="end"` at the call site is how a right-hand trigger gets room
+          // (it then grows leftward); this var follows whichever was chosen.
           position === 'popper' &&
-            'min-w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-16px)]',
+            'min-w-[var(--radix-select-trigger-width)] max-w-[var(--radix-select-content-available-width,calc(100vw-16px))]',
           className,
         )}
         {...props}
