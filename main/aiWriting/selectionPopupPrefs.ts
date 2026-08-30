@@ -48,6 +48,46 @@ export const STOCK_SELECTION_POPUP_PREFS: SelectionPopupPrefs = {
 };
 
 /**
+ * The keys that describe how the card LOOKS — everything the Customization
+ * card offers, and exactly what its "Restore defaults" and the Selection-
+ * translation page's "Restore default interface" put back.
+ *
+ * The multi-service pair is deliberately absent: it decides what the card
+ * ASKS, not how it is laid out, it lives on the Selection-translation page as
+ * a setting of its own, and it is not gated behind the Customization switch —
+ * so a "restore the interface" action must leave it alone.
+ */
+export const SELECTION_POPUP_UI_KEYS: CONFIG_KEY[] = [
+    CONFIG_KEY.SELECTION_POPUP_DICT,
+    CONFIG_KEY.SELECTION_POPUP_DICT_EXAMPLES,
+    CONFIG_KEY.SELECTION_POPUP_SHOW_ORIGINAL,
+    CONFIG_KEY.SELECTION_POPUP_TRANSLATION_TTS,
+    CONFIG_KEY.SELECTION_POPUP_TRANSLATION_COPY,
+    CONFIG_KEY.SELECTION_POPUP_ORIGINAL_TTS,
+    CONFIG_KEY.SELECTION_POPUP_ORIGINAL_COPY,
+    CONFIG_KEY.SELECTION_POPUP_HIDE_HEADER_CONFIG,
+];
+
+/**
+ * The "compact card" preset: original text with both of its buttons, no
+ * translation buttons, no dictionary examples, pickers tucked behind the gear.
+ *
+ * Only a subset of {@link SELECTION_POPUP_UI_KEYS} — the dictionary panel
+ * itself is left at whatever the user chose, since hiding it would remove
+ * content rather than chrome. Written as a list of pairs so applying it and
+ * testing "is it already applied?" read from one source.
+ */
+export const COMPACT_SELECTION_POPUP_UI: ReadonlyArray<readonly [CONFIG_KEY, boolean]> = [
+    [CONFIG_KEY.SELECTION_POPUP_HIDE_HEADER_CONFIG, true],
+    [CONFIG_KEY.SELECTION_POPUP_SHOW_ORIGINAL, true],
+    [CONFIG_KEY.SELECTION_POPUP_ORIGINAL_TTS, true],
+    [CONFIG_KEY.SELECTION_POPUP_ORIGINAL_COPY, true],
+    [CONFIG_KEY.SELECTION_POPUP_TRANSLATION_TTS, false],
+    [CONFIG_KEY.SELECTION_POPUP_TRANSLATION_COPY, false],
+    [CONFIG_KEY.SELECTION_POPUP_DICT_EXAMPLES, false],
+];
+
+/**
  * Live view of the card's settings.
  *
  * Reactive on purpose: the Options preview has to redraw the moment a switch is
@@ -63,6 +103,13 @@ export const STOCK_SELECTION_POPUP_PREFS: SelectionPopupPrefs = {
  * preview exists to show what these settings do, so snapping it back to the
  * stock card when the switch goes off would hide the very thing being adjusted.
  * Anything that actually renders the card wants the gate.
+ *
+ * The multi-service pair sits OUTSIDE that gate. It is not a Customization
+ * setting any more — it lives on Options › Selection translation, next to the
+ * service and target-language pickers — and a switch on one page that silently
+ * does nothing until a switch on another page is on is the worst kind of dead
+ * control. The gate keeps meaning what it always did: it governs the card's
+ * LAYOUT ({@link SELECTION_POPUP_UI_KEYS}), not what the card asks.
  */
 export function useSelectionPopupPrefs(options?: { ignoreSwitch?: boolean }): SelectionPopupPrefs {
     const ignoreSwitch = !!options?.ignoreSwitch;
@@ -86,11 +133,9 @@ export function useSelectionPopupPrefs(options?: { ignoreSwitch?: boolean }): Se
     );
 
     return useMemo(
-        () =>
-            enabled || ignoreSwitch
+        () => ({
+            ...(enabled || ignoreSwitch
                 ? {
-                    multiService: !!multiService,
-                    services: cleanServices,
                     dict: !!dict,
                     dictExamples: !!dictExamples,
                     showOriginal: !!showOriginal,
@@ -100,7 +145,10 @@ export function useSelectionPopupPrefs(options?: { ignoreSwitch?: boolean }): Se
                     originalCopy: !!originalCopy,
                     hideHeaderConfig: !!hideHeaderConfig,
                 }
-                : STOCK_SELECTION_POPUP_PREFS,
+                : STOCK_SELECTION_POPUP_PREFS),
+            multiService: !!multiService,
+            services: cleanServices,
+        }),
         [
             enabled, ignoreSwitch, multiService, cleanServices, dict, dictExamples, showOriginal,
             translationTts, translationCopy, originalTts, originalCopy, hideHeaderConfig,
@@ -135,18 +183,23 @@ export async function loadSelectionPopupPrefs(): Promise<SelectionPopupPrefs> {
         readConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_ORIGINAL_COPY),
         readConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_HIDE_HEADER_CONFIG),
     ]);
-    if (!enabled) return STOCK_SELECTION_POPUP_PREFS;
+    // Same split as the hook: the master switch governs the layout keys only,
+    // the multi-service pair is always live.
     return {
+        ...(enabled
+            ? {
+                dict: !!dict,
+                dictExamples: !!dictExamples,
+                showOriginal: !!showOriginal,
+                translationTts: !!translationTts,
+                translationCopy: !!translationCopy,
+                originalTts: !!originalTts,
+                originalCopy: !!originalCopy,
+                hideHeaderConfig: !!hideHeaderConfig,
+            }
+            : STOCK_SELECTION_POPUP_PREFS),
         multiService: !!multiService,
         services: Array.isArray(services) ? services.filter((x) => typeof x === 'string' && x !== '') : [],
-        dict: !!dict,
-        dictExamples: !!dictExamples,
-        showOriginal: !!showOriginal,
-        translationTts: !!translationTts,
-        translationCopy: !!translationCopy,
-        originalTts: !!originalTts,
-        originalCopy: !!originalCopy,
-        hideHeaderConfig: !!hideHeaderConfig,
     };
 }
 

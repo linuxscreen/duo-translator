@@ -1,4 +1,4 @@
-import { ExternalLink, Globe, KeyRound, Languages, SlidersHorizontal, Sparkles, Component, Captions, Wand2 } from 'lucide-react';
+import { ExternalLink, Globe, KeyRound, Languages, MousePointerClick, SlidersHorizontal, Sparkles, Component, Captions, Wand2 } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Translation, useTranslation } from 'react-i18next';
 import { cn } from '@/lib/cn';
@@ -7,6 +7,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { SettingsPage } from './pages/SettingsPage';
 import { ShortcutsPage } from './pages/ShortcutsPage';
 import { TranslationPage } from './pages/TranslationPage';
+import { SelectionTranslatePage } from './pages/SelectionTranslatePage';
 import { SiteRulesPage } from './pages/SiteRulesPage';
 import { AiWritingPage } from './pages/AiWritingPage';
 import { VideoSubtitlePage } from './pages/VideoSubtitlePage';
@@ -15,7 +16,7 @@ import { ServicesPage } from './pages/ServicesPage';
 import { CustomizationPage } from './pages/CustomizationPage';
 import { APP_NAME, APP_NAME_PASCAL_CASE } from '@/main/constants';
 
-type TabId = 'settings' | 'services' | 'translation' | 'aiWriting' | 'videoSubtitle' | 'shortcuts' | 'customization';
+type TabId = 'settings' | 'services' | 'translation' | 'selectionTranslate' | 'aiWriting' | 'videoSubtitle' | 'shortcuts' | 'customization';
 
 type Tab = {
   id: TabId;
@@ -23,7 +24,7 @@ type Tab = {
   icon: ReactNode;
 };
 
-const VALID_TABS: TabId[] = ['settings', 'services', 'translation', 'aiWriting', 'videoSubtitle', 'shortcuts', 'customization'];
+const VALID_TABS: TabId[] = ['settings', 'services', 'translation', 'selectionTranslate', 'aiWriting', 'videoSubtitle', 'shortcuts', 'customization'];
 
 /** Sub-pages, addressed as `#<tab>/<sub>`. Only the Translation tab has one so far. */
 type SubId = 'siteRules';
@@ -83,8 +84,13 @@ export default function App() {
     },
     {
       id: 'translation',
-      label: t('translation', 'Translation'),
+      label: t('webpageTranslation', 'Web page translation'),
       icon: <Languages className="h-4 w-4" strokeWidth={1.6} />,
+    },
+    {
+      id: 'selectionTranslate',
+      label: t('selectionTranslate', 'Selection translation'),
+      icon: <MousePointerClick className="h-4 w-4" strokeWidth={1.6} />,
     },
     {
       id: 'aiWriting',
@@ -194,6 +200,11 @@ export default function App() {
             ) : (
               <TranslationPage onOpenSiteRules={() => navigate({ tab: 'translation', sub: 'siteRules' })} />
             ))}
+          {tab === 'selectionTranslate' && (
+            <SelectionTranslatePage
+              onOpenCustomization={() => navigate({ tab: 'customization', sub: null })}
+            />
+          )}
           {tab === 'aiWriting' && <AiWritingPage />}
           {tab === 'videoSubtitle' && <VideoSubtitlePage />}
           {tab === 'shortcuts' && <ShortcutsPage />}

@@ -1,29 +1,22 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Switch } from '@/components/ui/switch';
 import { CONFIG_KEY, configDefault } from '@/main/constants';
 import { setConfig } from '@/utils/db';
 import { useConfig } from '@/utils/reactiveConfig';
-import { buildServiceOptions, getTranslateService } from '@/utils/service';
+import { SELECTION_POPUP_UI_KEYS } from '@/main/aiWriting/selectionPopupPrefs';
 
 /**
  * Every key "Restore defaults" covers — i.e. the card's own settings, NOT the
  * card's master switch in the header. Resetting that would switch the feature
  * off from inside itself, which is a different action than "put these options
  * back", and the user is standing in the open card when they press it.
+ *
+ * Shared with Options › Selection translation, whose "Restore default
+ * interface" button puts back the same keys (and then switches the card off) —
+ * two buttons claiming to restore the same card must restore the same keys.
  */
-const OPTION_KEYS: CONFIG_KEY[] = [
-  CONFIG_KEY.SELECTION_POPUP_MULTI_SERVICE,
-  CONFIG_KEY.SELECTION_POPUP_SERVICES,
-  CONFIG_KEY.SELECTION_POPUP_DICT,
-  CONFIG_KEY.SELECTION_POPUP_DICT_EXAMPLES,
-  CONFIG_KEY.SELECTION_POPUP_SHOW_ORIGINAL,
-  CONFIG_KEY.SELECTION_POPUP_TRANSLATION_TTS,
-  CONFIG_KEY.SELECTION_POPUP_TRANSLATION_COPY,
-  CONFIG_KEY.SELECTION_POPUP_ORIGINAL_TTS,
-  CONFIG_KEY.SELECTION_POPUP_ORIGINAL_COPY,
-  CONFIG_KEY.SELECTION_POPUP_HIDE_HEADER_CONFIG,
-];
+const OPTION_KEYS: CONFIG_KEY[] = SELECTION_POPUP_UI_KEYS;
 
 const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -34,8 +27,6 @@ const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringi
  */
 export function useSelectionPopupDefaults(): { dirty: boolean; restore: () => void } {
   const current: Record<string, unknown> = {
-    [CONFIG_KEY.SELECTION_POPUP_MULTI_SERVICE]: useConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_MULTI_SERVICE),
-    [CONFIG_KEY.SELECTION_POPUP_SERVICES]: useConfig<string[]>(CONFIG_KEY.SELECTION_POPUP_SERVICES),
     [CONFIG_KEY.SELECTION_POPUP_DICT]: useConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_DICT),
     [CONFIG_KEY.SELECTION_POPUP_DICT_EXAMPLES]: useConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_DICT_EXAMPLES),
     [CONFIG_KEY.SELECTION_POPUP_SHOW_ORIGINAL]: useConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_SHOW_ORIGINAL),
@@ -92,8 +83,6 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 export function SelectionPopupCard() {
   const { t } = useTranslation();
 
-  const multiService = useConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_MULTI_SERVICE);
-  const services = useConfig<string[]>(CONFIG_KEY.SELECTION_POPUP_SERVICES);
   const dict = useConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_DICT);
   const dictExamples = useConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_DICT_EXAMPLES);
   const showOriginal = useConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_SHOW_ORIGINAL);
@@ -103,56 +92,17 @@ export function SelectionPopupCard() {
   const originalCopy = useConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_ORIGINAL_COPY);
   const hideHeaderConfig = useConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_HIDE_HEADER_CONFIG);
 
-  const [allServiceKeys, setAllServiceKeys] = useState<string[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const { enabledTranslateServices, enabledAiProviders } = await getTranslateService(undefined);
-      if (cancelled) return;
-      setAllServiceKeys(buildServiceOptions(enabledTranslateServices, enabledAiProviders).map((o) => o.value));
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  /**
-   * Turning multi-service on with nothing chosen seeds it with EVERY enabled
-   * service.
-   *
-   * Without this the resolver falls back to the single page-translation service
-   * and the card looks exactly as it did — the switch would appear to do
-   * nothing, and the only place to fix that is the popup's own picker, which
-   * the user has to go find on some page. "Show every enabled service" is also
-   * what the setting promises, so the seed is the honest default rather than a
-   * convenience.
-   */
-  const onMultiServiceChange = (v: boolean) => {
-    void setConfig(CONFIG_KEY.SELECTION_POPUP_MULTI_SERVICE, v);
-    if (v && (!Array.isArray(services) || services.length === 0) && allServiceKeys.length > 0) {
-      void setConfig(CONFIG_KEY.SELECTION_POPUP_SERVICES, allServiceKeys);
-    }
-  };
-
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col">
-        <Row
-          label={t('selectionPopupMultiService', 'Multiple translate services')}
-          hint={t('selectionPopupMultiServiceHint', 'Show every chosen service’s translation at once')}
-          checked={multiService}
-          onChange={onMultiServiceChange}
-        />
-        <Row
-          label={t('selectionPopupHideHeaderConfig', 'Hide the header pickers')}
-          hint={t(
-            'selectionPopupHideHeaderConfigHint',
-            'Translate service and target language move to the settings button left of the pin',
-          )}
-          checked={hideHeaderConfig}
-          onChange={(v) => void setConfig(CONFIG_KEY.SELECTION_POPUP_HIDE_HEADER_CONFIG, v)}
-        />
-      </div>
+      <Row
+        label={t('selectionPopupHideHeaderConfig', 'Hide the header pickers')}
+        hint={t(
+          'selectionPopupHideHeaderConfigHint',
+          'Translate service and target language move to the settings button left of the pin',
+        )}
+        checked={hideHeaderConfig}
+        onChange={(v) => void setConfig(CONFIG_KEY.SELECTION_POPUP_HIDE_HEADER_CONFIG, v)}
+      />
 
       {/* Dependent switches are not greyed out — they are simply absent while
           their section head is off. A disabled ghost row reads as "broken"

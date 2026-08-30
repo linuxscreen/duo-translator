@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight, Check, Trash2, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -23,11 +23,8 @@ import {
   type TranslationStyleGroup,
   VIEW_STRATEGIES,
   DEFAULT_STRATEGY_OPTIONS,
-  TTS_SERVICE_OPTIONS,
   TRANSLATING_ANIMATION,
   TRANSLATING_ANIMATION_OPTIONS,
-  SELECTION_ICON_TRIGGER,
-  SELECTION_ICON_TRIGGER_OPTIONS,
 } from '@/main/constants';
 import {
   sendMessageToAllTabs,
@@ -107,17 +104,10 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   const [floatBallStyle, setFloatBallStyle] = useState<FLOAT_BALL_STYLE>(
     DEFAULT_VALUE.FLOAT_BALL_STYLE,
   );
-  const [selectionIcon, setSelectionIcon] = useState<boolean>(
-    DEFAULT_VALUE.SELECTION_ICON_SWITCH,
-  );
-  const [selectionIconTrigger, setSelectionIconTrigger] = useState<SELECTION_ICON_TRIGGER>(
-    DEFAULT_VALUE.SELECTION_ICON_TRIGGER,
-  );
   const [translatingAnimation, setTranslatingAnimation] = useState<TRANSLATING_ANIMATION>(
     DEFAULT_VALUE.TRANSLATING_ANIMATION,
   );
   const [translationCache, setTranslationCache] = useState(true);
-  const [ttsService, setTtsService] = useState<string>(DEFAULT_VALUE.TTS_SERVICE);
   const [noTranslateLanguages, setNoTranslateLanguages] = useState<string[]>([]);
   // Transient "cleared" state for the clear-cache button (resets after ~1.5s).
   const [cacheCleared, setCacheCleared] = useState(false);
@@ -161,21 +151,20 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   const [alwaysList, setAlwaysList] = useState<DomainItem[]>([]);
   const [neverList, setNeverList] = useState<DomainItem[]>([]);
   const [floatBallDisabledList, setFloatBallDisabledList] = useState<DomainItem[]>([]);
-  const [selectionIconDisabledList, setSelectionIconDisabledList] = useState<DomainItem[]>([]);
   const [translateAllElementsList, setTranslateAllElementsList] = useState<DomainItem[]>([]);
   const [alwaysOpen, setAlwaysOpen] = useState(false);
   const [neverOpen, setNeverOpen] = useState(false);
   const [floatBallDisabledOpen, setFloatBallDisabledOpen] = useState(false);
-  const [selectionIconDisabledOpen, setSelectionIconDisabledOpen] = useState(false);
   const [translateAllElementsOpen, setTranslateAllElementsOpen] = useState(false);
-  // Style section expanded by default; only the chevron button on the right
-  // toggles — not the header text — to avoid accidental collapse.
-  const [styleOpen, setStyleOpen] = useState(true);
+  // Both of the long cards ship collapsed — they are the bulk of the page and
+  // most visits are not here to repaint the translation or retune highlighting.
+  const [styleOpen, setStyleOpen] = useState(false);
+  const [highlightOpen, setHighlightOpen] = useState(false);
 
   const [ready, setReady] = useState(false);
 
   const refreshDomains = async () => {
-    const [a, n, fb, si, tae] = await Promise.all([
+    const [a, n, fb, tae] = await Promise.all([
       sendMessageToBackground({
         action: DB_ACTION.DOMAIN_LIST,
         data: { strategy: DOMAIN_STRATEGY.ALWAYS },
@@ -190,17 +179,12 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
       }),
       sendMessageToBackground({
         action: DB_ACTION.DOMAIN_LIST,
-        data: { selectionIconDisabled: true },
-      }),
-      sendMessageToBackground({
-        action: DB_ACTION.DOMAIN_LIST,
         data: { translateAllElements: true },
       }),
     ]);
     setAlwaysList(Array.isArray(a) ? a : []);
     setNeverList(Array.isArray(n) ? n : []);
     setFloatBallDisabledList(Array.isArray(fb) ? fb : []);
-    setSelectionIconDisabledList(Array.isArray(si) ? si : []);
     setTranslateAllElementsList(Array.isArray(tae) ? tae : []);
   };
 
@@ -208,15 +192,13 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     let cancelled = false;
     (async () => {
       const [
-        bh, fb, fbs, si, sit, ta, vs, tl, ts, ds, ms, lb, tc, tts, ntl,
+        bh, fb, fbs, ta, vs, tl, ts, ds, ms, lb, tc, ntl,
         styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg, qbcCfg, qbcIdxCfg,
         hbCfg, hbIdxCfg, hfCfg, hfIdxCfg, hsCfg, hbcCfg, hbcIdxCfg,
       ] = await Promise.all([
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
         getConfig(CONFIG_KEY.FLOAT_BALL_SWITCH),
         getConfig(CONFIG_KEY.FLOAT_BALL_STYLE),
-        getConfig(CONFIG_KEY.SELECTION_ICON_SWITCH),
-        getConfig(CONFIG_KEY.SELECTION_ICON_TRIGGER),
         getConfig(CONFIG_KEY.TRANSLATING_ANIMATION),
         getConfig(CONFIG_KEY.VIEW_STRATEGY),
         getConfig(CONFIG_KEY.TARGET_LANGUAGE),
@@ -225,7 +207,6 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES),
         getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS),
         getConfig(CONFIG_KEY.TRANSLATION_CACHE_SWITCH),
-        getConfig(CONFIG_KEY.TTS_SERVICE),
         getConfig(CONFIG_KEY.NO_TRANSLATE_LANGUAGES),
         getConfig(CONFIG_KEY.STYLE),
         getConfig(CONFIG_KEY.BG_COLOR),
@@ -262,19 +243,12 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
           ? fbs as FLOAT_BALL_STYLE
           : DEFAULT_VALUE.FLOAT_BALL_STYLE,
       );
-      setSelectionIcon(si === undefined ? DEFAULT_VALUE.SELECTION_ICON_SWITCH : !!si);
-      setSelectionIconTrigger(
-        Object.values(SELECTION_ICON_TRIGGER).includes(sit as SELECTION_ICON_TRIGGER)
-          ? sit as SELECTION_ICON_TRIGGER
-          : DEFAULT_VALUE.SELECTION_ICON_TRIGGER,
-      );
       setTranslatingAnimation(
         Object.values(TRANSLATING_ANIMATION).includes(ta as TRANSLATING_ANIMATION)
           ? ta as TRANSLATING_ANIMATION
           : DEFAULT_VALUE.TRANSLATING_ANIMATION,
       );
       setTranslationCache(tc === undefined ? true : tc);
-      setTtsService(typeof tts === 'string' && tts ? tts : DEFAULT_VALUE.TTS_SERVICE);
       setNoTranslateLanguages(Array.isArray(ntl) ? ntl.filter((l): l is string => typeof l === 'string') : []);
       setViewStrategy(vs === undefined ? DEFAULT_VALUE.VIEW_STRATEGY : vs);
       tl && setTargetLang(tl);
@@ -367,11 +341,6 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.TRANSLATION_CACHE_SWITCH]: v } });
   };
 
-  const onTtsService = (v: string) => {
-    setTtsService(v);
-    void setConfig(CONFIG_KEY.TTS_SERVICE, v);
-  };
-
   const onNoTranslateLanguages = (next: string[]) => {
     setNoTranslateLanguages(next);
     // No CONFIG_CHANGED broadcast: content reads this through the storage
@@ -409,25 +378,6 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
       action: ACTION.CONFIG_CHANGED,
       data: { [CONFIG_KEY.FLOAT_BALL_STYLE]: next },
     });
-  };
-
-  const onSelectionIcon = (v: boolean) => {
-    setSelectionIcon(v);
-    void setConfig(CONFIG_KEY.SELECTION_ICON_SWITCH, v);
-    void sendMessageToAllTabs({
-      action: ACTION.CONFIG_CHANGED,
-      data: { [CONFIG_KEY.SELECTION_ICON_SWITCH]: v },
-    });
-  };
-
-  const onSelectionIconTrigger = (v: string) => {
-    if (!Object.values(SELECTION_ICON_TRIGGER).includes(v as SELECTION_ICON_TRIGGER)) return;
-    const next = v as SELECTION_ICON_TRIGGER;
-    setSelectionIconTrigger(next);
-    // No CONFIG_CHANGED fan-out: the icon reads this key through the reactive
-    // config store (`useConfig`), which is driven by `storage.watch` and so
-    // updates every open tab off this write alone.
-    void setConfig(CONFIG_KEY.SELECTION_ICON_TRIGGER, next);
   };
 
   const onTranslatingAnimation = (v: string) => {
@@ -874,49 +824,6 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
           }
         />
         <SettingRow
-          label={t('ttsService', 'Text-to-speech (TTS) service')}
-          hint={t('ttsServiceHint', 'Voice provider for reading original / translated text aloud')}
-          control={
-            <Select value={ttsService} onValueChange={onTtsService}>
-              <SelectTrigger className="min-w-[200px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TTS_SERVICE_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          }
-        />
-        <SettingRow
-          label={t('selectionTranslateIcon', 'Selection translate icon')}
-          hint={t('selectionTranslateIconHint', 'Show a translate icon after selecting text')}
-          control={
-            <div className="flex items-center gap-2">
-              <Select
-                value={selectionIconTrigger}
-                onValueChange={onSelectionIconTrigger}
-                disabled={!selectionIcon}
-              >
-                <SelectTrigger className="min-w-[180px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SELECTION_ICON_TRIGGER_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {t(opt.title, opt.fallback)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Switch checked={selectionIcon} onCheckedChange={onSelectionIcon} />
-            </div>
-          }
-        />
-        <SettingRow
           label={t('translatingAnimation', 'Translating animation')}
           hint={t(
             'translatingAnimationHint',
@@ -957,15 +864,12 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
       </div>
 
       {/* Bilingual highlighting */}
-      <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
-        <div className="border-b border-line px-4 py-3 ">
-          <div className='text-[13.5px] font-semibold text-ink'>
-            {t('bilingualHighlighting', 'Bilingual sentence-by-sentence highlighting')}
-          </div>
-          <div className="mt-0.5 text-[12px] text-ink-soft">
-            {t('bilingualHighlightingHint', 'Highlight original and translation sentence by sentence')}
-          </div>
-        </div>
+      <CollapsibleSettingsCard
+        title={t('bilingualHighlighting', 'Bilingual sentence-by-sentence highlighting')}
+        hint={t('bilingualHighlightingHint', 'Highlight original and translation sentence by sentence')}
+        open={highlightOpen}
+        onToggle={() => setHighlightOpen((o) => !o)}
+      >
         <SettingRow
           label={t('enable', 'Enable')}
           hint={t('bilingualHighlightingEnableHint', 'Hover over original or translation to trigger')}
@@ -989,33 +893,15 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
             />
           }
         />
-      </div>
+      </CollapsibleSettingsCard>
 
       {/* Style */}
-      <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
-        <div
-          className={cn(
-            'flex w-full items-center gap-3 px-4 py-3 text-[13.5px] font-semibold text-ink',
-            styleOpen && 'border-b border-line',
-          )}
-        >
-          <div className="flex-1">{t('style', 'Style')}</div>
-          <button
-            type="button"
-            onClick={() => setStyleOpen((o) => !o)}
-            title={t(styleOpen ? 'collapse' : 'expand', styleOpen ? 'Collapse' : 'Expand')}
-            className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-ink-soft transition-colors hover:bg-hover hover:text-ink"
-          >
-            <ChevronDown
-              className={cn(
-                'h-4 w-4 transition-transform duration-150',
-                styleOpen && 'rotate-180',
-              )}
-              strokeWidth={1.6}
-            />
-          </button>
-        </div>
-        {styleOpen && <>
+      <CollapsibleSettingsCard
+        title={t('style', 'Style')}
+        open={styleOpen}
+        onToggle={() => setStyleOpen((o) => !o)}
+      >
+        <>
           <SettingRow
             label={t('translationStyle', 'Translation style')}
             control
@@ -1122,8 +1008,8 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
               </span>
             </p>
           </div>
-        </>}
-      </div>
+        </>
+      </CollapsibleSettingsCard>
 
       <DomainListSection
         title={t('alwaysTranslateWebsites', 'Always translate websites')}
@@ -1167,16 +1053,6 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         onChanged={refreshDomains}
       />
 
-      <DomainListSection
-        title={t('selectionIconDisabledWebsites', 'Selection translate icon disabled websites')}
-        emptyHint={t('noDomainsConfigured', 'No websites configured.')}
-        open={selectionIconDisabledOpen}
-        onToggle={() => setSelectionIconDisabledOpen((o) => !o)}
-        items={selectionIconDisabledList}
-        kind={{ field: 'selectionIconDisabled' }}
-        onChanged={refreshDomains}
-      />
-
       <Dialog
         open={clearCacheOpen}
         onClose={() => setClearCacheOpen(false)}
@@ -1204,6 +1080,58 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   );
 }
 
+
+/**
+ * A settings card whose body collapses, with the heading on the left and a
+ * chevron on the right.
+ *
+ * Only the chevron toggles — not the header text — so a click aimed at the card
+ * cannot fold it away mid-adjustment. The bottom rule belongs to the header and
+ * is therefore only drawn while the body is open, otherwise a collapsed card
+ * ends in a line under nothing.
+ */
+function CollapsibleSettingsCard({
+  title,
+  hint,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
+      <div
+        className={cn(
+          'flex w-full items-center gap-3 px-4 py-3',
+          open && 'border-b border-line',
+        )}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="text-[13.5px] font-semibold text-ink">{title}</div>
+          {hint && <div className="mt-0.5 text-[12px] text-ink-soft">{hint}</div>}
+        </div>
+        <button
+          type="button"
+          onClick={onToggle}
+          title={t(open ? 'collapse' : 'expand', open ? 'Collapse' : 'Expand')}
+          className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-ink-soft transition-colors hover:bg-hover hover:text-ink"
+        >
+          <ChevronDown
+            className={cn('h-4 w-4 transition-transform duration-150', open && 'rotate-180')}
+            strokeWidth={1.6}
+          />
+        </button>
+      </div>
+      {open && children}
+    </div>
+  );
+}
 
 function ContrastWarning({ onFix }: { onFix: () => void }) {
   const { t } = useTranslation();

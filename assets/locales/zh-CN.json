@@ -675,7 +675,6 @@
   "customSelectionPopupHint": "定制划词后弹出的翻译卡片",
   "customShortcutKeyHint": "只按修饰键（如 Ctrl、Ctrl+Shift）时，松开按键即记录。",
   "preview": "预览",
-  "selectionServicesChosen": "已选 {{count}} 个",
   "selectionPreviewTranslation": "示例译文",
   "selectionPreviewSense": "例子；实例；样本",
   "selectionPreviewExampleTarget": "这是一个例句。",
@@ -693,5 +692,12 @@
   "selectionPopupPlayButton": "朗读按钮",
   "selectionPopupCopyButton": "复制按钮",
   "customPopup": "扩展弹窗",
-  "customPopupHint": "点击扩展图标之后弹出的界面"
+  "customPopupHint": "点击扩展图标之后弹出的界面",
+  "webpageTranslation": "网页翻译",
+  "selectionIconTriggerMode": "触发方式",
+  "selectionPopupInterface": "弹窗界面",
+  "selectionPopupCompactUi": "设置精简界面",
+  "selectionPopupRestoreUi": "恢复默认界面",
+  "selectionPopupUiHint": "如果想进一步调整界面，请到 {{link}} -> 划词翻译弹窗 进行设置",
+  "disabledWebsites": "禁用的网站"
 }

@@ -11,6 +11,17 @@ type Props = {
   /** The card's own feature switch. */
   enabled: boolean;
   onEnabledChange: (v: boolean) => void;
+  /**
+   * `enabled` is not known yet — the switch is rendered hidden rather than in
+   * whatever state the default happens to be.
+   *
+   * Config reads are async, so a switch bound to one paints OFF (the shipped
+   * default for every card here) and then snaps ON for anyone who had turned it
+   * on: on load the setting looks like it flips itself. Holding back the switch
+   * alone, rather than the whole page, keeps the titles and hints painting
+   * immediately and leaves the layout identical — the switch keeps its box.
+   */
+  pending?: boolean;
   /** Collapsed unless told otherwise — the Customization cards all start closed. */
   defaultOpen?: boolean;
   /**
@@ -64,6 +75,7 @@ export function CollapsibleCard({
   icon,
   enabled,
   onEnabledChange,
+  pending = false,
   defaultOpen = false,
   action,
   footer,
@@ -107,7 +119,18 @@ export function CollapsibleCard({
             {action}
           </fieldset>
         )}
-        <Switch checked={enabled} onCheckedChange={onEnabledChange} />
+        <Switch
+          // Remounted when `pending` clears, so the switch is CREATED in its
+          // stored state. Without that it would be a live element changing from
+          // off to on, and the thumb's transition would play the flip in front
+          // of the user — the same wrong story, just animated.
+          key={pending ? 'pending' : 'ready'}
+          checked={enabled}
+          onCheckedChange={onEnabledChange}
+          // Hidden rather than unmounted: the header must not reflow when the
+          // switch arrives.
+          className={cn(pending && 'invisible')}
+        />
       </div>
 
       {open && (

@@ -519,10 +519,22 @@ export function SelectionCard(props: SelectionCardProps) {
         </select>
     );
 
-    const serviceCountLabel = t("selectionServicesChosen", "{{count}} services").replace(
-        "{{count}}",
-        String(selectedServices.length),
-    );
+    /**
+     * The chosen services, named and comma-separated.
+     *
+     * Not a count ("3 services"): the whole point of the multi-service mode is
+     * WHICH services answered, and a number makes the user open the menu to
+     * find out. The button truncates, so a long set degrades to an ellipsis
+     * rather than stretching the header — the full list is on the tooltip.
+     * Falls back to the raw key for a service the picker no longer offers, so
+     * a stale entry is still visible instead of silently vanishing.
+     */
+    const selectedServiceNames = selectedServices
+        .map((key) => {
+            const o = serviceOptions.find((x) => x.value === key);
+            return o ? serviceName(o) : key;
+        })
+        .join(", ");
 
     return (
         <div
@@ -576,11 +588,13 @@ export function SelectionCard(props: SelectionCardProps) {
                                 <button
                                     type="button"
                                     onClick={() => setServiceListOpen((v) => !v)}
-                                    title={t("translateService", "Translate service")}
+                                    // The full set on hover — the label itself
+                                    // is the truncated half of the same thing.
+                                    title={`${t("translateService", "Translate service")}: ${selectedServiceNames}`}
                                     aria-expanded={serviceListOpen}
                                     className={`${SELECT_CLS} w-[150px] flex items-center justify-between gap-1 text-left`}
                                 >
-                                    <span className="min-w-0 truncate">{serviceCountLabel}</span>
+                                    <span className="min-w-0 truncate">{selectedServiceNames}</span>
                                     <ChevronRight
                                         className={`h-3 w-3 shrink-0 transition-transform ${serviceListOpen ? "rotate-90" : ""}`}
                                     />

@@ -13,7 +13,7 @@ import { SelectionPopupPreview } from '@/components/options/customization/Select
 import { PreviewSection } from '@/components/options/customization/PreviewSection';
 import { CONFIG_KEY } from '@/main/constants';
 import { setConfig } from '@/utils/db';
-import { useConfig } from '@/utils/reactiveConfig';
+import { useConfig, useConfigHydrated } from '@/utils/reactiveConfig';
 
 /**
  * Customization — opt-in surfaces that change how the extension is *driven*,
@@ -22,6 +22,14 @@ import { useConfig } from '@/utils/reactiveConfig';
  */
 export function CustomizationPage() {
   const { t } = useTranslation();
+  // The three switches are the only thing on this page whose first paint could
+  // be wrong — everything else here is static until a card is expanded, by
+  // which time config has long landed. See useConfigHydrated.
+  const switchesReady = useConfigHydrated(
+    CONFIG_KEY.CUSTOM_SHORTCUT_SWITCH,
+    CONFIG_KEY.CUSTOM_SELECTION_POPUP_SWITCH,
+    CONFIG_KEY.CUSTOM_POPUP_SWITCH,
+  );
   const shortcutsOn = useConfig<boolean>(CONFIG_KEY.CUSTOM_SHORTCUT_SWITCH);
   const selectionPopupOn = useConfig<boolean>(CONFIG_KEY.CUSTOM_SELECTION_POPUP_SWITCH);
   const selectionPopupDefaults = useSelectionPopupDefaults();
@@ -45,6 +53,7 @@ export function CustomizationPage() {
         hint={t('customShortcutsCardHint', 'Trigger actions with a single press, a long press or a multi-press')}
         icon={<Keyboard className="h-3.5 w-3.5" strokeWidth={1.6} />}
         enabled={shortcutsOn}
+        pending={!switchesReady}
         onEnabledChange={(v) => void setConfig(CONFIG_KEY.CUSTOM_SHORTCUT_SWITCH, v)}
       >
         <CustomShortcutCard />
@@ -55,6 +64,7 @@ export function CustomizationPage() {
         // hint={t('customSelectionPopupHint', 'Customize the card shown after selecting text')}
         icon={<MousePointerClick className="h-3.5 w-3.5" strokeWidth={1.6} />}
         enabled={selectionPopupOn}
+        pending={!switchesReady}
         onEnabledChange={(v) => void setConfig(CONFIG_KEY.CUSTOM_SELECTION_POPUP_SWITCH, v)}
         action={restoreButton(selectionPopupDefaults)}
         footer={<PreviewSection><SelectionPopupPreview /></PreviewSection>}
@@ -67,6 +77,7 @@ export function CustomizationPage() {
         hint={t('customPopupHint', 'The panel that opens when you click the extension icon')}
         icon={<AppWindow className="h-3.5 w-3.5" strokeWidth={1.6} />}
         enabled={popupOn}
+        pending={!switchesReady}
         onEnabledChange={(v) => void setConfig(CONFIG_KEY.CUSTOM_POPUP_SWITCH, v)}
         action={restoreButton(popupDefaults)}
         footer={<PreviewSection><PopupPreview /></PreviewSection>}

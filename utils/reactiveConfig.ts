@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { storage, type StorageItemKey } from "wxt/utils/storage";
 import { configDefault, type CONFIG_KEY } from "@/main/constants";
 
@@ -159,4 +159,37 @@ export function useConfig<T>(key: CONFIG_KEY): T {
         () => cache.get(key) as T | undefined,
     );
     return (value === undefined ? configDefault(key) : value) as T;
+}
+
+/**
+ * Whether every one of `keys` has been read from storage at least once.
+ *
+ * The escape hatch for the one thing {@link useConfig} cannot do: it answers
+ * with the shipped default until hydration lands, so a control bound to it
+ * paints in the DEFAULT state first and snaps to the stored one a moment later.
+ * For a checkbox or a switch that snap is the setting appearing to flip itself
+ * on load. `readConfig` is the usual answer, but it is imperative — a component
+ * that only renders the value has nowhere to await it. This lets such a
+ * component hold that one control back (render it hidden, not wrong) for the
+ * few milliseconds involved, while everything static around it paints at once.
+ *
+ * Do NOT reach for this to gate a whole page: the point is to withhold the
+ * controls that would lie, not to trade one flash for a blank screen.
+ */
+export function useConfigHydrated(...keys: CONFIG_KEY[]): boolean {
+    // Subscribing is what starts hydration (`ensureWatching`), so this hook
+    // works on its own — the caller does not have to also read the keys.
+    // Keyed on the joined list so the identity is stable across renders and
+    // React does not resubscribe on every commit.
+    const joined = keys.join("\u0000");
+    const subscribeAll = useCallback(
+        (cb: () => void) => {
+            const stops = keys.map((key) => subscribe(key, cb));
+            return () => stops.forEach((stop) => stop());
+        },
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- `joined` IS `keys`
+        [joined],
+    );
+    // A boolean snapshot: compared by value, so it cannot churn the store.
+    return useSyncExternalStore(subscribeAll, () => keys.every((key) => cache.has(key)));
 }
