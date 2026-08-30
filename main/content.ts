@@ -214,6 +214,38 @@ export async function content() {
     // toggles are read live on trigger so the latest settings apply.
     const DOUBLE_TAP_INTERVAL_MS = 400;
     let lastModifierTapTime = 0;
+    /**
+     * Whether a bare Alt press has to be taken from the browser for this
+     * feature — see the Alt claim further down for what that means.
+     *
+     * A live mirror rather than a read, because the decision cannot wait:
+     * `preventDefault()` does nothing once the handler has awaited, the event's
+     * dispatch being over by then, and the handler below awaits `readConfig`
+     * before it looks at anything. Unknown (nothing hydrated yet) claims
+     * nothing.
+     *
+     * Note what it can and cannot ask. The custom-shortcut layer asks whether
+     * this very press completes a configured combo; here the FIRST tap of the
+     * pair is indistinguishable from a solo tap, so the question can only be
+     * "is Alt the configured modifier, with at least one action left on". That
+     * makes it an honest trade rather than a free win: choosing double-tap Alt
+     * gives up the browser's own solo-Alt behaviour. Letting the first tap
+     * through instead is not an option — the menu bar takes focus on it, and
+     * the second tap then never reaches the page at all, which is exactly the
+     * bug this fixes.
+     */
+    let doubleTapClaimsAlt = false;
+    {
+        let modifier: string | undefined;
+        let selection = false, input = false, paragraph = false;
+        const refresh = () => {
+            doubleTapClaimsAlt = modifier === 'alt' && (selection || input || paragraph);
+        };
+        watchConfig<string>(CONFIG_KEY.DOUBLE_TAP_MODIFIER, (v) => { modifier = v; refresh() });
+        watchConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TRANSLATE_SELECTION, (v) => { selection = !!v; refresh() });
+        watchConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TRANSLATE_INPUT, (v) => { input = !!v; refresh() });
+        watchConfig<boolean>(CONFIG_KEY.DOUBLE_TAP_TOGGLE_PARAGRAPH, (v) => { paragraph = !!v; refresh() });
+    }
     document.addEventListener('keydown', async (e) => {
         // Ignore auto-repeat while the key is held.
         if (e.repeat) return;
@@ -267,16 +299,54 @@ export async function content() {
     // that follows can be suppressed too — open-link-in-new-tab is dispatched
     // from auxclick, which a preventDefault on mousedown does NOT cancel.
     let middleClaimed = false
+    // The same for Alt, which Windows/Linux browsers read as "focus the menu
+    // bar" when it is tapped on its own: without this an Alt gesture fires AND
+    // pulls focus out of the page — and where focus lands is the browser's own
+    // UI, so every following key goes there too, not just this one.
+    //
+    // BOTH Alt features are claimants and either is enough: the double-tap
+    // above (which is why it was broken on Windows long before custom shortcuts
+    // existed) and a custom gesture. Neither claims Alt merely for being
+    // installed — the custom layer asks whether this press completes a
+    // configured combo, so binding `Alt+Shift` leaves a bare Alt alone, and the
+    // double-tap asks whether Alt is its configured modifier at all.
+    //
+    // Both events have to be cancelled, for different reasons on each engine:
+    // Firefox cancels the menu when the KEYDOWN was default-prevented, while
+    // Chromium routes to its own handler exactly those key events the renderer
+    // left unhandled, so the KEYUP that opens the menu must be taken too.
+    //
+    // Alt+F and friends are unaffected: a browser accelerator is decided on the
+    // ACCELERATOR key's event (the F), which is not this one, and modifier
+    // state itself does not come from the default action of a modifier press.
+    //
+    // `Meta` gets no equivalent on purpose: the Start / Command menu belongs to
+    // the OS, which takes that key before the page is offered it at all.
+    let altClaimed = false
     document.addEventListener('keydown', (e) => {
+        const key = gestureKeyOf(e)
+        if (key === 'Alt') {
+            // Before `press` below: `wouldActivate` probes what the key set
+            // WOULD become, so it has to be asked while Alt is still out of it.
+            if (!e.repeat && !altClaimed && (doubleTapClaimsAlt || customShortcuts.wouldActivate(key, e))) altClaimed = true
+            // Auto-repeats included: the menu opens on the release, and a press
+            // half of which was cancelled is not a state worth handing over.
+            if (altClaimed) e.preventDefault()
+        }
         // Auto-repeat is not a second press. Every key is forwarded, part of a
         // configured combo or not: a key from outside the combo is precisely
         // what has to end it, which is how real shortcuts (Ctrl+C) stay out of
         // the recognizer.
         if (e.repeat) return
-        customShortcuts.press(gestureKeyOf(e), e)
+        customShortcuts.press(key, e)
     }, true);
     document.addEventListener('keyup', (e) => {
-        customShortcuts.release(gestureKeyOf(e), e)
+        const key = gestureKeyOf(e)
+        if (key === 'Alt' && altClaimed) {
+            altClaimed = false
+            e.preventDefault()
+        }
+        customShortcuts.release(key, e)
     }, true);
     document.addEventListener('mousedown', (e) => {
         if (e.button !== 1) return
@@ -301,7 +371,10 @@ export async function content() {
     }, true);
     // A press whose release happens outside the page (alt-tab, a native menu)
     // would otherwise stay latched and pair with the next press.
-    window.addEventListener('blur', () => customShortcuts.reset());
+    // Alt-tab is the ordinary way an Alt press ends off-page: the keyup never
+    // arrives, so the claim has to be dropped here or the NEXT Alt press starts
+    // out already claimed and is suppressed for nothing.
+    window.addEventListener('blur', () => { altClaimed = false; customShortcuts.reset() });
 
     // add 'Translate/Restore this paragraph' menu when mouse is over the text of
     // a paragraph element and right mouse clicked
