@@ -519,6 +519,11 @@ export enum CONFIG_KEY {
     // Use the AI provider to re-segment auto-generated captions into
     // sentences (falls back to rule-based segmentation on failure).
     VIDEO_SUBTITLE_AI_SEGMENT = 'videoSubtitleAiSegment',
+    // Which AI provider does that segmentation — an AI provider id, or '' for
+    // "follow AI writing" (AI_ACTIVE_PROVIDER_ID). Stored separately from
+    // VIDEO_SUBTITLE_TRANSLATE_SERVICE: the translator may well be a
+    // non-AI service, and segmentation still needs a provider.
+    VIDEO_SUBTITLE_AI_PROVIDER = 'videoSubtitleAiProvider',
     // Vertical position of the subtitle overlay, percent of player height
     // measured from the bottom edge (user-draggable, persisted).
     VIDEO_SUBTITLE_POSITION = 'videoSubtitlePosition',
@@ -724,6 +729,8 @@ export const DEFAULT_VALUE = {
     VIDEO_SUBTITLE_SOURCE_POLICY: 'caption',
     VIDEO_SUBTITLE_TRANSLATE_SERVICE: 'microsoft',
     VIDEO_SUBTITLE_AI_SEGMENT: false,
+    // '' = follow the AI-writing provider (CONFIG_KEY.AI_ACTIVE_PROVIDER_ID).
+    VIDEO_SUBTITLE_AI_PROVIDER: '',
     VIDEO_SUBTITLE_PAUSE_ON_SELECT: false,
     VIDEO_SUBTITLE_HOVER_DICT: true,
     VIDEO_SUBTITLE_FOLLOW_NATIVE_CC: false,

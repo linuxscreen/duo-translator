@@ -273,6 +273,16 @@ export function initVideoSubtitle(): VideoSubtitleController {
         return ctx.activeService;
     };
 
+    /**
+     * Which AI provider re-segments auto-generated captions. Its own setting
+     * (Options › Video subtitles › AI service), '' meaning "follow AI writing"
+     * — which is what `undefined` asks `resolveAiProvider` for. Deliberately
+     * NOT derived from the translate service: that one is usually a plain
+     * translator, and segmentation would then have no provider at all.
+     */
+    const resolveSegmentProviderId = async () =>
+        (await readConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_AI_PROVIDER)) || undefined;
+
     /** The source-language preference `pickTrack` is asked with. */
     const sourcePreference = async (): Promise<SourcePreference> => ({
         policy: await readConfig<string>(CONFIG_KEY.VIDEO_SUBTITLE_SOURCE_POLICY),
@@ -739,8 +749,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
         // Resolve the provider first: awaiting after the `segmenting` flag is
         // set would be fine, but awaiting between the checks below and setting
         // it would let a second tick start the same chunk twice.
-        const key = await resolveServiceKey();
-        const providerId = key.startsWith(AI_PREFIX) ? key.slice(AI_PREFIX.length) : undefined;
+        const providerId = await resolveSegmentProviderId();
         // Re-check: the state may have moved while that read was in flight.
         if (session !== s || !s.aiSegment || s.segmenting || s.loadState !== "ready") return;
 

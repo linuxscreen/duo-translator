@@ -16,6 +16,7 @@ import {
 } from '@/main/videoSubtitle/types';
 import { getConfig, setConfig } from '@/utils/db';
 import { buildServiceOptions, getAiTranslateService, type ServiceOption } from '@/utils/service';
+import type { AiProvider } from '@/main/aiProvider';
 import { SettingRow } from '@/components/options/SettingRow';
 import { ColorPicker } from '@/components/options/ColorPicker';
 import { Switch } from '@/components/ui/switch';
@@ -33,6 +34,13 @@ const FONT_COLOR_PRESETS = ['#ffffff', '#d8d8d8', '#ffd500', '#7fdcff', '#9dff8a
 const BG_COLOR_PRESETS = ['#000000', '#1c1c1c', '#0b2a45', '#2a0b45', '#452a0b'];
 const FONT_WEIGHTS = ['300', '400', '500', '600', '700'];
 
+/**
+ * Sentinel for "follow AI writing" in the AI-service picker. The key stores
+ * `''` for that, but Radix's Select reads the empty string as "no value" and
+ * would render a blank trigger — same trick as the selection-translate page.
+ */
+const FOLLOW_AI_WRITING = '__follow_ai_writing__';
+
 /** Resolve a hex color to (presetIndex | customIndex) for the ColorPicker. */
 function presetIndexOf(presets: string[], color: string): number {
   const idx = presets.indexOf(color.toLowerCase());
@@ -47,6 +55,10 @@ export function VideoSubtitlePage() {
   const [mode, setMode] = useState<string>(DEFAULT_VALUE.VIDEO_SUBTITLE_DISPLAY_MODE);
   const [serviceKey, setServiceKey] = useState<string>(DEFAULT_VALUE.VIDEO_SUBTITLE_TRANSLATE_SERVICE);
   const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
+  const [aiProviderId, setAiProviderId] = useState<string>(
+    DEFAULT_VALUE.VIDEO_SUBTITLE_AI_PROVIDER,
+  );
+  const [aiProviders, setAiProviders] = useState<AiProvider[]>([]);
   const [targetLang, setTargetLang] = useState<string>('');
   const [sourcePolicy, setSourcePolicy] = useState<string>(
     DEFAULT_VALUE.VIDEO_SUBTITLE_SOURCE_POLICY,
@@ -67,7 +79,7 @@ export function VideoSubtitlePage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [sw, auto, m, svc, lang, pageLang, srcPolicy, seg, pause, hoverWord, followCc, chromeGate, rawStyle] =
+      const [sw, auto, m, svc, lang, pageLang, srcPolicy, seg, segProvider, pause, hoverWord, followCc, chromeGate, rawStyle] =
         await Promise.all([
           getConfig(CONFIG_KEY.VIDEO_SUBTITLE_SWITCH),
           getConfig(CONFIG_KEY.VIDEO_SUBTITLE_AUTO_ENABLE),
@@ -77,6 +89,7 @@ export function VideoSubtitlePage() {
           getConfig(CONFIG_KEY.TARGET_LANGUAGE),
           getConfig(CONFIG_KEY.VIDEO_SUBTITLE_SOURCE_POLICY),
           getConfig(CONFIG_KEY.VIDEO_SUBTITLE_AI_SEGMENT),
+          getConfig(CONFIG_KEY.VIDEO_SUBTITLE_AI_PROVIDER),
           getConfig(CONFIG_KEY.VIDEO_SUBTITLE_PAUSE_ON_SELECT),
           getConfig(CONFIG_KEY.VIDEO_SUBTITLE_HOVER_DICT),
           getConfig(CONFIG_KEY.VIDEO_SUBTITLE_FOLLOW_NATIVE_CC),
@@ -99,6 +112,7 @@ export function VideoSubtitlePage() {
           : DEFAULT_VALUE.VIDEO_SUBTITLE_SOURCE_POLICY,
       );
       setAiSegment(!!seg);
+      setAiProviderId(typeof segProvider === 'string' ? segProvider : '');
       setPauseOnSelect(!!pause);
       setHoverDict(!!hoverWord);
       setFollowNativeCc(!!followCc);
@@ -112,6 +126,7 @@ export function VideoSubtitlePage() {
         );
       if (cancelled) return;
       setServiceOptions(buildServiceOptions(enabledTranslateServices, enabledAiProviders));
+      setAiProviders(enabledAiProviders);
       setServiceKey(activeService);
       setReady(true);
     })();
@@ -325,6 +340,45 @@ export function VideoSubtitlePage() {
                     <span className="flex items-center gap-1">
                       <ServiceMark id={o.iconId} />
                       {o.i18nKey ? t(o.i18nKey, o.label) : o.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
+        <SettingRow
+          label={t('videoSubtitleAiProvider', 'AI service')}
+          hint={t('videoSubtitleAiProviderHint', 'Used by AI sentence segmentation')}
+          control={
+            <Select
+              // A provider that has since been deleted or disabled is shown as
+              // "follow AI writing" rather than a blank trigger — Radix has no
+              // item for it. The stored id is left alone: re-enabling the
+              // provider brings the choice back.
+              value={
+                aiProviders.some((p) => p.id === aiProviderId)
+                  ? aiProviderId
+                  : FOLLOW_AI_WRITING
+              }
+              onValueChange={(v) => {
+                const next = v === FOLLOW_AI_WRITING ? '' : v;
+                setAiProviderId(next);
+                void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_AI_PROVIDER, next);
+              }}
+            >
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={FOLLOW_AI_WRITING}>
+                  {t('videoSubtitleAiProviderFollowWriting', 'Follow AI writing')}
+                </SelectItem>
+                {aiProviders.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    <span className="flex items-center gap-1">
+                      <ServiceMark id={p.type as string} />
+                      {p.getTitle()}
                     </span>
                   </SelectItem>
                 ))}
