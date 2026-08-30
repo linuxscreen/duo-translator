@@ -88,6 +88,16 @@ interface VideoSession {
     /** Whole track, blank words dropped. Empty until the load succeeds. */
     words: SubtitleWord[];
     cues: SubtitleCue[];
+    /**
+     * Bumped every time the cue array is REPLACED (`setCues`) rather than
+     * appended to. In-flight work that captured cue indices compares it on
+     * completion: after a seek rebuilds the window the old indices address
+     * either nothing (crash) or, once the next chunk lands, a different cue
+     * (silently wrong translations that are never retried, because the slot is
+     * no longer `undefined`). Appending cannot invalidate an index, so
+     * `appendCues` deliberately does not bump it.
+     */
+    cuesGen: number;
     /** Ordered cue start times for the binary search. */
     starts: number[];
     translating: boolean;
@@ -444,6 +454,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
             trackId: "",
             words: [],
             cues: [],
+            cuesGen: 0,
             starts: [],
             translating: false,
             translationKey: "",
@@ -704,8 +715,11 @@ export function initVideoSubtitle(): VideoSubtitleController {
     const setCues = (s: VideoSession, cues: SubtitleCue[]) => {
         s.cues = cues;
         s.starts = cues.map((c) => c.startMs);
+        // Every previously captured cue index is now meaningless — see `cuesGen`.
+        s.cuesGen++;
     };
 
+    /** Indices stay valid across an append, so this must NOT bump `cuesGen`. */
     const appendCues = (s: VideoSession, cues: SubtitleCue[]) => {
         for (const c of cues) {
             s.cues.push(c);
@@ -844,11 +858,19 @@ export function initVideoSubtitle(): VideoSubtitleController {
 
         s.translating = true;
         const texts = pendingIdx.map((i) => s.cues[i].text);
+        // Captured in the same synchronous stretch as `pendingIdx`, so the two
+        // cannot disagree.
+        const gen = s.cuesGen;
         void translateTexts(service, texts, lang, s.abort.signal)
             .then((results) => {
                 if (session !== s || s.abort.signal.aborted) return;
                 if (!results || results.length !== texts.length) return;
                 if (s.translationKey !== key) return; // superseded mid-flight
+                // A seek rebuilt the cue window (AI segmentation) while this was
+                // in flight: `pendingIdx` no longer addresses these texts. The
+                // session, the abort controller and the translation key are all
+                // unchanged in that case, so nothing above catches it.
+                if (s.cuesGen !== gen) return;
                 for (let k = 0; k < pendingIdx.length; k++) {
                     s.cues[pendingIdx[k]].translated = results[k]?.translatedMappedHtmlText ?? "";
                 }
