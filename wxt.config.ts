@@ -79,12 +79,6 @@ export default defineConfig({
                 },
                 "description": '__MSG_shortcutTranslateRestorePage__'
             },
-            "shortcut-translate": {
-                "description": '__MSG_shortcutTranslate__'
-            },
-            "shortcut-restore": {
-                "description": '__MSG_shortcutRestore__'
-            },
             "shortcut-ai-workbench": {
                 "suggested_key": {
                     "default": "Alt+W",

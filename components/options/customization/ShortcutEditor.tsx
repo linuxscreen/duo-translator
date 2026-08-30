@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { browser } from 'wxt/browser';
+import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -21,11 +23,12 @@ import {
   type CustomShortcut,
   type ShortcutDef,
 } from '@/main/customShortcut/types';
+import { browserShortcutsFrom, type BrowserShortcut } from '@/main/customShortcut/browserShortcuts';
 
 type Props = {
   /** `null` = creating a new one. */
   shortcut: CustomShortcut | null;
-  /** Everything the new gesture must not duplicate (built-ins + the other customs). */
+  /** The other shortcuts (built-ins + the other customs), for the duplicate notice. */
   others: { def: ShortcutDef; label: string }[];
   onCancel: () => void;
   onSave: (shortcut: CustomShortcut) => void;
@@ -86,12 +89,17 @@ function NumberField({
 }
 
 /**
- * Create / edit one custom gesture, inline inside the card.
+ * Create / edit one custom shortcut, inline inside the card.
  *
  * Follows the repo's form rules even though it is not a modal: the one field
  * Save actually rejects when empty carries the red asterisk, Save is disabled
  * from a live-derived verdict rather than a check that only runs on click, and
- * the error line sits directly above the buttons where it cannot scroll away.
+ * the notices sit directly above the buttons where they cannot scroll away.
+ *
+ * Nothing but an empty key refuses a save. The two things this editor can spot
+ * — another shortcut on the same key, and a combo the browser keeps for itself
+ * — are reported and left to the user; see the notices below for why neither is
+ * ours to veto.
  */
 export function ShortcutEditor({ shortcut, others, onCancel, onSave }: Props) {
   const { t } = useTranslation();
@@ -198,7 +206,43 @@ export function ShortcutEditor({ shortcut, others, onCancel, onSave }: Props) {
     };
   }, [capturing]);
 
-  const conflict = useMemo(() => {
+  /**
+   * The extension's own browser-level shortcuts, so this editor can point out a
+   * combo the page will never receive. Read live rather than from the manifest:
+   * the user can reassign them (chrome://extensions/shortcuts, or our own
+   * editor on Firefox).
+   */
+  const [browserShortcuts, setBrowserShortcuts] = useState<BrowserShortcut[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void browser.commands
+      ?.getAll?.()
+      .then((commands) => {
+        if (!cancelled) setBrowserShortcuts(browserShortcutsFrom(commands ?? [], isMac));
+      })
+      // No warnings is the right degradation: a missing list must never block
+      // a save, and it says nothing about whether the combo is free.
+      .catch(() => { /* commands API unavailable */ });
+    return () => { cancelled = true };
+  }, [isMac]);
+
+  /**
+   * Both notices are WARNINGS, and neither blocks Save. Only an empty key does.
+   *
+   * Duplicates used to be refused outright, which was wrong in a way that had
+   * no workaround: "hold Ctrl" is a duplicate of the built-in even when the
+   * user wants a different hold time (`sameGesture` deliberately ignores
+   * timings), so a perfectly reasonable shortcut could not be created at all.
+   * And which of two same-key shortcuts wins only matters if BOTH end up bound
+   * — the bindings are edited elsewhere, so this editor cannot honestly call it
+   * a conflict.
+   *
+   * The reserved notice is the opposite case — it is always true and never
+   * recoverable here — but it stays a warning too: what it reports is a browser
+   * assignment the user can go and change, and refusing the save would leave
+   * them with no way to prepare the shortcut first.
+   */
+  const duplicate = useMemo(() => {
     if (!key) return null;
     return others.find((o) => sameGesture(o.def, draft)) ?? null;
     // `draft` is rebuilt every render; the fields `sameGesture` actually reads
@@ -206,13 +250,29 @@ export function ShortcutEditor({ shortcut, others, onCancel, onSave }: Props) {
     // identity — see sameGesture).
   }, [key, trigger, count, others]);
 
+  const reserved = useMemo(
+    () => (key ? browserShortcuts.find((b) => b.combo === key) ?? null : null),
+    [key, browserShortcuts],
+  );
+
   const missing = key === '';
-  const error = conflict
-    ? t('customShortcutConflict', 'This gesture is already used by "{{name}}"', { name: conflict.label })
-    : '';
+  const warnings = [
+    reserved &&
+      t(
+        'customShortcutReserved',
+        'The browser handles this combo itself for “{{name}}”, so the page never receives it',
+        { name: reserved.label },
+      ),
+    duplicate &&
+      t(
+        'customShortcutDuplicate',
+        '“{{name}}” uses the same key — if both are bound, only one of them fires',
+        { name: duplicate.label },
+      ),
+  ].filter((w): w is string => !!w);
 
   const save = () => {
-    if (missing || error) return;
+    if (missing) return;
     onSave({
       id: shortcut?.id || newId(),
       // Empty = "still following the gesture"; the list and the picker derive
@@ -331,19 +391,24 @@ export function ShortcutEditor({ shortcut, others, onCancel, onSave }: Props) {
         />
       )}
 
-      {/* Pinned right above the buttons: an error the user has to scroll to find
-          is indistinguishable from a Save button that is broken. */}
-      {error && (
-        <div role="alert" className="rounded-md border border-danger/40 bg-danger/10 px-2.5 py-1.5 text-[12px] text-danger">
-          {error}
+      {/* Pinned right above the buttons, where a notice cannot scroll out of
+          sight. Amber, not red: nothing here refuses the save. */}
+      {warnings.map((warning) => (
+        <div
+          key={warning}
+          role="status"
+          className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[12px] text-amber-600"
+        >
+          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" strokeWidth={1.8} />
+          <span>{warning}</span>
         </div>
-      )}
+      ))}
 
       <div className="flex items-center justify-end gap-2">
         <Button variant="outline" size="sm" onClick={onCancel}>
           {t('cancel', 'Cancel')}
         </Button>
-        <Button size="sm" onClick={save} disabled={missing || !!error}>
+        <Button size="sm" onClick={save} disabled={missing}>
           {t('save', 'Save')}
         </Button>
       </div>

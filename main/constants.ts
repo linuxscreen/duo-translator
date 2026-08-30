@@ -597,7 +597,7 @@ export enum CONFIG_KEY {
     // Customization › extension popup UI. Master switch for the card; OFF makes
     // every key below inert and the popup shows everything, same contract as
     // CUSTOM_SELECTION_POPUP_SWITCH.
-    CUSTOM_POPUP_UI_SWITCH = 'customPopupUiSwitch',
+    CUSTOM_POPUP_SWITCH = 'customPopupSwitch',
     // Which pieces of the toolbar popup are surfaced. All default true — these
     // hide UI, they never change what the underlying setting is: hiding the
     // global switch does not turn the extension off, it only stops offering the
@@ -755,7 +755,7 @@ export const DEFAULT_VALUE = {
     SELECTION_POPUP_ORIGINAL_TTS: true,
     SELECTION_POPUP_ORIGINAL_COPY: true,
     SELECTION_POPUP_HIDE_HEADER_CONFIG: false,
-    CUSTOM_POPUP_UI_SWITCH: false,
+    CUSTOM_POPUP_SWITCH: false,
     POPUP_SHOW_THEME: true,
     POPUP_SHOW_HELP: true,
     POPUP_SHOW_GLOBAL_SWITCH: true,

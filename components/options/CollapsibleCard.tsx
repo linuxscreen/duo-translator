@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Info } from 'lucide-react';
 import { type ReactNode, useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/cn';
@@ -20,6 +20,13 @@ type Props = {
    * user to act on settings they cannot see.
    */
   action?: ReactNode;
+  /**
+   * Rendered below the body and OUTSIDE its deactivated group, so the switch
+   * does not reach it. For the live previews: a preview shows what the surface
+   * looks like right now, and this switch does not change that — dimming it
+   * would say the previewed thing is off, which it is not.
+   */
+  footer?: ReactNode;
   children: ReactNode;
 };
 
@@ -31,10 +38,26 @@ type Props = {
  * make the page look different for every visit without the user ever having
  * asked for that.
  *
- * The switch and the body are independent: turning the feature off leaves its
- * settings editable, so a user can set a gesture up first and arm it after —
- * and, more importantly, so switching off never looks like it erased anything.
+ * The switch gates the body: while it is off the settings are shown, greyed
+ * out and inert, under a line saying which switch turns them on. Shown rather
+ * than hidden because switching off must never look like it erased anything —
+ * and inert rather than editable because every one of these settings does
+ * nothing until the switch is on, so a control that accepts an edit and changes
+ * nothing is the worse half of both options.
  */
+/**
+ * How a deactivated group looks: dimmed as ONE surface, so labels and controls
+ * fade together.
+ *
+ * The `!opacity-100` is what makes that true. Every control here carries its
+ * own `disabled:opacity-50`, which multiplies with the container's — a button
+ * would land at 25% and all but disappear against the dark theme, while the
+ * label beside it stayed at 50%. Overriding it needs `!important` rather than
+ * ordering: the two selectors have equal specificity, so which one wins would
+ * otherwise depend on the order Tailwind happens to emit them in.
+ */
+const DEACTIVATED = 'pointer-events-none select-none opacity-50 [&_:disabled]:!opacity-100';
+
 export function CollapsibleCard({
   title,
   hint,
@@ -43,6 +66,7 @@ export function CollapsibleCard({
   onEnabledChange,
   defaultOpen = false,
   action,
+  footer,
   children,
 }: Props) {
   const { t } = useTranslation();
@@ -75,14 +99,36 @@ export function CollapsibleCard({
         </button>
         {/* A sibling of the toggle button, not inside it — nesting an action in
             the header's own <button> would make every click on it collapse the
-            card as well. */}
-        {open && action}
+            card as well. Deactivated along with the body: it acts on the body's
+            settings, and "Restore defaults" for a feature that is off would
+            rewrite storage with nothing to show for it. */}
+        {open && action && (
+          <fieldset disabled={!enabled} className={cn(!enabled && DEACTIVATED)}>
+            {action}
+          </fieldset>
+        )}
         <Switch checked={enabled} onCheckedChange={onEnabledChange} />
       </div>
 
       {open && (
         <div id={bodyId} className="border-t border-line px-4 py-3.5">
-          {children}
+          {!enabled && (
+            <div className="mb-3.5 flex items-start gap-2 rounded-lg border border-dashed border-line px-3 py-2 text-[12px] text-ink-soft">
+              <Info className="mt-px h-3.5 w-3.5 shrink-0" strokeWidth={1.6} />
+              <span>{t('cardDisabledHint', 'Turn on the switch above to change these settings')}</span>
+            </div>
+          )}
+          {/* <fieldset disabled> rather than a prop threaded through every
+              control: it disables descendant form controls natively, so nothing
+              can be missed and nothing new has to be wired. `pointer-events`
+              covers what it cannot reach — click handlers on plain elements —
+              and `min-w-0` undoes the UA's `min-width: min-content`, which
+              would otherwise stop flex children shrinking (an ordinary <div>
+              here does not do that). */}
+          <fieldset disabled={!enabled} className={cn('min-w-0', !enabled && DEACTIVATED)}>
+            {children}
+          </fieldset>
+          {footer}
         </div>
       )}
     </section>

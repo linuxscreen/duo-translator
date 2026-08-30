@@ -57,8 +57,15 @@ export const STOCK_SELECTION_POPUP_PREFS: SelectionPopupPrefs = {
  *
  * Memoized so the object identity only changes when a value does — the popup
  * feeds some of these into effects that restart translations.
+ *
+ * `ignoreSwitch` answers with what the settings SAY, whether or not the card's
+ * master switch is on. That is for the Options preview, and only for it: the
+ * preview exists to show what these settings do, so snapping it back to the
+ * stock card when the switch goes off would hide the very thing being adjusted.
+ * Anything that actually renders the card wants the gate.
  */
-export function useSelectionPopupPrefs(): SelectionPopupPrefs {
+export function useSelectionPopupPrefs(options?: { ignoreSwitch?: boolean }): SelectionPopupPrefs {
+    const ignoreSwitch = !!options?.ignoreSwitch;
     const enabled = useConfig<boolean>(CONFIG_KEY.CUSTOM_SELECTION_POPUP_SWITCH);
     const multiService = useConfig<boolean>(CONFIG_KEY.SELECTION_POPUP_MULTI_SERVICE);
     const services = useConfig<string[]>(CONFIG_KEY.SELECTION_POPUP_SERVICES);
@@ -80,7 +87,7 @@ export function useSelectionPopupPrefs(): SelectionPopupPrefs {
 
     return useMemo(
         () =>
-            enabled
+            enabled || ignoreSwitch
                 ? {
                     multiService: !!multiService,
                     services: cleanServices,
@@ -95,7 +102,7 @@ export function useSelectionPopupPrefs(): SelectionPopupPrefs {
                 }
                 : STOCK_SELECTION_POPUP_PREFS,
         [
-            enabled, multiService, cleanServices, dict, dictExamples, showOriginal,
+            enabled, ignoreSwitch, multiService, cleanServices, dict, dictExamples, showOriginal,
             translationTts, translationCopy, originalTts, originalCopy, hideHeaderConfig,
         ],
     );

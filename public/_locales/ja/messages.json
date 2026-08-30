@@ -8,12 +8,6 @@
   "shortcutTranslateRestorePage": {
     "message": "翻訳／ページ復元"
   },
-  "shortcutTranslate": {
-    "message": "ページを翻訳する"
-  },
-  "shortcutRestore": {
-    "message": "ページを復元"
-  },
   "shortcutAiWorkbench": {
     "message": "Open AIライティングワークベンチ"
   },

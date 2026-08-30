@@ -22,14 +22,22 @@ export enum GESTURE_TRIGGER {
 }
 
 /**
- * What a gesture does. The three actions the page already knows how to perform
- * from a pointer/key gesture — the same set the double-tap modifier offers,
- * which is why the labels reuse its i18n keys (one wording, one translation).
+ * What a gesture does.
+ *
+ * The first three are the set the double-tap modifier already offers, which is
+ * why their labels reuse its i18n keys — one wording, one translation. The rest
+ * are page-level and go through the very messages the browser commands send, so
+ * a gesture and a command are the same action reached two ways.
  */
 export enum CUSTOM_SHORTCUT_ACTION {
     TRANSLATE_SELECTION = 'translateSelection',
     TRANSLATE_INPUT = 'translateInput',
     TOGGLE_PARAGRAPH = 'toggleParagraph',
+    TOGGLE_PAGE = 'togglePage',
+    TRANSLATE_PAGE = 'translatePage',
+    RESTORE_PAGE = 'restorePage',
+    OPEN_WORKBENCH = 'openWorkbench',
+    TOGGLE_VIDEO_SUBTITLE = 'toggleVideoSubtitle',
 }
 
 /** Options rows for the "Function" picker, in display order. Default is the first. */
@@ -41,6 +49,17 @@ export const CUSTOM_SHORTCUT_ACTION_OPTIONS: {
         { value: CUSTOM_SHORTCUT_ACTION.TRANSLATE_SELECTION, title: 'doubleTapTranslateSelection', fallback: 'Translate selection' },
         { value: CUSTOM_SHORTCUT_ACTION.TRANSLATE_INPUT, title: 'doubleTapTranslateInput', fallback: 'Translate input box' },
         { value: CUSTOM_SHORTCUT_ACTION.TOGGLE_PARAGRAPH, title: 'doubleTapToggleParagraph', fallback: 'Translate / restore mouse-over paragraph' },
+        // The page-level four below are the same actions the browser commands
+        // dispatch. Two of those commands (translate / restore, which never had
+        // a suggested key) were dropped once these existed: a browser command
+        // costs a slot in a hard limit — Chrome allows four `suggested_key`
+        // entries per extension — and is bound in one place for the whole
+        // browser, while these are page shortcuts the user composes freely.
+        { value: CUSTOM_SHORTCUT_ACTION.TOGGLE_PAGE, title: 'customShortcutActionTogglePage', fallback: 'Translate / restore page' },
+        { value: CUSTOM_SHORTCUT_ACTION.TRANSLATE_PAGE, title: 'customShortcutActionTranslatePage', fallback: 'Translate page' },
+        { value: CUSTOM_SHORTCUT_ACTION.RESTORE_PAGE, title: 'customShortcutActionRestorePage', fallback: 'Restore page' },
+        { value: CUSTOM_SHORTCUT_ACTION.OPEN_WORKBENCH, title: 'customShortcutActionWorkbench', fallback: 'Open the AI writing workbench' },
+        { value: CUSTOM_SHORTCUT_ACTION.TOGGLE_VIDEO_SUBTITLE, title: 'customShortcutActionVideoSubtitle', fallback: 'Turn bilingual subtitles on or off' },
     ];
 
 /**

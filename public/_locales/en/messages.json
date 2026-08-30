@@ -8,12 +8,6 @@
   "shortcutTranslateRestorePage": {
     "message": "Translate / Restore page"
   },
-  "shortcutTranslate": {
-    "message": "Translate page"
-  },
-  "shortcutRestore": {
-    "message": "Restore page"
-  },
   "shortcutAiWorkbench": {
     "message": "Open AI writing workbench"
   },

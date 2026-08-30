@@ -8,12 +8,6 @@
   "shortcutTranslateRestorePage": {
     "message": "페이지 번역/복원"
   },
-  "shortcutTranslate": {
-    "message": "페이지 번역"
-  },
-  "shortcutRestore": {
-    "message": "페이지 복원"
-  },
   "shortcutAiWorkbench": {
     "message": "오픈 AI 글쓰기 작업대"
   },

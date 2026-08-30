@@ -19,8 +19,6 @@ type CommandInfo = {
 
 const COMMAND_LABEL_KEYS: Record<string, { key: string; fallback: string }> = {
   'shortcut-translate-restore-page': { key: 'shortcutTranslateRestorePage', fallback: 'Translate / Restore page' },
-  'shortcut-translate': { key: 'shortcutTranslate', fallback: 'Translate page' },
-  'shortcut-restore': { key: 'shortcutRestore', fallback: 'Restore page' },
   'shortcut-ai-workbench': { key: 'shortcutAiWorkbench', fallback: 'Open AI writing workbench' },
   'shortcut-translate-restore-paragraph': { key: 'shortcutTranslateRestoreParagraph', fallback: 'Translate / Restore mouse-over paragraph' },
   'shortcut-translate-selection-input': { key: 'shortcutTranslateSelectionInput', fallback: 'Translate selection / input box' },

@@ -8,12 +8,6 @@
   "shortcutTranslateRestorePage": {
     "message": "翻譯或復原頁面"
   },
-  "shortcutTranslate": {
-    "message": "翻譯頁面"
-  },
-  "shortcutRestore": {
-    "message": "恢復頁面"
-  },
   "shortcutAiWorkbench": {
     "message": "開啟 AI 寫作工作臺"
   },

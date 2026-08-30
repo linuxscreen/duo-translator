@@ -8,12 +8,6 @@
   "shortcutTranslateRestorePage": {
     "message": "Перевести / Восстановить страницу"
   },
-  "shortcutTranslate": {
-    "message": "Перевести страницу"
-  },
-  "shortcutRestore": {
-    "message": "Восстановить страницу"
-  },
   "shortcutAiWorkbench": {
     "message": "Открытая среда разработки для ИИ-писателей"
   },

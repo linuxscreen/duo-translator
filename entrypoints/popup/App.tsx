@@ -35,7 +35,7 @@ import { Button } from '@/components/ui/button';
 import { use } from 'i18next';
 import { buildServiceOptions, getAiTranslateService, getTranslateService, resolveActiveService, type ServiceOption } from '@/utils/service';
 import { THEME_OPTIONS, useResolvedTheme, useThemeSetting, type ThemeSetting } from '@/utils/theme';
-import { loadPopupUiPrefs, usePopupUiPrefs, type PopupUiPrefs } from '@/utils/popupUiPrefs';
+import { loadPopupPrefs, usePopupPrefs, type PopupPrefs } from '@/utils/popupPrefs';
 import { cachedPopupHeight, rememberPopupHeight } from './popupHeight';
 
 const getConfig = (name: string) =>
@@ -80,16 +80,25 @@ type AppProps = {
    * popup a height it never had.
    */
   embedded?: boolean;
+  /**
+   * Which sections to show, supplied from outside instead of read from config.
+   *
+   * The Options preview passes the settings AS CONFIGURED, ignoring the card's
+   * master switch — that switch decides whether the real popup obeys them, and
+   * a preview that jumped back to the full popup the moment it was turned off
+   * would hide exactly what the user is adjusting.
+   */
+  uiPrefs?: PopupPrefs;
 };
 
-export default function App({ embedded = false }: AppProps = {}) {
+export default function App({ embedded = false, uiPrefs }: AppProps = {}) {
   const { t } = useTranslation();
   /**
    * Which pieces of this popup the user chose to surface — Options ›
    * Customization › Extension popup. Everything is shown by default, and the
    * switches only hide controls: none of them changes the setting behind one.
    *
-   * Two forms, and they must not be collapsed into one. `livePopupUi` (the
+   * Two forms, and they must not be collapsed into one. `livePopupPrefs` (the
    * hook) answers with the defaults until storage hydrates, which the popup
    * cannot paint with: its window is sized to its content, so drawing every
    * section once and then dropping the hidden ones snaps the window from full
@@ -97,15 +106,17 @@ export default function App({ embedded = false }: AppProps = {}) {
    * the AWAITED answer, resolved as part of the hydration below and gating the
    * first paint; the hook only feeds later edits back in.
    */
-  const livePopupUi = usePopupUiPrefs();
-  const [ui, setUi] = useState<PopupUiPrefs | null>(null);
+  const livePopupPrefs = usePopupPrefs();
+  const [resolvedUi, setResolvedUi] = useState<PopupPrefs | null>(null);
+  // A caller-supplied set wins outright — it is not a default to fall back to.
+  const ui = uiPrefs ?? resolvedUi;
   const uiResolvedRef = useRef(false);
   // Gated on an awaited read having landed — this effect also runs on mount,
   // when the hook is still on the defaults, and taking those would put the
   // flash straight back.
   useEffect(() => {
-    if (uiResolvedRef.current) setUi(livePopupUi);
-  }, [livePopupUi]);
+    if (uiResolvedRef.current) setResolvedUi(livePopupPrefs);
+  }, [livePopupPrefs]);
 
   /**
    * How tall the placeholder above is, and where the next open gets its answer.
@@ -216,10 +227,10 @@ export default function App({ embedded = false }: AppProps = {}) {
     browser.runtime.onMessage.addListener(listener);
 
     (async () => {
-      const [gs, vs, tl, ts, ds, bh, d, id, selSvc, aiSvc, vidSvc, popupUi]: [
+      const [gs, vs, tl, ts, ds, bh, d, id, selSvc, aiSvc, vidSvc, popupPrefs]: [
         boolean, VIEW_STRATEGY, string | undefined, string | undefined, DEFAULT_STRATEGY, boolean,
         string | undefined, number | undefined, string | undefined, string | undefined, string | undefined,
-        PopupUiPrefs
+        PopupPrefs
       ] = await Promise.all([
         getConfig(CONFIG_KEY.GLOBAL_SWITCH),
         getConfig(CONFIG_KEY.VIEW_STRATEGY),
@@ -232,7 +243,7 @@ export default function App({ embedded = false }: AppProps = {}) {
         getConfig(CONFIG_KEY.SELECTION_TRANSLATE_SERVICE),
         getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
         getConfig(CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE),
-        loadPopupUiPrefs(),
+        loadPopupPrefs(),
       ]);
       tabId = id
       let { activeService, enabledTranslateServices, enabledAiProviders, aiUsedForTranslatePage } = await getTranslateService(ts);
@@ -244,7 +255,7 @@ export default function App({ embedded = false }: AppProps = {}) {
 
       // Before `ready`: the layout has to be final on the first painted frame.
       uiResolvedRef.current = true;
-      setUi(popupUi);
+      setResolvedUi(popupPrefs);
 
       setOtherAiProviders(aiCtx.enabledAiProviders);
       // Selection keeps "" (follow the page); the other two are resolved so a

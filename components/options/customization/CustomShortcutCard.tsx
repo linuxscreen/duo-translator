@@ -100,7 +100,7 @@ export function CustomShortcutCard() {
 
   const removeBinding = (id: string) => writeBindings(bindings.filter((b) => b.id !== id));
 
-  /** Everything a gesture under edit must not duplicate. */
+  /** Everything the editor compares the draft against, for its duplicate notice. */
   const conflictPool = useMemo(
     () => [
       ...BUILTIN_SHORTCUTS.map((def) => ({ def, label: labelOf(def) })),
@@ -246,12 +246,16 @@ export function CustomShortcutCard() {
                 </SelectContent>
               </Select>
 
-              {/* Nothing to remove when the single remaining row IS the defaults. */}
+              {/* Disabled only when pressing it would do nothing: one row, and
+                  that row is the placeholder default rather than anything the
+                  user has stored. A single CONFIGURED row is removable — it
+                  clears back to the default row, which is a real change and the
+                  only way to undo the last binding. */}
               <button
                 type="button"
                 onClick={() => removeBinding(b.id)}
                 title={t('remove', 'Remove')}
-                disabled={bindings.length <= 1}
+                disabled={bindings.length <= 1 && stored.length === 0}
                 className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-ink-soft transition-colors hover:bg-hover hover:text-danger disabled:cursor-not-allowed disabled:opacity-30"
               >
                 <X className="h-3.5 w-3.5" strokeWidth={1.8} />

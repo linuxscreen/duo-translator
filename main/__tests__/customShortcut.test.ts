@@ -3,6 +3,7 @@
 // DOM, no storage — so this suite is the real coverage for the timing rules.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createGestureEngine } from "@/main/customShortcut/gestureEngine";
+import { browserShortcutsFrom, commandShortcutToCombo } from "@/main/customShortcut/browserShortcuts";
 import {
     BUILTIN_SHORTCUTS,
     CUSTOM_SHORTCUT_ACTION,
@@ -447,5 +448,64 @@ describe("resolution", () => {
         // gesture no matter what `count` happens to be carrying.
         const h = def({ id: "a", key: "Control", trigger: GESTURE_TRIGGER.HOLD, count: 2 });
         expect(sameGesture(h, def({ id: "b", key: "Control", trigger: GESTURE_TRIGGER.HOLD, count: 4 }))).toBe(true);
+    });
+});
+
+// --- browser-level shortcuts ------------------------------------------------
+//
+// A `chrome.commands` shortcut is handled by the BROWSER, so a page gesture on
+// the same combo can never fire. Translating the command syntax into combo form
+// is what lets the editor say so instead of leaving the user with a shortcut
+// that silently does nothing (this extension's own Alt+W, in practice).
+
+describe("browser shortcut parsing", () => {
+    it("translates the command syntax into gesture combos", () => {
+        expect(commandShortcutToCombo("Alt+W", false)).toBe("Alt+KeyW");
+        expect(commandShortcutToCombo("Ctrl+Shift+Y", false)).toBe("Control+Shift+KeyY");
+        expect(commandShortcutToCombo("Command+Shift+1", true)).toBe("Shift+Meta+Digit1");
+        expect(commandShortcutToCombo("Alt+Up", false)).toBe("Alt+ArrowUp");
+        expect(commandShortcutToCombo("F5", false)).toBe("F5");
+        expect(commandShortcutToCombo("Ctrl+Period", false)).toBe("Control+Period");
+    });
+
+    it("orders modifiers canonically, so comparison is a string equality", () => {
+        expect(commandShortcutToCombo("Shift+Alt+W", false)).toBe("Alt+Shift+KeyW");
+    });
+
+    it("reads Ctrl as Command on macOS, and MacCtrl as the real Control key", () => {
+        // Not a quirk of ours: the command syntax defines it that way, and
+        // reading it literally would warn about a combo the user never bound.
+        expect(commandShortcutToCombo("Ctrl+Y", true)).toBe("Meta+KeyY");
+        expect(commandShortcutToCombo("MacCtrl+Y", true)).toBe("Control+KeyY");
+        expect(commandShortcutToCombo("Ctrl+Y", false)).toBe("Control+KeyY");
+    });
+
+    it("answers null rather than guessing — no warning beats a wrong one", () => {
+        expect(commandShortcutToCombo("", false)).toBeNull();
+        expect(commandShortcutToCombo("Search+A", false)).toBeNull();
+        // Modifiers alone are not something the browser can register.
+        expect(commandShortcutToCombo("Ctrl", false)).toBeNull();
+        expect(commandShortcutToCombo("Ctrl+A+B", false)).toBeNull();
+        expect(commandShortcutToCombo("Ctrl+F13", false)).toBeNull();
+    });
+
+    it("drops unassigned and unparsable commands, and names the rest", () => {
+        expect(
+            browserShortcutsFrom(
+                [
+                    { name: "workbench", description: "AI workbench", shortcut: "Alt+W" },
+                    // No key bound — collides with nothing.
+                    { name: "translate", description: "Translate", shortcut: "" },
+                    { name: "chromeos", description: "ChromeOS", shortcut: "Search+A" },
+                    // Falls back to the command name when the browser gives no
+                    // description; a nameless warning helps nobody.
+                    { name: "bare", shortcut: "Alt+Q" },
+                ],
+                false,
+            ),
+        ).toEqual([
+            { combo: "Alt+KeyW", label: "AI workbench" },
+            { combo: "Alt+KeyQ", label: "bare" },
+        ]);
     });
 });

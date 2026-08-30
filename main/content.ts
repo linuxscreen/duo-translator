@@ -28,8 +28,10 @@ import { getDomainWithPortFromUrl } from "@/utils/url";
 import { createGestureEngine } from "@/main/customShortcut/gestureEngine";
 import {
     CUSTOM_SHORTCUT_ACTION,
+    GESTURE_TRIGGER,
     MOUSE_MIDDLE_KEY,
     actionsForGesture,
+    findShortcut,
     gestureKeyOf,
     normalizeBindings,
     normalizeCustomShortcuts,
@@ -37,6 +39,7 @@ import {
     type CustomShortcut,
     type ShortcutBinding,
 } from "@/main/customShortcut/types";
+import { removeTypedEcho } from "@/main/dom/typedEcho";
 import { getAiTranslateService, getTranslateService } from "@/utils/service";
 import { buildTranslationCss } from "@/main/css";
 import { TRANSLATE_INDICATOR_CSS } from "@/main/translateIndicator/indicatorCss";
@@ -282,19 +285,32 @@ export async function content() {
     // watch list is a live view of config, so saving in Options arms or
     // disarms a gesture on already-open pages with no reload.
     let customShortcutBindings: ShortcutBinding[] = []
+    // Kept beside the bindings rather than inside the watch block below: the
+    // fired gesture's DEFINITION is needed to know how many characters it can
+    // have typed (see takeTypedEcho).
+    let customShortcutList: CustomShortcut[] = []
     const customShortcuts = createGestureEngine((shortcutId) => {
         void runCustomShortcutGesture(shortcutId)
     })
     {
         let enabled = false
-        let list: CustomShortcut[] = []
         const refresh = () => {
-            customShortcuts.setGestures(enabled ? resolveGestures(list, customShortcutBindings) : [])
+            customShortcuts.setGestures(enabled ? resolveGestures(customShortcutList, customShortcutBindings) : [])
         }
         watchConfig<boolean>(CONFIG_KEY.CUSTOM_SHORTCUT_SWITCH, (v) => { enabled = !!v; refresh() })
-        watchConfig<unknown[]>(CONFIG_KEY.CUSTOM_SHORTCUT_LIST, (v) => { list = normalizeCustomShortcuts(v); refresh() })
+        watchConfig<unknown[]>(CONFIG_KEY.CUSTOM_SHORTCUT_LIST, (v) => { customShortcutList = normalizeCustomShortcuts(v); refresh() })
         watchConfig<unknown[]>(CONFIG_KEY.CUSTOM_SHORTCUT_BINDINGS, (v) => { customShortcutBindings = normalizeBindings(v); refresh() })
     }
+    /**
+     * The run of identical characters the focused editable has just received.
+     *
+     * A shortcut on a printable key types before it fires — the browser inserts
+     * on every press, and nothing at press time can know whether the sequence
+     * will complete. Suppressing the default is not an option (that would take
+     * Space away from the user), so the insertion is recorded here and undone
+     * by the action that reads the field.
+     */
+    let typedEcho: { el: HTMLElement; text: string } | null = null
     // Set when a middle-button press was claimed by a gesture, so the auxclick
     // that follows can be suppressed too — open-link-in-new-tab is dispatched
     // from auxclick, which a preventDefault on mousedown does NOT cancel.
@@ -333,6 +349,9 @@ export async function content() {
             // half of which was cancelled is not a state worth handing over.
             if (altClaimed) e.preventDefault()
         }
+        // Before the repeat guard: a held printable key really does insert a
+        // character per repeat, and those are just as much the shortcut's doing.
+        noteTypedEcho(e)
         // Auto-repeat is not a second press. Every key is forwarded, part of a
         // configured combo or not: a key from outside the combo is precisely
         // what has to end it, which is how real shortcuts (Ctrl+C) stay out of
@@ -374,7 +393,7 @@ export async function content() {
     // Alt-tab is the ordinary way an Alt press ends off-page: the keyup never
     // arrives, so the claim has to be dropped here or the NEXT Alt press starts
     // out already claimed and is suppressed for nothing.
-    window.addEventListener('blur', () => { altClaimed = false; customShortcuts.reset() });
+    window.addEventListener('blur', () => { altClaimed = false; typedEcho = null; customShortcuts.reset() });
 
     // add 'Translate/Restore this paragraph' menu when mouse is over the text of
     // a paragraph element and right mouse clicked
@@ -1362,6 +1381,51 @@ export async function content() {
     }
 
     /**
+     * Record a character the focused editable is about to receive.
+     *
+     * Only a run of the SAME character can belong to one shortcut, and starting
+     * over on anything else is what keeps "hello   " from being read as eight
+     * characters of shortcut. Function declaration so the listener above, which
+     * is registered in the first synchronous pass, can call it.
+     */
+    function noteTypedEcho(e: KeyboardEvent) {
+        // Ctrl / Alt / Meta suppress text input, and a `key` longer than one
+        // character is not a character at all (Enter, ArrowLeft, F5).
+        if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) { typedEcho = null; return }
+        const el = deepActiveElement()
+        if (!(el instanceof HTMLElement) || !IsEditableElement(el)) { typedEcho = null; return }
+        if (typedEcho && typedEcho.el === el && typedEcho.text[0] === e.key) typedEcho.text += e.key
+        else typedEcho = { el, text: e.key }
+    }
+
+    /**
+     * What the shortcut that just fired can account for of that run, taken and
+     * cleared in one go.
+     *
+     * The cap matters: three spaces where the shortcut is a double-tap means the
+     * first one was the user's (its sequence timed out), and removing it would
+     * delete a character they meant to keep.
+     */
+    function takeTypedEcho(shortcutId: string): { el: HTMLElement; text: string } | null {
+        const echo = typedEcho
+        typedEcho = null
+        if (!echo) return null
+        const def = findShortcut(shortcutId, customShortcutList)
+        if (!def) return null
+        const presses = def.trigger === GESTURE_TRIGGER.MULTI ? def.count
+            : def.trigger === GESTURE_TRIGGER.CLICK ? 1
+                // HOLD: the key auto-repeats for as long as it is held, so how
+                // many characters arrived is not something the definition can
+                // say — the run itself is the only answer. Characters that
+                // arrive after the hold fires are missed; a hold on a printable
+                // key bound to "translate input box" is a pathological setup and
+                // not worth a second pass to catch them.
+                : echo.text.length
+        const text = echo.text.slice(-Math.min(echo.text.length, presses))
+        return text ? { el: echo.el, text } : null
+    }
+
+    /**
      * A custom gesture fired. Runs the actions bound to it in the order the
      * user arranged them, stopping at the first whose precondition holds — the
      * same "one action per gesture" rule as the double-tap handler, except the
@@ -1371,18 +1435,25 @@ export async function content() {
     async function runCustomShortcutGesture(shortcutId: string) {
         const actions = actionsForGesture(shortcutId, customShortcutBindings)
         if (actions.length === 0) return
+        // Synchronously, before the await: the run is live state, and more
+        // typing during the wait would change what this gesture is answerable
+        // for. Same rule as capturing a pointer position off an event.
+        const echo = takeTypedEcho(shortcutId)
         // The gesture is recognized immediately; only the action waits for the
         // pipeline, so a gesture on a still-initializing page acts as soon as
         // it can instead of doing nothing.
         await startupReady
         if (startupAborted) return
         for (const action of actions) {
-            if (runCustomShortcutAction(action)) return
+            if (runCustomShortcutAction(action, echo)) return
         }
     }
 
     /** @returns whether the action's precondition was met and it actually ran. */
-    function runCustomShortcutAction(action: CUSTOM_SHORTCUT_ACTION): boolean {
+    function runCustomShortcutAction(
+        action: CUSTOM_SHORTCUT_ACTION,
+        echo: { el: HTMLElement; text: string } | null,
+    ): boolean {
         switch (action) {
             case CUSTOM_SHORTCUT_ACTION.TRANSLATE_SELECTION: {
                 const { selection, text, inPopup } = currentTranslateSelection();
@@ -1393,6 +1464,13 @@ export async function content() {
             case CUSTOM_SHORTCUT_ACTION.TRANSLATE_INPUT: {
                 const active = deepActiveElement();
                 if (!(active instanceof HTMLElement) || !IsEditableElement(active)) return false
+                // Take the shortcut's own characters back out FIRST: they are
+                // in the field the user is asking us to translate, so leaving
+                // them in would both send them to the provider and leave them
+                // behind whenever the translation fails or comes back empty
+                // (the success path replaces the whole value, which is what hid
+                // this until a shortcut on a printable key existed).
+                if (echo && echo.el === active) removeTypedEcho(active, echo.text);
                 lastEditableElement = active;
                 void translateInputBox();
                 return true
@@ -1401,6 +1479,49 @@ export async function content() {
                 // Always "runs": it falls back to whole-container behaviour when
                 // the pointer is over no unit, so it never silently does nothing.
                 toggleTranslateParagraph();
+                return true
+            // The page-level three are broadcast rather than run here, even in
+            // the top frame. A key event only reaches the FOCUSED frame, so
+            // acting locally would translate an iframe and nothing else; going
+            // through background's fan-out is exactly what the popup and the
+            // browser commands do, and every frame then handles it once. The
+            // echo back to this frame is a no-op for the same reason it is for
+            // the float ball (task + status guards).
+            //
+            // TOGGLE stays a broadcast too, and specifically must not be
+            // decided here: sub-frames ignore raw TOGGLE by design and take the
+            // explicit translate/restore the top frame relays afterwards, so
+            // letting a sub-frame flip its own status is how they drift out of
+            // phase with the tab.
+            case CUSTOM_SHORTCUT_ACTION.TOGGLE_PAGE:
+                relayToSubframes(TRANSLATE_ACTION.TOGGLE);
+                return true
+            case CUSTOM_SHORTCUT_ACTION.TRANSLATE_PAGE:
+                relayToSubframes(TRANSLATE_ACTION.TRANSLATE);
+                return true
+            case CUSTOM_SHORTCUT_ACTION.RESTORE_PAGE:
+                relayToSubframes(TRANSLATE_ACTION.SHOW_ORIGINAL);
+                return true
+            case CUSTOM_SHORTCUT_ACTION.OPEN_WORKBENCH:
+                // Broadcast for the same reason, and the handler is already
+                // top-frame-only, so the tab still gets exactly one workbench.
+                relayToSubframes(ACTION.AI_OPEN_WORKBENCH);
+                return true
+            case CUSTOM_SHORTCUT_ACTION.TOGGLE_VIDEO_SUBTITLE:
+                // Not broadcast, and not a config write either. It flips the
+                // controller's per-tab session switch — the same one the player
+                // menu shows — so turning it off just stops drawing subtitles,
+                // leaving the player button and the menu where they are.
+                //
+                // `VIDEO_SUBTITLE_SWITCH` would be the wrong lever: that is the
+                // "disable everywhere" setting the menu puts behind a confirm
+                // dialog, and it tears the injected UI down with it.
+                //
+                // No controller means no player to act on (a sub-frame, or a
+                // site the feature does not support), which is a precondition
+                // that failed rather than an action that ran.
+                if (!videoSubtitle) return false
+                videoSubtitle.toggleEnabled();
                 return true
         }
         return false

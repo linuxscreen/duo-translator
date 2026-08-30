@@ -824,12 +824,6 @@ export async function background() {
         if (command === 'shortcut-translate-restore-page') {
             // send message to current tab, toggle translate status
             action = TRANSLATE_ACTION.TOGGLE
-        } else if (command === 'shortcut-translate') {
-            // send message to current tab, toggle translate status
-            action = TRANSLATE_ACTION.TRANSLATE
-        } else if (command === 'shortcut-restore') {
-            // send message to current tab, restore page
-            action = TRANSLATE_ACTION.SHOW_ORIGINAL
         } else if (command === 'shortcut-ai-workbench') {
             action = ACTION.AI_OPEN_WORKBENCH
         } else if (command === 'shortcut-translate-restore-paragraph') {

@@ -4,8 +4,7 @@ import { Switch } from '@/components/ui/switch';
 import { CONFIG_KEY, configDefault } from '@/main/constants';
 import { setConfig } from '@/utils/db';
 import { useConfig } from '@/utils/reactiveConfig';
-import { POPUP_UI_OPTION_KEYS } from '@/utils/popupUiPrefs';
-import { PopupPreview } from './PopupPreview';
+import { POPUP_OPTION_KEYS } from '@/utils/popupPrefs';
 
 /**
  * "Restore defaults" as a hook, because the button that drives it lives in the
@@ -14,7 +13,7 @@ import { PopupPreview } from './PopupPreview';
  * The card's own master switch is deliberately NOT included: resetting it would
  * switch the feature off from inside itself, which is a different action.
  */
-export function usePopupUiDefaults(): { dirty: boolean; restore: () => void } {
+export function usePopupDefaults(): { dirty: boolean; restore: () => void } {
   const current: Record<string, unknown> = {
     [CONFIG_KEY.POPUP_SHOW_THEME]: useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_THEME),
     [CONFIG_KEY.POPUP_SHOW_HELP]: useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_HELP),
@@ -27,9 +26,9 @@ export function usePopupUiDefaults(): { dirty: boolean; restore: () => void } {
     // Compared against the shipped defaults rather than a second hardcoded
     // list, and the same comparison disables the button — a reset that would
     // change nothing is better greyed out than silently inert.
-    dirty: POPUP_UI_OPTION_KEYS.some((k) => current[k] !== configDefault(k)),
+    dirty: POPUP_OPTION_KEYS.some((k) => current[k] !== configDefault(k)),
     restore: () => {
-      for (const key of POPUP_UI_OPTION_KEYS) void setConfig(key, configDefault(key));
+      for (const key of POPUP_OPTION_KEYS) void setConfig(key, configDefault(key));
     },
   };
 }
@@ -44,7 +43,7 @@ function Row({ label, checked, onChange }: { label: ReactNode; checked: boolean;
   );
 }
 
-export function PopupUiCard() {
+export function PopupCard() {
   const { t } = useTranslation();
 
   const theme = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_THEME);
@@ -87,13 +86,6 @@ export function PopupUiCard() {
           checked={aiWriting}
           onChange={(v) => void setConfig(CONFIG_KEY.POPUP_SHOW_AI_WRITING, v)}
         />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <span className="text-[13px] font-medium text-ink">{t('preview', 'Preview')}</span>
-        <div className="flex justify-center rounded-lg border border-dashed border-line bg-bg/40 p-4">
-          <PopupPreview />
-        </div>
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import PopupApp from '@/entrypoints/popup/App';
 // @ts-ignore — Vite's ?inline returns the compiled file contents as a string.
 import popupCss from '@/entrypoints/popup/popup.css?inline';
 import { bindThemeToElement, useResolvedTheme } from '@/utils/theme';
+import { usePopupPrefs } from '@/utils/popupPrefs';
 
 /** Width the popup is fixed at (`#root` / `html, body` in popup.css). */
 const POPUP_WIDTH = 380;
@@ -32,7 +33,7 @@ const PREVIEW_CSS = (popupCss as string).replaceAll(
  *
  * Renders the REAL popup component, so every setting on this card is shown
  * exactly as it will look — including the pieces this card can hide, which the
- * popup gates on the same `usePopupUiPrefs()` hook.
+ * popup gates on the same `usePopupPrefs()` hook.
  *
  * Nothing in it is clickable: the whole surface is `pointer-events: none`.
  * That is deliberately blunt rather than per-control — the popup writes config
@@ -45,6 +46,10 @@ export function PopupPreview() {
   const hostRef = useRef<HTMLDivElement>(null);
   const [mount, setMount] = useState<HTMLDivElement | null>(null);
   const resolvedTheme = useResolvedTheme();
+  // Ungated, and handed to the popup rather than left for it to read: the
+  // preview shows what the six settings say even while the card's master switch
+  // is off — see usePopupPrefs.
+  const uiPrefs = usePopupPrefs({ ignoreSwitch: true });
 
   useEffect(() => {
     const host = hostRef.current;
@@ -90,7 +95,7 @@ export function PopupPreview() {
           >
             {/* `embedded`: this copy must not record its height as the real
                 popup's opening height — see entrypoints/popup/popupHeight.ts. */}
-            <PopupApp embedded />
+            <PopupApp embedded uiPrefs={uiPrefs} />
           </div>,
           mount,
         )}

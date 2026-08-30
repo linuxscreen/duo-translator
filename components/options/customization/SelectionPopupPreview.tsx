@@ -36,7 +36,9 @@ const CARD_WIDTH = 460;
  * preview is showing.
  */
 export function SelectionPopupPreview() {
-  const prefs = useSelectionPopupPrefs();
+  // Ungated: the preview shows what the settings say even with the card's
+  // master switch off — see useSelectionPopupPrefs.
+  const prefs = useSelectionPopupPrefs({ ignoreSwitch: true });
   const hostRef = useRef<HTMLDivElement>(null);
   const [mount, setMount] = useState<HTMLDivElement | null>(null);
 

@@ -15,7 +15,7 @@ import { useMemo } from 'react';
 import { CONFIG_KEY } from '@/main/constants';
 import { readConfig, useConfig } from '@/utils/reactiveConfig';
 
-export interface PopupUiPrefs {
+export interface PopupPrefs {
     theme: boolean;
     help: boolean;
     globalSwitch: boolean;
@@ -25,7 +25,7 @@ export interface PopupUiPrefs {
 }
 
 /** The popup exactly as it shipped: everything shown. */
-export const STOCK_POPUP_UI_PREFS: PopupUiPrefs = {
+export const STOCK_POPUP_PREFS: PopupPrefs = {
     theme: true,
     help: true,
     globalSwitch: true,
@@ -35,7 +35,7 @@ export const STOCK_POPUP_UI_PREFS: PopupUiPrefs = {
 };
 
 /** Every key the card owns, in display order. */
-export const POPUP_UI_OPTION_KEYS: CONFIG_KEY[] = [
+export const POPUP_OPTION_KEYS: CONFIG_KEY[] = [
     CONFIG_KEY.POPUP_SHOW_THEME,
     CONFIG_KEY.POPUP_SHOW_HELP,
     CONFIG_KEY.POPUP_SHOW_GLOBAL_SWITCH,
@@ -52,10 +52,17 @@ export const POPUP_UI_OPTION_KEYS: CONFIG_KEY[] = [
  * that is visible: the window sizes itself to its content, so painting once
  * with every section and again without them makes it snap from full height to
  * the trimmed height. The popup therefore takes its first answer from
- * {@link loadPopupUiPrefs} and only adopts this one afterwards.
+ * {@link loadPopupPrefs} and only adopts this one afterwards.
+ *
+ * `ignoreSwitch` answers with what the six settings SAY, whether or not the
+ * card's master switch is on. That is for the Options preview, and only for it:
+ * the preview's job is to show what these settings do, so having it snap back
+ * to the full popup when the switch goes off would hide the very thing the user
+ * is adjusting. Anything that actually renders the popup wants the gate.
  */
-export function usePopupUiPrefs(): PopupUiPrefs {
-    const enabled = useConfig<boolean>(CONFIG_KEY.CUSTOM_POPUP_UI_SWITCH);
+export function usePopupPrefs(options?: { ignoreSwitch?: boolean }): PopupPrefs {
+    const ignoreSwitch = !!options?.ignoreSwitch;
+    const enabled = useConfig<boolean>(CONFIG_KEY.CUSTOM_POPUP_SWITCH);
     const theme = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_THEME);
     const help = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_HELP);
     const globalSwitch = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_GLOBAL_SWITCH);
@@ -65,7 +72,7 @@ export function usePopupUiPrefs(): PopupUiPrefs {
 
     return useMemo(
         () =>
-            enabled
+            enabled || ignoreSwitch
                 ? {
                     theme: !!theme,
                     help: !!help,
@@ -74,8 +81,8 @@ export function usePopupUiPrefs(): PopupUiPrefs {
                     bilingualHighlight: !!bilingualHighlight,
                     aiWriting: !!aiWriting,
                 }
-                : STOCK_POPUP_UI_PREFS,
-        [enabled, theme, help, globalSwitch, defaultStrategy, bilingualHighlight, aiWriting],
+                : STOCK_POPUP_PREFS,
+        [enabled, ignoreSwitch, theme, help, globalSwitch, defaultStrategy, bilingualHighlight, aiWriting],
     );
 }
 
@@ -87,10 +94,10 @@ export function usePopupUiPrefs(): PopupUiPrefs {
  * version relied on `useConfig` landing before the popup's own background round
  * trips — it usually does, and "usually" is exactly a flash the user sees.)
  */
-export async function loadPopupUiPrefs(): Promise<PopupUiPrefs> {
+export async function loadPopupPrefs(): Promise<PopupPrefs> {
     const [enabled, theme, help, globalSwitch, defaultStrategy, bilingualHighlight, aiWriting] =
         await Promise.all([
-            readConfig<boolean>(CONFIG_KEY.CUSTOM_POPUP_UI_SWITCH),
+            readConfig<boolean>(CONFIG_KEY.CUSTOM_POPUP_SWITCH),
             readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_THEME),
             readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_HELP),
             readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_GLOBAL_SWITCH),
@@ -98,7 +105,7 @@ export async function loadPopupUiPrefs(): Promise<PopupUiPrefs> {
             readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_BILINGUAL_HIGHLIGHT),
             readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_AI_WRITING),
         ]);
-    if (!enabled) return STOCK_POPUP_UI_PREFS;
+    if (!enabled) return STOCK_POPUP_PREFS;
     return {
         theme: !!theme,
         help: !!help,

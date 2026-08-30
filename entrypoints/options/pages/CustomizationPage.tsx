@@ -7,7 +7,10 @@ import {
   SelectionPopupCard,
   useSelectionPopupDefaults,
 } from '@/components/options/customization/SelectionPopupCard';
-import { PopupUiCard, usePopupUiDefaults } from '@/components/options/customization/PopupUiCard';
+import { PopupCard, usePopupDefaults } from '@/components/options/customization/PopupCard';
+import { PopupPreview } from '@/components/options/customization/PopupPreview';
+import { SelectionPopupPreview } from '@/components/options/customization/SelectionPopupPreview';
+import { PreviewSection } from '@/components/options/customization/PreviewSection';
 import { CONFIG_KEY } from '@/main/constants';
 import { setConfig } from '@/utils/db';
 import { useConfig } from '@/utils/reactiveConfig';
@@ -22,8 +25,8 @@ export function CustomizationPage() {
   const shortcutsOn = useConfig<boolean>(CONFIG_KEY.CUSTOM_SHORTCUT_SWITCH);
   const selectionPopupOn = useConfig<boolean>(CONFIG_KEY.CUSTOM_SELECTION_POPUP_SWITCH);
   const selectionPopupDefaults = useSelectionPopupDefaults();
-  const popupUiOn = useConfig<boolean>(CONFIG_KEY.CUSTOM_POPUP_UI_SWITCH);
-  const popupUiDefaults = usePopupUiDefaults();
+  const popupOn = useConfig<boolean>(CONFIG_KEY.CUSTOM_POPUP_SWITCH);
+  const popupDefaults = usePopupDefaults();
 
   /** The header action shared by the cards that have restorable settings. */
   function restoreButton({ dirty, restore }: { dirty: boolean; restore: () => void }) {
@@ -54,19 +57,21 @@ export function CustomizationPage() {
         enabled={selectionPopupOn}
         onEnabledChange={(v) => void setConfig(CONFIG_KEY.CUSTOM_SELECTION_POPUP_SWITCH, v)}
         action={restoreButton(selectionPopupDefaults)}
+        footer={<PreviewSection><SelectionPopupPreview /></PreviewSection>}
       >
         <SelectionPopupCard />
       </CollapsibleCard>
 
       <CollapsibleCard
-        title={t('customPopupUi', 'Extension popup')}
-        hint={t('customPopupUiHint', 'The panel that opens when you click the extension icon')}
+        title={t('customPopup', 'Extension popup')}
+        hint={t('customPopupHint', 'The panel that opens when you click the extension icon')}
         icon={<AppWindow className="h-3.5 w-3.5" strokeWidth={1.6} />}
-        enabled={popupUiOn}
-        onEnabledChange={(v) => void setConfig(CONFIG_KEY.CUSTOM_POPUP_UI_SWITCH, v)}
-        action={restoreButton(popupUiDefaults)}
+        enabled={popupOn}
+        onEnabledChange={(v) => void setConfig(CONFIG_KEY.CUSTOM_POPUP_SWITCH, v)}
+        action={restoreButton(popupDefaults)}
+        footer={<PreviewSection><PopupPreview /></PreviewSection>}
       >
-        <PopupUiCard />
+        <PopupCard />
       </CollapsibleCard>
     </div>
   );

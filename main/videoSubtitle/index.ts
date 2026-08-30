@@ -47,6 +47,11 @@ import {
 
 export interface VideoSubtitleController {
     destroy(): void;
+    /**
+     * Flip the per-tab "Enable bilingual subtitles" switch — the very one the
+     * player menu shows. Reached from a custom shortcut.
+     */
+    toggleEnabled(): void;
 }
 
 const TICK_MS = 150;
@@ -663,6 +668,23 @@ export function initVideoSubtitle(): VideoSubtitleController {
     };
 
     /**
+     * The session switch, flipped from outside (a custom shortcut).
+     *
+     * Deliberately NOT `VIDEO_SUBTITLE_SWITCH`: that one means "disable
+     * everywhere", sits behind a confirm dialog, and tears the player button
+     * down with it. A shortcut is pressed casually, so it has to be as cheap to
+     * undo as it was to fire — which is exactly what the menu's own switch is.
+     *
+     * Nothing else to do here. The tick reads `sessionEnabled`, pushes the new
+     * state into the menu and hides or shows the overlay, the same way it
+     * follows the menu switch and the native-CC follow; at 150 ms that is not a
+     * delay anyone can see, and it keeps one code path owning the transition.
+     */
+    const toggleEnabled = () => {
+        void isEnabled().then((on) => { sessionEnabled = !on; });
+    };
+
+    /**
      * A language picked in the player menu's source-language dropdown ("" =
      * back to the policy). Applies immediately — the user is looking at the
      * subtitle they want changed.
@@ -1179,5 +1201,6 @@ export function initVideoSubtitle(): VideoSubtitleController {
             window.clearInterval(timer);
             teardownFeature();
         },
+        toggleEnabled,
     };
 }

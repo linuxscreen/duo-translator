@@ -5,7 +5,6 @@ import { CONFIG_KEY, configDefault } from '@/main/constants';
 import { setConfig } from '@/utils/db';
 import { useConfig } from '@/utils/reactiveConfig';
 import { buildServiceOptions, getTranslateService } from '@/utils/service';
-import { SelectionPopupPreview } from './SelectionPopupPreview';
 
 /**
  * Every key "Restore defaults" covers — i.e. the card's own settings, NOT the
@@ -208,13 +207,6 @@ export function SelectionPopupCard() {
           />
         )}
       </Section>
-
-      <div className="flex flex-col gap-2">
-        <span className="text-[13px] font-medium text-ink">{t('preview', 'Preview')}</span>
-        <div className="flex justify-center rounded-lg border border-dashed border-line bg-bg/40 p-4">
-          <SelectionPopupPreview />
-        </div>
-      </div>
     </div>
   );
 }
