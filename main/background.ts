@@ -130,7 +130,11 @@ export async function background() {
                 sendResponse({ status: STATUS_FAIL, data: { name: e.name, message: e.message, recieved: message } })
             }
         }
-        console.log('background onMessage', message)
+        // Log the action ONLY. Full payloads have carried API keys (provider
+        // saves) and WebDAV passwords (connect requests) into the SW console,
+        // which survives until the next worker wake and lands in any log the
+        // user pastes into an issue.
+        console.debug('background onMessage', message.action)
         // Feature modules own their own handlers; background only dispatches.
         // A plain synchronous table lookup, so the MV3 first-turn registration
         // rule above is unaffected.
