@@ -376,6 +376,47 @@ export class MicrosoftTranslateService extends TranslateService {
     ): Promise<TranslateResult[]> {
         if (texts.length === 0) return [];
 
+        // Microsoft caps each request at ~5000 chars / 1000 elements. A first
+        // viewport batch (IntersectionObserver rootMargin 300px) can exceed
+        // both, and the ENTIRE batch used to fail together with HTTP 400 —
+        // the split used to live in translateBatchText, which nothing called.
+        // Split into chunks, dispatch concurrently, reassemble in order.
+        const chunks: string[][] = [[]];
+        let charCount = 0;
+        let itemCount = 0;
+        for (let raw of texts) {
+            if (raw.length > MS_BATCH_CHAR_LIMIT) raw = raw.substring(0, MS_BATCH_CHAR_LIMIT);
+            charCount += raw.length;
+            itemCount++;
+            if (charCount > MS_BATCH_CHAR_LIMIT || itemCount > MS_BATCH_ITEM_LIMIT) {
+                chunks.push([]);
+                charCount = 0;
+                itemCount = 0;
+            }
+            chunks[chunks.length - 1].push(raw);
+        }
+
+        if (chunks.length === 1) return this.translateOnce(chunks[0], targetLang, signal, sourceLang);
+        const responses = await Promise.all(
+            chunks.map((chunk, index) =>
+                this.translateOnce(chunk, targetLang, signal, sourceLang).then(
+                    (translatedTexts) => ({ index, translatedTexts }),
+                ),
+            ),
+        );
+        responses.sort((a, b) => a.index - b.index);
+
+        const result: TranslateResult[] = [];
+        for (const r of responses) result.push(...r.translatedTexts);
+        return result;
+    }
+
+    private async translateOnce(
+        texts: string[],
+        targetLang: string,
+        signal?: AbortSignal | null,
+        _sourceLang?: string,
+    ): Promise<TranslateResult[]> {
         const url = MS_TRANSLATE_URL + "to=" + targetLang;
         const response = await providerFetch(url, {
             method: "POST",
@@ -402,48 +443,6 @@ export class MicrosoftTranslateService extends TranslateService {
                     d.detectedLanguage.score,
                 ),
         );
-    }
-
-    /**
-     * Microsoft caps each request at ~5000 chars / 1000 elements. Split the
-     * batch into sub-requests, dispatch concurrently, then re-assemble in
-     * original order.
-     */
-    async translateBatchText(
-        texts: string[],
-        targetLang: string,
-        signal?: AbortSignal | null,
-        sourceLang?: string,
-    ): Promise<TranslateResult[]> {
-        if (texts.length === 0) return [];
-
-        const chunks: string[][] = [[]];
-        let charCount = 0;
-        let itemCount = 0;
-        for (let raw of texts) {
-            if (raw.length > MS_BATCH_CHAR_LIMIT) raw = raw.substring(0, MS_BATCH_CHAR_LIMIT);
-            charCount += raw.length;
-            itemCount++;
-            if (charCount > MS_BATCH_CHAR_LIMIT || itemCount > MS_BATCH_ITEM_LIMIT) {
-                chunks.push([]);
-                charCount = 0;
-                itemCount = 0;
-            }
-            chunks[chunks.length - 1].push(raw);
-        }
-
-        const responses = await Promise.all(
-            chunks.map((chunk, index) =>
-                this.translateText(chunk, targetLang, signal, sourceLang, { retryCount: 0 }).then(
-                    (translatedTexts) => ({ index, translatedTexts }),
-                ),
-            ),
-        );
-        responses.sort((a, b) => a.index - b.index);
-
-        const result: TranslateResult[] = [];
-        for (const r of responses) result.push(...r.translatedTexts);
-        return result;
     }
 
     async detectLanguage(texts: string[]): Promise<string> {
