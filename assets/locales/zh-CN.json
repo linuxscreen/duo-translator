@@ -686,7 +686,7 @@
   "selectionPreviewExampleTarget": "这是一个例句。",
   "selectionPopupMultiService": "翻译服务多选",
   "selectionPopupMultiServiceHint": "同时显示所选的每个翻译服务的译文",
-  "selectionPopupDict": "字典",
+  "selectionPopupDict": "词典",
   "selectionPopupShowOriginal": "显示原文",
   "selectionPopupHideHeaderConfig": "隐藏配置项",
   "selectionPopupHideHeaderConfigHint": "翻译服务与目标语言选项移到「钉住」左边的设置按钮",
@@ -694,7 +694,7 @@
   "cardDisabledHint": "打开上方的开关后，才能修改以下设置",
   "selectionPopupSectionOriginal": "原文",
   "selectionPopupSectionTranslation": "译文",
-  "selectionPopupShowDict": "显示字典",
+  "selectionPopupShowDict": "显示词典",
   "selectionPopupPlayButton": "朗读按钮",
   "selectionPopupCopyButton": "复制按钮",
   "customPopup": "扩展弹窗",
@@ -705,5 +705,8 @@
   "selectionPopupCompactUi": "设置精简界面",
   "selectionPopupRestoreUi": "恢复默认界面",
   "selectionPopupUiHint": "如果想进一步调整界面，请到 {{link}} -> 划词翻译弹窗 进行设置",
-  "disabledWebsites": "禁用的网站"
+  "disabledWebsites": "禁用的网站",
+  "errDisableForever": "永久禁用",
+  "errorToastSwitch": "报错弹窗",
+  "errorToastSwitchHint": "当插件出现错误时将弹窗提醒"
 }

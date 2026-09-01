@@ -22,8 +22,9 @@
 // iframe is still visible where the user is looking.
 // ---------------------------------------------------------------------------
 
-import { ACTION, APP_NAME_WITH_SUFFIX } from "@/main/constants";
+import { ACTION, APP_NAME_WITH_SUFFIX, CONFIG_KEY } from "@/main/constants";
 import { BackgroundRequestError, sendMessageToBackground } from "@/utils/message";
+import { readConfig } from "@/utils/reactiveConfig";
 import type { ErrorToastPayload } from "@/main/errorToast";
 
 /**
@@ -38,16 +39,25 @@ import type { ErrorToastPayload } from "@/main/errorToast";
  * test a translation call.
  */
 function toast(payload: ErrorToastPayload): void {
-    // NOT `void toast(...)` at the call sites any more: this used to be an
-    // `async` function, so anything it threw became a REJECTION, which the
-    // synchronous try/catch in reportRequestError below cannot catch and `void`
-    // then discarded — an "Uncaught (in promise)" from the error reporter
-    // itself. (Seen for real: on a page whose extension had been disabled,
-    // showErrorToast → ensureMounted → bindThemeToElement → storage.watch threw
-    // "Extension context invalidated.") Keeping the catch inside makes the
-    // "reporting never becomes the failure" promise true for callers.
-    import("@/main/errorToast")
-        .then(({ showErrorToast }) => showErrorToast(payload))
+    // Callers do NOT `void toast(...)`: everything asynchronous in here keeps
+    // its own catch. This used to be an `async` function, so anything it threw
+    // became a REJECTION, which the synchronous try/catch in reportRequestError
+    // below cannot catch and `void` then discarded — an "Uncaught (in promise)"
+    // from the error reporter itself. (Seen for real: on a page whose extension
+    // had been disabled, showErrorToast → ensureMounted → bindThemeToElement →
+    // storage.watch threw "Extension context invalidated.") Keeping the catch
+    // inside makes the "reporting never becomes the failure" promise true for
+    // callers.
+    //
+    // The switch is read here rather than inside main/errorToast so a user who
+    // turned the bubble off never pays to download that chunk (React + i18n +
+    // Tailwind). `readConfig` awaits hydration, so an error raised in the first
+    // milliseconds of a page cannot be shown against a provisional default.
+    readConfig<boolean>(CONFIG_KEY.ERROR_TOAST_SWITCH)
+        .then((enabled) => {
+            if (enabled === false) return;
+            return import("@/main/errorToast").then(({ showErrorToast }) => showErrorToast(payload));
+        })
         .catch((e) => {
             console.log(APP_NAME_WITH_SUFFIX, "error bubble failed to render:", e);
         });

@@ -108,6 +108,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     DEFAULT_VALUE.TRANSLATING_ANIMATION,
   );
   const [translationCache, setTranslationCache] = useState(true);
+  const [errorToast, setErrorToast] = useState(Boolean(DEFAULT_VALUE.ERROR_TOAST_SWITCH));
   const [noTranslateLanguages, setNoTranslateLanguages] = useState<string[]>([]);
   // Transient "cleared" state for the clear-cache button (resets after ~1.5s).
   const [cacheCleared, setCacheCleared] = useState(false);
@@ -192,7 +193,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     let cancelled = false;
     (async () => {
       const [
-        bh, fb, fbs, ta, vs, tl, ts, ds, ms, lb, tc, ntl,
+        bh, fb, fbs, ta, vs, tl, ts, ds, ms, lb, tc, et, ntl,
         styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg, qbcCfg, qbcIdxCfg,
         hbCfg, hbIdxCfg, hfCfg, hfIdxCfg, hsCfg, hbcCfg, hbcIdxCfg,
       ] = await Promise.all([
@@ -207,6 +208,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_MIN_SENTENCES),
         getConfig(CONFIG_KEY.TRANSLATION_LINE_BREAK_MIN_CHARS),
         getConfig(CONFIG_KEY.TRANSLATION_CACHE_SWITCH),
+        getConfig(CONFIG_KEY.ERROR_TOAST_SWITCH),
         getConfig(CONFIG_KEY.NO_TRANSLATE_LANGUAGES),
         getConfig(CONFIG_KEY.STYLE),
         getConfig(CONFIG_KEY.BG_COLOR),
@@ -249,6 +251,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
           : DEFAULT_VALUE.TRANSLATING_ANIMATION,
       );
       setTranslationCache(tc === undefined ? true : tc);
+      setErrorToast(et === undefined ? Boolean(DEFAULT_VALUE.ERROR_TOAST_SWITCH) : et);
       setNoTranslateLanguages(Array.isArray(ntl) ? ntl.filter((l): l is string => typeof l === 'string') : []);
       setViewStrategy(vs === undefined ? DEFAULT_VALUE.VIEW_STRATEGY : vs);
       tl && setTargetLang(tl);
@@ -339,6 +342,15 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     setTranslationCache(v);
     void setConfig(CONFIG_KEY.TRANSLATION_CACHE_SWITCH, v);
     void sendMessageToAllTabs({ action: ACTION.CONFIG_CHANGED, data: { [CONFIG_KEY.TRANSLATION_CACHE_SWITCH]: v } });
+  };
+
+  // No CONFIG_CHANGED broadcast: content reads this key through
+  // utils/reactiveConfig (storage.watch), which fires in every context on any
+  // write, so open pages pick it up on their own — and so does the "disable
+  // permanently" button on the bubble itself, which writes the same key.
+  const onErrorToast = (v: boolean) => {
+    setErrorToast(v);
+    void setConfig(CONFIG_KEY.ERROR_TOAST_SWITCH, v);
   };
 
   const onNoTranslateLanguages = (next: string[]) => {
@@ -847,6 +859,14 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         <NoTranslateLanguagesRow
           value={noTranslateLanguages}
           onChange={onNoTranslateLanguages}
+        />
+        <SettingRow
+          label={t('errorToastSwitch', 'Error popup')}
+          hint={t(
+            'errorToastSwitchHint',
+            'Show a popup when the extension runs into an error',
+          )}
+          control={<Switch checked={errorToast} onCheckedChange={onErrorToast} />}
         />
         <SettingRow
           label={t('websiteTranslationRules', 'Website translation rules')}

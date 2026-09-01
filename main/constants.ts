@@ -438,6 +438,12 @@ export enum CONFIG_KEY {
     // page-level error bubble is suppressed for those two scopes (it is still
     // what the indicator's "details" button opens).
     TRANSLATING_ANIMATION = 'translatingAnimation',
+    // The page-level error bubble (main/errorToast). Default on. Turned off by
+    // the "disable permanently" button on the bubble itself, so a user who does
+    // not want to be told about failures can silence it from where it appears
+    // instead of hunting through Options. Read live through reactiveConfig, so
+    // flipping it takes effect on already-open pages with no broadcast.
+    ERROR_TOAST_SWITCH = 'errorToastSwitch',
     GLOBAL_SWITCH = 'globalSwitch',
     TRANSLATE_SERVICE = 'translateService',
     MICROSOFT_TOKEN = 'microsoftToken',
@@ -699,6 +705,7 @@ export const DEFAULT_VALUE = {
     SELECTION_ICON_SWITCH: true,
     SELECTION_ICON_TRIGGER: SELECTION_ICON_TRIGGER.CLICK,
     TRANSLATING_ANIMATION: TRANSLATING_ANIMATION.INLINE_DOTS,
+    ERROR_TOAST_SWITCH: true,
     CONTEXT_MENU_SWITCH: true,
     VIEW_STRATEGY: 'double',
     DEFAULT_STRATEGY: 'auto',

@@ -705,5 +705,8 @@
   "selectionPopupCompactUi": "Compact interface",
   "selectionPopupRestoreUi": "Restore default interface",
   "selectionPopupUiHint": "To adjust the card further, go to {{link}} → Selection translate popup",
-  "disabledWebsites": "Disabled websites"
+  "disabledWebsites": "Disabled websites",
+  "errDisableForever": "Disable permanently",
+  "errorToastSwitch": "Error popup",
+  "errorToastSwitchHint": "Show a popup when the extension runs into an error"
 }
