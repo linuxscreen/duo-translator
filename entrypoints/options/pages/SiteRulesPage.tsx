@@ -12,7 +12,7 @@ import { RuleTable } from '@/components/options/siteRules/RuleTable';
 import { RuleDetailDialog } from '@/components/options/siteRules/RuleDetailDialog';
 import { RuleEditorDialog } from '@/components/options/siteRules/RuleEditorDialog';
 import { SubscriptionsTab } from '@/components/options/siteRules/SubscriptionsTab';
-import { APP_NAME_KEBAB_CASE, CONFIG_KEY, SITE_RULE_ACTION } from '@/main/constants';
+import { APP_NAME_KEBAB_CASE, APP_NAME_WITH_SUFFIX, CONFIG_KEY, SITE_RULE_ACTION } from '@/main/constants';
 import { sendMessageToBackground } from '@/utils/message';
 import { setConfig } from '@/utils/db';
 import { normalizeBundle } from '@/main/siteRules/normalize';
@@ -137,7 +137,7 @@ export function SiteRulesPage({ onBack }: Props) {
             toast(
                 t('rulesImported', { count: bundle.rules.length, defaultValue: 'Imported {{count}} rules' }),
             );
-            if (warnings.length > 0) console.log(warnings);
+            if (warnings.length > 0) console.log(APP_NAME_WITH_SUFFIX, warnings);
         } catch (err: any) {
             toast(err?.message || String(err), 'error');
         }

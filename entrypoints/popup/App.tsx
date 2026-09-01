@@ -214,11 +214,11 @@ export default function App({ embedded = false, uiPrefs }: AppProps = {}) {
 
   // Hydrate from background storage on mount
   useEffect(() => {
-    console.log("popup loaded")
+    console.debug("popup loaded")
     let cancelled = false;
     const listener = (message: any, sender: Browser.runtime.MessageSender, sendResponse: (response?: any) => void) => {
       if (message.action === TRANSLATE_ACTION.TRANSLATE_STATUS_CHANGED) {
-        console.log("receive message:", message, tabId)
+        console.debug("receive message:", message, tabId)
         if (tabId !== undefined && message.data.tabId === tabId && typeof message.data.status === 'boolean') {
           setTranslateActive(message.data.status)
         }
@@ -267,7 +267,7 @@ export default function App({ embedded = false, uiPrefs }: AppProps = {}) {
       setAiWritingService(aiCtx.activeService);
       setVideoService(resolveActiveService(vidSvc, aiCtx.enabledTranslateServices, aiCtx.enabledAiProviders));
 
-      console.log("domain: ", d)
+      console.debug("domain: ", d)
 
       // Surface AI providers in the service dropdown only when:
       //  (a) the global "Also used for translating pages" toggle is on (default true)
@@ -283,7 +283,7 @@ export default function App({ embedded = false, uiPrefs }: AppProps = {}) {
       setTargetLanguage(tl || browserTargetLanguage());
 
       setService(activeService)
-      console.log("service: ", service)
+      console.debug("service: ", service)
       setDefaultStrategy(ds);
       setHighlight(bh);
       if (typeof d === 'string') setDomain(d);

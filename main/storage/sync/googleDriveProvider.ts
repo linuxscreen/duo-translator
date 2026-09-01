@@ -480,7 +480,7 @@ class GoogleDriveProviderImpl implements SyncProvider {
             tokens = { mode: 'web', accessToken, expiresAt, email: await fetchEmail(accessToken) };
         }
 
-        console.log(APP_NAME_WITH_SUFFIX, 'GDrive connected via', tokens.mode, 'flow');
+        console.debug(APP_NAME_WITH_SUFFIX, 'GDrive connected via', tokens.mode, 'flow');
         await this.saveTokens(tokens);
         await this.clearNeedsReauth();
     }

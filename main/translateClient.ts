@@ -521,7 +521,7 @@ export function googleTranslate(results: TranslateResult[]) {
             let num = indexedText.index
             if (num < 0 || num >= textNodes.length) continue
             textNodes[num].textContent = decodeHtmlText(indexedText.text)
-            // console.log('debug', indexedText.text, textNodes[num].textContent, num, result.translatedCopyElement?.textContent)
+            // console.debug('debug', indexedText.text, textNodes[num].textContent, num, result.translatedCopyElement?.textContent)
             let childIndex = result.textIndexMap?.get(num)
             if (childIndex === undefined) continue
             if (movedNodeSet.has(childIndex)) {
@@ -546,7 +546,7 @@ export function googleTranslate(results: TranslateResult[]) {
             lastMovedNodeIndex = childIndex
             lastTextNodeIndex = num
             movedNodeSet.add(childIndex)
-            // console.log('debug', result.translatedCopyElement?.textContent)
+            // console.debug('debug', result.translatedCopyElement?.textContent)
         }
         result.replacedTextNodes = replacedTextNodes
     }

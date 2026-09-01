@@ -1,5 +1,6 @@
 import {
     AI_PREFIX,
+    APP_NAME_WITH_SUFFIX,
     browserTargetLanguage,
     CONFIG_KEY,
     normalizeLanguageTag,
@@ -497,7 +498,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
         s.loadState = exhausted ? "gaveup" : "pending";
         s.nextRetryAt = Date.now() + LOAD_RETRY_MS;
         if (exhausted) {
-            console.warn("duo video subtitle: giving up on captions —", reason);
+            console.warn(APP_NAME_WITH_SUFFIX, "duo video subtitle: giving up on captions —", reason);
             // A queued download would otherwise wait forever on a track that is
             // never coming.
             if (pendingDownloadKind) {

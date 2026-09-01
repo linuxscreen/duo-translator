@@ -200,7 +200,7 @@ export default defineConfig({
             sourcemap: process.env.NODE_ENV !== 'production' && 'inline',
             terserOptions: {
                 compress: {
-                    pure_funcs: ['console.log', 'console.debug', 'console.info', 'console.trace'], // retain warn and error
+                    pure_funcs: ['console.debug', 'console.trace'], // retain info, warn and error
                     // production env will remove all console.* calls
                     // drop_console: process.env.NODE_ENV == 'production',
                     drop_debugger: process.env.NODE_ENV == 'production',

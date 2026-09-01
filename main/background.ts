@@ -49,7 +49,7 @@ import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/m
 
 export async function background() {
     //#region main
-    console.log("background loaded")
+    console.debug("background loaded")
     let translateStatus = false
     let paraTranslateStatus = false
     let paraContextMenuShowStatus = false
@@ -228,9 +228,8 @@ export async function background() {
             }
             // get the configuration
             case DB_ACTION.CONFIG_GET:
-                console.log('getConfig', message.data)
+                console.debug('getConfig', message.data)
                 configRepo.get(message.data.name).then((value) => {
-                    // console.log(value)
                     sendResponse({ status: STATUS_SUCCESS, data: value })
                 }).catch((e) => {
                     errorResponse(e)
@@ -418,11 +417,11 @@ export async function background() {
             case STORAGE_ACTION.SESSION_SET:
                 let key = message.data.key
                 if (!key || key.endsWith("null") || key.endsWith("undefined") || message.data.value == undefined || message.data.value === "" || message.data.value === "null" || message.data.value === "undefined") {
-                    console.log('value is null or empty', key, message.data.value)
+                    console.debug('value is null or empty', key, message.data.value)
                     sendResponse({ status: STATUS_FAIL, data: "value is null or empty" });
                     return
                 }
-                console.log('set session storage', key, message.data.value)
+                console.debug('set session storage', key, message.data.value)
                 browser.storage.session.set({ [key]: message.data.value }).then(() => {
                     sendResponse({ status: STATUS_SUCCESS, data: "insert success" });
                 }).catch((e) => {
@@ -461,7 +460,7 @@ export async function background() {
                 break
             }
             case TRANSLATE_ACTION.TRANSLATE_STATUS_CHANGED:
-                console.log('translateStatusChanged', message.data)
+                console.debug('translateStatusChanged', message.data)
                 if (typeof message.data.status === 'boolean') {
                     translateStatus = message.data.status
                     if (!contextMenuSwitch) return
@@ -553,7 +552,7 @@ export async function background() {
                         try {
                             await browser.contextMenus.update(CONTEXT_MENU.TRANSLATE_RESTORE_PARA, { title: msg })
                         } catch (e) {
-                            console.log('Error updating context menu:', e);
+                            console.debug('Error updating context menu:', e);
                             sendResponse({ status: STATUS_FAIL });
                             return
                         }
@@ -567,7 +566,7 @@ export async function background() {
                     try {
                         await browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE)
                     } catch (e) {
-                        console.log('Error removing context menu:', e);
+                        console.debug('Error removing context menu:', e);
                         sendResponse({ status: STATUS_FAIL });
                         return
                     }
@@ -577,7 +576,7 @@ export async function background() {
                         contexts: ["page", "link"] //"selection"
                     }, () => {
                         if (browser.runtime.lastError) {
-                            console.log('Error creating context menu:', browser.runtime.lastError.message);
+                            console.debug('Error creating context menu:', browser.runtime.lastError.message);
                             sendResponse({ status: STATUS_FAIL });
                             return
                         }
@@ -599,7 +598,7 @@ export async function background() {
                     try {
                         await browser.contextMenus.remove(CONTEXT_MENU.TRANSLATE_RESTORE_PARA)
                     } catch (e) {
-                        console.log('Error removing context menu:', e);
+                        console.debug('Error removing context menu:', e);
                         sendResponse({ status: STATUS_FAIL });
                         return
                     }
@@ -611,7 +610,7 @@ export async function background() {
                         contexts: ["page"] //"selection"
                     }, () => {
                         if (browser.runtime.lastError) {
-                            console.log('Error creating context menu:', browser.runtime.lastError.message);
+                            console.debug('Error creating context menu:', browser.runtime.lastError.message);
                             sendResponse({ status: STATUS_FAIL });
                             return
                         }
@@ -669,7 +668,7 @@ export async function background() {
     })
 
     browser.tabs.onRemoved.addListener((tabId, removeInfo) => {
-        // console.log('tab removed:', tabId, removeInfo);
+        // console.debug('tab removed:', tabId, removeInfo);
         browser.storage.session.remove(TRANSLATE_STATUS_KEY + tabId)
     })
 
@@ -677,7 +676,7 @@ export async function background() {
 
     //#region functions
     function contextMenuClickLister(info: Browser.contextMenus.OnClickData, tab: Browser.tabs.Tab | undefined): void {
-        console.log('contextMenus.onClicked', info, tab, translateStatus)
+        console.debug('contextMenus.onClicked', info, tab, translateStatus)
         if (!tab || !tab.id) {
             return
         }
@@ -697,7 +696,7 @@ export async function background() {
                 browser.tabs.sendMessage(tab.id, { action: TRANSLATE_ACTION.TRANSLATE_INPUT_BOX }).catch(() => { });
                 break
             case CONTEXT_MENU.TRANSLATE_RESTORE_PARA:
-                console.log('translatePara', info, tab)
+                console.debug('translatePara', info, tab)
                 let act = paraTranslateStatus ? TRANSLATE_ACTION.SHOW_ORIGINAL_PARA : TRANSLATE_ACTION.TRANSLATE_PARA
                 browser.tabs.sendMessage(tab.id, { action: act }).catch(() => { });
                 break
@@ -711,7 +710,7 @@ export async function background() {
     async function onConfigChanged(key: string, value: any) {
         switch (key) {
             case CONFIG_KEY.GLOBAL_SWITCH:
-                console.log('global switch changed', value)
+                console.debug('global switch changed', value)
                 let globalSwitch = value
                 if (typeof globalSwitch === 'boolean') {
                     if (globalSwitch) {
@@ -722,7 +721,7 @@ export async function background() {
                 }
                 break
             case CONFIG_KEY.CONTEXT_MENU_SWITCH:
-                console.log('contextMenuSwitch changed: ', value)
+                console.debug('contextMenuSwitch changed: ', value)
                 if (typeof value !== 'boolean') return
                 contextMenuSwitch = value
                 if (contextMenuSwitch) {
@@ -742,7 +741,7 @@ export async function background() {
         if (!tab?.url?.startsWith('http')) {
             return
         }
-        console.log('tabs.onActivated', activeInfo)
+        console.debug('tabs.onActivated', activeInfo)
         // get current tab translate status
         let tabTranslateStatusKey = TRANSLATE_STATUS_KEY + activeInfo.tabId
         browser.storage.session.get(tabTranslateStatusKey).then((value) => {
@@ -851,7 +850,7 @@ export async function background() {
     }
 
     function updateContextMenu(status: boolean) {
-        console.log('updateContextMenu', status)
+        console.debug('updateContextMenu', status)
         if (paraContextMenuShowStatus) return
 
         updateMenuQuietly(CONTEXT_MENU.TRANSLATE_RESTORE_PAGE, {

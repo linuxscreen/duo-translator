@@ -38,7 +38,7 @@ function onStorageChanged(
     // changes should arm the debounce (this also stops the apply→watch loop:
     // applyMergedToLocal writes __sync_meta, which isSnapshotKey rejects).
     if (!Object.keys(changes).some(isSnapshotKey)) return;
-    console.log(APP_NAME_WITH_SUFFIX, 'storage change watched', changes, areaName);
+    console.debug(APP_NAME_WITH_SUFFIX, 'storage change watched', changes, areaName);
     void (async () => {
         if (!(await isAutoOn())) return;
         // Re-creating the one-shot alarm resets the debounce window.

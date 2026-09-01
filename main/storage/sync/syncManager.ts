@@ -156,7 +156,7 @@ export async function syncAll(reason = 'auto'): Promise<void> {
         const provider = providerById(await getActiveProviderId());
         if (!(await provider.isAuthenticated())) return;
         const result = await withLock(() => runSync(provider));
-        console.log(APP_NAME_WITH_SUFFIX, 'sync', reason, provider.id, result);
+        console.debug(APP_NAME_WITH_SUFFIX, 'sync', reason, provider.id, result);
     } catch (e) {
         console.error(APP_NAME_WITH_SUFFIX, 'sync error', reason, e);
     }

@@ -164,7 +164,7 @@ export async function detectLanguage(elements?: UnitContainer[]): Promise<string
             }
         })
         if (maxLang != "und" && maxLangScore / totalLen >= 0.6) {
-            console.log("detect language by franc: %s, divide: %f", maxLang, maxLangScore / totalLen);
+            console.debug("detect language by franc: %s, divide: %f", maxLang, maxLangScore / totalLen);
             return maxLang
         }
     }
@@ -182,7 +182,7 @@ export async function detectLanguage(elements?: UnitContainer[]): Promise<string
     // Fallback: ask the Microsoft translate service to detect the language.
     try {
         lang = (await detectTextsLanguage(needsDetectTexts)) || "und";
-        console.log("detect language by microsoft translate: %s", lang);
+        console.debug("detect language by microsoft translate: %s", lang);
         return lang;
     } catch {
         return "und";

@@ -55,7 +55,7 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
     return Promise.race([
         new Promise((resolve) => {
             runtimeSendMessage(message).then((response) => {
-                console.log("sendMessageToBackground response:", response, message);
+                console.debug("sendMessageToBackground response:", response, message);
                 clearTimeout(timeoutId)
                 if (!response) {
                     resolve(undefined)
@@ -65,7 +65,7 @@ export function sendMessageToBackground(message: Message, timeout: number = 5000
                     resolve(response.data);
                 } else {
                     resolve(undefined)
-                    console.log(APP_NAME_WITH_SUFFIX, `sendMessageToBackground ${message.action} ${response.data}`);
+                    console.debug(APP_NAME_WITH_SUFFIX, `sendMessageToBackground ${message.action} ${response.data}`);
                 }
             }).catch((e) => {
                 // A rejection here (e.g. "Could not establish connection / receiving
@@ -225,7 +225,7 @@ export async function sendMessageToTab(message: Message) {
     if (tabs.length === 0) {
         return null
     }
-    console.log("sendMessageToTab:", tabs[0]?.id, tabs[0]?.url);
+    console.debug("sendMessageToTab:", tabs[0]?.id, tabs[0]?.url);
     if (!tabs[0].id || !tabs[0].url?.startsWith('http')) {
         return null
     }

@@ -56,7 +56,7 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
     async function activeSelectInteraction() {
         // get all the rules of the current domain from the db, find the element and add class duo-selected
         let rules = await listRuleFromDB(domainWithPort)
-        console.log('rules:', rules)
+        console.debug('rules:', rules)
         if (rules) {
             for (let rule of rules) {
                 let element = resolveRuleSelector(rule);
@@ -70,7 +70,7 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
     }
 
     function deactivateSelectInteraction() {
-        console.log('deactivateSelectionMode')
+        console.debug('deactivateSelectionMode')
         // remove all element that have duo-selected
         deepQuerySelectorAll('.duo-selected').forEach((element) => {
             element.classList.remove('duo-selected');

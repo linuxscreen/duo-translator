@@ -112,7 +112,7 @@ import { initMinimalPlayerUi, type MinimalPlayerUiController } from "@/main/vide
 
 export async function content() {
     //#region main
-    console.log('content script loaded');
+    console.debug('content script loaded');
 
     window.addEventListener("error", (e) => {
         if (e.message.includes(EXTENSION_INVALID_CONTEXT_MSG)) {
@@ -422,7 +422,7 @@ export async function content() {
             await startupReady
             if (startupAborted || !contextMenuSwitch) return
             if (target && IsEditableElement(target)) {
-                // console.log("isContentEditable", target);
+                // console.debug("isContentEditable", target);
                 lastEditableElement = target
             }
             if (IS_FIREFOX && !IS_MAC) {
@@ -823,8 +823,8 @@ export async function content() {
 
             // Cheap structural skip — bail before queueing.
             if (isIgnoreMutationElement(target)) continue;
-            // console.log('mutation target', target);
-            // console.log('start mutation');
+            // console.debug('mutation target', target);
+            // console.debug('start mutation');
             // Removals are only *flagged* here. Cleaning them up per removed
             // node was the single most expensive thing this extension did — see
             // sweepDetachedBookkeeping.
@@ -835,7 +835,7 @@ export async function content() {
     });
 
     const intersectionObserver = new IntersectionObserver(items => {
-        // console.log("intersectionObserver items: ", items.length)
+        // console.debug("intersectionObserver items: ", items.length)
         if (!translateStatus) {
             return
         }
@@ -853,13 +853,13 @@ export async function content() {
                 }
                 batchElements.push(el)
                 paragraphElementMap.set(el, ELEMENT_STATUS.PENDING)
-                // console.log("IntersectionObserver in item", el.textContent)
+                // console.debug("IntersectionObserver in item", el.textContent)
             }
         }
         if (batchTimer == null) {
             batchTimer = setTimeout(() => {
                 trackParagraphTranslation(batchElements)
-                console.log("batchElements translated", batchElements.length)
+                console.debug("batchElements translated", batchElements.length)
                 batchElements = [];
                 batchTimer = null
             }, 50);
@@ -893,14 +893,14 @@ export async function content() {
     // content() instead of here — see the note there. A function declaration so
     // the registration above can reference it before this point.
     async function handleRuntimeMessage(message: any) {
-        console.log('content script receive message:', message)
+        console.debug('content script receive message:', message)
         switch (message.action) {
             case TRANSLATE_ACTION.TRANSLATE:
-                console.log('start translate page')
+                console.debug('start translate page')
                 await translateAction()
                 break
             case TRANSLATE_ACTION.SHOW_ORIGINAL:
-                console.log('start restore original page')
+                console.debug('start restore original page')
                 await restoreOriginalAction()
                 break
             case TRANSLATE_ACTION.TOGGLE:
@@ -974,11 +974,11 @@ export async function content() {
                 break
             case ACTION.STYLE_CHANGED:
                 // process style change action
-                console.log("process style change action")
+                console.debug("process style change action")
                 await updateStyle()
                 break
             case ACTION.DOMAIN_STRATEGY_CHANGED:
-                console.log('domain strategy changed:', message)
+                console.debug('domain strategy changed:', message)
                 if (message.data && typeof message.data === "string") {
                     let strategy = message.data as string
                     if (!Object.values(DOMAIN_STRATEGY).includes(strategy as DOMAIN_STRATEGY) || strategy === domainStrategy) {
@@ -1088,7 +1088,7 @@ export async function content() {
                 translationLineBreakMinChars = value
                 break
             case CONFIG_KEY.TRANSLATE_SERVICE:
-                console.log('translate service changed:', value)
+                console.debug('translate service changed:', value)
                 if (!value || typeof value !== "string") return
                 let service = value
                 translateService = service
@@ -1105,7 +1105,7 @@ export async function content() {
                 await updateDefaultStrategy(value, activeFlag)
                 break
             case CONFIG_KEY.GLOBAL_SWITCH:
-                console.log('global switch changed:', value)
+                console.debug('global switch changed:', value)
                 if (typeof value === "boolean" && globalSwitch != value) {
                     manualTrigger = false
                     globalSwitch = value
@@ -1168,7 +1168,7 @@ export async function content() {
             case CONFIG_KEY.FLOAT_BALL_SWITCH:
                 if (typeof value !== "boolean") return
                 if (value === floatBallSwitch) return
-                console.log('float ball switch changed from ', floatBallSwitch, "to ", value)
+                console.debug('float ball switch changed from ', floatBallSwitch, "to ", value)
                 floatBallSwitch = value
                 if (floatBallSwitch) {
                     await initFloatBall()
@@ -1334,7 +1334,7 @@ export async function content() {
                 if (!translateStatus && autoNeedsTranslate()) {
                     await translateAction()
                 }
-                console.log('default strategy:', translateStatus)
+                console.debug('default strategy:', translateStatus)
                 break
             case DEFAULT_STRATEGY.NEVER:
                 if (translateStatus) {
@@ -1509,10 +1509,10 @@ export async function content() {
             if (!active || !(active instanceof HTMLElement) || IsEditableElement(active)) return
             lastEditableElement = active
             translateInputBox()
-            // console.log('translateSelectionInputBox active: ', active)
+            // console.debug('translateSelectionInputBox active: ', active)
             return
         }
-        // console.log('translateSelectionInputBox text: ', text)
+        // console.debug('translateSelectionInputBox text: ', text)
         translateSelection(text, selection, inPopup)
 
     }
@@ -1752,7 +1752,8 @@ export async function content() {
                 // querySelector per conditional rule, once per scan cycle.
                 syncSiteRuleCss();
             }
-            // console.log("processPendingMutations ", pendingMarkRoots.size);
+            // console.debug("processPendingMutations ", pendingMarkRoots.size);
+
             // Drain in waves: roots added — and removals flagged — during our
             // async work get picked up on the next iteration of the outer loop.
             // Both conditions are re-read here rather than latched, and nothing
@@ -1772,7 +1773,7 @@ export async function content() {
                     // already removed during our wait.
                     if (!root.isConnected) continue;
                     if (isIgnoreMutationElement(root)) continue;
-                    // console.log("processPendingMutations root");
+                    // console.debug("processPendingMutations root");
                     //
                     // Hand containers to the IntersectionObserver as the scan
                     // finds them, not only when it finishes. A Reddit post page
@@ -2380,7 +2381,7 @@ export async function content() {
     }
 
     function setFloatBallSwitchStatus(status: boolean) {
-        console.log("setFloatBallSwitchStatus", floatBall + " " + status);
+        console.debug("setFloatBallSwitchStatus", floatBall + " " + status);
         floatBall?.setActive(status)
     }
 
@@ -2436,7 +2437,7 @@ export async function content() {
             translateStatus = status
             return
         }
-        console.log("persist translate status", status);
+        console.debug("persist translate status", status);
         if (persist) {
             await setSessionStorage(tabTranslateStatusKey, status)
         }
@@ -2469,7 +2470,8 @@ export async function content() {
         await restoreOriginalPage(false)
         needsTranslateParagraphs().forEach((ele) => {
             paragraphElementMap.set(ele, ELEMENT_STATUS.ORIGINAL)
-            // console.log("translateAction observe element");
+            // console.debug("translateAction observe element");
+
             // unobserve FIRST. `observe()` on an element the observer is already
             // watching is a silent no-op — no fresh callback is delivered — and
             // elements only leave the observer on a SUCCESSFUL translation
@@ -2921,7 +2923,7 @@ export async function content() {
             clearParagraphMarks()
             resetNoTranslateMarks()
         }
-        // console.log('restore original page', duoTranslatedElementMap)
+        // console.debug('restore original page', duoTranslatedElementMap)
     }
 
     async function setSessionStorage(key: string, value: any) {
@@ -3463,10 +3465,10 @@ export async function content() {
         if (elements.length == 0) {
             return
         }
-        console.log('translateParagraphElements: ', elements.length)
+        console.debug('translateParagraphElements: ', elements.length)
         // @debuglog
         // elements.forEach((element) => {
-        //     console.log('translateParagraphElements element:', element.textContent)
+        //     console.debug('translateParagraphElements element:', element.textContent)
         // })
         if (context && typeof context.hasDuplicated === 'boolean' && !context.hasDuplicated) {
             // remove duplicate elements
@@ -3678,7 +3680,7 @@ export async function content() {
             let service = translateService
             if (context && typeof context.targetTranslateService === "string" && context.targetTranslateService) {
                 service = context.targetTranslateService
-                console.log('context.targetTranslateService:', context.targetTranslateService)
+                console.debug('context.targetTranslateService:', context.targetTranslateService)
             }
             if (service == "") {
                 service = TRANSLATE_SERVICE.MICROSOFT
