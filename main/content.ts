@@ -1,4 +1,4 @@
-import { splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
+import { alignSentenceBlocks, splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
 import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE, EXTENSION_INVALID_CONTEXT_MSG, STYLE_BLUR, TRANSLATING_ANIMATION } from "./constants";
 import { restore, translateParams, getTranslateResult, translate, TranslateResult, detectTextsLanguages } from "./translateClient";
 import { buildNoTranslateLanguageSet, isNoTranslateLanguage } from "./noTranslateLanguage";
@@ -3939,14 +3939,32 @@ export async function content() {
                         let validOriginalSentencesLen = originalSentences.filter(s => s.trim() !== '').length;
                         if (originalSentences.length === 0 || validOriginalSentencesLen < bilingualHighlightingMinSentences) continue
                         const translatedSentences = splitSentence(translatedTextResult.text)
-                        if (translatedSentences.filter(s => s.trim() !== '').length != validOriginalSentencesLen) continue // todo fallback to using AI for sentence segmentation
+                        // The hover pairing pairs the two sides by index, so
+                        // they must carry the same number of segments.
+                        // Machine translators keep sentence structure and pass
+                        // through unchanged; an AI provider freely merges or
+                        // splits sentences, and one mismatched count used to
+                        // drop the WHOLE unit's highlighting (the old gate was
+                        // strict equality). Mismatched sides are re-segmented
+                        // into proportional blocks instead — coarser pairing,
+                        // but the highlight survives.
+                        const aligned = alignSentenceBlocks(originalSentences, translatedSentences)
+                        if (!aligned) continue
+                        // Re-apply the minimum to the BLOCK count: when the
+                        // model merged the whole paragraph into one sentence,
+                        // the alignment collapses to a single block and the
+                        // hover would light the entire original and its whole
+                        // translation at once — the very bluntness the
+                        // min-sentences setting exists to avoid.
+                        if (aligned.original.length < bilingualHighlightingMinSentences) continue
                         if (highlightApiSupported) {
                             // Blank segments yield no range, so both arrays are
-                            // indexed by non-blank sentence order — the very count
-                            // the gate above equalized, which is what makes
+                            // indexed by non-blank sentence order — equal on
+                            // both sides by construction (equal counts in, one
+                            // non-blank block out), which is what makes
                             // pairing by index correct.
-                            const originalRanges = buildSentenceRanges(originalTextResult.textNodes, originalSentences)
-                            const translationRanges = buildSentenceRanges(translatedTextResult.textNodes, translatedSentences)
+                            const originalRanges = buildSentenceRanges(originalTextResult.textNodes, aligned.original)
+                            const translationRanges = buildSentenceRanges(translatedTextResult.textNodes, aligned.translated)
                             if (originalRanges.length === 0 || translationRanges.length === 0) continue
                             record.sentences = { original: originalRanges, translation: translationRanges }
                             highlightedAny = true
@@ -3956,9 +3974,9 @@ export async function content() {
                             originalTextResult.textNodes.forEach(textNode => {
                                 record.texts.push({ text: textNode, content: textNode.textContent })
                             })
-                            const spans = wrapTextNode2Span(originalTextResult.textNodes, originalSentences, ignoreMutationElements, sequenceOffset)
-                            spans.push(...wrapTextNode2Span(translatedTextResult.textNodes, translatedSentences, ignoreMutationElements, sequenceOffset))
-                            sequenceOffset += originalSentences.length
+                            const spans = wrapTextNode2Span(originalTextResult.textNodes, aligned.original, ignoreMutationElements, sequenceOffset)
+                            spans.push(...wrapTextNode2Span(translatedTextResult.textNodes, aligned.translated, ignoreMutationElements, sequenceOffset))
+                            sequenceOffset += aligned.original.length
                             if (spans.length > 0) highlightedAny = true
                         }
                     }
