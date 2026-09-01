@@ -3950,6 +3950,13 @@ export async function content() {
                         // but the highlight survives.
                         const aligned = alignSentenceBlocks(originalSentences, translatedSentences)
                         if (!aligned) continue
+                        // Re-apply the minimum to the BLOCK count: when the
+                        // model merged the whole paragraph into one sentence,
+                        // the alignment collapses to a single block and the
+                        // hover would light the entire original and its whole
+                        // translation at once — the very bluntness the
+                        // min-sentences setting exists to avoid.
+                        if (aligned.original.length < bilingualHighlightingMinSentences) continue
                         if (highlightApiSupported) {
                             // Blank segments yield no range, so both arrays are
                             // indexed by non-blank sentence order — equal on
