@@ -18,6 +18,7 @@ import type {
     ChatOptions,
 } from "@/main/aiProvider";
 import { configRepo } from "@/main/storage/configStore";
+import { hasPlaceholders, placeholdersPreserved, stripPlaceholders } from "@/main/builtinAi/placeholders";
 import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
 
 /**
@@ -636,22 +637,47 @@ export async function aiPageTranslate(
 
     // Translate one batch and write its results back at the right offset.
     const runBatch = async (batch: { start: number; texts: string[] }) => {
+        // Neutralize a literal separator inside a segment: it would otherwise
+        // be indistinguishable from OUR protocol marker and misalign the split
+        // below. The escaped form renders the same in practice.
+        const safeTexts = batch.texts.map((t) =>
+            t.includes(SEPARATOR_TAG) ? t.split(SEPARATOR_TAG).join("<sep\\/>") : t,
+        );
         const messages = buildPrompt({
             task: AI_TASK.PAGE_TRANSLATE,
             providerId: provider.id,
-            payload: { text: batch.texts.join(SEPARATOR_TAG), targetLang },
+            payload: { text: safeTexts.join(SEPARATOR_TAG), targetLang },
         });
         // Non-streaming: the upstream request is sent with stream:false (see
         // chatCompleteNonStream) — page translation wants the full result in
         // one response, not an SSE stream.
         const full = await chatCompleteNonStream(provider, messages, { temperature, signal, params });
-        const outs = full.split(SEPARATOR_TAG).filter((s) => s.length > 0);
+        // Split on the separator but KEEP interior empties. Filtering every
+        // empty (the old behavior) shifted all translations after an empty one
+        // up by a position — one dropped segment mis-translated the rest of
+        // the batch onto the wrong paragraphs. Only leading/trailing empties
+        // (model chatter around the payload, trailing separator) are trimmed.
+        const parts = full.split(SEPARATOR_TAG);
+        while (parts.length > 0 && parts[0].trim() === "") parts.shift();
+        while (parts.length > 0 && parts[parts.length - 1].trim() === "") parts.pop();
 
         for (let i = 0; i < batch.texts.length; i++) {
-            // Guard against a short response — fall back to the source text so
-            // indices never drift out of alignment with the input array.
+            const out = parts[i];
+            let value = batch.texts[i];
+            if (out !== undefined && out.trim() !== "") {
+                // <bN> round-trip check, same multiset signature the built-in
+                // AI uses: a model that dropped or fabricated tags would
+                // scatter text into the wrong inline elements on write-back.
+                // Degrade to plain text (tags stripped) rather than corrupt
+                // the page. Segments without placeholders pass through.
+                value = hasPlaceholders(safeTexts[i]) && !placeholdersPreserved(safeTexts[i], out)
+                    ? stripPlaceholders(out)
+                    : out;
+            }
+            // Missing/empty segments fall back to the source text so indices
+            // never drift out of alignment with the input array.
             // todo fallback to machine translation
-            results[batch.start + i] = i < outs.length ? outs[i] : batch.texts[i];
+            results[batch.start + i] = value;
         }
     };
 
