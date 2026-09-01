@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.5] - 2026-09-01
+
+### Added
+
+- Custom shortcuts (Settings → Customization → Function shortcuts): bind an action to a single press, a press and hold, or a multi-press of any key, key combo or the middle mouse button. Available actions are selection translation, input box translation, translate / restore the paragraph under the pointer, translate / restore / toggle the page, open the AI writing workbench, and turn bilingual subtitles on or off. They coexist with the browser shortcuts and the double-tap modifier, and the editor warns when a gesture is already taken by another binding or handled by the browser itself
+- Customization of the selection translate popup, with a live preview that renders the real card: show several translation services' answers at once, turn the dictionary, its examples, the original text and the play / copy buttons on or off, and move the service and language pickers out of the header behind a settings button
+- Customization of the extension popup, also with a live preview: hide the theme menu, the help link, the global switch, the page strategy, bilingual highlighting or the AI writing section. Hiding a control only takes it out of the popup — the setting itself is untouched and stays in Settings
+- The popup picks the service for page translation and for the other entry points (selection, input box) separately, in one dropdown
+- Selection translation has its own section in the settings sidebar, split out of the translation page
+- A separate AI service for video subtitles, used by AI sentence segmentation — it can follow the AI writing one or be chosen on its own
+- A switch for the error popup, for anyone who would rather the extension failed quietly
+
+### Changed
+
+- The "Translate page" and "Restore page" browser shortcuts are gone from the browser's shortcut list. They shipped without a default key, and browsers cap how many an extension can suggest, so they could not be bound at all on Safari and had to be added by hand elsewhere. Both actions are in the custom shortcuts above, which are set inside the extension
+
+### Fixed
+
+- Double-tapping Alt doing nothing on Windows. A lone Alt press opens the browser's menu bar, which takes focus off the page, so the second tap never arrived. Alt is now held back from the browser while a gesture is bound to it
+- Whole screens of text staying untranslated on Microsoft Translate. The per-request size limits were applied on a path nothing used, so a text-heavy first screen went out as one oversized request and came back rejected
+- AI page translation putting translations on the wrong paragraphs: one empty answer inside a batch shifted every following paragraph up by one. Inline formatting is also checked per paragraph now, so a model that drops or invents tags no longer scatters text into the wrong links and emphasis
+- Sentence-by-sentence highlighting disappearing on AI-translated paragraphs whenever the model merged or split a sentence — the two sides are now paired proportionally instead of requiring an exact match
+- Words breaking apart in YouTube's broadcast captions (CC1, relayed from TV), which arrive two characters at a time — "and as you can see" rendered as "an d as y ou c an s ee"
+- Seeking a video while AI sentence segmentation was still running showed subtitle text belonging to another moment, and never corrected itself
+- The extension no longer writes the contents of internal messages to the background console, which included AI API keys and the WebDAV password and could end up in a pasted bug report (this issue does not occur in production)
+
 ## [2.2.4] - 2026-08-25
 
 ### Changed

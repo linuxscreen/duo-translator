@@ -8,18 +8,47 @@ An AI-powered translation and writing assistant. Supports webpage translation, s
 
 ## Features
 - Translation
-  - Webpage Translation
-  - Paragraph and Selection Translation
-  - Input box Translation
-  - Highlights the original and translation sentence by sentence
-  - Text-to-speech (TTS)
+  - Webpage translation
+    - Bilingual translation
+    - Bilingual highlighting (Highlight original and translation sentence by sentence)
+    - Style settings
+    - Website translation rules (per-site translate areas, no-translate areas and custom CSS)
+  - Selection translation
+    - Dictionary
+    - Text-to-speech (TTS)
+    - Multiple translation services and a compact interface (optional)
+  - Input box translation
+  - Paragraph translation
 - AI Writing
-  - Correct grammar, polish, translate, and more directly in input box
-  - AI workbench to edit long-form text
-- Video Subtitles (YouTube bilingual subtitles)
-- Multiple Translation and AI Service Integrations
-- Sync (WebDAV) & Backup Config
-- Website translation rules (Per-site translate areas, no-translate areas and custom CSS)
+  - Correct grammar, polish, translate, and more directly in the input box
+  - AI writing workbench
+- Video subtitles (YouTube bilingual subtitles)
+  - Look up words on hover
+  - Subtitle download
+  - Subtitle styles
+  - AI sentence segmentation
+- Multiple translation and AI service integrations
+  - Translation services: Microsoft, Google, Yandex, browser built-in AI (Chrome and Edge only), DeepL
+  - AI: OpenAI, DeepSeek, Gemini, OpenRouter, Claude, Ollama, Custom
+- Sync & Backup
+  - Sync methods: Google Drive, WebDAV
+  - Automatic sync (on a schedule and after a setting changes)
+  - Backup config (import / export a JSON file)
+- Shortcuts
+  - Browser shortcuts
+    - Translate / Restore page (Alt+S)
+    - Translate selection / input box (Alt+A)
+    - Translate / Restore mouse-over paragraph (Alt+Q)
+    - Open AI writing workbench (Alt+W)
+  - Double-tap shortcuts (double-tap Ctrl/Alt)
+    - Translate selection
+    - Translate input box
+    - Translate / restore mouse-over paragraph
+
+- Customization
+  - Function shortcuts (trigger actions with a single press, a long press or a multi-press)
+  - Selection translate popup (UI customization)
+  - Extension popup (UI customization)
 
 ## Installation
 Add to your browser:
