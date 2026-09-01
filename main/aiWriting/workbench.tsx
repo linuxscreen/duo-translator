@@ -382,16 +382,6 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                     </select>
                     {task === AI_TASK.TRANSLATE ? (
                         <>
-                            <select
-                                title={t("aiTargetLang", "Translate to")}
-                                value={targetLang}
-                                onChange={(e) => setTargetLang(e.target.value)}
-                                className="h-7 rounded-md bg-surface border border-line-strong text-[12px] text-ink px-2"
-                            >
-                                {LANGUAGES.map((l) => (
-                                    <option key={l.value} value={l.value}>{t(l.title, l.title)}</option>
-                                ))}
-                            </select>
                             {/* Translate service: built-in translators + configured AI providers (flat list). */}
                             <select
                                 value={buildTranslateServiceKey(translateChoice)}
@@ -403,6 +393,16 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                                     <option key={s.value} value={s.value}>
                                         {s.i18nKey ? t(s.i18nKey, s.label) : s.label}
                                     </option>
+                                ))}
+                            </select>
+                            <select
+                                title={t("aiTargetLang", "Translate to")}
+                                value={targetLang}
+                                onChange={(e) => setTargetLang(e.target.value)}
+                                className="h-7 rounded-md bg-surface border border-line-strong text-[12px] text-ink px-2"
+                            >
+                                {LANGUAGES.map((l) => (
+                                    <option key={l.value} value={l.value}>{t(l.title, l.title)}</option>
                                 ))}
                             </select>
                         </>

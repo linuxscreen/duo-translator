@@ -77,7 +77,8 @@ export const MOUSE_MIDDLE_KEY = 'MouseMiddle';
 export const SHORTCUT_NONE = 'none';
 
 /**
- * Bounds for the tunable timings.
+ * Bounds for the tunable timings. The interval is the gap ALLOWED BETWEEN
+ * presses, so a triple-tap's total budget is twice it.
  *
  * `MULTI_INTERVAL_MS.def` is 400 to match the existing double-tap window in
  * content.ts — two gestures with visibly different tolerances for "quickly"
@@ -87,6 +88,20 @@ export const SHORTCUT_NONE = 'none';
  */
 export const MULTI_COUNT = { min: 2, max: 4, def: 2 } as const;
 export const MULTI_INTERVAL_MS = { min: 100, max: 1000, def: 400 } as const;
+
+/**
+ * The gap allowed inside the built-in triple-tap, tighter than the default.
+ *
+ * Three presses at 400ms apart is a 1.2-second window, and Space — unlike the
+ * modifier keys the double-tap gesture uses — is pressed constantly while
+ * writing, so an ordinary run of spaces in a sentence was long enough to fire
+ * it. 250ms puts the three presses inside half a second: comfortable when it is
+ * meant as one gesture, out of reach for spaces typed as part of a sentence.
+ *
+ * Only this one built-in. The double-tap built-ins have one gap rather than
+ * two, so the same tolerance buys half the window.
+ */
+const TRIPLE_TAP_INTERVAL_MS = 250;
 export const HOLD_MS = { min: 200, max: 3000, def: 500 } as const;
 
 /** A gesture definition, built-in or user-made. */
@@ -131,8 +146,7 @@ export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
     { id: 'middleClick', key: MOUSE_MIDDLE_KEY, trigger: GESTURE_TRIGGER.CLICK, count: 0, interval: 0, holdMs: 0 },
     { id: 'holdMiddle', key: MOUSE_MIDDLE_KEY, trigger: GESTURE_TRIGGER.HOLD, count: 0, interval: 0, holdMs: HOLD_MS.def },
     { id: 'doubleMiddle', key: MOUSE_MIDDLE_KEY, trigger: GESTURE_TRIGGER.MULTI, count: 2, interval: MULTI_INTERVAL_MS.def, holdMs: 0 },
-    { id: 'doubleSpace', key: 'Space', trigger: GESTURE_TRIGGER.MULTI, count: 2, interval: MULTI_INTERVAL_MS.def, holdMs: 0 },
-    { id: 'tripleSpace', key: 'Space', trigger: GESTURE_TRIGGER.MULTI, count: 3, interval: MULTI_INTERVAL_MS.def, holdMs: 0 },
+    { id: 'tripleSpace', key: 'Space', trigger: GESTURE_TRIGGER.MULTI, count: 3, interval: TRIPLE_TAP_INTERVAL_MS, holdMs: 0 },
 ];
 
 const BUILTIN_BY_ID = new Map(BUILTIN_SHORTCUTS.map((s) => [s.id, s]));

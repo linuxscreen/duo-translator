@@ -1,5 +1,5 @@
 import { alignSentenceBlocks, splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
-import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE, EXTENSION_INVALID_CONTEXT_MSG, STYLE_BLUR, TRANSLATING_ANIMATION } from "./constants";
+import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE, EXTENSION_INVALID_CONTEXT_MSG, STYLE_BLUR, TRANSLATING_ANIMATION, IS_MAC } from "./constants";
 import { restore, translateParams, getTranslateResult, translate, TranslateResult, detectTextsLanguages } from "./translateClient";
 import { buildNoTranslateLanguageSet, isNoTranslateLanguage } from "./noTranslateLanguage";
 import {
@@ -28,7 +28,6 @@ import { getDomainWithPortFromUrl } from "@/utils/url";
 import { createGestureEngine } from "@/main/customShortcut/gestureEngine";
 import {
     CUSTOM_SHORTCUT_ACTION,
-    GESTURE_TRIGGER,
     MOUSE_MIDDLE_KEY,
     actionsForGesture,
     findShortcut,
@@ -40,6 +39,7 @@ import {
     type ShortcutBinding,
 } from "@/main/customShortcut/types";
 import { removeTypedEcho } from "@/main/dom/typedEcho";
+import { extendTypedRun, typedRunForShortcut, type TypedRun } from "@/main/customShortcut/typedRun";
 import { getAiTranslateService, getTranslateService } from "@/utils/service";
 import { buildTranslationCss } from "@/main/css";
 import { TRANSLATE_INDICATOR_CSS } from "@/main/translateIndicator/indicatorCss";
@@ -303,14 +303,10 @@ export async function content() {
     }
     /**
      * The run of identical characters the focused editable has just received.
-     *
-     * A shortcut on a printable key types before it fires — the browser inserts
-     * on every press, and nothing at press time can know whether the sequence
-     * will complete. Suppressing the default is not an option (that would take
-     * Space away from the user), so the insertion is recorded here and undone
-     * by the action that reads the field.
+     * The rules live in main/customShortcut/typedRun.ts; this only feeds it
+     * events and the element they would land in.
      */
-    let typedEcho: { el: HTMLElement; text: string } | null = null
+    let typedEcho: TypedRun | null = null
     // Set when a middle-button press was claimed by a gesture, so the auxclick
     // that follows can be suppressed too — open-link-in-new-tab is dispatched
     // from auxclick, which a preventDefault on mousedown does NOT cancel.
@@ -399,7 +395,13 @@ export async function content() {
     // a paragraph element and right mouse clicked
     // Due to chrome limitations, currently context menu of 'Translate/Restore this paragraph' can only be implemented in this way.
     // chrome known issue: The context menu that is not triggered by the right mouse button may be abnormal.
-    if (!IS_FIREFOX) {
+    //
+    // Skipped entirely on macOS (IS_MAC, both engines): a right click there
+    // selects the word under the pointer, so the selection path already covers
+    // that gesture and this menu item only duplicates it. Not registering the
+    // listener at all keeps the per-right-click work — and the swap of the
+    // page-level menu item for the paragraph one — off that platform.
+    if (!IS_FIREFOX && !IS_MAC) {
         document.addEventListener("mousedown", (e) => {
             if (e.button !== 2) return // ignore non right click
             // Read the position synchronously — the pointer may have moved by
@@ -423,7 +425,7 @@ export async function content() {
                 // console.log("isContentEditable", target);
                 lastEditableElement = target
             }
-            if (IS_FIREFOX) {
+            if (IS_FIREFOX && !IS_MAC) {
                 notifyParaContextMenuUpdate(lastX, lastY)
             }
         })()
@@ -1381,48 +1383,20 @@ export async function content() {
     }
 
     /**
-     * Record a character the focused editable is about to receive.
-     *
-     * Only a run of the SAME character can belong to one shortcut, and starting
-     * over on anything else is what keeps "hello   " from being read as eight
-     * characters of shortcut. Function declaration so the listener above, which
-     * is registered in the first synchronous pass, can call it.
+     * Feed one keydown to the run tracker. A function declaration so the
+     * listener above, registered in the first synchronous pass, can call it.
      */
     function noteTypedEcho(e: KeyboardEvent) {
-        // Ctrl / Alt / Meta suppress text input, and a `key` longer than one
-        // character is not a character at all (Enter, ArrowLeft, F5).
-        if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) { typedEcho = null; return }
-        const el = deepActiveElement()
-        if (!(el instanceof HTMLElement) || !IsEditableElement(el)) { typedEcho = null; return }
-        if (typedEcho && typedEcho.el === el && typedEcho.text[0] === e.key) typedEcho.text += e.key
-        else typedEcho = { el, text: e.key }
+        const active = deepActiveElement()
+        const el = active instanceof HTMLElement && IsEditableElement(active) ? active : null
+        typedEcho = extendTypedRun(typedEcho, e, el)
     }
 
-    /**
-     * What the shortcut that just fired can account for of that run, taken and
-     * cleared in one go.
-     *
-     * The cap matters: three spaces where the shortcut is a double-tap means the
-     * first one was the user's (its sequence timed out), and removing it would
-     * delete a character they meant to keep.
-     */
-    function takeTypedEcho(shortcutId: string): { el: HTMLElement; text: string } | null {
-        const echo = typedEcho
+    /** What the shortcut that just fired can account for, taken and cleared. */
+    function takeTypedEcho(shortcutId: string): TypedRun | null {
+        const run = typedEcho
         typedEcho = null
-        if (!echo) return null
-        const def = findShortcut(shortcutId, customShortcutList)
-        if (!def) return null
-        const presses = def.trigger === GESTURE_TRIGGER.MULTI ? def.count
-            : def.trigger === GESTURE_TRIGGER.CLICK ? 1
-                // HOLD: the key auto-repeats for as long as it is held, so how
-                // many characters arrived is not something the definition can
-                // say — the run itself is the only answer. Characters that
-                // arrive after the hold fires are missed; a hold on a printable
-                // key bound to "translate input box" is a pathological setup and
-                // not worth a second pass to catch them.
-                : echo.text.length
-        const text = echo.text.slice(-Math.min(echo.text.length, presses))
-        return text ? { el: echo.el, text } : null
+        return typedRunForShortcut(run, findShortcut(shortcutId, customShortcutList))
     }
 
     /**
@@ -1452,7 +1426,7 @@ export async function content() {
     /** @returns whether the action's precondition was met and it actually ran. */
     function runCustomShortcutAction(
         action: CUSTOM_SHORTCUT_ACTION,
-        echo: { el: HTMLElement; text: string } | null,
+        echo: TypedRun | null,
     ): boolean {
         switch (action) {
             case CUSTOM_SHORTCUT_ACTION.TRANSLATE_SELECTION: {

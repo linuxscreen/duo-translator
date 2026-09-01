@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Switch } from '@/components/ui/switch';
+import { PreviewSection } from './PreviewSection';
+import { PopupPreview } from './PopupPreview';
 import { CONFIG_KEY, configDefault } from '@/main/constants';
 import { setConfig } from '@/utils/db';
 import { useConfig } from '@/utils/reactiveConfig';
@@ -87,6 +89,10 @@ export function PopupCard() {
           onChange={(v) => void setConfig(CONFIG_KEY.POPUP_SHOW_AI_WRITING, v)}
         />
       </div>
+
+      <PreviewSection>
+        <PopupPreview />
+      </PreviewSection>
     </div>
   );
 }

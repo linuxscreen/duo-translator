@@ -56,6 +56,21 @@ export const IS_SAFARI = import.meta.env.SAFARI;
 // the standards-following branch. Used where Chromium ACCEPTS something the
 // WebExtensions grammar does not — see `legacyHostPermissionPattern`.
 export const IS_CHROMIUM = !import.meta.env.FIREFOX && !import.meta.env.SAFARI;
+// Runtime platform check, NOT a build macro: macOS is not a build target — the
+// same chrome / firefox / safari bundle runs on every OS. `navigator.platform`
+// is deprecated but is the only *synchronous* answer available in a content
+// script (`runtime.getPlatformInfo` is async and `navigator.userAgentData` is
+// Chromium-only), and a content-script listener has to decide whether to
+// register in the first synchronous round — see the "listeners register in the
+// first sync round" rule. UI code that only needs to NAME a modifier key uses
+// the accurate async probe in utils/useIsMac.ts instead; being wrong here only
+// shows or hides a context-menu item, so best-effort is the right trade.
+export const IS_MAC = /mac/i.test(
+    (globalThis.navigator as unknown as { userAgentData?: { platform?: string } } | undefined)
+        ?.userAgentData?.platform
+    || globalThis.navigator?.platform
+    || ''
+);
 
 export const EXTENSION_INVALID_CONTEXT_MSG = "Extension context invalidated"
 

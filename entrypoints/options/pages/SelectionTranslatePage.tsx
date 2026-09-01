@@ -14,6 +14,7 @@ import {
 } from '@/main/constants';
 import {
   COMPACT_SELECTION_POPUP_UI,
+  orderSelectionServices,
   resolveSelectionServices,
   SELECTION_POPUP_UI_KEYS,
   STOCK_SELECTION_POPUP_PREFS,
@@ -218,9 +219,14 @@ export function SelectionTranslatePage({ onOpenCustomization }: Props) {
   );
 
   const onToggleSelectedService = (key: string) => {
-    const next = selectedServices.includes(key)
-      ? selectedServices.filter((k) => k !== key)
-      : [...selectedServices, key];
+    // Stored in the picker's order rather than the order ticked — that is the
+    // order the card answers in, and the two must not disagree.
+    const next = orderSelectionServices(
+      selectedServices.includes(key)
+        ? selectedServices.filter((k) => k !== key)
+        : [...selectedServices, key],
+      serviceOptions,
+    );
     // Same refusal as the card's own checklist: a set with nothing in it would
     // be put straight back by the resolver, so the tick would look inert.
     if (next.length === 0) return;

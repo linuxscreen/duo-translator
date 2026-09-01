@@ -191,7 +191,7 @@ export function AiWritingPage() {
                       <span className="flex items-center gap-1">
                         {<ServiceMark id={p.type} />}
                         {p.getTitle()}
-                        </span>
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -219,22 +219,24 @@ export function AiWritingPage() {
         />
 
         <SettingRow
-          label={t('aiTargetLang', 'Translate to')}
+          label={t('aiWhitelistMode', 'Whitelist mode')}
+          hint={t('aiWhitelistModeHint', 'Only enabled on designated websites')}
           control={
-            <Select value={targetLang} onValueChange={(v) => void changeTargetLang(v)}>
-              <SelectTrigger className="min-w-[200px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LANGUAGES.map((l) => (
-                  <SelectItem key={l.value} value={l.value}>
-                    {t(l.title, l.title)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Switch
+              checked={whitelistMode}
+              onCheckedChange={(v) => void toggleWhitelistMode(v)}
+            />
           }
         />
+      </div>
+
+      {/* Input-box translation: target language + which service does it. */}
+      <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
+        <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+          <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-mute">
+            {t('aiInputBoxTranslation', 'Translate input box')}
+          </span>
+        </div>
 
         <SettingRow
           label={t('aiTranslateWith', 'Translate with')}
@@ -261,13 +263,20 @@ export function AiWritingPage() {
         />
 
         <SettingRow
-          label={t('aiWhitelistMode', 'Whitelist mode')}
-          hint={t('aiWhitelistModeHint', 'Only enabled on designated websites')}
+          label={t('aiTargetLang', 'Translate to')}
           control={
-            <Switch
-              checked={whitelistMode}
-              onCheckedChange={(v) => void toggleWhitelistMode(v)}
-            />
+            <Select value={targetLang} onValueChange={(v) => void changeTargetLang(v)}>
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LANGUAGES.map((l) => (
+                  <SelectItem key={l.value} value={l.value}>
+                    {t(l.title, l.title)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           }
         />
       </div>

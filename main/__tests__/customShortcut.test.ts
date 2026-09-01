@@ -30,6 +30,12 @@ import {
     type ShortcutBinding,
     type ShortcutDef,
 } from "@/main/customShortcut/types";
+import {
+    extendTypedRun,
+    typedRunForShortcut,
+    type TypedKey,
+    type TypedRun,
+} from "@/main/customShortcut/typedRun";
 
 /** Modifier flags as an event would report them. */
 const mods = (held: string[] = []): ModifierState => ({
@@ -357,7 +363,6 @@ describe("labels", () => {
         expect(label("middleClick")).toBe("Click Middle button");
         expect(label("holdMiddle")).toBe("Hold Middle button");
         expect(label("doubleMiddle")).toBe("Double-tap Middle button");
-        expect(label("doubleSpace")).toBe("Double-tap Space");
         expect(label("tripleSpace")).toBe("Triple-tap Space");
     });
 
@@ -507,5 +512,111 @@ describe("browser shortcut parsing", () => {
             { combo: "Alt+KeyW", label: "AI workbench" },
             { combo: "Alt+KeyQ", label: "bare" },
         ]);
+    });
+});
+
+// --- typed run (the characters a printable-key shortcut inserts) ------------
+//
+// main/customShortcut/typedRun.ts. Every way of getting this wrong is silent:
+// too few characters leaves a space in the user's text, too many makes
+// removeTypedEcho's verification fail and leaves ALL of them behind.
+// A gesture configured TIGHTER than the shipped default has to actually get
+// that window. The per-combo wait used to be seeded with MULTI_INTERVAL_MS.def,
+// which silently floored it — the built-in triple-tap's 250ms, and any custom
+// gesture set below 400ms, would have kept the 400ms window.
+describe("a tighter-than-default interval", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("is enforced rather than floored at the default", () => {
+        const fired: string[] = [];
+        const engine = createGestureEngine((id) => fired.push(id));
+        engine.setGestures([
+            def({ id: "t", key: "Space", trigger: GESTURE_TRIGGER.MULTI, count: 3, interval: 250 }),
+        ]);
+        const tap = () => { engine.press("Space", mods()); engine.release("Space", mods()); };
+
+        // 300ms gaps: inside the old 400ms floor, outside this gesture's 250ms.
+        tap();
+        vi.advanceTimersByTime(300);
+        tap();
+        vi.advanceTimersByTime(300);
+        tap();
+        vi.advanceTimersByTime(300);
+        expect(fired).toEqual([]);
+
+        // The same three presses inside the window do fire.
+        tap();
+        tap();
+        tap();
+        expect(fired).toEqual(["t"]);
+    });
+});
+
+describe("typedRun", () => {
+    const el = { nodeName: "TEXTAREA" } as unknown as HTMLElement;
+    const other = { nodeName: "INPUT" } as unknown as HTMLElement;
+    const tap = (key: string, extra: Partial<TypedKey> = {}): TypedKey =>
+        ({ key, ctrlKey: false, altKey: false, metaKey: false, ...extra });
+    const feed = (keys: TypedKey[], target: HTMLElement | null = el) =>
+        keys.reduce<TypedRun | null>((run, k) => extendTypedRun(run, k, target), null);
+
+    const multi = (count: number): ShortcutDef =>
+        ({ id: "x", key: "Space", trigger: GESTURE_TRIGGER.MULTI, count, interval: 400, holdMs: 0 });
+
+    it("collects a run of the same character", () => {
+        expect(feed([tap(" "), tap(" "), tap(" ")])?.text).toBe("   ");
+    });
+
+    it("starts over on a different character, so typed text is not counted as shortcut", () => {
+        expect(feed([tap("h"), tap("i"), tap(" "), tap(" ")])?.text).toBe("  ");
+    });
+
+    it("drops the run on a modifier combo or a non-character key", () => {
+        expect(feed([tap(" "), tap("c", { ctrlKey: true })])).toBeNull();
+        expect(feed([tap(" "), tap("Enter")])).toBeNull();
+    });
+
+    it("drops the run when the focus is not in an editable, and when it moves", () => {
+        expect(feed([tap(" ")], null)).toBeNull();
+        const run = feed([tap(" ")]);
+        expect(extendTypedRun(run, tap(" "), other)?.text).toBe(" ");
+    });
+
+    // The reported bug: in a Chinese IME the Space that COMMITS the candidate
+    // inserts no space of its own, so three presses put two spaces in the field.
+    // Counting it made the run longer than the text really there, and since the
+    // removal verifies before it cuts, NOTHING was removed — the shortcut left
+    // two spaces in the message it had just translated.
+    it("ignores a press the IME consumed", () => {
+        const run = feed([tap(" ", { isComposing: true }), tap(" "), tap(" ")]);
+        expect(run?.text).toBe("  ");
+        expect(typedRunForShortcut(run, multi(3))?.text).toBe("  ");
+    });
+
+    it("ignores a legacy keyCode-229 press the same way", () => {
+        expect(feed([tap(" ", { keyCode: 229 }), tap(" "), tap(" ")])?.text).toBe("  ");
+    });
+
+    it("takes only what the shortcut can account for", () => {
+        // Three spaces, but a double-tap: the first was the user's own.
+        const run = feed([tap(" "), tap(" "), tap(" ")]);
+        expect(typedRunForShortcut(run, multi(2))?.text).toBe("  ");
+        expect(typedRunForShortcut(run, multi(3))?.text).toBe("   ");
+        // More presses than characters is fine — take what is there.
+        expect(typedRunForShortcut(run, multi(4))?.text).toBe("   ");
+    });
+
+    it("takes one for a click and the whole run for a hold", () => {
+        const run = feed([tap(" "), tap(" "), tap(" ")]);
+        const at = (trigger: GESTURE_TRIGGER): ShortcutDef =>
+            ({ id: "x", key: "Space", trigger, count: 0, interval: 0, holdMs: 500 });
+        expect(typedRunForShortcut(run, at(GESTURE_TRIGGER.CLICK))?.text).toBe(" ");
+        expect(typedRunForShortcut(run, at(GESTURE_TRIGGER.HOLD))?.text).toBe("   ");
+    });
+
+    it("has nothing to take without a run or without a definition", () => {
+        expect(typedRunForShortcut(null, multi(2))).toBeNull();
+        expect(typedRunForShortcut(feed([tap(" ")]), null)).toBeNull();
     });
 });

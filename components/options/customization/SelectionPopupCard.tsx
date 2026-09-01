@@ -1,6 +1,8 @@
 import { type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Switch } from '@/components/ui/switch';
+import { PreviewSection } from './PreviewSection';
+import { SelectionPopupPreview } from './SelectionPopupPreview';
 import { CONFIG_KEY, configDefault } from '@/main/constants';
 import { setConfig } from '@/utils/db';
 import { useConfig } from '@/utils/reactiveConfig';
@@ -157,6 +159,10 @@ export function SelectionPopupCard() {
           />
         )}
       </Section>
+
+      <PreviewSection>
+        <SelectionPopupPreview />
+      </PreviewSection>
     </div>
   );
 }

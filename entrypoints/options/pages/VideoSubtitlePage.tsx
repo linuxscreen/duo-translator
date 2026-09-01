@@ -275,6 +275,32 @@ export function VideoSubtitlePage() {
           }
         />
         <SettingRow
+          label={t('translateService', 'Translate service')}
+          control={
+            <Select
+              value={serviceKey}
+              onValueChange={(v) => {
+                setServiceKey(v);
+                void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE, v);
+              }}
+            >
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {serviceOptions.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    <span className="flex items-center gap-1">
+                      <ServiceMark id={o.iconId} />
+                      {o.i18nKey ? t(o.i18nKey, o.label) : o.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
+        <SettingRow
           label={t('targetLanguage', 'Target language')}
           control={
             <Select
@@ -317,32 +343,6 @@ export function VideoSubtitlePage() {
                 <SelectItem value={VIDEO_SUBTITLE_SOURCE_POLICY.AUDIO}>
                   {t('videoSubtitleSourceFollowAudio', 'Follow the native audio')}
                 </SelectItem>
-              </SelectContent>
-            </Select>
-          }
-        />
-        <SettingRow
-          label={t('translateService', 'Translate service')}
-          control={
-            <Select
-              value={serviceKey}
-              onValueChange={(v) => {
-                setServiceKey(v);
-                void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE, v);
-              }}
-            >
-              <SelectTrigger className="min-w-[200px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {serviceOptions.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    <span className="flex items-center gap-1">
-                      <ServiceMark id={o.iconId} />
-                      {o.i18nKey ? t(o.i18nKey, o.label) : o.label}
-                    </span>
-                  </SelectItem>
-                ))}
               </SelectContent>
             </Select>
           }

@@ -4,12 +4,16 @@ import { useTranslation } from 'react-i18next';
 /**
  * The framed "Preview" block at the bottom of a customization card.
  *
- * Lives outside the card's deactivated body on purpose — see
- * `CollapsibleCard`'s `footer` prop — and reads its settings ungated (the
- * `ignoreSwitch` option on the prefs hooks). The master switch decides whether
- * the real surface obeys these settings; the preview's job is to show what they
- * do, so it keeps drawing them either way. Letting the switch dim it or reset
- * it to the stock layout would hide precisely what the user is adjusting.
+ * The master switch reaches it in one way and not the other, and the split is
+ * the point:
+ *
+ *  - WHAT it draws ignores the switch (the `ignoreSwitch` option on the prefs
+ *    hooks). The settings above are what the user is adjusting, so the preview
+ *    keeps showing them; snapping back to the stock layout the moment the
+ *    switch goes off would hide exactly the thing being looked at.
+ *  - HOW it draws follows the switch, because it sits inside the card's
+ *    deactivated body: greyed out and inert, saying these settings are not in
+ *    effect right now — which is the one thing the switch does decide.
  */
 export function PreviewSection({ children }: { children: ReactNode }) {
   const { t } = useTranslation();

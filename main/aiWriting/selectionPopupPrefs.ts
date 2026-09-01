@@ -211,6 +211,15 @@ export async function loadSelectionPopupPrefs(): Promise<SelectionPopupPrefs> {
  * Keys the picker no longer offers (an AI provider that was deleted) are
  * dropped here rather than at render time, so a stale entry cannot cost a
  * request that is guaranteed to fail.
+ *
+ * The result follows `available` — the picker's own order — NOT the order the
+ * keys happen to sit in storage. Both checklists (Options and the card's
+ * header) append a newly ticked key to the end, so the stored array records the
+ * order the user CLICKED in; using it verbatim made the card's result blocks
+ * come out in an order that matched nothing on screen, and re-ticking a service
+ * silently moved its answer to the bottom. Ordering here rather than at each
+ * render point keeps the answer blocks, the "A, B, C" summary and the
+ * checkboxes reading off one list.
  */
 export function resolveSelectionServices(
     prefs: SelectionPopupPrefs,
@@ -219,7 +228,23 @@ export function resolveSelectionServices(
     singleOverride: string | null,
 ): string[] {
     if (!prefs.multiService) return [singleOverride || pageService].filter(Boolean);
-    const known = new Set(available.map((o) => o.value));
-    const picked = prefs.services.filter((k) => known.has(k));
-    return picked.length > 0 ? picked : [pageService].filter(Boolean);
+    const ordered = orderSelectionServices(prefs.services, available);
+    return ordered.length > 0 ? ordered : [pageService].filter(Boolean);
+}
+
+/**
+ * Put a set of service keys back into the picker's order, dropping any the
+ * picker no longer offers.
+ *
+ * Also applied by the two checklists when they WRITE, so the list that is
+ * re-asked the instant a box is ticked matches the one the next open resolves
+ * to — otherwise a freshly ticked service answers at the bottom of the card
+ * until it is reopened.
+ */
+export function orderSelectionServices(
+    keys: readonly string[],
+    available: readonly { value: string }[],
+): string[] {
+    const picked = new Set(keys);
+    return available.map((o) => o.value).filter((v) => picked.has(v));
 }

@@ -512,7 +512,7 @@ export default function App({ embedded = false, uiPrefs }: AppProps = {}) {
       },
       {
         key: 'aiWriting',
-        label: t('aiWritingInputTranslate', 'AI Writing (input box)'),
+        label: t('aiWritingInputTranslate', 'Translate input box (AI Writing)'),
         value: aiWritingService,
         options: otherServiceList,
         onChange: onAiWritingServiceChange,

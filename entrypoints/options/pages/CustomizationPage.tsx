@@ -8,9 +8,6 @@ import {
   useSelectionPopupDefaults,
 } from '@/components/options/customization/SelectionPopupCard';
 import { PopupCard, usePopupDefaults } from '@/components/options/customization/PopupCard';
-import { PopupPreview } from '@/components/options/customization/PopupPreview';
-import { SelectionPopupPreview } from '@/components/options/customization/SelectionPopupPreview';
-import { PreviewSection } from '@/components/options/customization/PreviewSection';
 import { CONFIG_KEY } from '@/main/constants';
 import { setConfig } from '@/utils/db';
 import { useConfig, useConfigHydrated } from '@/utils/reactiveConfig';
@@ -48,8 +45,16 @@ export function CustomizationPage() {
 
   return (
     <div className="flex flex-col gap-4">
+      <p className="text-[12px] text-ink-soft">
+        {t('customizationPageHint', 'Advanced features and UI customization')}
+      </p>
+
       <CollapsibleCard
-        title={t('shortcuts', 'Shortcuts')}
+        // Not `shortcuts`: that label belongs to the sidebar page for the
+        // BROWSER shortcuts, and two settings entries with the same name is
+        // the confusion this card kept causing. "Function" is the word the
+        // bindings table below already uses for what a gesture triggers.
+        title={t('functionShortcuts', 'Function shortcuts')}
         hint={t('customShortcutsCardHint', 'Trigger actions with a single press, a long press or a multi-press')}
         icon={<Keyboard className="h-3.5 w-3.5" strokeWidth={1.6} />}
         enabled={shortcutsOn}
@@ -67,7 +72,6 @@ export function CustomizationPage() {
         pending={!switchesReady}
         onEnabledChange={(v) => void setConfig(CONFIG_KEY.CUSTOM_SELECTION_POPUP_SWITCH, v)}
         action={restoreButton(selectionPopupDefaults)}
-        footer={<PreviewSection><SelectionPopupPreview /></PreviewSection>}
       >
         <SelectionPopupCard />
       </CollapsibleCard>
@@ -80,7 +84,6 @@ export function CustomizationPage() {
         pending={!switchesReady}
         onEnabledChange={(v) => void setConfig(CONFIG_KEY.CUSTOM_POPUP_SWITCH, v)}
         action={restoreButton(popupDefaults)}
-        footer={<PreviewSection><PopupPreview /></PreviewSection>}
       >
         <PopupCard />
       </CollapsibleCard>

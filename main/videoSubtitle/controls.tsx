@@ -635,6 +635,22 @@ function SubtitleMenuApp({
                         </select>
                     </div>
 
+                    {/* Translate service */}
+                    <div className={rowCls}>
+                        <span className="text-ink-2">{t("translateService", "Translate service")}</span>
+                        <select
+                            className={selectCls}
+                            value={activeService}
+                            onChange={(e) => void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE, e.target.value)}
+                        >
+                            {serviceOptions.map((o) => (
+                                <option key={o.value} value={o.value}>
+                                    {o.i18nKey ? t(o.i18nKey, o.label) : o.label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
                     {/* Target language */}
                     <div className={rowCls}>
                         <span className="text-ink-2">{t("targetLanguage", "Target language")}</span>
@@ -674,22 +690,6 @@ function SubtitleMenuApp({
                             {sourceTracks.map((track) => (
                                 <option key={track.languageCode} value={track.languageCode}>
                                     {track.label || track.languageCode}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-
-                    {/* Translate service */}
-                    <div className={rowCls}>
-                        <span className="text-ink-2">{t("translateService", "Translate service")}</span>
-                        <select
-                            className={selectCls}
-                            value={activeService}
-                            onChange={(e) => void setConfig(CONFIG_KEY.VIDEO_SUBTITLE_TRANSLATE_SERVICE, e.target.value)}
-                        >
-                            {serviceOptions.map((o) => (
-                                <option key={o.value} value={o.value}>
-                                    {o.i18nKey ? t(o.i18nKey, o.label) : o.label}
                                 </option>
                             ))}
                         </select>

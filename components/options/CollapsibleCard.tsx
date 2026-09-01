@@ -31,13 +31,6 @@ type Props = {
    * user to act on settings they cannot see.
    */
   action?: ReactNode;
-  /**
-   * Rendered below the body and OUTSIDE its deactivated group, so the switch
-   * does not reach it. For the live previews: a preview shows what the surface
-   * looks like right now, and this switch does not change that — dimming it
-   * would say the previewed thing is off, which it is not.
-   */
-  footer?: ReactNode;
   children: ReactNode;
 };
 
@@ -78,7 +71,6 @@ export function CollapsibleCard({
   pending = false,
   defaultOpen = false,
   action,
-  footer,
   children,
 }: Props) {
   const { t } = useTranslation();
@@ -151,7 +143,6 @@ export function CollapsibleCard({
           <fieldset disabled={!enabled} className={cn('min-w-0', !enabled && DEACTIVATED)}>
             {children}
           </fieldset>
-          {footer}
         </div>
       )}
     </section>

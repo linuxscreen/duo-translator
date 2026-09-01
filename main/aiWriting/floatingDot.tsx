@@ -935,18 +935,6 @@ function SettingsPopover({
                 )}
             </Field>
 
-            <Field label={t("aiTargetLang", "Target language")}>
-                <select
-                    value={targetLang}
-                    onChange={(e) => onPickLang(e.target.value)}
-                    className="h-7 w-full rounded bg-bg border border-line-strong text-[12px] text-ink px-1.5"
-                >
-                    {LANGUAGES.map((l) => (
-                        <option key={l.value} value={l.value}>{t(l.title, l.title)}</option>
-                    ))}
-                </select>
-            </Field>
-
             <Field label={t("aiTranslateWith", "Translate with")}>
                 <select
                     value={translateKey}
@@ -957,6 +945,18 @@ function SettingsPopover({
                         <option key={s.value} value={s.value}>
                             {s.i18nKey ? t(s.i18nKey, s.label) : s.label}
                         </option>
+                    ))}
+                </select>
+            </Field>
+
+            <Field label={t("aiTargetLang", "Target language")}>
+                <select
+                    value={targetLang}
+                    onChange={(e) => onPickLang(e.target.value)}
+                    className="h-7 w-full rounded bg-bg border border-line-strong text-[12px] text-ink px-1.5"
+                >
+                    {LANGUAGES.map((l) => (
+                        <option key={l.value} value={l.value}>{t(l.title, l.title)}</option>
                     ))}
                 </select>
             </Field>

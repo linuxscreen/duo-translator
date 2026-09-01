@@ -10,6 +10,7 @@ import { useTts } from "./useTts";
 import { SelectionCard, type TranslationRun } from "./SelectionCard";
 import {
     loadSelectionPopupPrefs,
+    orderSelectionServices,
     resolveSelectionServices,
     useSelectionPopupPrefs,
     type SelectionPopupPrefs,
@@ -681,9 +682,15 @@ function SelectionPopupApp({ registerOpen }: { registerOpen: (fn: (s: SelectionS
      * appear to do nothing.
      */
     const onToggleService = (key: string) => {
-        const next = selectedServices.includes(key)
-            ? selectedServices.filter((k) => k !== key)
-            : [...selectedServices, key];
+        // Ordered by the picker, not by the tick: the re-ask below renders its
+        // blocks in exactly this order, so appending would drop the freshly
+        // ticked service to the bottom of the card until the next open.
+        const next = orderSelectionServices(
+            selectedServices.includes(key)
+                ? selectedServices.filter((k) => k !== key)
+                : [...selectedServices, key],
+            pageDefaults.options,
+        );
         if (next.length === 0) return;
         void setConfig(CONFIG_KEY.SELECTION_POPUP_SERVICES, next);
         if (!seed) return;

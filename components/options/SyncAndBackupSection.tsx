@@ -530,25 +530,25 @@ export function SyncAndBackupSection() {
                 path there at all (see IS_SAFARI) and WebDAV is the only target;
                 a selector with one option is a question with no answer. */}
             {!IS_SAFARI && (
-            <SettingRow
-                label={t('syncMethod', 'Sync method')}
-                // hint={t('syncMethodHint', 'This device only — the choice itself is not synced.')}
-                control={
-                    <Select value={activeId} onValueChange={onChangeMethod}>
-                        <SelectTrigger className="min-w-[160px]">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value={SYNC_PROVIDER_ID.GDRIVE}>
-                                {t('syncProviderGoogleDrive', 'Google Drive')}
-                            </SelectItem>
-                            <SelectItem value={SYNC_PROVIDER_ID.WEBDAV}>
-                                {t('syncProviderWebdav', 'WebDAV')}
-                            </SelectItem>
-                        </SelectContent>
-                    </Select>
-                }
-            />
+                <SettingRow
+                    label={t('syncMethod', 'Sync method')}
+                    // hint={t('syncMethodHint', 'This device only — the choice itself is not synced.')}
+                    control={
+                        <Select value={activeId} onValueChange={onChangeMethod}>
+                            <SelectTrigger className="min-w-[160px]">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value={SYNC_PROVIDER_ID.GDRIVE}>
+                                    {t('syncProviderGoogleDrive', 'Google Drive')}
+                                </SelectItem>
+                                <SelectItem value={SYNC_PROVIDER_ID.WEBDAV}>
+                                    {t('syncProviderWebdav', 'WebDAV')}
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
+                    }
+                />
             )}
 
             {activeId === SYNC_PROVIDER_ID.GDRIVE ? (
@@ -680,9 +680,6 @@ export function SyncAndBackupSection() {
                                 <Button size="sm" onClick={() => onSyncNow(SYNC_PROVIDER_ID.WEBDAV)} disabled={busy}>
                                     {t('syncNow', 'Sync now')}
                                 </Button>
-                                <Button variant="outline" size="sm" onClick={openConfig} disabled={busy}>
-                                    {t('webdavConfigure', 'Configure')}
-                                </Button>
                                 <Button
                                     variant="outline"
                                     size="sm"
@@ -690,6 +687,9 @@ export function SyncAndBackupSection() {
                                     disabled={busy}
                                 >
                                     {t('manageSyncedFile', 'Manage synced file')}
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={openConfig} disabled={busy}>
+                                    {t('webdavConfigure', 'Configure')}
                                 </Button>
                                 <Button
                                     variant="outline"

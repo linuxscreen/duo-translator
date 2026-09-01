@@ -21,7 +21,6 @@
 import {
     GESTURE_TRIGGER,
     MODIFIER_FLAGS,
-    MULTI_INTERVAL_MS,
     comboKeys,
     type ModifierState,
     type ShortcutDef,
@@ -88,7 +87,14 @@ function buildPlans(defs: ShortcutDef[]): Map<string, ComboPlan> {
                 hold: null,
                 byCount: new Map(),
                 maxCount: 0,
-                waitMs: MULTI_INTERVAL_MS.def,
+                // Starts at zero, NOT at the shipped default: the loop below
+                // raises it to the slowest gesture actually on this combo, and
+                // seeding it with the default would be a silent floor — a
+                // gesture configured tighter than 400ms would keep the 400ms
+                // window and its setting would do nothing. A combo with no
+                // multi-tap never reads this (its only count is its max, so it
+                // fires on release instead of waiting).
+                waitMs: 0,
             };
             plans.set(def.key, plan);
         }
@@ -103,7 +109,9 @@ function buildPlans(defs: ShortcutDef[]): Map<string, ComboPlan> {
         plan.maxCount = Math.max(plan.maxCount, count);
         // The wait must accommodate the SLOWEST gesture on this combo,
         // otherwise a generous 800ms triple-tap would be cut short by a strict
-        // 200ms double-tap sharing it.
+        // 200ms double-tap sharing it. The flip side is that binding both puts
+        // the tighter one on the looser one's window — inherent to the window
+        // being per combo, and the looser tolerance is the safe direction.
         if (def.trigger === GESTURE_TRIGGER.MULTI) plan.waitMs = Math.max(plan.waitMs, def.interval);
     }
     return plans;

@@ -720,23 +720,6 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
           }
         />
         <SettingRow
-          label={t('targetLanguage', 'Target language')}
-          control={
-            <Select value={targetLang} onValueChange={onTargetLang}>
-              <SelectTrigger className="min-w-[200px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LANGUAGES.map((l) => (
-                  <SelectItem key={l.value} value={l.value}>
-                    {t(l.title, l.title)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          }
-        />
-        <SettingRow
           label={t('translateService', 'Translate service')}
           control={
             <Select value={translateService} onValueChange={onTranslateService}>
@@ -750,6 +733,23 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
                       <ServiceMark id={s.iconId} />
                       {s.i18nKey ? t(s.i18nKey, s.label) : s.label}
                     </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
+        <SettingRow
+          label={t('targetLanguage', 'Target language')}
+          control={
+            <Select value={targetLang} onValueChange={onTargetLang}>
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LANGUAGES.map((l) => (
+                  <SelectItem key={l.value} value={l.value}>
+                    {t(l.title, l.title)}
                   </SelectItem>
                 ))}
               </SelectContent>
