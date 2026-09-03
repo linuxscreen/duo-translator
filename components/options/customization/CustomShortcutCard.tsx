@@ -117,7 +117,7 @@ export function CustomShortcutCard() {
   return (
     <div className="flex flex-col gap-5">
       <p className="text-[12px] text-ink-soft">
-        {t('customShortcutsHint', 'Coexists with the browser shortcuts and the double-tap modifier')}
+        {t('customShortcutsHint', 'Coexists with the browser shortcuts and the double-tap shortcuts')}
       </p>
 
       {/* --- Custom gesture definitions ------------------------------------ */}

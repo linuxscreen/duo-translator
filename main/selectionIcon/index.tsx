@@ -931,7 +931,7 @@ function CloseMenu({
         >
             <div className="px-3 pb-0.5">
                 <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-soft">
-                    {t("disableSelectionIcon", "Disable selection translate icon")}
+                    {t("disableSelectionTranslation", "Disable selection translation")}
                 </span>
             </div>
             <MenuItem onClick={() => onPick("session")} label={t("aiCloseTemporary", "Hide until next reload")} />

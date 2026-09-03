@@ -700,7 +700,7 @@ export default function App({ embedded = false, uiPrefs }: AppProps = {}) {
         {/* Services — page translation on the left, the three other surfaces
             behind the panel on the right. Both halves are the same width. */}
         <div className="flex items-center gap-4 justify-between">
-          <div className="w-1/2" title={t('pageTranslationService', 'Page translation service')}>
+          <div className="w-1/2" title={t('pageTranslationService', 'Webpage translation service')}>
             <Select value={service} onValueChange={onServiceChange}>
               <SelectTrigger className='items-center justify-center'>
                 <SelectValue />

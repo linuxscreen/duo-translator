@@ -84,7 +84,7 @@ export default function App() {
     },
     {
       id: 'translation',
-      label: t('webpageTranslation', 'Web page translation'),
+      label: t('webpageTranslation', 'Webpage translation'),
       icon: <Languages className="h-4 w-4" strokeWidth={1.6} />,
     },
     {
