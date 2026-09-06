@@ -19,6 +19,7 @@ import {
 } from '@/main/storage/snapshot';
 import { getConfigItem } from '@/main/storage/configStore';
 import type { SyncProvider, SyncResult, SyncDirection } from './types';
+import { isTransientSyncError } from './types';
 import { googleDriveProvider } from './googleDriveProvider';
 import { webdavProvider } from './webdavProvider';
 
@@ -133,7 +134,16 @@ async function runSync(provider: SyncProvider): Promise<SyncResult> {
                         : 'noop';
         return { ok: true, direction };
     } catch (e: any) {
-        console.error(APP_NAME_WITH_SUFFIX, 'syncNow failed', provider.id, e);
+        // A transient failure (see markTransient) fails this round but clears
+        // itself on the next scheduled one — nothing is broken and nobody has to
+        // act, so it is info, not error. Logging it at error level puts an entry
+        // in chrome://extensions that reads as "this extension is broken", which
+        // is the fastest way to teach someone to ignore that list.
+        if (isTransientSyncError(e)) {
+            console.log(APP_NAME_WITH_SUFFIX, 'sync will retry', provider.id, e?.message || e);
+        } else {
+            console.error(APP_NAME_WITH_SUFFIX, 'syncNow failed', provider.id, e);
+        }
         return { ok: false, error: e?.message || String(e) };
     }
 }

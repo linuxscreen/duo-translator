@@ -57,6 +57,7 @@ import { APP_NAME_KEBAB_CASE, APP_NAME_WITH_SUFFIX, IS_CHROME, SYNC_PROVIDER_ID 
 import type { Snapshot } from '@/main/storage/snapshot';
 import { isValidSnapshot } from '@/main/storage/snapshot';
 import type { SyncProvider, RemoteBackupInfo } from './types';
+import { markTransient } from './types';
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const REMOTE_FILE_NAME = `${APP_NAME_KEBAB_CASE}-config.json`;
@@ -98,7 +99,27 @@ type Tokens = {
     email?: string;
 };
 
-type NeedsReauth = { reason: string; at: number };
+/**
+ * The last failed token mint. Two flavours, because "reconnect" is the wrong
+ * advice for most failures:
+ *
+ *   hard  — Google itself said a human is required (`interaction_required` &
+ *           friends). Surfaces immediately.
+ *   soft  — anything else: a navigation that did not load, no network, a 5xx.
+ *           These are routine on the implicit path and self-heal on the next
+ *           attempt, so they only surface after `SOFT_FAILURE_LIMIT` in a row.
+ *
+ * `count` is consecutive: any successful mint clears the record.
+ */
+type RenewFailure = { reason: string; at: number; count: number; hard: boolean };
+
+// Auto-sync retries on the 15-min periodic alarm (and on every config change),
+// so three in a row means it has been failing for the better part of an hour —
+// long enough that it is no longer a blip worth hiding. A permanent breakage
+// (redirect_uri_mismatch, an unapproved test account) still reaches the user,
+// just three attempts later, and the interactive Connect it prompts for carries
+// the full diagnostic URL.
+const SOFT_FAILURE_LIMIT = 3;
 
 // -------- identity helpers --------
 
@@ -386,6 +407,49 @@ function isAuthorizationRevoked(e: unknown): boolean {
     );
 }
 
+/**
+ * "A human has to be present" — the only class of renewal failure that
+ * reconnecting actually fixes.
+ *
+ * These are OAuth's own answers to `prompt=none`: the grant is still on file,
+ * but this browser no longer has a live Google session (or the account needs to
+ * be picked again). Everything else — a navigation that never loaded, an
+ * offline moment, a Google 5xx — is transient and must NOT be reported as an
+ * expired sign-in: telling the user to reconnect when the next attempt would
+ * have succeeded is how a working setup gets torn down and rebuilt for nothing.
+ */
+function isInteractionRequired(e: unknown): boolean {
+    const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+    return (
+        msg.includes('interaction_required') ||
+        msg.includes('login_required') ||
+        msg.includes('consent_required') ||
+        msg.includes('account_selection_required')
+    );
+}
+
+/**
+ * Same question for the Chrome path, whose vocabulary is `getAuthToken`'s own
+ * short sentences rather than OAuth error codes.
+ *
+ * Default is *soft*: the browser owns this grant and refreshes it indefinitely,
+ * so a failure here is far more likely to be "offline right now" than "the grant
+ * is gone" — and the ones that really are permanent are all in this list.
+ */
+function isChromeAuthHardFailure(reason: string): boolean {
+    const msg = reason.toLowerCase();
+    return (
+        isInteractionRequired(reason) ||
+        msg.includes('not signed in') ||
+        msg.includes('not granted') ||
+        msg.includes('revoked') ||
+        msg.includes('user interaction required') ||
+        msg.includes('did not approve') ||
+        msg.includes('canceled') ||
+        msg.includes('cancelled')
+    );
+}
+
 // ----------------------------------------------------------------------------
 
 class GoogleDriveProviderImpl implements SyncProvider {
@@ -404,14 +468,38 @@ class GoogleDriveProviderImpl implements SyncProvider {
         await storage.setItem(TOKENS_KEY, tokens);
     }
 
-    private async markNeedsReauth(reason: string): Promise<void> {
-        await storage.setItem<NeedsReauth>(NEEDS_REAUTH_KEY, { reason, at: Date.now() });
+    /**
+     * Record a failed mint and turn it into the error the caller throws.
+     *
+     * Soft failures accumulate rather than flagging the account on the spot —
+     * see RenewFailure. The message differs too: "will retry" and "please
+     * reconnect" ask completely different things of the user. A soft one is
+     * also tagged transient, which is what keeps it out of the error log until
+     * it has repeated enough times to be worth someone's attention.
+     */
+    private async recordRenewFailure(reason: string, hard: boolean): Promise<Error> {
+        const prev = await storage.getItem<RenewFailure>(NEEDS_REAUTH_KEY);
+        const count = (prev?.count ?? 0) + 1;
+        await storage.setItem<RenewFailure>(NEEDS_REAUTH_KEY, {
+            reason,
+            at: Date.now(),
+            count,
+            hard,
+        });
+        if (hard || count >= SOFT_FAILURE_LIMIT) {
+            return new Error(`Google Drive sign-in expired; please reconnect (${reason})`);
+        }
+        return markTransient(
+            new Error(
+                `Google Drive token renewal failed; will retry (attempt ${count}: ${reason})`,
+            ),
+        );
     }
 
-    private async clearNeedsReauth(): Promise<void> {
+    private async clearRenewFailure(): Promise<void> {
         // Read first: this runs after every successful token mint, i.e. several
         // times per sync, and the flag is set at most once in a blue moon.
-        if (await storage.getItem<NeedsReauth>(NEEDS_REAUTH_KEY)) {
+        if (await storage.getItem<RenewFailure>(NEEDS_REAUTH_KEY)) {
             await storage.removeItem(NEEDS_REAUTH_KEY);
         }
     }
@@ -420,7 +508,7 @@ class GoogleDriveProviderImpl implements SyncProvider {
     private async forgetGrant(reason: string): Promise<void> {
         console.warn(APP_NAME_WITH_SUFFIX, 'GDrive authorization lost:', reason);
         await storage.removeItem(TOKENS_KEY);
-        await this.clearNeedsReauth();
+        await this.clearRenewFailure();
     }
 
     async isAuthenticated(): Promise<boolean> {
@@ -435,10 +523,16 @@ class GoogleDriveProviderImpl implements SyncProvider {
     /**
      * Credentials are still on file but this browser can no longer mint a token
      * without the user. Surfaced in Options as "needs reconnect".
+     *
+     * A single soft failure is deliberately NOT this state — see RenewFailure.
      */
     async needsReauth(): Promise<boolean> {
         if (!(await this.isAuthenticated())) return false;
-        return !!(await storage.getItem<NeedsReauth>(NEEDS_REAUTH_KEY));
+        const f = await storage.getItem<RenewFailure>(NEEDS_REAUTH_KEY);
+        if (!f) return false;
+        // Records written before this field existed meant "needs reauth" flatly.
+        if (f.hard === undefined) return true;
+        return f.hard || (f.count ?? 1) >= SOFT_FAILURE_LIMIT;
     }
 
     async describe(): Promise<string | null> {
@@ -482,7 +576,7 @@ class GoogleDriveProviderImpl implements SyncProvider {
 
         console.debug(APP_NAME_WITH_SUFFIX, 'GDrive connected via', tokens.mode, 'flow');
         await this.saveTokens(tokens);
-        await this.clearNeedsReauth();
+        await this.clearRenewFailure();
     }
 
     async disconnect(): Promise<void> {
@@ -499,7 +593,7 @@ class GoogleDriveProviderImpl implements SyncProvider {
         }
         await storage.removeItem(TOKENS_KEY);
         await storage.removeItem(FILE_ID_KEY);
-        await this.clearNeedsReauth();
+        await this.clearRenewFailure();
     }
 
     // -------- token plumbing --------
@@ -514,13 +608,11 @@ class GoogleDriveProviderImpl implements SyncProvider {
         if (t.mode === 'chrome') {
             try {
                 const token = await getAuthTokenAsync(false);
-                await this.clearNeedsReauth();
+                await this.clearRenewFailure();
                 return token;
             } catch (e: any) {
-                await this.markNeedsReauth(e?.message || 'getAuthToken failed');
-                throw new Error(
-                    `Google Drive sign-in expired; please reconnect (${e?.message || e})`,
-                );
+                const reason = e?.message || String(e) || 'getAuthToken failed';
+                throw await this.recordRenewFailure(reason, isChromeAuthHardFailure(reason));
             }
         }
 
@@ -531,7 +623,7 @@ class GoogleDriveProviderImpl implements SyncProvider {
         try {
             const { accessToken, expiresAt } = await launchImplicitFlow(false, t.email);
             await this.saveTokens({ ...t, accessToken, expiresAt });
-            await this.clearNeedsReauth();
+            await this.clearRenewFailure();
             return accessToken;
         } catch (e: any) {
             const reason = e?.message || String(e);
@@ -539,8 +631,11 @@ class GoogleDriveProviderImpl implements SyncProvider {
                 await this.forgetGrant(reason);
                 throw new Error(`Google Drive access was revoked; please reconnect (${reason})`);
             }
-            await this.markNeedsReauth(reason);
-            throw new Error(`Google Drive sign-in expired; please reconnect (${reason})`);
+            // Everything left is either "a human must sign in again" or a blip.
+            // Only the first deserves "please reconnect"; the observed reality on
+            // this path is that a hidden navigation occasionally just fails to
+            // load and the very next attempt succeeds.
+            throw await this.recordRenewFailure(reason, isInteractionRequired(e));
         }
     }
 

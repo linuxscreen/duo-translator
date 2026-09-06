@@ -65,3 +65,29 @@ export type SyncDirection = 'upload' | 'download' | 'merge' | 'noop';
 export type SyncResult =
     | { ok: true; direction: SyncDirection }
     | { ok: false; error: string };
+
+// ---------------------------------------------------------------------------
+// Transient failures
+//
+// Some sync failures are expected to clear themselves on the next scheduled
+// attempt — a silent OAuth renewal whose hidden navigation didn't load, an
+// offline moment. They still fail this round, but nothing is broken and nobody
+// has to act, so they must not be logged at error level: an error entry in
+// chrome://extensions reads as "your extension is broken" and is exactly the
+// kind of false alarm that trains people to ignore the list.
+//
+// The flag is a property on the Error rather than a subclass because these
+// errors cross `sendMessage` to Options, where the prototype is gone anyway.
+// ---------------------------------------------------------------------------
+
+const TRANSIENT_FLAG = '__duoTransientSync';
+
+/** Tag `e` as "will retry on its own"; returns it so it can be thrown inline. */
+export function markTransient<E extends Error>(e: E): E {
+    (e as unknown as Record<string, boolean>)[TRANSIENT_FLAG] = true;
+    return e;
+}
+
+export function isTransientSyncError(e: unknown): boolean {
+    return !!(e && typeof e === 'object' && (e as Record<string, unknown>)[TRANSIENT_FLAG]);
+}
