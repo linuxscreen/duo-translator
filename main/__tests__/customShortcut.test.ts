@@ -577,6 +577,16 @@ describe("typedRun", () => {
         expect(feed([tap(" "), tap("Enter")])).toBeNull();
     });
 
+    // A page may dispatch a "keydown" that is a plain Event, which carries no
+    // `key` at all; the capture-phase listener sees it like any other. Reading
+    // `.length` off that threw, and a TypeError inside a capture listener takes
+    // the rest of that handler with it.
+    it("drops an event with no key instead of throwing", () => {
+        const noKey = { ctrlKey: false, altKey: false, metaKey: false } as unknown as TypedKey;
+        expect(() => extendTypedRun(null, noKey, el)).not.toThrow();
+        expect(extendTypedRun(feed([tap(" ")]), noKey, el)).toBeNull();
+    });
+
     it("drops the run when the focus is not in an editable, and when it moves", () => {
         expect(feed([tap(" ")], null)).toBeNull();
         const run = feed([tap(" ")]);

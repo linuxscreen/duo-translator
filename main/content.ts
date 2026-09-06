@@ -212,6 +212,25 @@ export async function content() {
     let lastX = 0, lastY = 0
     document.addEventListener('mousemove', e => { lastX = e.clientX; lastY = e.clientY; }, { passive: true });
 
+    /**
+     * Is this a real key event, i.e. one we can read a key off at all?
+     *
+     * Both gesture layers below are capture-phase listeners on `document`, so
+     * they see every "keydown" ANY node in the page dispatches — and a page is
+     * free to dispatch a plain `Event`/`CustomEvent` under that name (a11y
+     * helpers, editors and analytics scripts really do). Such an object has no
+     * `key`, and every reader downstream is typed as if it did: `extendTypedRun`
+     * threw on `e.key.length`, and had it not, `gestureKeyOf` would have handed
+     * the engine `undefined` as a held key. Matching is set EQUALITY, so one
+     * such event with no matching keyup disarms every custom shortcut until the
+     * next window blur — silent, and far worse than the throw.
+     *
+     * Deliberately not `e.isTrusted`: that asks who dispatched the event rather
+     * than whether it can be read as one, and would also drop the synthetic
+     * presses password managers and some assistive tools send.
+     */
+    const isKeyEvent = (e: KeyboardEvent) => typeof e.key === 'string';
+
     // Double-tap shortcut: pressing the configured modifier (Ctrl/Alt) twice in
     // quick succession, with no other key in between, runs a quick action. The
     // toggles are read live on trigger so the latest settings apply.
@@ -252,6 +271,9 @@ export async function content() {
     document.addEventListener('keydown', async (e) => {
         // Ignore auto-repeat while the key is held.
         if (e.repeat) return;
+        // A synthesized event is not a tap, and letting one fall through to the
+        // comparison below would break a pair the user is halfway through.
+        if (!isKeyEvent(e)) return;
         // Nothing before this point touches the event synchronously (no
         // preventDefault/stopPropagation), so awaiting here is safe.
         const modifier = await readConfig<string>(CONFIG_KEY.DOUBLE_TAP_MODIFIER);
@@ -336,6 +358,7 @@ export async function content() {
     // the OS, which takes that key before the page is offered it at all.
     let altClaimed = false
     document.addEventListener('keydown', (e) => {
+        if (!isKeyEvent(e)) return
         const key = gestureKeyOf(e)
         if (key === 'Alt') {
             // Before `press` below: `wouldActivate` probes what the key set
@@ -356,6 +379,10 @@ export async function content() {
         customShortcuts.press(key, e)
     }, true);
     document.addEventListener('keyup', (e) => {
+        // Symmetrical with the keydown above: a release the engine cannot name
+        // would `lift` nothing, and asking it to is only a chance to get the
+        // held-key set wrong.
+        if (!isKeyEvent(e)) return
         const key = gestureKeyOf(e)
         if (key === 'Alt' && altClaimed) {
             altClaimed = false

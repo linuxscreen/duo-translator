@@ -48,7 +48,14 @@ function imeConsumed(e: TypedKey): boolean {
 export function extendTypedRun(run: TypedRun | null, e: TypedKey, el: HTMLElement | null): TypedRun | null {
     // Ctrl / Alt / Meta suppress text input, and a `key` longer than one
     // character is not a character at all (Enter, ArrowLeft, F5).
-    if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return null;
+    //
+    // `key` is typed as a string but arrives from an untrusted place: a page
+    // may dispatch a "keydown" that is a plain Event, which has no `key` at
+    // all. The caller drops those at the door; this stays because the type
+    // says nothing about it and the failure mode is a thrown TypeError inside
+    // a capture-phase listener, i.e. the rest of that handler silently not
+    // running.
+    if (e.ctrlKey || e.metaKey || e.altKey || typeof e.key !== "string" || e.key.length !== 1) return null;
     // An IME-consumed press inserts nothing of its own. In a Chinese IME the
     // Space that COMMITS the candidate is exactly this: the user sees three
     // presses and the field receives two spaces. Counting it made the run one
