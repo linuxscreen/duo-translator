@@ -56,7 +56,7 @@ export function buildServiceOptions(
     return [
         ...enabledTranslateServices.map((s): ServiceOption => ({
             value: s.value,
-            iconId: s.value,
+            iconId: s.icon,
             isAi: false,
             i18nKey: s.title,
             label: s.name,
@@ -81,7 +81,7 @@ export async function getTranslateService(configValue: string | undefined): Prom
     enabledAiProviders: AiProvider[],
     aiUsedForTranslatePage?: boolean
 }> {
-    const [disabledTranslateServices, aiProviders, aiUsedForTranslatePage]: [string[], AiProvider[], boolean] = await Promise.all([
+    const [disabledTranslateServices, aiProviders, aiUsedForTranslatePage] = await Promise.all([
         getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES),
         getConfig(CONFIG_KEY.AI_PROVIDERS),
         getConfig(CONFIG_KEY.AI_USE_FOR_TRANSLATE_PAGE),
@@ -113,7 +113,7 @@ export interface AiTranslateService {
 }
 
 /**
- * Pure resolver — given the three raw config values, produce the AI-writing
+ * Pure resolver — given the raw config values, produce the AI-writing
  * translate context. Split out from `getAiTranslateService` so reactive callers
  * (e.g. the floating dot, watching config via `useConfig`) can recompute
  * synchronously without re-reading storage.
@@ -182,8 +182,13 @@ function filterEnabledTranslateServices(disabled: string[] | undefined): Transla
 }
 
 export async function getActiveTranslateService() {
-    const [translateServiceConfig, aiTranslateServiceConfig, disabledTranslateServices, aiProviders, aiUsedForTranslatePage]
-        : [string | undefined, string | undefined, string[], AiProvider[], boolean] = await Promise.all([
+    const [
+        translateServiceConfig,
+        aiTranslateServiceConfig,
+        disabledTranslateServices,
+        aiProviders,
+        aiUsedForTranslatePage,
+    ] = await Promise.all([
             getConfig(CONFIG_KEY.TRANSLATE_SERVICE),
             getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
             getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES),

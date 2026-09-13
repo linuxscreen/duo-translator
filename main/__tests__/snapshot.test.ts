@@ -59,6 +59,8 @@ import { APP_NAME_KEBAB_CASE, CONFIG_KEY } from "@/main/constants";
 
 const AI_PROVIDERS_KEY = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.AI_PROVIDERS}`;
 const DEEPL_KEY = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.DEEPL_API_KEY}`;
+const AZURE_KEY = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.AZURE_API_KEY}`;
+const GOOGLE_CLOUD_KEY = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.GOOGLE_CLOUD_API_KEY}`;
 const TARGET_LANG_KEY = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.TARGET_LANGUAGE}`;
 
 function snapshot(data: Record<string, unknown>): Snapshot {
@@ -78,6 +80,8 @@ function seedLocalKeys() {
         { id: "p2", name: "Claude", url: "https://api.anthropic.com", apiKey: "sk-local-2" },
     ];
     store[DEEPL_KEY] = "deepl-local-key";
+    store[AZURE_KEY] = "azure-local-key";
+    store[GOOGLE_CLOUD_KEY] = "google-cloud-local-key";
 }
 
 beforeEach(() => {
@@ -97,11 +101,15 @@ describe("applyImportedSnapshot — secrets", () => {
                     { id: "p2", name: "Claude", url: "https://api.anthropic.com", apiKey: "sk-local-2" },
                 ],
                 [DEEPL_KEY]: "deepl-local-key",
+                [AZURE_KEY]: "azure-local-key",
+                [GOOGLE_CLOUD_KEY]: "google-cloud-local-key",
             }),
         );
         // Sanity: the file really is redacted.
         expect((exported.data[AI_PROVIDERS_KEY] as any[]).every((p) => p.apiKey === "")).toBe(true);
         expect(exported.data[DEEPL_KEY]).toBe("");
+        expect(exported.data[AZURE_KEY]).toBe("");
+        expect(exported.data[GOOGLE_CLOUD_KEY]).toBe("");
 
         await applyImportedSnapshot(exported);
 
@@ -109,6 +117,8 @@ describe("applyImportedSnapshot — secrets", () => {
         expect(providers.find((p) => p.id === "p1").apiKey).toBe("sk-local-1");
         expect(providers.find((p) => p.id === "p2").apiKey).toBe("sk-local-2");
         expect(store[DEEPL_KEY]).toBe("deepl-local-key");
+        expect(store[AZURE_KEY]).toBe("azure-local-key");
+        expect(store[GOOGLE_CLOUD_KEY]).toBe("google-cloud-local-key");
     });
 
     it("still restores non-secret fields from a redacted backup", async () => {
@@ -135,11 +145,15 @@ describe("applyImportedSnapshot — secrets", () => {
             snapshot({
                 [AI_PROVIDERS_KEY]: [{ id: "p1", name: "OpenAI", apiKey: "sk-from-file" }],
                 [DEEPL_KEY]: "deepl-from-file",
+                [AZURE_KEY]: "azure-from-file",
+                [GOOGLE_CLOUD_KEY]: "google-cloud-from-file",
             }),
         );
 
         expect((store[AI_PROVIDERS_KEY] as any[])[0].apiKey).toBe("sk-from-file");
         expect(store[DEEPL_KEY]).toBe("deepl-from-file");
+        expect(store[AZURE_KEY]).toBe("azure-from-file");
+        expect(store[GOOGLE_CLOUD_KEY]).toBe("google-cloud-from-file");
     });
 
     it("leaves a provider that has no local counterpart untouched", async () => {

@@ -270,12 +270,33 @@ export abstract class TranslateService {
 // DeepL and the TTS fetches.
 
 const GOOGLE_TRANSLATE_URL = "https://translate-pa.googleapis.com/v1/translateHtml";
+const AZURE_TRANSLATE_URL = "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0";
+const GOOGLE_CLOUD_TRANSLATE_URL = "https://translation.googleapis.com/language/translate/v2";
 const MS_TRANSLATE_URL = "https://edge.microsoft.com/translate/translatetext?isEnterpriseClient=false&"
 const MS_DETECT_URL = `${MS_TRANSLATE_URL}to=en`
 const DEEPL_FREE_URL = "https://api-free.deepl.com/v2/translate";
 const DEEPL_PRO_URL = "https://api.deepl.com/v2/translate";
 const YANDEX_TRANSLATE_URL = "https://translate.yandex.net/api/v1/tr.json/translate";
 const YANDEX_DETECT_URL = "https://translate.yandex.net/api/v1/tr.json/detect";
+
+/** Split without cutting an individual HTML-bearing translation unit. */
+function splitTextBatch(texts: string[], maxItems: number, maxChars: number): string[][] {
+    const chunks: string[][] = [];
+    let current: string[] = [];
+    let currentChars = 0;
+    for (const text of texts) {
+        const chars = Array.from(text).length;
+        if (current.length > 0 && (current.length >= maxItems || currentChars + chars > maxChars)) {
+            chunks.push(current);
+            current = [];
+            currentChars = 0;
+        }
+        current.push(text);
+        currentChars += chars;
+    }
+    if (current.length > 0) chunks.push(current);
+    return chunks;
+}
 
 /**
  * Pick the DeepL endpoint implied by the key. Free-tier keys carry a `:fx`
@@ -336,6 +357,183 @@ export class GoogleTranslateService extends TranslateService {
         return result;
     }
 
+}
+
+// ---------------------------------------------------------------------------
+// Azure Translator (official v3 API)
+// ---------------------------------------------------------------------------
+
+type AzureCredentials = { apiKey: string; region?: string };
+const AZURE_BATCH_ITEM_LIMIT = 1000;
+const AZURE_BATCH_CHAR_LIMIT = 50_000;
+
+function azureTargetLanguage(lang: string): string {
+    if (lang === "zh-CN") return "zh-Hans";
+    if (lang === "zh-TW") return "zh-Hant";
+    return lang;
+}
+
+export class AzureTranslateService extends TranslateService {
+    readonly name = TRANSLATE_SERVICE.AZURE;
+
+    /** Draft credentials are supplied by the Options dialog connection test. */
+    constructor(private readonly credentialsOverride?: AzureCredentials) {
+        super();
+    }
+
+    private async credentials(): Promise<AzureCredentials> {
+        if (this.credentialsOverride !== undefined) return this.credentialsOverride;
+        const [apiKey, region] = await Promise.all([
+            configRepo.get(CONFIG_KEY.AZURE_API_KEY),
+            configRepo.get(CONFIG_KEY.AZURE_REGION),
+        ]);
+        return {
+            apiKey: typeof apiKey === "string" ? apiKey.trim() : "",
+            region: typeof region === "string" ? region.trim() : "",
+        };
+    }
+
+    async translateText(
+        texts: string[],
+        targetLang: string,
+        signal?: AbortSignal | null,
+        _sourceLang?: string,
+        _options?: TranslateRequestOptions,
+    ): Promise<TranslateResult[]> {
+        if (texts.length === 0) return [];
+        const { apiKey, region } = await this.credentials();
+        if (!apiKey) throw new Error("Azure API key is not configured");
+
+        const chunks = splitTextBatch(texts, AZURE_BATCH_ITEM_LIMIT, AZURE_BATCH_CHAR_LIMIT);
+        const translatedChunks = await Promise.all(
+            chunks.map((chunk) => this.translateOnce(chunk, targetLang, apiKey, region, signal)),
+        );
+        return translatedChunks.flat();
+    }
+
+    private async translateOnce(
+        texts: string[],
+        targetLang: string,
+        apiKey: string,
+        region?: string,
+        signal?: AbortSignal | null,
+    ): Promise<TranslateResult[]> {
+        const url = `${AZURE_TRANSLATE_URL}&to=${encodeURIComponent(azureTargetLanguage(targetLang))}&textType=html`;
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json; charset=UTF-8",
+            "Ocp-Apim-Subscription-Key": apiKey,
+        };
+        if (region) headers["Ocp-Apim-Subscription-Region"] = region;
+
+        const response = await providerFetch(url, {
+            method: "POST",
+            headers,
+            // Deliberately omit `from`: Azure then detects each source language
+            // and includes it in the corresponding response item.
+            body: JSON.stringify(texts.map((text) => ({ Text: text }))),
+        }, signal);
+        if (response.status !== 200) throw providerHttpError("Azure Translator", url, response);
+
+        const data: Array<{
+            detectedLanguage?: { language?: string; score?: number };
+            translations?: Array<{ text?: string }>;
+        }> = await response.json();
+        if (!Array.isArray(data) || data.length !== texts.length) {
+            throw new Error("Azure Translator returned a mismatched translation batch");
+        }
+        return data.map((item) => {
+            const translated = item.translations?.[0]?.text;
+            if (typeof translated !== "string") {
+                throw new Error("Azure Translator returned an unrecognized response shape");
+            }
+            return new TranslateResult(
+                translated,
+                transferLanguageCode(item.detectedLanguage?.language || ""),
+                item.detectedLanguage?.score ?? 0,
+            );
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Google Cloud Translation Basic (official v2 API)
+// ---------------------------------------------------------------------------
+
+const GOOGLE_CLOUD_BATCH_ITEM_LIMIT = 128;
+const GOOGLE_CLOUD_BATCH_CHAR_LIMIT = 30_000;
+
+export class GoogleCloudTranslateService extends TranslateService {
+    readonly name = TRANSLATE_SERVICE.GOOGLE_CLOUD;
+
+    /** A draft key is supplied by the Options dialog connection test. */
+    constructor(private readonly apiKeyOverride?: string) {
+        super();
+    }
+
+    private async apiKey(): Promise<string> {
+        if (this.apiKeyOverride !== undefined) return this.apiKeyOverride.trim();
+        const stored = await configRepo.get(CONFIG_KEY.GOOGLE_CLOUD_API_KEY);
+        return typeof stored === "string" ? stored.trim() : "";
+    }
+
+    async translateText(
+        texts: string[],
+        targetLang: string,
+        signal?: AbortSignal | null,
+        _sourceLang?: string,
+        _options?: TranslateRequestOptions,
+    ): Promise<TranslateResult[]> {
+        if (texts.length === 0) return [];
+        const key = await this.apiKey();
+        if (!key) throw new Error("Google Cloud API key is not configured");
+
+        // Cloud Translation Basic accepts at most 128 `q` values in one call.
+        // Keep the page batch ordered while issuing independent chunks.
+        const chunks = splitTextBatch(
+            texts,
+            GOOGLE_CLOUD_BATCH_ITEM_LIMIT,
+            GOOGLE_CLOUD_BATCH_CHAR_LIMIT,
+        );
+        const translatedChunks = await Promise.all(
+            chunks.map((chunk) => this.translateOnce(chunk, targetLang, key, signal)),
+        );
+        return translatedChunks.flat();
+    }
+
+    private async translateOnce(
+        texts: string[],
+        targetLang: string,
+        apiKey: string,
+        signal?: AbortSignal | null,
+    ): Promise<TranslateResult[]> {
+        const url = `${GOOGLE_CLOUD_TRANSLATE_URL}?key=${encodeURIComponent(apiKey)}`;
+        const response = await providerFetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=UTF-8" },
+            // Deliberately omit `source`; the API auto-detects it. `html` is
+            // required because the translation pipeline carries inline tags.
+            body: JSON.stringify({ q: texts, target: targetLang, format: "html" }),
+        }, signal);
+        if (response.status !== 200) throw providerHttpError("Google Cloud Translation", url, response);
+
+        const data: Array<{
+            translatedText?: string;
+            detectedSourceLanguage?: string;
+        }> = (await response.json())?.data?.translations;
+        if (!Array.isArray(data) || data.length !== texts.length) {
+            throw new Error("Google Cloud Translation returned a mismatched translation batch");
+        }
+        return data.map((item) => {
+            if (typeof item.translatedText !== "string") {
+                throw new Error("Google Cloud Translation returned an unrecognized response shape");
+            }
+            return new TranslateResult(
+                item.translatedText,
+                transferLanguageCode(item.detectedSourceLanguage || ""),
+                1,
+            );
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1012,6 +1210,8 @@ export class AiTranslateService extends TranslateService {
 // ---------------------------------------------------------------------------
 
 export const googleTranslationService: TranslateService = new GoogleTranslateService();
+export const azureTranslationService: TranslateService = new AzureTranslateService();
+export const googleCloudTranslationService: TranslateService = new GoogleCloudTranslateService();
 // Typed as the concrete class, not `TranslateService`: it is the one provider
 // that can answer per-text detection (detectTextsLanguages), and the
 // no-translate-language filter calls it by name regardless of which translator
@@ -1024,6 +1224,8 @@ export const builtinAiTranslationService: TranslateService = new BuiltinAiTransl
 // TODO: support user-defined custom keys / endpoints (Youdao, …).
 export const translationServices = new Map<string, TranslateService>([
     [googleTranslationService.name, googleTranslationService],
+    [azureTranslationService.name, azureTranslationService],
+    [googleCloudTranslationService.name, googleCloudTranslationService],
     [microsoftTranslationService.name, microsoftTranslationService],
     [yandexTranslationService.name, yandexTranslationService],
     [builtinAiTranslationService.name, builtinAiTranslationService],
@@ -1032,7 +1234,7 @@ export const translationServices = new Map<string, TranslateService>([
 
 /**
  * Resolve a service identifier to a TranslateService instance.
- * Identifiers may be either a built-in name (`microsoft|google|deepl`) or
+ * Identifiers may be either a built-in name (`microsoft|azure|googleCloud|…`) or
  * an AI provider id prefixed with `ai:` (e.g. `ai:p_xyz123`).
  */
 export function resolveTranslateService(service: string): TranslateService | undefined {
@@ -1321,17 +1523,21 @@ export const translateMessageHandlers: Record<string, MessageHandler> = {
  * reason arrives here on its own and `handleAsync` relays it to the dialog.
  */
 async function testTranslateService(
-    data: { service?: string; targetLang?: string; apiKey?: string } | undefined,
+    data: { service?: string; targetLang?: string; apiKey?: string; region?: string } | undefined,
 ): Promise<{ reply: string }> {
     const svc = data?.service;
     const targetLang = data?.targetLang || 'zh-CN';
     if (!svc) throw new Error('Unknown service: undefined');
 
-    // A draft DeepL key typed into the Options dialog but not yet saved needs a
-    // one-off instance; everything else uses the shared singletons.
-    const service = (svc === TRANSLATE_SERVICE.DEEPL && data?.apiKey)
+    // Draft credentials typed into an Options dialog but not yet saved need a
+    // one-off instance; row tests and keyless providers use the shared singletons.
+    const service = svc === TRANSLATE_SERVICE.DEEPL && data?.apiKey !== undefined
         ? new DeepLTranslateService(data.apiKey)
-        : resolveTranslateService(svc);
+        : svc === TRANSLATE_SERVICE.AZURE && data?.apiKey !== undefined
+            ? new AzureTranslateService({ apiKey: data.apiKey, region: data.region })
+            : svc === TRANSLATE_SERVICE.GOOGLE_CLOUD && data?.apiKey !== undefined
+                ? new GoogleCloudTranslateService(data.apiKey)
+                : resolveTranslateService(svc);
     if (!service) throw new Error(`Unknown service: ${svc}`);
 
     // Pressing Test is the user asking for this service to work, so it lifts a

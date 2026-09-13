@@ -23,7 +23,8 @@
 //
 // Internal book-keeping keys (migration flag, sync metadata, OAuth tokens, etc.)
 // and the short-lived Microsoft token are always excluded. API-key keys (AI
-// providers + DeepL) are excluded unless the caller asks for includeSecrets.
+// providers + translation APIs) are excluded unless the caller asks for
+// includeSecrets.
 
 import { storage, type StorageItemKey } from 'wxt/utils/storage';
 import { APP_NAME_KEBAB_CASE, CONFIG_KEY } from '@/main/constants';
@@ -111,6 +112,8 @@ const AI_PROVIDERS_KEY = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.AI_PROVIDERS}`;
 // without it. Fully excluded unless includeSecrets.
 const PURE_SECRET_KEYS: string[] = [
     `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.DEEPL_API_KEY}`,
+    `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.AZURE_API_KEY}`,
+    `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.GOOGLE_CLOUD_API_KEY}`,
 ];
 
 export type BuildOptions = { includeSecrets?: boolean };
@@ -605,7 +608,6 @@ export async function applyImportedSnapshot(snap: Snapshot): Promise<void> {
  */
 export function redactSecrets(snap: Snapshot): Snapshot {
     const providersKey = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.AI_PROVIDERS}`;
-    const deeplKey = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.DEEPL_API_KEY}`;
     const data = { ...snap.data };
     const providers = data[providersKey];
     if (Array.isArray(providers)) {
@@ -614,8 +616,8 @@ export function redactSecrets(snap: Snapshot): Snapshot {
             apiKey: '',
         }));
     }
-    if (deeplKey in data) {
-        data[deeplKey] = '';
+    for (const secretKey of PURE_SECRET_KEYS) {
+        if (secretKey in data) data[secretKey] = '';
     }
     return { ...snap, data };
 }

@@ -76,8 +76,14 @@ describe("isNoTranslateLanguage", () => {
 // Which provider can answer per paragraph
 // ---------------------------------------------------------------------------
 describe("provider capability split", () => {
-    it("lists the three providers that report a source language per text", () => {
-        for (const s of [TRANSLATE_SERVICE.GOOGLE, TRANSLATE_SERVICE.MICROSOFT, TRANSLATE_SERVICE.DEEPL]) {
+    it("lists providers that report a source language per text", () => {
+        for (const s of [
+            TRANSLATE_SERVICE.GOOGLE,
+            TRANSLATE_SERVICE.MICROSOFT,
+            TRANSLATE_SERVICE.AZURE,
+            TRANSLATE_SERVICE.GOOGLE_CLOUD,
+            TRANSLATE_SERVICE.DEEPL,
+        ]) {
             expect(reportsPerTextSourceLang(s)).toBe(true);
             expect(needsCompanionDetect(s)).toBe(false);
         }

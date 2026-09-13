@@ -21,11 +21,19 @@ import { listTranslateServices, notifyUpdateActiveTranslateService } from '@/uti
 
 type Row = {
     value: string;
+    icon: string;
     name: string;
     description: string;
     editable: boolean;
     enabled: boolean;
 };
+
+type CredentialService =
+    | TRANSLATE_SERVICE.DEEPL
+    | TRANSLATE_SERVICE.AZURE
+    | TRANSLATE_SERVICE.GOOGLE_CLOUD;
+
+type CredentialValues = { apiKey: string; region: string };
 
 type TestState =
     | { kind: 'idle' }
@@ -50,10 +58,16 @@ export function ServicesPage() {
     // Per-service connection-test results, keyed by service value.
     const [testStates, setTestStates] = useState<Record<string, TestState>>({});
 
-    // DeepL API key + edit dialog state.
-    const [deeplApiKey, setDeeplApiKey] = useState<string>('');
-    const [deeplDialogOpen, setDeeplDialogOpen] = useState(false);
-    const [deeplKeyDraft, setDeeplKeyDraft] = useState('');
+    // Credentials shared by the three API-backed translation services. Region
+    // is only used by Azure; keeping one draft shape makes the dialog flow and
+    // connection test identical for every credential-backed row.
+    const [credentials, setCredentials] = useState<Record<CredentialService, CredentialValues>>({
+        [TRANSLATE_SERVICE.DEEPL]: { apiKey: '', region: '' },
+        [TRANSLATE_SERVICE.AZURE]: { apiKey: '', region: '' },
+        [TRANSLATE_SERVICE.GOOGLE_CLOUD]: { apiKey: '', region: '' },
+    });
+    const [credentialDialogService, setCredentialDialogService] = useState<CredentialService | null>(null);
+    const [credentialDraft, setCredentialDraft] = useState<CredentialValues>({ apiKey: '', region: '' });
     const [dialogTest, setDialogTest] = useState<TestState>({ kind: 'idle' });
 
     // Built-in AI model dialog (status + download).
@@ -63,15 +77,31 @@ export function ServicesPage() {
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const [ds, dpKey, tl] = await Promise.all([
+            const [ds, deeplKey, azureKey, azureRegion, googleCloudKey, tl] = await Promise.all([
                 getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES),
                 getConfig(CONFIG_KEY.DEEPL_API_KEY),
+                getConfig(CONFIG_KEY.AZURE_API_KEY),
+                getConfig(CONFIG_KEY.AZURE_REGION),
+                getConfig(CONFIG_KEY.GOOGLE_CLOUD_API_KEY),
                 getConfig(CONFIG_KEY.TARGET_LANGUAGE),
             ]);
             if (cancelled) return;
             const set = new Set(Array.isArray(ds) ? ds : []);
             setDisabled(set);
-            setDeeplApiKey(typeof dpKey === 'string' ? dpKey : '');
+            setCredentials({
+                [TRANSLATE_SERVICE.DEEPL]: {
+                    apiKey: typeof deeplKey === 'string' ? deeplKey : '',
+                    region: '',
+                },
+                [TRANSLATE_SERVICE.AZURE]: {
+                    apiKey: typeof azureKey === 'string' ? azureKey : '',
+                    region: typeof azureRegion === 'string' ? azureRegion : '',
+                },
+                [TRANSLATE_SERVICE.GOOGLE_CLOUD]: {
+                    apiKey: typeof googleCloudKey === 'string' ? googleCloudKey : '',
+                    region: '',
+                },
+            });
             if (typeof tl === 'string' && tl) setTargetLang(tl);
             setRows(
                 // listTranslateServices() rather than TRANSLATE_SERVICES directly:
@@ -79,6 +109,7 @@ export function ServicesPage() {
                 // filter the pickers use, so the two cannot drift apart.
                 listTranslateServices().map((svc) => ({
                     value: svc.value,
+                    icon: svc.icon,
                     name: t(svc.name, svc.name),
                     description: t(svc.description, svc.description),
                     editable: svc.editable,
@@ -226,12 +257,17 @@ export function ServicesPage() {
         });
     };
 
+    const isCredentialService = (value: string): value is CredentialService =>
+        value === TRANSLATE_SERVICE.DEEPL
+        || value === TRANSLATE_SERVICE.AZURE
+        || value === TRANSLATE_SERVICE.GOOGLE_CLOUD;
+
     // Each editable service owns its own dialog — dispatch, don't early-return.
     const openEdit = (value: string) => {
-        if (value === TRANSLATE_SERVICE.DEEPL) {
-            setDeeplKeyDraft(deeplApiKey);
+        if (isCredentialService(value)) {
+            setCredentialDraft(credentials[value]);
             setDialogTest({ kind: 'idle' });
-            setDeeplDialogOpen(true);
+            setCredentialDialogService(value);
             return;
         }
         if (value === TRANSLATE_SERVICE.BUILTIN) {
@@ -241,11 +277,19 @@ export function ServicesPage() {
 
     // Test the key currently in the dialog draft (not yet persisted).
     const runDialogTest = async () => {
+        if (!credentialDialogService) return;
         setDialogTest({ kind: 'pending' });
         try {
             const resp: any = await browser.runtime.sendMessage({
                 action: ACTION.TRANSLATE_SERVICE_TEST,
-                data: { service: TRANSLATE_SERVICE.DEEPL, targetLang: 'zh-CN', apiKey: deeplKeyDraft.trim() },
+                data: {
+                    service: credentialDialogService,
+                    targetLang: 'zh-CN',
+                    apiKey: credentialDraft.apiKey.trim(),
+                    ...(credentialDialogService === TRANSLATE_SERVICE.AZURE
+                        ? { region: credentialDraft.region.trim() }
+                        : {}),
+                },
             });
             if (resp?.status === STATUS_SUCCESS) {
                 setDialogTest({ kind: 'ok' });
@@ -257,13 +301,26 @@ export function ServicesPage() {
         }
     };
 
-    const saveDeeplKey = async () => {
-        const key = deeplKeyDraft.trim();
-        setDeeplApiKey(key);
-        await setConfig(CONFIG_KEY.DEEPL_API_KEY, key);
-        // Saving a key clears any stale DeepL test result.
-        setTestStates((s) => ({ ...s, [TRANSLATE_SERVICE.DEEPL]: { kind: 'idle' } }));
-        setDeeplDialogOpen(false);
+    const saveCredentials = async () => {
+        if (!credentialDialogService) return;
+        const values = {
+            apiKey: credentialDraft.apiKey.trim(),
+            region: credentialDraft.region.trim(),
+        };
+        setCredentials((current) => ({ ...current, [credentialDialogService]: values }));
+        if (credentialDialogService === TRANSLATE_SERVICE.DEEPL) {
+            await setConfig(CONFIG_KEY.DEEPL_API_KEY, values.apiKey);
+        } else if (credentialDialogService === TRANSLATE_SERVICE.AZURE) {
+            await Promise.all([
+                setConfig(CONFIG_KEY.AZURE_API_KEY, values.apiKey),
+                setConfig(CONFIG_KEY.AZURE_REGION, values.region),
+            ]);
+        } else {
+            await setConfig(CONFIG_KEY.GOOGLE_CLOUD_API_KEY, values.apiKey);
+        }
+        // Saving credentials clears any stale row-level test result.
+        setTestStates((s) => ({ ...s, [credentialDialogService]: { kind: 'idle' } }));
+        setCredentialDialogService(null);
     };
 
     const filtered = useMemo(
@@ -272,10 +329,15 @@ export function ServicesPage() {
     );
 
     const toggleService = async (row: Row, next: boolean) => {
-        // Enabling DeepL requires an API key — prompt for it first.
-        if (next && row.value === TRANSLATE_SERVICE.DEEPL && !deeplApiKey.trim()) {
-            alert(t('deeplApiKeyRequired', 'Please configure the DeepL API Key first.'));
-            openEdit(TRANSLATE_SERVICE.DEEPL);
+        // Credential-backed services cannot be enabled until their key exists.
+        if (next && isCredentialService(row.value) && !credentials[row.value].apiKey.trim()) {
+            const requiredMessage = row.value === TRANSLATE_SERVICE.DEEPL
+                ? t('deeplApiKeyRequired', 'Please configure the DeepL API Key first.')
+                : row.value === TRANSLATE_SERVICE.AZURE
+                    ? t('azureApiKeyRequired', 'Please configure the Azure API Key first.')
+                    : t('googleCloudApiKeyRequired', 'Please configure the Google Cloud API Key first.');
+            alert(requiredMessage);
+            openEdit(row.value);
             return;
         }
         // Built-in AI needs no key — only the browser API. Turning it on when
@@ -356,7 +418,7 @@ export function ServicesPage() {
                                 <div className="flex flex-col gap-0.5 min-w-0">
                                     <div className="flex items-center gap-2.5">
                                         <img
-                                            src={`/services/${row.value}.svg`}
+                                            src={`/services/${row.icon}.svg`}
                                             alt=""
                                             className="h-6 w-6 shrink-0 rounded-sm object-contain"
                                             onError={(e) => {
@@ -442,27 +504,31 @@ export function ServicesPage() {
             <AiProvidersCard />
 
             <Dialog
-                open={deeplDialogOpen}
-                onClose={() => setDeeplDialogOpen(false)}
+                open={credentialDialogService !== null}
+                onClose={() => setCredentialDialogService(null)}
                 widthClass="w-[480px]"
-                title={t('deeplApiKeyDialogTitle', 'Edit DeepL API Key')}
+                title={credentialDialogService === TRANSLATE_SERVICE.AZURE
+                    ? t('azureCredentialsDialogTitle', 'Edit Azure credentials')
+                    : credentialDialogService === TRANSLATE_SERVICE.GOOGLE_CLOUD
+                        ? t('googleCloudApiKeyDialogTitle', 'Edit Google Cloud API Key')
+                        : t('deeplApiKeyDialogTitle', 'Edit DeepL API Key')}
                 footer={
                     <>
-                        <Button variant="ghost" size="sm" onClick={() => setDeeplDialogOpen(false)}>
+                        <Button variant="ghost" size="sm" onClick={() => setCredentialDialogService(null)}>
                             {t('aiCancel', 'Cancel')}
                         </Button>
                         <Button
                             variant="outline"
                             size="sm"
                             onClick={() => void runDialogTest()}
-                            disabled={!deeplKeyDraft.trim() || dialogTest.kind === 'pending'}
+                            disabled={!credentialDraft.apiKey.trim() || dialogTest.kind === 'pending'}
                         >
                             {dialogTest.kind === 'pending' ? (
                                 <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
                             ) : null}
                             {t('aiTest', 'Test')}
                         </Button>
-                        <Button size="sm" onClick={() => void saveDeeplKey()}>
+                        <Button size="sm" onClick={() => void saveCredentials()}>
                             {t('aiSave', 'Save')}
                         </Button>
                     </>
@@ -470,20 +536,47 @@ export function ServicesPage() {
             >
                 <div className="flex flex-col gap-2">
                     <label className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">
-                        {t('deeplApiKey', 'DeepL API Key')}
+                        {credentialDialogService === TRANSLATE_SERVICE.AZURE
+                            ? t('azureApiKey', 'Azure API Key')
+                            : credentialDialogService === TRANSLATE_SERVICE.GOOGLE_CLOUD
+                                ? t('googleCloudApiKey', 'Google Cloud API Key')
+                                : t('deeplApiKey', 'DeepL API Key')}
                     </label>
                     <Input
                         type="text"
-                        value={deeplKeyDraft}
+                        value={credentialDraft.apiKey}
                         onChange={(e) => {
-                            setDeeplKeyDraft(e.target.value);
+                            setCredentialDraft((draft) => ({ ...draft, apiKey: e.target.value }));
                             setDialogTest({ kind: 'idle' });
                         }}
-                        placeholder={t('deeplApiKeyPlaceholder', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx')}
+                        placeholder={credentialDialogService === TRANSLATE_SERVICE.DEEPL
+                            ? t('deeplApiKeyPlaceholder', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx')
+                            : t('cloudApiKeyPlaceholder', 'Enter API key')}
                         autoComplete="off"
                     />
+                    {credentialDialogService === TRANSLATE_SERVICE.AZURE && (
+                        <>
+                            <label className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">
+                                {t('azureRegion', 'Azure region (optional)')}
+                            </label>
+                            <Input
+                                type="text"
+                                value={credentialDraft.region}
+                                onChange={(e) => {
+                                    setCredentialDraft((draft) => ({ ...draft, region: e.target.value }));
+                                    setDialogTest({ kind: 'idle' });
+                                }}
+                                placeholder={t('azureRegionPlaceholder', 'e.g. eastasia')}
+                                autoComplete="off"
+                            />
+                        </>
+                    )}
                     <p className="text-[11px] text-ink-mute">
-                        {t('deeplApiKeyHint', 'Free-tier keys end with ":fx". Get one from your DeepL account.')}
+                        {credentialDialogService === TRANSLATE_SERVICE.DEEPL
+                            ? t('deeplApiKeyHint', 'Free-tier keys end with ":fx". Get one from your DeepL account.')
+                            : credentialDialogService === TRANSLATE_SERVICE.AZURE
+                                ? t('azureCredentialsHint', 'Region is optional for global resources and required for regional or multi-service resources.')
+                                : t('googleCloudApiKeyHint', 'Use an API key with Cloud Translation Basic (v2) enabled.')}
                     </p>
                     {dialogTest.kind === 'ok' && (
                         <div className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[12px] text-emerald-600">

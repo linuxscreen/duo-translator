@@ -35,7 +35,8 @@ export default defineConfig({
             // firefox needs these (the firefox target is MV3 too -- see the
             // `--mv3` flag on the firefox scripts in package.json)
             // 'https://translate-pa.googleapis.com/*',
-            // 'https://api.cognitive.microsofttranslator.com/*',
+            'https://api.cognitive.microsofttranslator.com/*',
+            'https://translation.googleapis.com/*',
             // 'https://api-free.deepl.com/*',
             //
             // Google Drive sync: the Drive REST API + the userinfo endpoint,

@@ -33,6 +33,8 @@ import {
     Token,
     transferLanguageCode,
     GoogleTranslateService,
+    AzureTranslateService,
+    GoogleCloudTranslateService,
     MicrosoftTranslateService,
     YandexTranslateService,
     DeepLTranslateService,
@@ -40,6 +42,8 @@ import {
     resolveTranslateService,
     translationServices,
     googleTranslationService,
+    azureTranslationService,
+    googleCloudTranslationService,
     microsoftTranslationService,
     deeplTranslationService,
     builtinAiTranslationService,
@@ -171,6 +175,113 @@ describe("GoogleTranslateService.translateText", () => {
         routeFetch(() => reply(null, 500));
         expect(await new GoogleTranslateService("k").translateText([], "zh-CN")).toEqual([]);
         expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// AzureTranslateService
+// ---------------------------------------------------------------------------
+describe("AzureTranslateService.translateText", () => {
+    it("uses the official v3 API with HTML input and optional region", async () => {
+        routeFetch(() => reply([
+            { detectedLanguage: { language: "en", score: 0.98 }, translations: [{ text: "<b0>你好</b0>" }] },
+        ]));
+        const out = await new AzureTranslateService({ apiKey: "azure-key", region: "eastasia" })
+            .translateText(["<b0>Hello</b0>"], "zh-CN");
+
+        expect(out[0].translatedMappedHtmlText).toBe("<b0>你好</b0>");
+        expect(out[0].sourceLang).toBe("en");
+        expect(out[0].score).toBe(0.98);
+
+        const [[url, init]] = fetchCalls("https://api.cognitive.microsofttranslator.com") as any[];
+        expect(url).toContain("api-version=3.0");
+        expect(url).toContain("to=zh-Hans");
+        expect(url).toContain("textType=html");
+        expect(url).not.toContain("from=");
+        expect(init.headers["Ocp-Apim-Subscription-Key"]).toBe("azure-key");
+        expect(init.headers["Ocp-Apim-Subscription-Region"]).toBe("eastasia");
+        expect(JSON.parse(init.body)).toEqual([{ Text: "<b0>Hello</b0>" }]);
+    });
+
+    it("omits the optional region header for a global resource", async () => {
+        routeFetch(() => reply([
+            { detectedLanguage: { language: "en", score: 1 }, translations: [{ text: "你好" }] },
+        ]));
+        await new AzureTranslateService({ apiKey: "azure-key" }).translateText(["Hello"], "zh-CN");
+        const [[, init]] = fetchCalls("https://api.cognitive.microsofttranslator.com") as any[];
+        expect(init.headers).not.toHaveProperty("Ocp-Apim-Subscription-Region");
+    });
+
+    it("reads stored credentials and rejects a missing key", async () => {
+        mockConfigGet.mockImplementation(async (key?: string) => {
+            if (key === CONFIG_KEY.AZURE_API_KEY) return "stored-azure-key";
+            if (key === CONFIG_KEY.AZURE_REGION) return "southeastasia";
+            return undefined;
+        });
+        routeFetch(() => reply([
+            { detectedLanguage: { language: "en", score: 1 }, translations: [{ text: "你好" }] },
+        ]));
+        await new AzureTranslateService().translateText(["Hello"], "zh-CN");
+        const [[, init]] = fetchCalls("https://api.cognitive.microsofttranslator.com") as any[];
+        expect(init.headers["Ocp-Apim-Subscription-Key"]).toBe("stored-azure-key");
+
+        mockConfigGet.mockResolvedValue(undefined);
+        await expect(new AzureTranslateService().translateText(["Hello"], "zh-CN"))
+            .rejects.toThrow(/Azure API key is not configured/);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// GoogleCloudTranslateService
+// ---------------------------------------------------------------------------
+describe("GoogleCloudTranslateService.translateText", () => {
+    it("uses the official v2 API with HTML format and automatic source detection", async () => {
+        routeFetch(() => reply({ data: { translations: [
+            { translatedText: "<b0>你好</b0>", detectedSourceLanguage: "en" },
+        ] } }));
+        const out = await new GoogleCloudTranslateService("google-key")
+            .translateText(["<b0>Hello</b0>"], "zh-CN");
+
+        expect(out[0].translatedMappedHtmlText).toBe("<b0>你好</b0>");
+        expect(out[0].sourceLang).toBe("en");
+
+        const [[url, init]] = fetchCalls("https://translation.googleapis.com") as any[];
+        expect(url).toBe("https://translation.googleapis.com/language/translate/v2?key=google-key");
+        expect(JSON.parse(init.body)).toEqual({
+            q: ["<b0>Hello</b0>"],
+            target: "zh-CN",
+            format: "html",
+        });
+        expect(JSON.parse(init.body)).not.toHaveProperty("source");
+    });
+
+    it("splits requests at the documented 128-item limit and preserves order", async () => {
+        routeFetch((_url, init) => {
+            const body = JSON.parse(init.body);
+            return reply({ data: { translations: body.q.map((text: string) => ({
+                translatedText: `t:${text}`,
+                detectedSourceLanguage: "en",
+            })) } });
+        });
+        const texts = Array.from({ length: 129 }, (_, i) => String(i));
+        const out = await new GoogleCloudTranslateService("google-key").translateText(texts, "fr");
+        expect(fetchCalls("https://translation.googleapis.com")).toHaveLength(2);
+        expect(out.map((item) => item.translatedMappedHtmlText)).toEqual(texts.map((text) => `t:${text}`));
+    });
+
+    it("reads the stored key and rejects a missing key", async () => {
+        mockConfigGet.mockImplementation(async (key?: string) =>
+            key === CONFIG_KEY.GOOGLE_CLOUD_API_KEY ? "stored-google-key" : undefined);
+        routeFetch(() => reply({ data: { translations: [
+            { translatedText: "你好", detectedSourceLanguage: "en" },
+        ] } }));
+        await new GoogleCloudTranslateService().translateText(["Hello"], "zh-CN");
+        const [[url]] = fetchCalls("https://translation.googleapis.com") as any[];
+        expect(url).toContain("key=stored-google-key");
+
+        mockConfigGet.mockResolvedValue(undefined);
+        await expect(new GoogleCloudTranslateService().translateText(["Hello"], "zh-CN"))
+            .rejects.toThrow(/Google Cloud API key is not configured/);
     });
 });
 
@@ -573,6 +684,8 @@ describe("AiTranslateService.translateText", () => {
 describe("resolveTranslateService", () => {
     it("resolves the built-ins to the shared singletons", () => {
         expect(resolveTranslateService(TRANSLATE_SERVICE.GOOGLE)).toBe(googleTranslationService);
+        expect(resolveTranslateService(TRANSLATE_SERVICE.AZURE)).toBe(azureTranslationService);
+        expect(resolveTranslateService(TRANSLATE_SERVICE.GOOGLE_CLOUD)).toBe(googleCloudTranslationService);
         expect(resolveTranslateService(TRANSLATE_SERVICE.MICROSOFT)).toBe(microsoftTranslationService);
         expect(resolveTranslateService(TRANSLATE_SERVICE.DEEPL)).toBe(deeplTranslationService);
         expect(resolveTranslateService(TRANSLATE_SERVICE.BUILTIN)).toBe(builtinAiTranslationService);
@@ -590,6 +703,8 @@ describe("resolveTranslateService", () => {
 
     it("registers every built-in in translationServices", () => {
         expect(translationServices.get(TRANSLATE_SERVICE.GOOGLE)).toBe(googleTranslationService);
+        expect(translationServices.get(TRANSLATE_SERVICE.AZURE)).toBe(azureTranslationService);
+        expect(translationServices.get(TRANSLATE_SERVICE.GOOGLE_CLOUD)).toBe(googleCloudTranslationService);
         expect(translationServices.get(TRANSLATE_SERVICE.BUILTIN)).toBe(builtinAiTranslationService);
         expect(translationServices.size).toBeGreaterThanOrEqual(4);
     });

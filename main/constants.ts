@@ -6,14 +6,16 @@ export class TranslateServiceMeta {
     title: string;
     description: string;
     editable: boolean
+    icon: string;
     api: string | undefined;
     token: string | undefined;
-    constructor(name: string, value: string, title: string, description: string, editable?: boolean, api?: string | undefined, token?: string | undefined) {
+    constructor(name: string, value: string, title: string, description: string, editable?: boolean, api?: string | undefined, token?: string | undefined, icon?: string) {
         this.value = value;
         this.name = name;
         this.title = title
         this.description = description;
         this.editable = editable === undefined ? true : editable;
+        this.icon = icon ?? value;
         this.api = api;
         this.token = token;
     }
@@ -187,6 +189,8 @@ export enum COMMON {
 export enum TRANSLATE_SERVICE {
     MICROSOFT = 'microsoft',
     GOOGLE = 'google',
+    AZURE = 'azure',
+    GOOGLE_CLOUD = 'googleCloud',
     // Yandex's browser-translate endpoint. Keyless like Google/Microsoft, and
     // it preserves the same `<bN>` inline placeholders Microsoft does, so it
     // needs no special handling in the DOM orchestration.
@@ -216,10 +220,12 @@ export const TRANSLATE_SERVICES: Map<string, TranslateServiceMeta> = new Map([
     ["yandex", new TranslateServiceMeta("Yandex", "yandex", "yandexTranslate", "YandexTranslateDescription", false)],
     // Insertion order IS the display order of every service picker and of the
     // Options service table — there is no sort key anywhere. Built-in AI sits
-    // above DeepL by request. `editable: true` so the row's Edit button opens
-    // the model-status / download dialog (BuiltinAiModelDialog).
+    // above DeepL, followed by Azure and Google Cloud. `editable: true` makes
+    // each row open its corresponding model or credential dialog.
     ["builtin", new TranslateServiceMeta("Built-in AI", "builtin", "builtinAiTranslate", "BuiltinAiTranslateDescription", true)],
     ["deepl", new TranslateServiceMeta("DeepL", "deepl", "deepl", "DeeplTranslateDescription", true)],
+    ["azure", new TranslateServiceMeta("Azure", "azure", "azureTranslator", "AzureTranslateDescription", true, undefined, undefined, "azure")],
+    ["googleCloud", new TranslateServiceMeta("GoogleCloud", "googleCloud", "googleCloudTranslator", "GoogleCloudTranslateDescription", true, undefined, undefined, "googlecloud")],
 ]);
 
 export const DEFAULT_STRATEGY_OPTIONS: { value: DEFAULT_STRATEGY; title: string; fallback: string }[] = [
@@ -489,9 +495,17 @@ export enum CONFIG_KEY {
     // User-supplied DeepL API key (free-tier keys end with ":fx"). When empty,
     // DeepL translation is unavailable until configured in Options.
     DEEPL_API_KEY = 'deeplApiKey',
-    // When true, cloud sync includes API keys (AI providers + DeepL) in the
-    // synced snapshot. Off by default so secrets stay on-device unless the user
-    // opts in. Separate from the per-export "include keys" checkbox.
+    // Credentials for the official Azure Translator endpoint. Region is only
+    // required for regional and multi-service resources; global resources use
+    // the key alone.
+    AZURE_API_KEY = 'azureApiKey',
+    AZURE_REGION = 'azureRegion',
+    // User-supplied API key for Cloud Translation Basic (v2).
+    GOOGLE_CLOUD_API_KEY = 'googleCloudApiKey',
+    // When true, cloud sync includes API keys (AI providers + translation
+    // APIs) in the synced snapshot. Off by default so secrets stay on-device
+    // unless the user opts in. Separate from the per-export "include keys"
+    // checkbox.
     SYNC_INCLUDE_SECRETS = 'syncIncludeSecrets',
     // Automatic sync: when on, sync runs on startup, 30s-debounced after any
     // config change, and on a periodic alarm. Off by default. Per-device pref
@@ -727,7 +741,7 @@ export const DEFAULT_VALUE = {
     // instead of as a quote mark. Index 1 — presets[0] is the empty slot.
     QUOTE_BORDER_COLOR: '#df5f47',
     QUOTE_BORDER_COLOR_INDEX: 1,
-    // DeepL needs an API key before it can translate anything, so it starts off.
+    // Credential-backed services start off until the user configures them.
     //
     // Built-in AI is deliberately NOT listed here: its default is a runtime
     // question, not a static one. A browser with the on-device API gets it
@@ -735,7 +749,7 @@ export const DEFAULT_VALUE = {
     // without it has the service force-disabled by `builtinAiApiAvailable()` in
     // utils/service.ts — which no static default could express, since the same
     // build ships to browsers that do and don't have it.
-    DISABLED_TRANSLATE_SERVICES: ['deepl'],
+    DISABLED_TRANSLATE_SERVICES: ['deepl', 'azure', 'googleCloud'],
     // Module-level constant on purpose: `useConfig` resolves its default
     // through here, and a fresh [] every render would loop useSyncExternalStore.
     NO_TRANSLATE_LANGUAGES: [] as string[],
@@ -1913,4 +1927,3 @@ export const SEGMENT_BR_SPLIT_MIN = 2;
 export const iso6393To1Map: Map<string, string> = new Map(Object.entries(iso6393To1));
 
 export const excludedTagSet: Set<string> = new Set(EXCLUDE_TAGS)
-

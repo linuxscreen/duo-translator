@@ -26,7 +26,8 @@ test.describe('@bundle background/content separation', () => {
             // AI provider clients
             'anthropic-version', 'x-api-key', 'chatCompleteNonStream', 'acquireNonStreamSlot',
             // Translate provider endpoints
-            'translate-pa.googleapis.com', 'cognitive.microsofttranslator.com',
+            'translate-pa.googleapis.com', 'translation.googleapis.com',
+            'cognitive.microsofttranslator.com',
             'edge.microsoft.com/translate/auth',
             'api.deepl.com', 'api-free.deepl.com',
             'browser.translate.yandex.net',
@@ -35,6 +36,7 @@ test.describe('@bundle background/content separation', () => {
             'www.bing.com', 'translate.google.com', 'translate_a/single',
             // Credentials
             'DeepL-Auth-Key', 'x-goog-api-key',
+            'Ocp-Apim-Subscription-Key', 'Ocp-Apim-Subscription-Region',
             // Built-in AI has no endpoint and no credential, so nothing else
             // here would catch it leaking. Both the translation AND the model
             // download run in background, so the page never touches the model.
@@ -81,6 +83,9 @@ test.describe('@bundle background/content separation', () => {
             'anthropic-version',
             'edge.microsoft.com/translate/auth',
             'translate-pa.googleapis.com',
+            'translation.googleapis.com',
+            'api.cognitive.microsofttranslator.com',
+            'Ocp-Apim-Subscription-Key',
             'translate.yandex.net',
             'DeepL-Auth-Key',
             'translate_a/single',

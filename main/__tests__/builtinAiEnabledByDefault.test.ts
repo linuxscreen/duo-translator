@@ -76,4 +76,5 @@ describe("built-in AI availability gating", () => {
             expect(values).not.toContain(TRANSLATE_SERVICE.DEEPL);
         }
     });
+
 });

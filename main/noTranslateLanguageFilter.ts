@@ -80,15 +80,18 @@ export function resetDetectedLanguageCache() {
 /**
  * Does this translator report a source language for every text in a batch?
  *
- * Google (`data[1][i]`), Microsoft (`detectedLanguage`) and DeepL
- * (`detected_source_language`) do. Yandex reports ONE language for the whole
- * chunk and built-in AI one for the whole batch — using either as a
- * per-paragraph verdict would let one long paragraph decide for its neighbours
- * — and the AI providers report none at all (`sourceLang` is `""`).
+ * Google (`data[1][i]`), Microsoft/Azure (`detectedLanguage`), Google Cloud
+ * (`detectedSourceLanguage`) and DeepL (`detected_source_language`) do. Yandex
+ * reports ONE language for the whole chunk and built-in AI one for the whole
+ * batch — using either as a per-paragraph verdict would let one long paragraph
+ * decide for its neighbours — and the AI providers report none at all
+ * (`sourceLang` is `""`).
  */
 export function reportsPerTextSourceLang(service: string): boolean {
     return service === TRANSLATE_SERVICE.GOOGLE
         || service === TRANSLATE_SERVICE.MICROSOFT
+        || service === TRANSLATE_SERVICE.AZURE
+        || service === TRANSLATE_SERVICE.GOOGLE_CLOUD
         || service === TRANSLATE_SERVICE.DEEPL;
 }
 
