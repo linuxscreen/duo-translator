@@ -1,5 +1,6 @@
 import { alignSentenceBlocks, splitSentence, wrapTextNode2Span } from "@/main/dom/sentence";
-import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE, EXTENSION_INVALID_CONTEXT_MSG, STYLE_BLUR, TRANSLATING_ANIMATION, IS_MAC } from "./constants";
+import { clampOpacity } from "../utils/color";
+import { TAB_ACTION, TRANSLATE_STATUS_KEY, CONFIG_KEY, DB_ACTION, TRANSLATE_SERVICE, DOMAIN_STRATEGY, TRANSLATE_ACTION, ACTION, STORAGE_ACTION, VIEW_STRATEGY, DEFAULT_STRATEGY, ELEMENT_STATUS, APP_NAME, APP_NAME_WITH_SUFFIX, DEFAULT_VALUE, STATUS_SUCCESS, CONFIG_VALUE_TO_KEY, LANGUAGES_MAP, IS_FIREFOX, browserTargetLanguage, FLOAT_BALL_STYLE, EXTENSION_INVALID_CONTEXT_MSG, STYLE_BLUR, TRANSLATING_ANIMATION, IS_MAC, DEFAULT_TRANSLATION_BG_COLOR, DEFAULT_TRANSLATION_FONT_COLOR, DEFAULT_TRANSLATION_BG_OPACITY } from "./constants";
 import { restore, translateParams, getTranslateResult, translate, TranslateResult, detectTextsLanguages } from "./translateClient";
 import { buildNoTranslateLanguageSet, isNoTranslateLanguage } from "./noTranslateLanguage";
 import {
@@ -42,6 +43,7 @@ import { removeTypedEcho } from "@/main/dom/typedEcho";
 import { extendTypedRun, typedRunForShortcut, type TypedRun } from "@/main/customShortcut/typedRun";
 import { getAiTranslateService, getTranslateService } from "@/utils/service";
 import { buildTranslationCss } from "@/main/css";
+import { styleUsesBackground } from "@/utils/translationStyle";
 import { TRANSLATE_INDICATOR_CSS } from "@/main/translateIndicator/indicatorCss";
 import {
     beginTranslateIndicator,
@@ -2985,11 +2987,12 @@ export async function content() {
 
     async function updateStyle() {
         let [
-            bgColor, fontColor, borderStyle, borderColor, quoteBorderColor,
+            bgColor, bgOpacity, fontColor, borderStyle, borderColor, quoteBorderColor,
             highlightBg, highlightFontColor, highlightStyle, highlightBorderColor,
             highlightSwitch,
         ] = await Promise.all([
             getConfig(CONFIG_KEY.BG_COLOR),
+            getConfig(CONFIG_KEY.BG_OPACITY),
             getConfig(CONFIG_KEY.FONT_COLOR),
             getConfig(CONFIG_KEY.STYLE),
             getConfig(CONFIG_KEY.BORDER_COLOR),
@@ -3007,9 +3010,30 @@ export async function content() {
         // (setShadowCss below). Appended unconditionally — the rules match
         // nothing when the feature is off, and making delivery conditional would
         // mean re-pushing a sheet to every root when the setting changes.
+        // Default to a dark, clearly-distinct translation box (Immersive
+        // Translate style) when the user has never set a background. An
+        // explicit '' (the transparent preset slot) still means "no fill".
+        const style0 = borderStyle || 'noneStyleSelect'
+        const hasBg = typeof bgColor === 'string'
+        const effBg = hasBg ? bgColor : DEFAULT_TRANSLATION_BG_COLOR
+        // Pair the dark default with a white font ONLY when the style actually
+        // paints the fill (none / border / underline). Quote / dim / blur do not
+        // paint a background, so forcing a white font there would make the
+        // translation invisible on a light page — fall back to the inherited
+        // (page) text color instead.
+        const effFont = (typeof fontColor === 'string')
+            ? fontColor
+            : (!hasBg && styleUsesBackground(style0) ? DEFAULT_TRANSLATION_FONT_COLOR : '')
+        // Alpha for the fill. Unset OR an unusable stored value falls back to the
+        // default; an explicit 0 is honoured (a fill the user deliberately faded
+        // out completely).
+        const effBgOpacity =
+            clampOpacity(typeof bgOpacity === 'number' ? bgOpacity : undefined)
+            ?? DEFAULT_TRANSLATION_BG_OPACITY
         const css = TRANSLATE_INDICATOR_CSS + "\n" + buildTranslationCss({
-            bgColor: bgColor || '',
-            fontColor: fontColor || '',
+            bgColor: effBg,
+            bgOpacity: effBgOpacity,
+            fontColor: effFont,
             borderStyle: borderStyle || 'noneStyleSelect',
             borderColor: borderColor || '',
             quoteBorderColor: quoteBorderColor || '',

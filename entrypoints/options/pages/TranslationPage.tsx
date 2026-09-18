@@ -25,13 +25,16 @@ import {
   DEFAULT_STRATEGY_OPTIONS,
   TRANSLATING_ANIMATION,
   TRANSLATING_ANIMATION_OPTIONS,
+  DEFAULT_TRANSLATION_BG_COLOR,
+  DEFAULT_TRANSLATION_FONT_COLOR,
+  DEFAULT_TRANSLATION_BG_OPACITY,
 } from '@/main/constants';
 import {
   sendMessageToAllTabs,
   sendMessageToBackground,
 } from '@/utils/message';
 import { getConfig, setConfig, clearTranslationCache, getTranslationCacheSize } from '@/utils/db';
-import { isReadableContrast, readableFontColor } from '@/utils/color';
+import { clampOpacity, isReadableContrast, readableFontColor } from '@/utils/color';
 import { SettingRow } from '@/components/options/SettingRow';
 import { ColorPicker } from '@/components/options/ColorPicker';
 import { NumberInputWithReset } from '@/components/options/NumberInputWithReset';
@@ -122,11 +125,15 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   const [defaultStrategy, setDefaultStrategy] = useState<DEFAULT_STRATEGY>(DEFAULT_STRATEGY.AUTO);
 
   // Translation style
+  // Defaults mirror main/content.ts updateStyle(): when nothing is configured
+  // yet the page shows a dark, clearly-distinct translation box (Immersive
+  // Translate style) with white text — see DEFAULT_TRANSLATION_* in constants.
   const [style, setStyle] = useState<string>(STYLE_NONE);
-  const [bgColor, setBgColor] = useState('');
-  const [bgColorIndex, setBgColorIndex] = useState(0);
-  const [fontColor, setFontColor] = useState('');
-  const [fontColorIndex, setFontColorIndex] = useState(0);
+  const [bgColor, setBgColor] = useState(DEFAULT_TRANSLATION_BG_COLOR);
+  const [bgOpacity, setBgOpacity] = useState(DEFAULT_TRANSLATION_BG_OPACITY);
+  const [bgColorIndex, setBgColorIndex] = useState(TRANSLATION_BG_COLORS.length);
+  const [fontColor, setFontColor] = useState(DEFAULT_TRANSLATION_FONT_COLOR);
+  const [fontColorIndex, setFontColorIndex] = useState(TRANSLATION_FONT_COLORS.length);
   const [borderColor, setBorderColor] = useState('');
   const [borderColorIndex, setBorderColorIndex] = useState(0);
   // The quote style's leading bar — its own key, so switching between the quote
@@ -194,7 +201,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     (async () => {
       const [
         bh, fb, fbs, ta, vs, tl, ts, ds, ms, lb, tc, et, ntl,
-        styleCfg, bgCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg, qbcCfg, qbcIdxCfg,
+        styleCfg, bgCfg, bgOpCfg, bgIdxCfg, fcCfg, fcIdxCfg, bcCfg, bcIdxCfg, qbcCfg, qbcIdxCfg,
         hbCfg, hbIdxCfg, hfCfg, hfIdxCfg, hsCfg, hbcCfg, hbcIdxCfg,
       ] = await Promise.all([
         getConfig(CONFIG_KEY.BILINGUAL_HIGHLIGHTING_SWITCH),
@@ -212,6 +219,7 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
         getConfig(CONFIG_KEY.NO_TRANSLATE_LANGUAGES),
         getConfig(CONFIG_KEY.STYLE),
         getConfig(CONFIG_KEY.BG_COLOR),
+        getConfig(CONFIG_KEY.BG_OPACITY),
         getConfig(CONFIG_KEY.BG_COLOR_INDEX),
         getConfig(CONFIG_KEY.FONT_COLOR),
         getConfig(CONFIG_KEY.FONT_COLOR_INDEX),
@@ -264,11 +272,25 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
       if (ds === DEFAULT_STRATEGY.ALWAYS || ds === DEFAULT_STRATEGY.NEVER || ds === DEFAULT_STRATEGY.AUTO) {
         setDefaultStrategy(ds);
       }
-      setStyle(typeof styleCfg === 'string' && styleCfg ? styleCfg : STYLE_NONE);
-      setBgColor(typeof bgCfg === 'string' ? bgCfg : '');
-      setBgColorIndex(typeof bgIdxCfg === 'number' ? bgIdxCfg : 0);
-      setFontColor(typeof fcCfg === 'string' ? fcCfg : '');
-      setFontColorIndex(typeof fcIdxCfg === 'number' ? fcIdxCfg : 0);
+      // Mirror main/content.ts updateStyle(): an UNSET background falls back to
+      // the dark default box, while an explicit '' (the transparent swatch) is
+      // respected as "no fill". The white default font only rides along when the
+      // background is at its default AND the style actually paints a fill.
+      const hasUserBg = typeof bgCfg === 'string';
+      const hasUserFont = typeof fcCfg === 'string';
+      const effStyle = typeof styleCfg === 'string' && styleCfg ? styleCfg : STYLE_NONE;
+      setStyle(effStyle);
+      setBgColor(hasUserBg ? bgCfg : DEFAULT_TRANSLATION_BG_COLOR);
+      setBgColorIndex(hasUserBg ? (typeof bgIdxCfg === 'number' ? bgIdxCfg : 0) : TRANSLATION_BG_COLORS.length);
+      // Same fallback rule as the fill itself: an unusable stored value (absent,
+      // null, NaN, out of range) means "default alpha", not "transparent".
+      setBgOpacity(
+        clampOpacity(typeof bgOpCfg === 'number' ? bgOpCfg : undefined) ??
+          DEFAULT_TRANSLATION_BG_OPACITY,
+      );
+      const defaultFontActive = !hasUserBg && styleUsesBackground(effStyle);
+      setFontColor(hasUserFont ? fcCfg : defaultFontActive ? DEFAULT_TRANSLATION_FONT_COLOR : '');
+      setFontColorIndex(hasUserFont ? (typeof fcIdxCfg === 'number' ? fcIdxCfg : 0) : defaultFontActive ? TRANSLATION_FONT_COLORS.length : 0);
       setBorderColor(typeof bcCfg === 'string' ? bcCfg : '');
       setBorderColorIndex(typeof bcIdxCfg === 'number' ? bcIdxCfg : 0);
       setQuoteBorderColor(typeof qbcCfg === 'string' ? qbcCfg : '');
@@ -463,6 +485,19 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
     setBgColorIndex(i);
     persistColorDebounced(CONFIG_KEY.BG_COLOR, CONFIG_KEY.BG_COLOR_INDEX, c, i);
   };
+  // Dragging the opacity slider fires continuously, so this trails persistence
+  // and the cross-tab broadcast the same way the color pickers do. There is no
+  // companion index key — the value is a number, not a preset slot.
+  const onBgOpacity = (v: number) => {
+    const next = clampOpacity(v) ?? DEFAULT_TRANSLATION_BG_OPACITY;
+    setBgOpacity(next);
+    const id = CONFIG_KEY.BG_OPACITY as string;
+    if (persistTimers.current[id]) clearTimeout(persistTimers.current[id]);
+    persistTimers.current[id] = setTimeout(() => {
+      void setConfig(CONFIG_KEY.BG_OPACITY, next);
+      broadcastStyleChanged();
+    }, 120);
+  };
   const onFontColor = (c: string, i: number) => {
     setFontColor(c);
     setFontColorIndex(i);
@@ -547,12 +582,13 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
       buildStylePreview({
         style,
         bgColor,
+        bgOpacity,
         fontColor,
         borderColor,
         quoteBorderColor,
         hovered: translationHovered,
       }),
-    [style, bgColor, fontColor, borderColor, quoteBorderColor, translationHovered],
+    [style, bgColor, bgOpacity, fontColor, borderColor, quoteBorderColor, translationHovered],
   );
   const highlightCss = useMemo(
     () =>
@@ -574,9 +610,12 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
   // too low to read. Pairs with a default/transparent color aren't evaluable
   // and are left alone. See utils/color. A style that ignores the background is
   // not evaluable either: the translation sits on the page's own backdrop.
+  // A translucent fill is not evaluable for the same reason — the real backdrop
+  // is a blend with whatever is behind the box, so warn only at full opacity
+  // rather than guess (and rather than offer a "fix" that assumes a solid fill).
   const translationLowContrast = useMemo(
-    () => styleUsesBackground(style) && !isReadableContrast(bgColor, fontColor),
-    [style, bgColor, fontColor],
+    () => styleUsesBackground(style) && bgOpacity >= 1 && !isReadableContrast(bgColor, fontColor),
+    [style, bgColor, bgOpacity, fontColor],
   );
   const highlightLowContrast = useMemo(
     () => !isReadableContrast(highlightBg, highlightFontColor),
@@ -668,6 +707,33 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
                 presets={TRANSLATION_BG_COLORS}
                 onChange={onBgColor}
               />
+            }
+          />
+        );
+      case 'bgOpacity':
+        return (
+          <SettingRow
+            key={field}
+            label={t('translationBgOpacity', 'background opacity')}
+            control={
+              <span className="flex items-center gap-1.5">
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={Math.round(bgOpacity * 100)}
+                  title={t(
+                    'translationBgOpacityHint',
+                    'How much of the page shows through the translation background',
+                  )}
+                  onChange={(e) => onBgOpacity(Number(e.target.value) / 100)}
+                  className="w-[104px] accent-[var(--color-accent)]"
+                />
+                <span className="w-[36px] text-right text-[12px] tabular-nums text-ink-soft">
+                  {Math.round(bgOpacity * 100)}%
+                </span>
+              </span>
             }
           />
         );

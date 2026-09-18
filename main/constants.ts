@@ -392,6 +392,11 @@ export enum CONFIG_KEY {
     NO_TRANSLATE_LANGUAGES = 'noTranslateLanguages',
     STYLE = 'style',
     BG_COLOR = 'bgColor',
+    // Alpha of the translation's background fill, 0–1. A separate key from
+    // BG_COLOR so a presets-only user (who never opens the opacity slider) keeps
+    // storing the same value they always did, and so "unset" can mean "use the
+    // default alpha" rather than "fully transparent".
+    BG_OPACITY = 'bgOpacity',
     FONT_COLOR = 'fontColor',
     BORDER_COLOR = 'borderColor',
     PADDING = 'padding',
@@ -717,6 +722,23 @@ export const TRANSLATING_ANIMATION_OPTIONS: { value: TRANSLATING_ANIMATION, titl
  */
 export const TRANSLATE_INDICATOR_TAG = 'duo-loading'
 
+/**
+ * Alpha of the page translation's background fill, 0–1.
+ *
+ * Declared up here, unlike the two color defaults below, because DEFAULT_VALUE
+ * (right below) registers it: an unset key then reads as 1 through
+ * `configDefault()`, exactly like every other registered default, so no reader
+ * needs its own fallback. The color defaults are deliberately NOT registered —
+ * for those, "unset" has to stay distinguishable from the explicit '' the
+ * transparent swatch stores, which is what drives the dark default box.
+ *
+ * Fully opaque by default: the point of the dark box is maximum legibility, and
+ * a translucent default would make the font-contrast guardrails approximate.
+ * The Options slider is what turns it into a softer, Immersive-Translate-like
+ * wash for users who want the page to show through.
+ */
+export const DEFAULT_TRANSLATION_BG_OPACITY = 1;
+
 export const DEFAULT_VALUE = {
     GLOBAL_SWITCH: true,
     BILINGUAL_HIGHLIGHTING_SWITCH: true,
@@ -742,6 +764,8 @@ export const DEFAULT_VALUE = {
     HIGHLIGHT_STYLE: 'underLine',
     HIGHLIGHT_BORDER_COLOR: '#df5f47',
     HIGHLIGHT_BORDER_COLOR_INDEX: 1,
+    // Registered, so an unset key reads as the default alpha everywhere.
+    BG_OPACITY: DEFAULT_TRANSLATION_BG_OPACITY,
     // The quote bar defaults to the first preset rather than "no color": a bar
     // that follows the translation's own text color reads as part of the text
     // instead of as a quote mark. Index 1 — presets[0] is the empty slot.
@@ -1672,6 +1696,13 @@ export const TRANSLATION_STYLE_GROUPS: TranslationStyleGroup[] = [
     },
     ...STYLE_GROUPS.slice(1),
 ];
+
+// Default fill for the page translation when the user has never picked a
+// background color: a dark box so the translation reads as clearly distinct
+// from the page (Immersive Translate-style). Explicit '' (the transparent
+// preset slot) still means "no fill" — only an UNSET config falls back here.
+export const DEFAULT_TRANSLATION_BG_COLOR = '#3c4045';
+export const DEFAULT_TRANSLATION_FONT_COLOR = '#ffffff';
 
 // Preset color palettes. Empty string = "no color" (transparent slot rendered as a checker swatch).
 export const TRANSLATION_BG_COLORS = ['', '#df5f47', '#57a0ee', '#faec63', '#73b364'];
