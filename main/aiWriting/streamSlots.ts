@@ -37,6 +37,8 @@ export interface SlotStore {
     stopAll(): void;
     reset(id: SlotId): void;
     setBase(id: SlotId, text: string): void;
+    /** Replace a completed result, e.g. after the user edits its Text view. */
+    setOutput(id: SlotId, text: string): void;
     setView(id: SlotId, view: SlotView): void;
     setError(id: SlotId, error: string | null): void;
     destroy(): void;
@@ -144,6 +146,9 @@ export function createSlotStore(): SlotStore {
         },
         setBase(id, text) {
             setState(id, { base: text });
+        },
+        setOutput(id, text) {
+            setState(id, { output: text });
         },
         setView(id, view) {
             setState(id, { view });

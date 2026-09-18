@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Copy, CornerDownLeft, Eraser, Loader2, Maximize2, Minimize2, StopCircle } from "lucide-react";
 import { AI_TASK, LANGUAGES } from "@/main/constants";
 import { startAiChatStream } from "@/main/aiClient";
 import { AI_MAX_INPUT_CHARS } from "@/main/aiLimits";
 import { applyTextToTarget, canApplyToTarget } from "../applyText";
 import { DiffView } from "../DiffView";
+import { splitEmailEnvelope, withEmailEnvelope } from "../emailEnvelope";
 import { t } from "../i18n";
 import { useCopyFeedback } from "../useCopyFeedback";
 import { startTranslate, type TranslateServiceChoice } from "../translateRunner";
@@ -21,12 +22,8 @@ const WRITING_TASKS: { value: AI_TASK; labelKey: string; fallback: string }[] = 
     { value: AI_TASK.FORMAL, labelKey: "aiFormal", fallback: "Formal" },
     { value: AI_TASK.GRAMMAR, labelKey: "aiGrammar", fallback: "Grammar fix" },
     { value: AI_TASK.CASUAL, labelKey: "aiCasual", fallback: "Casual" },
+    { value: AI_TASK.EMAIL, labelKey: "aiEmailGenerate", fallback: "Email" },
 ];
-
-/** Coerce any stored/config value into one of {@link WRITING_TASKS}. */
-export function asWritingTask(value: unknown, fallback = AI_TASK.POLISH): AI_TASK {
-    return WRITING_TASKS.some((item) => item.value === value) ? (value as AI_TASK) : fallback;
-}
 
 /**
  * The four bidirectional panes, in reading order: ① incoming original,
@@ -64,7 +61,6 @@ interface Props {
     /** Language the reply is translated into (④ target). */
     peerLang: string;
     targetEl: HTMLElement | null;
-    defaultTask: AI_TASK;
     mailOriginal: string;
     onMailOriginalChange: (value: string) => void;
     myReply: string;
@@ -175,10 +171,15 @@ function ResultBody({
     state,
     diffOriginal,
     showDiff,
+    editable = false,
+    onOutputChange,
 }: {
     state: SlotState;
     diffOriginal: string;
     showDiff: boolean;
+    /** Bidirectional rewrite results are editable in Text view. */
+    editable?: boolean;
+    onOutputChange?: (text: string) => void;
 }) {
     if (state.error) {
         return <span className="text-error">{state.error}</span>;
@@ -193,6 +194,16 @@ function ResultBody({
     }
     if (state.output && showDiff && state.view === "diff") {
         return <DiffView original={diffOriginal} rewritten={state.output} />;
+    }
+    if (onOutputChange && state.view === "text" && (state.output || editable)) {
+        return (
+            <textarea
+                value={state.output}
+                onChange={(e) => onOutputChange(e.target.value)}
+                disabled={!editable}
+                className="w-full min-h-full resize-none bg-transparent border-0 outline-none p-0 text-[13px] leading-[1.5] text-ink disabled:opacity-70"
+            />
+        );
     }
     return state.output;
 }
@@ -241,7 +252,6 @@ export function BidirectionalMode({
     myLang,
     peerLang,
     targetEl,
-    defaultTask,
     mailOriginal,
     onMailOriginalChange,
     myReply,
@@ -251,7 +261,13 @@ export function BidirectionalMode({
     focusPane,
     onFocusPaneChange,
 }: Props) {
-    const [task, setTask] = useState<AI_TASK>(() => asWritingTask(defaultTask));
+    const [task, setTask] = useState<AI_TASK>(AI_TASK.EMAIL);
+    const [emailRecipient, setEmailRecipient] = useState("");
+    const [emailSender, setEmailSender] = useState("");
+    // Set when an EMAIL result is accepted into ③. Translation then removes
+    // the first/last lines and puts them back unchanged after translating the
+    // middle, so recipients and signatures never pass through the translator.
+    const [emailEnvelopeActive, setEmailEnvelopeActive] = useState(false);
     const [mailCopied, copyMail] = useCopyFeedback();
     const [replyCopied, copyReply] = useCopyFeedback();
     // ③ vertical split between the editor and the rewrite result. Kept in
@@ -263,10 +279,6 @@ export function BidirectionalMode({
     const replyRewrite = useSlot(slots, "replyRewrite");
     const replyTranslation = useSlot(slots, "replyTranslation");
 
-    useEffect(() => {
-        setTask((current) => (current === defaultTask ? current : asWritingTask(defaultTask)));
-    }, [defaultTask]);
-
     const runTranslation = (slot: SlotId, text: string, targetLang: string) => {
         if (!text.trim()) return;
         if (text.length > AI_MAX_INPUT_CHARS) {
@@ -274,6 +286,34 @@ export function BidirectionalMode({
             return;
         }
         void slots.run(slot, () => startTranslate(text, targetLang, translateChoice));
+    };
+
+    const runReplyTranslation = () => {
+        if (!myReply.trim() || replyTranslation.running) return;
+        const envelope = emailEnvelopeActive ? splitEmailEnvelope(myReply) : null;
+        if (emailEnvelopeActive && !envelope) {
+            slots.setError(
+                "replyTranslation",
+                t(
+                    "aiEmailEnvelopeInvalid",
+                    "Keep the recipient salutation as the first line and your name as the final line before translating.",
+                ),
+            );
+            return;
+        }
+        const text = envelope?.body ?? myReply;
+        if (text.length > AI_MAX_INPUT_CHARS) {
+            slots.setError("replyTranslation", limitMessage(text.length));
+            return;
+        }
+        void slots.run("replyTranslation", () => {
+            const running = startTranslate(text, peerLang, translateChoice);
+            if (!envelope) return running;
+            return {
+                abort: running.abort,
+                stream: withEmailEnvelope(running.stream, envelope),
+            };
+        });
     };
 
     const runRewrite = () => {
@@ -286,12 +326,22 @@ export function BidirectionalMode({
             slots.setError("replyRewrite", t("aiNoProviderShort", "Configure a provider in Options → AI Writing first."));
             return;
         }
+        if (task === AI_TASK.EMAIL && (!emailRecipient.trim() || !emailSender.trim())) {
+            slots.setError("replyRewrite", t("aiEmailFieldsRequired", "Enter both the recipient salutation and your name."));
+            return;
+        }
         slots.setBase("replyRewrite", myReply);
         slots.setView("replyRewrite", "diff");
         void slots.run("replyRewrite", () => startAiChatStream({
             task,
             providerId: enhanceProviderId,
-            payload: { text: myReply },
+            payload: task === AI_TASK.EMAIL
+                ? {
+                    text: myReply,
+                    recipientSalutation: emailRecipient.trim(),
+                    senderName: emailSender.trim(),
+                }
+                : { text: myReply },
         }));
     };
 
@@ -320,8 +370,15 @@ export function BidirectionalMode({
     // on it (otherwise a second task would re-run against the pre-rewrite text).
     const acceptRewrite = () => {
         if (!replyRewrite.output) return;
+        setEmailEnvelopeActive(task === AI_TASK.EMAIL);
         onMyReplyChange(replyRewrite.output);
         slots.reset("replyRewrite");
+    };
+
+    const changeTask = (next: AI_TASK) => {
+        if (next === task) return;
+        slots.reset("replyRewrite");
+        setTask(next);
     };
 
     const applyReplyTranslation = async () => {
@@ -330,7 +387,9 @@ export function BidirectionalMode({
     };
 
     // ③ only splits once a rewrite exists; before that the editor owns the pane.
-    const hasRewrite = !!(replyRewrite.output || replyRewrite.running || replyRewrite.error);
+    // Keep the result pane mounted while its editable text is temporarily
+    // empty: `base` is the completed run's frozen marker until Clear/Accept.
+    const hasRewrite = !!(replyRewrite.output || replyRewrite.running || replyRewrite.error || replyRewrite.base);
     const mailTargetLang = languageLabel(myLang);
     const replyTargetLang = languageLabel(peerLang);
     const canApply = canApplyToTarget(targetEl);
@@ -400,10 +459,7 @@ export function BidirectionalMode({
                             <div className="flex items-center gap-1">
                                 <select
                                     value={task}
-                                    onChange={(e) => {
-                                        slots.reset("replyRewrite");
-                                        setTask(e.target.value as AI_TASK);
-                                    }}
+                                    onChange={(e) => changeTask(e.target.value as AI_TASK)}
                                     className="h-6 rounded bg-surface border border-line-strong text-[11px] text-ink px-1.5"
                                 >
                                     {WRITING_TASKS.map((item) => (
@@ -423,13 +479,38 @@ export function BidirectionalMode({
                                 <ClearButton
                                     onClick={() => {
                                         onMyReplyChange("");
+                                        setEmailEnvelopeActive(false);
                                         slots.reset("replyRewrite");
                                     }}
-                                    disabled={!myReply && !replyRewrite.output && !replyRewrite.error}
+                                    disabled={!myReply && !replyRewrite.output && !replyRewrite.error && !replyRewrite.base}
                                 />
                             </div>
                         )}
                     />
+                    {task === AI_TASK.EMAIL && (
+                        <div className="flex flex-wrap items-center gap-3 px-3 py-2 border-b border-line bg-bg">
+                            <label className="flex items-center gap-2 text-[11px] text-ink-mute">
+                                <span>{t("aiEmailRecipient", "Recipient salutation")}</span>
+                                <input
+                                    value={emailRecipient}
+                                    onChange={(e) => setEmailRecipient(e.target.value)}
+                                    disabled={replyRewrite.running}
+                                    placeholder={t("aiEmailRecipientPlaceholder", "e.g. Mr. Smith")}
+                                    className="h-7 w-40 rounded-md bg-surface border border-line-strong text-[12px] text-ink px-2 placeholder:text-ink-mute disabled:opacity-60"
+                                />
+                            </label>
+                            <label className="flex items-center gap-2 text-[11px] text-ink-mute">
+                                <span>{t("aiEmailSender", "Your name")}</span>
+                                <input
+                                    value={emailSender}
+                                    onChange={(e) => setEmailSender(e.target.value)}
+                                    disabled={replyRewrite.running}
+                                    placeholder={t("aiEmailSenderPlaceholder", "e.g. Zhang San")}
+                                    className="h-7 w-40 rounded-md bg-surface border border-line-strong text-[12px] text-ink px-2 placeholder:text-ink-mute disabled:opacity-60"
+                                />
+                            </label>
+                        </div>
+                    )}
                     {/* Editor and rewrite result share ③ by an explicit fraction
                         rather than an even flex-1 split, so the rewrite box gets
                         real height; the divider between them is draggable. */}
@@ -481,7 +562,7 @@ export function BidirectionalMode({
                                             )}
                                             <ClearButton
                                                 onClick={() => slots.reset("replyRewrite")}
-                                                disabled={!replyRewrite.output && !replyRewrite.error}
+                                                disabled={!replyRewrite.output && !replyRewrite.error && !replyRewrite.base}
                                             />
                                         </div>
                                     )}
@@ -491,6 +572,8 @@ export function BidirectionalMode({
                                         state={replyRewrite}
                                         diffOriginal={replyRewrite.base}
                                         showDiff
+                                        editable={!replyRewrite.running}
+                                        onOutputChange={(text) => slots.setOutput("replyRewrite", text)}
                                     />
                                 </div>
                             </div>
@@ -551,7 +634,7 @@ export function BidirectionalMode({
                                 <RunButton
                                     running={replyTranslation.running}
                                     disabled={!myReply.trim()}
-                                    onClick={() => runTranslation("replyTranslation", myReply, peerLang)}
+                                    onClick={runReplyTranslation}
                                     onStop={() => slots.stop("replyTranslation")}
                                     labelKey="aiTranslateReply"
                                     fallback="Translate reply"

@@ -99,4 +99,20 @@ describe("createSlotStore", () => {
         expect(store.get("mailTranslation").output).toBe("");
         expect(store.get("replyTranslation").output).toBe("reply");
     });
+
+    it("replaces output in only the requested slot without losing its view or base", () => {
+        const store = createSlotStore();
+        store.setBase("replyRewrite", "original");
+        store.setView("replyRewrite", "text");
+        store.setOutput("result", "untouched");
+
+        store.setOutput("replyRewrite", "edited");
+
+        expect(store.get("replyRewrite")).toMatchObject({
+            output: "edited",
+            base: "original",
+            view: "text",
+        });
+        expect(store.get("result").output).toBe("untouched");
+    });
 });

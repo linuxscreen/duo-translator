@@ -899,6 +899,8 @@ export enum AI_TASK {
     POLISH = 'polish',
     FORMAL = 'formal',
     CASUAL = 'casual',
+    /** Bidirectional-only: turn the reply draft into a complete email. */
+    EMAIL = 'email',
     CUSTOM = 'custom',
     /** Page-translation: AI receives a JSON-stringified array of paragraph
      *  texts (with <bN> placeholder tags) and must return a JSON array of the

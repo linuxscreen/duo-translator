@@ -217,6 +217,10 @@ export interface AiStreamRequest {
         targetLang?: string;
         systemPrompt?: string;
         lang?: string;
+        /** Email generation: recipient salutation used verbatim as the first line. */
+        recipientSalutation?: string;
+        /** Email generation: sender name used verbatim as the final line. */
+        senderName?: string;
     };
 }
 

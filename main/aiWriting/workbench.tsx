@@ -32,7 +32,7 @@ import { NoProviderNotice } from "./NoProviderNotice";
 import { t, useLang } from "./i18n";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { useSlot, useSlots } from "./streamSlots";
-import { BidirectionalMode, asWritingTask, type FocusPaneId } from "./bidirectional/BidirectionalMode";
+import { BidirectionalMode, type FocusPaneId } from "./bidirectional/BidirectionalMode";
 import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
 
 // ---------------------------------------------------------------------------
@@ -181,8 +181,6 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
     const [mailOriginal, setMailOriginal] = useState("");
     const [myReply, setMyReply] = useState("");
     const [task, setTask] = useState<AI_TASK>(AI_TASK.POLISH);
-    // 双向 ③ default task — mirrors Options › "Default enhance mode".
-    const [writingTask, setWritingTask] = useState<AI_TASK>(AI_TASK.POLISH);
     // Single-column translate target. Shares its config key with 双向's 对方语言.
     const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANGUAGE);
     // 双向 ② target = 我的语言. Its own config key (AI_MY_LANGUAGE) that
@@ -217,12 +215,14 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
             slots.reset("mailTranslation");
             slots.reset("replyRewrite");
             slots.reset("replyTranslation");
+            const seedText = seed.text || "";
             setOpen(true);
-            setInput(seed.text || "");
-            // The seed (the input box's current text) is a *draft reply*, so it
-            // lands in ③. ① stays empty for the incoming message to be pasted.
-            setMailOriginal("");
-            setMyReply(seed.text || "");
+            // The seed is incoming/context text. Single-column keeps it in
+            // `input`; bidirectional puts it in ① mailOriginal and leaves ③
+            // myReply empty so selected page text is never treated as a draft.
+            setInput(seedText);
+            setMailOriginal(seedText);
+            setMyReply("");
             if (seed.task) setTask(seed.task);
             targetRef.current = seed.targetEl ?? null;
             // Reset window state on every open (A/B): a fresh default size
@@ -267,7 +267,6 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                 setTranslateChoice(parseTranslateServiceKey(activeService));
                 setEnhanceProviderId(enabledAiProviders.find((p) => p.id === activeId)?.id || enabledAiProviders[0]?.id || "");
                 setTask(mode as AI_TASK);
-                setWritingTask(asWritingTask(mode));
             })();
         });
     }, [registerOpen, slots]);
@@ -658,7 +657,6 @@ function WorkbenchApp({ registerOpen }: { registerOpen: (fn: (s: WorkbenchSeed) 
                         myLang={myLang}
                         peerLang={targetLang}
                         targetEl={targetRef.current}
-                        defaultTask={writingTask}
                         mailOriginal={mailOriginal}
                         onMailOriginalChange={onChangeMailOriginal}
                         myReply={myReply}
