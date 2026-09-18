@@ -20,6 +20,9 @@ import type {
 import { configRepo } from "@/main/storage/configStore";
 import { hasPlaceholders, placeholdersPreserved, stripPlaceholders } from "@/main/builtinAi/placeholders";
 import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
+import { AI_MAX_INPUT_CHARS } from "@/main/aiLimits";
+
+export { AI_MAX_INPUT_CHARS } from "@/main/aiLimits";
 
 /**
  * Paragraph separator in page-translation prompts. The model is told to
@@ -45,8 +48,6 @@ export const SEPARATOR_TAG = "<sep/>";
  * the one place every AI path goes through; the throw is reported to the caller
  * as a stream error.
  */
-export const AI_MAX_INPUT_CHARS = 20_000;
-
 export function buildPrompt(req: AiStreamRequest): ChatMessage[] {
     const { task, payload } = req;
     const text = payload.text ?? "";

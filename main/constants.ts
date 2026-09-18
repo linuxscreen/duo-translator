@@ -472,7 +472,13 @@ export enum CONFIG_KEY {
     AI_PROVIDERS = 'aiProviders',
     AI_ACTIVE_PROVIDER_ID = 'aiActiveProviderId', //which AI provider Better-Writing uses.
     AI_TARGET_LANGUAGE = 'aiTargetLanguage',
-    // When true, the floating dot only mounts on domains explicitly added to
+    // 双向 workbench's 我的语言 (the side the user reads/writes in). Kept
+    // separate from CONFIG_KEY.TARGET_LANGUAGE so the page-translation target
+    // and the bidirectional pair never move each other. Empty/undefined means
+    // "follow the page translation target language" (TARGET_LANGUAGE), falling
+    // back to browserTargetLanguage() — same convention as
+    // VIDEO_SUBTITLE_TARGET_LANGUAGE.
+    AI_MY_LANGUAGE = 'aiMyLanguage',    // When true, the floating dot only mounts on domains explicitly added to
     // the enabled list (DomainStorage.aiWritingEnabled). When false (default),
     // it mounts everywhere except domains on the disabled list.
     AI_WRITING_WHITELIST_MODE = 'aiWritingWhitelistMode',
