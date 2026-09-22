@@ -62,6 +62,9 @@ jobs:
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
+    # The suite takes ~2 min; a hang (e.g. a web server that outlives the run)
+    # should fail fast instead of holding the runner for the 6 h default.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
