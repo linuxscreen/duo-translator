@@ -12,6 +12,7 @@ import { AI_TASK } from "@/main/constants";
 export type AiProviderType =
     | "openai"
     | "deepseek"
+    | "bailian"
     | "gemini"
     | "ollama"
     | "openrouter"
@@ -96,6 +97,20 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
         // The legacy `deepseek-chat` / `deepseek-reasoner` ids were retired on
         // 2026-07-24 — do not re-add them.
         models: ["deepseek-v4-flash", "deepseek-v4-pro"],
+    },
+    {
+        type: "bailian",
+        label: "阿里百炼",
+        defaultUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        requiresApiKey: true,
+        models: [
+            "qwen-mt-flash",
+            "qwen-mt-plus",
+            "qwen-mt-turbo",
+            "qwen-mt-lite",
+            "qwen-plus",
+            "qwen-flash",
+        ],
     },
     {
         type: "gemini",
@@ -203,6 +218,8 @@ export interface ChatMessage {
 }
 
 export interface ChatOptions {
+    task?: AI_TASK;
+    targetLang?: string;
     params?: any;
     temperature?: number;
     maxTokens?: number;
