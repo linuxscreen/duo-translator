@@ -20,6 +20,9 @@ import type {
 import { configRepo } from "@/main/storage/configStore";
 import { hasPlaceholders, placeholdersPreserved, stripPlaceholders } from "@/main/builtinAi/placeholders";
 import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
+import { AI_MAX_INPUT_CHARS } from "@/main/aiLimits";
+
+export { AI_MAX_INPUT_CHARS } from "@/main/aiLimits";
 
 /**
  * Paragraph separator in page-translation prompts. The model is told to
@@ -45,8 +48,6 @@ export const SEPARATOR_TAG = "<sep/>";
  * the one place every AI path goes through; the throw is reported to the caller
  * as a stream error.
  */
-export const AI_MAX_INPUT_CHARS = 20_000;
-
 export function buildPrompt(req: AiStreamRequest): ChatMessage[] {
     const { task, payload } = req;
     const text = payload.text ?? "";
@@ -86,6 +87,20 @@ export function buildPrompt(req: AiStreamRequest): ChatMessage[] {
                 { role: "system", content: "You are a writing assistant. Rewrite the user's text in a casual, conversational tone. Keep the original language. Output only the rewritten text, with no explanation, no quotes, no markdown." },
                 { role: "user", content: text },
             ];
+        case AI_TASK.EMAIL: {
+            const recipientSalutation = payload.recipientSalutation?.trim() || "";
+            const senderName = payload.senderName?.trim() || "";
+            return [
+                {
+                    role: "system",
+                    content: "You are a professional email writing assistant. Write a complete email in the same language as the user's draft. Use the provided recipient salutation verbatim as the first line. Put a natural opening greeting on the next line, then insert a blank line before the polished email body. After the body, insert a blank line, then a natural closing sentence. After the closing sentence, insert another blank line, then use the provided sender name verbatim as the final line. Never invent or alter either name. Do not translate. Do not add a subject line. Output only the complete email, with no explanation, no markdown, and no quotation marks.",
+                },
+                {
+                    role: "user",
+                    content: `RECIPIENT SALUTATION (use verbatim as the first line):\n${recipientSalutation}\n\nSENDER NAME (use verbatim as the final line):\n${senderName}\n\nDRAFT:\n${text}`,
+                },
+            ];
+        }
         case AI_TASK.CUSTOM:
             return [
                 { role: "system", content: payload.systemPrompt || "You are a writing assistant. Follow the user's instructions and reply with only the requested output." },
@@ -724,7 +739,14 @@ export const aiMessageHandlers: Record<string, MessageHandler> = {
             const { providerId, task, payload } = data as {
                 providerId?: string;
                 task: AI_TASK;
-                payload: { text: string; targetLang?: string; systemPrompt?: string; lang?: string };
+                payload: {
+                    text: string;
+                    targetLang?: string;
+                    systemPrompt?: string;
+                    lang?: string;
+                    recipientSalutation?: string;
+                    senderName?: string;
+                };
             };
             const provider = await resolveAiProviderOrThrow(providerId);
             const messages = buildPrompt({ task, providerId: provider.id, payload });

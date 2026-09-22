@@ -7,6 +7,7 @@ import {
   DB_ACTION,
   DEFAULT_VALUE,
   LANGUAGES,
+  browserTargetLanguage,
 } from '@/main/constants';
 import { getConfig, setConfig } from '@/utils/db';
 import { sendMessageToBackground } from '@/utils/message';
@@ -39,6 +40,7 @@ export function AiWritingPage() {
   const [ready, setReady] = useState(false);
   const [enabled, setEnabled] = useState<boolean>(true);
   const [targetLang, setTargetLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANGUAGE);
+  const [myLang, setMyLang] = useState<string>(DEFAULT_VALUE.AI_TARGET_LANGUAGE);
   const [defaultMode, setDefaultMode] = useState<string>(DEFAULT_VALUE.AI_DEFAULT_ENHANCE_MODE);
   const [providers, setProviders] = useState<AiProvider[]>([]);
   const [hasConfiguredProviders, setHasConfiguredProviders] = useState(false);
@@ -74,17 +76,26 @@ export function AiWritingPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [sw, lang, mode, activeId, transKey, wlMode] = await Promise.all([
+      const [sw, lang, mode, activeId, transKey, wlMode, pageLang, myLangRaw] = await Promise.all([
         getConfig(CONFIG_KEY.AI_WRITING_SWITCH),
         getConfig(CONFIG_KEY.AI_TARGET_LANGUAGE),
         getConfig(CONFIG_KEY.AI_DEFAULT_ENHANCE_MODE),
         getConfig(CONFIG_KEY.AI_ACTIVE_PROVIDER_ID),
         getConfig(CONFIG_KEY.AI_TRANSLATE_SERVICE),
         getConfig(CONFIG_KEY.AI_WRITING_WHITELIST_MODE),
+        getConfig(CONFIG_KEY.TARGET_LANGUAGE),
+        getConfig(CONFIG_KEY.AI_MY_LANGUAGE),
       ]);
       if (cancelled) return;
       setEnabled(sw === undefined ? true : !!sw);
       setTargetLang(lang || DEFAULT_VALUE.AI_TARGET_LANGUAGE);
+      // "我的语言" keeps its own key. Unset follows the page-translation
+      // target, then the browser UI language — same chain as video subtitles.
+      setMyLang(
+        (typeof myLangRaw === 'string' && myLangRaw ? myLangRaw : '') ||
+        (typeof pageLang === 'string' && pageLang ? pageLang : '') ||
+        browserTargetLanguage(),
+      );
       setDefaultMode(mode || DEFAULT_VALUE.AI_DEFAULT_ENHANCE_MODE);
       // Shared loader: enabled translators + enabled AI providers + the
       // resolved active translate service (falls back if the saved one is gone).
@@ -119,6 +130,12 @@ export function AiWritingPage() {
     setTargetLang(v);
     await setConfig(CONFIG_KEY.AI_TARGET_LANGUAGE, v);
   };
+  // 双向模式 · 我的语言 — its own key, independent from page translation.
+  // No CONFIG_CHANGED broadcast: nothing in the page-translation path reads it.
+  const changeMyLang = async (v: string) => {
+    setMyLang(v);
+    await setConfig(CONFIG_KEY.AI_MY_LANGUAGE, v);
+  };
   const changeDefaultMode = async (v: string) => {
     setDefaultMode(v);
     await setConfig(CONFIG_KEY.AI_DEFAULT_ENHANCE_MODE, v);
@@ -139,6 +156,67 @@ export function AiWritingPage() {
   if (!ready) {
     return <div className="h-60 rounded-xl border border-line bg-surface/60 backdrop-blur-sm" />;
   }
+
+  // Two service pickers, each rendered by more than one card. The bidirectional
+  // workbench needs *both* engines visible at once (A writes, B translates), and
+  // reused nodes keep every copy on the same state — so they can never disagree
+  // with each other or drift from the config keys they write.
+  const writingServicePicker = providers.length === 0 ? (
+    <div className="flex items-center justify-between gap-2 rounded-md border border-line bg-surface/60 px-2.5 py-1.5">
+      <span className="text-[12px] text-ink-soft">
+        {hasConfiguredProviders
+          ? t('aiNoProviderEnabled', 'No AI provider enabled')
+          : t('aiNoProviderConfigured', 'No AI provider configured')}
+      </span>
+      <button
+        type="button"
+        onClick={() => { window.location.hash = '#services'; }}
+        className="shrink-0 text-[12px] text-accent hover:underline"
+      >
+        {t('aiConfigure', 'Configure')}
+      </button>
+    </div>
+  ) : (
+    <Select
+      value={enhanceProviderId || activeProviderId || providers[0]?.id || ''}
+      onValueChange={(v) => void changeEnhanceProvider(v)}
+    >
+      <SelectTrigger className="min-w-[200px]">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {providers.map((p) => (
+          <SelectItem key={p.id} value={p.id}>
+            <span className="flex items-center gap-1">
+              {<ServiceMark id={p.type} />}
+              {p.getTitle()}
+            </span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+
+  const translateServicePicker = (
+    <Select
+      value={translateServiceKey}
+      onValueChange={(v) => void changeTranslateService(v)}
+    >
+      <SelectTrigger className="min-w-[200px]">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {serviceOptions.map((s) => (
+          <SelectItem key={s.value} value={s.value}>
+            <span className="flex items-center gap-1">
+              <ServiceMark id={s.iconId} />
+              {s.i18nKey ? t(s.i18nKey, s.label) : s.label}
+            </span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -161,43 +239,7 @@ export function AiWritingPage() {
 
         <SettingRow
           label={t('aiBetterWritingWith', 'Better writing with')}
-          control={
-            providers.length === 0 ? (
-              <div className="flex items-center justify-between gap-2 rounded-md border border-line bg-surface/60 px-2.5 py-1.5">
-                <span className="text-[12px] text-ink-soft">
-                  {hasConfiguredProviders
-                    ? t('aiNoProviderEnabled', 'No AI provider enabled')
-                    : t('aiNoProviderConfigured', 'No AI provider configured')}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => { window.location.hash = '#services'; }}
-                  className="shrink-0 text-[12px] text-accent hover:underline"
-                >
-                  {t('aiConfigure', 'Configure')}
-                </button>
-              </div>
-            ) : (
-              <Select
-                value={enhanceProviderId || activeProviderId || providers[0]?.id || ''}
-                onValueChange={(v) => void changeEnhanceProvider(v)}
-              >
-                <SelectTrigger className="min-w-[200px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {providers.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      <span className="flex items-center gap-1">
-                        {<ServiceMark id={p.type} />}
-                        {p.getTitle()}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )
-          }
+          control={writingServicePicker}
         />
 
         <SettingRow
@@ -240,21 +282,66 @@ export function AiWritingPage() {
 
         <SettingRow
           label={t('aiTranslateWith', 'Translate with')}
+          control={translateServicePicker}
+        />
+
+        <SettingRow
+          label={t('aiTargetLang', 'Translate to')}
+          hint={t('aiTargetLangHint', 'In bidirectional mode this is the recipient language')}
           control={
-            <Select
-              value={translateServiceKey}
-              onValueChange={(v) => void changeTranslateService(v)}
-            >
+            <Select value={targetLang} onValueChange={(v) => void changeTargetLang(v)}>
               <SelectTrigger className="min-w-[200px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {serviceOptions.map((s) => (
-                  <SelectItem key={s.value} value={s.value}>
-                    <span className="flex items-center gap-1">
-                      <ServiceMark id={s.iconId} />
-                      {s.i18nKey ? t(s.i18nKey, s.label) : s.label}
-                    </span>
+                {LANGUAGES.map((l) => (
+                  <SelectItem key={l.value} value={l.value}>
+                    {t(l.title, l.title)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          }
+        />
+      </div>
+
+      {/* Bidirectional workbench: which language you read the incoming message
+          in, and which language you write the reply in. 我的语言 has its own
+          key and only *reads* the page-translation target as a default, so the
+          two surfaces no longer change each other. */}
+      <div className="rounded-xl border border-line bg-surface/60 backdrop-blur-sm">
+        <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+          <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-mute">
+            {t('aiDualMode', 'Bidirectional mode')}
+          </span>
+        </div>
+
+        {/* The two engines the bidirectional workbench runs: A rewrites ③,
+            B translates ② / ④. Same keys as the cards above. */}
+        <SettingRow
+          label={t('aiBetterWritingWith', 'Better writing with')}
+          hint={t('aiWritingServiceHint', 'Used by the single column and by the reply pane')}
+          control={writingServicePicker}
+        />
+
+        <SettingRow
+          label={t('aiTranslateWith', 'Translate with')}
+          hint={t('aiTranslateServiceHint', 'Used by both translation panes')}
+          control={translateServicePicker}
+        />
+
+        <SettingRow
+          label={t('aiMyLanguage', 'My language')}
+          hint={t('aiMyLanguageHint', 'The language you read in — independent from page translation; leave empty to follow it')}
+          control={
+            <Select value={myLang} onValueChange={(v) => void changeMyLang(v)}>
+              <SelectTrigger className="min-w-[200px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LANGUAGES.map((l) => (
+                  <SelectItem key={l.value} value={l.value}>
+                    {t(l.title, l.title)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -263,7 +350,8 @@ export function AiWritingPage() {
         />
 
         <SettingRow
-          label={t('aiTargetLang', 'Translate to')}
+          label={t('aiPeerLanguage', 'Recipient language')}
+          hint={t('aiPeerLanguageHint', 'The language your reply is translated into')}
           control={
             <Select value={targetLang} onValueChange={(v) => void changeTargetLang(v)}>
               <SelectTrigger className="min-w-[200px]">

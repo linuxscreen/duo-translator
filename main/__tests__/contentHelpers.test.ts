@@ -5,11 +5,17 @@
 // All DOM-free, so they run in the default node environment.
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 
-// effectiveFontColor does a contrast calc; stub it to identity so the CSS
-// builder output is deterministic and we test *its* assembly logic, not colors.
-vi.mock("@/utils/color", () => ({
-    effectiveFontColor: (_bg: string, font: string) => font,
-}));
+// Partial mock: only effectiveFontColor (which does a contrast calc) is stubbed
+// to identity, so the CSS builder output is deterministic and we test *its*
+// assembly logic rather than colors. Everything else — withAlpha / clampOpacity
+// — stays real, so the alpha tests below exercise the shipping implementation.
+vi.mock("@/utils/color", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/utils/color")>();
+    return {
+        ...actual,
+        effectiveFontColor: (_bg: string, font: string) => font,
+    };
+});
 vi.mock("franc", () => ({ franc: vi.fn() }));
 vi.mock("@/utils/language", () => ({ isTraditionalChinese: vi.fn(() => false) }));
 
@@ -250,21 +256,29 @@ describe("buildTranslationCss", () => {
 describe("styleColorFields", () => {
     it("leads with the border color for the styles that are about an edge", () => {
         for (const style of ["solidBorder", "dashedBorder", "underLine", "wavyLine"]) {
-            expect(styleColorFields(style)).toEqual(["border", "bg", "font"]);
+            expect(styleColorFields(style)).toEqual(["border", "bg", "bgOpacity", "font"]);
         }
     });
 
-    it("keeps background + font for none", () => {
-        expect(styleColorFields(STYLE_NONE)).toEqual(["bg", "font"]);
+    it("keeps background + opacity + font for none", () => {
+        expect(styleColorFields(STYLE_NONE)).toEqual(["bg", "bgOpacity", "font"]);
         // Unwritten config reads as "", which must behave as none rather than
         // falling through to the border default.
-        expect(styleColorFields("")).toEqual(["bg", "font"]);
+        expect(styleColorFields("")).toEqual(["bg", "bgOpacity", "font"]);
     });
 
     it("offers only what each enhance style can use", () => {
         expect(styleColorFields(STYLE_DIM)).toEqual(["font"]);
         expect(styleColorFields(STYLE_BLUR)).toEqual(["font"]);
         expect(styleColorFields(STYLE_QUOTE)).toEqual(["font", "quoteBorder"]);
+    });
+
+    it("offers the opacity control exactly where it offers a background", () => {
+        // An alpha with no fill to apply it to would be a dead control.
+        for (const style of [STYLE_NONE, "", "solidBorder", "underLine", "quoteBar", STYLE_DIM, STYLE_QUOTE]) {
+            expect(styleColorFields(style).includes("bgOpacity"))
+                .toBe(styleColorFields(style).includes("bg"));
+        }
     });
 });
 

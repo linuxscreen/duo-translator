@@ -2,7 +2,7 @@
 // Extracted from main/content.ts so the string logic is unit-testable in
 // isolation (no DOM, no config). content.ts reads config and feeds the values
 // in via buildTranslationCss().
-import { effectiveFontColor } from "@/utils/color";
+import { effectiveFontColor, withAlpha } from "@/utils/color";
 import {
     BLUR_RADIUS_PX,
     DIM_OPACITY,
@@ -17,6 +17,12 @@ import { HIGHLIGHT_ORIGINAL, HIGHLIGHT_TRANSLATION } from "@/main/dom/sentenceHi
 
 export interface TranslationCssOptions {
     bgColor: string;
+    /**
+     * Alpha (0–1) of the translation's background fill. Omitted or 1 emits
+     * `bgColor` verbatim; anything lower emits `rgba(...)`, so the page can show
+     * through the box.
+     */
+    bgOpacity?: number;
     fontColor: string;
     borderStyle: string;
     borderColor: string;
@@ -186,7 +192,11 @@ export function buildTranslationCss(opts: TranslationCssOptions): string {
     // pickers — one definition, so no color is offered that never lands, and
     // none lands that cannot be changed).
     const bgColor = styleUsesBackground(opts.borderStyle) ? opts.bgColor : "";
-    if (bgColor) translationDecls.push(`background-color: ${bgColor};`);
+    // The fill may be translucent, but the font-nudge comparison below stays on
+    // the authored color: withAlpha only formats the declaration, so
+    // "font === background" keeps resolving to a distinguishable pair no matter
+    // what the alpha is.
+    if (bgColor) translationDecls.push(`background-color: ${withAlpha(bgColor, opts.bgOpacity)};`);
     // Nudge the font to a near-color only when it exactly matches the bg, so
     // identical bg+font text stays visible (config is untouched).
     const translationFont = effectiveFontColor(bgColor, opts.fontColor);

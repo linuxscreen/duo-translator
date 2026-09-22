@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import { STYLE_BLUR, STYLE_DIM, STYLE_NONE, STYLE_QUOTE } from '@/main/constants';
-import { effectiveFontColor } from '@/utils/color';
+import { effectiveFontColor, withAlpha } from '@/utils/color';
 
 // ─── Enhance styles ─────────────────────────────────────────────────────────
 // The numbers live here rather than in main/css.ts so the Options preview and
@@ -16,21 +16,23 @@ export const QUOTE_BAR_GAP = '0.6em';
 export const QUOTE_BAR_DEFAULT_COLOR = 'currentColor';
 
 /**
- * Which color pickers a style actually uses, in the order they should be shown.
+ * Which controls a style actually uses, in the order they should be shown.
  *
  * This is the single definition of that mapping — Options renders its rows from
- * it and main/css.ts gates its declarations on it, so a picker is never offered
- * for a color the page will ignore (nor a color silently applied with no way to
- * change it).
+ * it and main/css.ts gates its declarations on it, so a control is never offered
+ * for something the page will ignore (nor applied with no way to change it).
  *
- * - `none`: background + font, as before.
+ * - `none`: background + its opacity + font, as before.
  * - border / underline styles: the border color leads, since it is what the
- *   style is *about*; background + font follow.
+ *   style is *about*; background + opacity + font follow.
  * - `dim` / `blur`: font only — both work by attenuating the whole paragraph,
  *   and a background fill would defeat that.
  * - `quote`: font + the bar's own color (`quoteBorder`, its own config key).
+ *
+ * `bgOpacity` is not a color, but it rides the same gate as `bg`: an alpha is
+ * meaningless without a fill to apply it to.
  */
-export type StyleColorField = 'border' | 'bg' | 'font' | 'quoteBorder';
+export type StyleColorField = 'border' | 'bg' | 'bgOpacity' | 'font' | 'quoteBorder';
 
 export function styleColorFields(style: string): StyleColorField[] {
   switch (style) {
@@ -41,9 +43,9 @@ export function styleColorFields(style: string): StyleColorField[] {
       return ['font', 'quoteBorder'];
     case STYLE_NONE:
     case '':
-      return ['bg', 'font'];
+      return ['bg', 'bgOpacity', 'font'];
     default:
-      return ['border', 'bg', 'font'];
+      return ['border', 'bg', 'bgOpacity', 'font'];
   }
 }
 
@@ -73,6 +75,8 @@ export const HIGHLIGHT_BORDER_LINE_STYLE: Record<string, string> = {
 export function buildStylePreview(opts: {
   style: string;
   bgColor?: string;
+  /** 0–1 alpha for the fill; omitted means fully opaque. */
+  bgOpacity?: number;
   fontColor?: string;
   borderColor?: string;
   quoteBorderColor?: string;
@@ -83,8 +87,10 @@ export function buildStylePreview(opts: {
   // A style that ignores the background must ignore it here too, or the preview
   // shows a fill the page will never paint.
   const bgColor = styleUsesBackground(opts.style) ? opts.bgColor : '';
-  if (bgColor) css.backgroundColor = bgColor;
+  if (bgColor) css.backgroundColor = withAlpha(bgColor, opts.bgOpacity);
   // Mirror the live page: nudge font to a near-color when it equals the bg.
+  // Compared against the *authored* color, exactly as main/css.ts does, so the
+  // nudge still triggers when the fill is translucent.
   const fontColor = effectiveFontColor(bgColor, opts.fontColor);
   if (fontColor) css.color = fontColor;
   const highlightLine = opts.forHighlight ? HIGHLIGHT_BORDER_LINE_STYLE[opts.style] : undefined;

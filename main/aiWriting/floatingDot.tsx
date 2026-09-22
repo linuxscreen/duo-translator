@@ -1156,6 +1156,7 @@ function labelForTask(task: AI_TASK): string | undefined {
         case AI_TASK.POLISH: return t("aiPolish", "Polish");
         case AI_TASK.FORMAL: return t("aiFormal", "Formal");
         case AI_TASK.CASUAL: return t("aiCasual", "Casual");
+        case AI_TASK.EMAIL: return t("aiEmailGenerate", "Email");
         case AI_TASK.CUSTOM: return t("aiBetterWriting", "Custom");
     }
 }

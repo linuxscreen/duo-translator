@@ -94,6 +94,33 @@ export function colorsEqual(a: string | undefined, b: string | undefined): boole
 }
 
 /**
+ * Clamp an opacity to 0–1. Returns null when the value isn't a usable number —
+ * callers treat that as "not configured" rather than as 1, so a garbage stored
+ * value falls back to the caller's own default instead of silently becoming
+ * fully transparent.
+ */
+export function clampOpacity(opacity: number | undefined): number | null {
+    if (typeof opacity !== "number" || !Number.isFinite(opacity)) return null;
+    return Math.max(0, Math.min(1, Math.round(opacity * 1000) / 1000));
+}
+
+/**
+ * Render `color` with an alpha channel: `rgba(...)` when the color parses and
+ * `opacity` is below 1, otherwise the color untouched.
+ *
+ * Returning the input verbatim in the opaque case is deliberate — the
+ * stylesheet keeps exactly the string the user picked (`#fff` stays `#fff`),
+ * and every caller that has no notion of opacity keeps its existing output.
+ */
+export function withAlpha(color: string, opacity: number | undefined): string {
+    const alpha = clampOpacity(opacity);
+    if (alpha === null || alpha >= 1) return color;
+    const c = parseHexColor(color);
+    if (!c) return color;
+    return `rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})`;
+}
+
+/**
  * Fixed blend amount toward black/white used by `distinguishableFontColor`.
  * 0.5 keeps the result in the same hue family yet clearly different in
  * lightness — close but legible.
