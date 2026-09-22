@@ -17,6 +17,8 @@ import type {
     ChatMessage,
     ChatOptions,
 } from "@/main/aiProvider";
+import { applyTemplate, assertAiInputLength, sseFrames, withNonStreamSlot } from "@/main/aiServiceShared";
+import { isQwenMt, qwenMtChatComplete, qwenMtChatStream, qwenMtPageTranslate } from "@/main/qwenMtService";
 import { configRepo } from "@/main/storage/configStore";
 import { hasPlaceholders, placeholdersPreserved, stripPlaceholders } from "@/main/builtinAi/placeholders";
 import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
@@ -33,28 +35,12 @@ export const SEPARATOR_TAG = "<sep/>";
 // Prompt building
 // ---------------------------------------------------------------------------
 
-/**
- * Hard ceiling on the text of one AI request.
- *
- * A backstop against runaway PROGRAMMATIC input, not a user-facing limit: it
- * sits well above any plausible hand-written selection, but below the point
- * where a request costs real money and stalls for a minute. Features that feed
- * generated text to a provider (subtitle segmentation, page translation) must
- * chunk to their own, much tighter budget — the video subtitle segmenter once
- * shipped whole transcripts this way. Enforced here because `buildPrompt` is
- * the one place every AI path goes through; the throw is reported to the caller
- * as a stream error.
- */
-export const AI_MAX_INPUT_CHARS = 20_000;
+export { AI_MAX_INPUT_CHARS } from "@/main/aiServiceShared";
 
 export function buildPrompt(req: AiStreamRequest): ChatMessage[] {
     const { task, payload } = req;
     const text = payload.text ?? "";
-    if (text.length > AI_MAX_INPUT_CHARS) {
-        throw new Error(
-            `Text too long for one AI request (${text.length} chars, limit ${AI_MAX_INPUT_CHARS}). Split it into smaller pieces.`,
-        );
-    }
+    assertAiInputLength(text);
     switch (task) {
         case AI_TASK.TRANSLATE: {
             const lang = LANGUAGES_MAP.get(payload.targetLang || DEFAULT_VALUE.AI_TARGET_LANGUAGE)?.name;
@@ -110,22 +96,24 @@ export function buildPrompt(req: AiStreamRequest): ChatMessage[] {
 // Streaming clients — background-only (CORS, API-key isolation)
 // ---------------------------------------------------------------------------
 
-function applyTemplate(url: string, vars: { model: string; key: string }): string {
-    return url
-        .replace(/\{model\}/g, encodeURIComponent(vars.model))
-        .replace(/\{key\}/g, encodeURIComponent(vars.key));
+function getAiProtocol(provider: AiProvider): AiProvider["type"] | "qwen-mt" {
+    if (provider.type === "gemini" || provider.type === "claude") return provider.type;
+    return isQwenMt(provider) ? "qwen-mt" : provider.type;
 }
 
 /**
  * Dispatch a chat-completion stream to the right protocol adapter based on
- * `provider.type`. Yields plain text deltas in document order.
+ * the configured provider and model. Yields plain text deltas in document order.
  */
 export async function* chatStream(
     provider: AiProvider,
     messages: ChatMessage[],
     opts: ChatOptions = {},
 ): AsyncGenerator<string, void, void> {
-    switch (provider.type) {
+    switch (getAiProtocol(provider)) {
+        case "qwen-mt":
+            yield* qwenMtChatStream(provider, messages, opts);
+            return;
         case "gemini":
             yield* geminiChatStream(provider, messages, opts);
             return;
@@ -136,41 +124,6 @@ export async function* chatStream(
         default:
             yield* openAiChatStream(provider, messages, opts);
             return;
-    }
-}
-
-// SSE frame parser shared by OpenAI/Gemini. Yields the `data:` payload of
-// each complete frame (frames separated by blank lines).
-async function* sseFrames(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
-    const reader = body.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let buf = "";
-    try {
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buf += decoder.decode(value, { stream: true });
-            let sep: number;
-            while ((sep = buf.indexOf("\n\n")) !== -1) {
-                const frame = buf.slice(0, sep);
-                buf = buf.slice(sep + 2);
-                // Concatenate multi-line `data:` payloads per SSE spec.
-                let data = "";
-                for (const rawLine of frame.split("\n")) {
-                    const line = rawLine.trim();
-                    if (!line || !line.startsWith("data:")) continue;
-                    data += (data ? "\n" : "") + line.slice(5).trim();
-                }
-                if (data) yield data;
-            }
-        }
-    } finally {
-        // Consumers may stop early — AI_PROVIDER_TEST breaks out after ~32
-        // chars, and any aborted stream closes the generator mid-iteration.
-        // Without cancelling, the upstream response body stays open.
-        // Fire-and-forget: cancel() on an already-closed reader can reject, and
-        // this must never block the generator's teardown.
-        void reader.cancel().catch(() => { });
     }
 }
 
@@ -349,48 +302,20 @@ export async function* claudeChatStream(
 // batch JSON translation). Mirrors the chatStream adapters per provider type.
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Global concurrency limiter for non-streaming requests. Every call to
-// chatCompleteNonStream goes through this semaphore, so no matter how many
-// callers fire at once (multiple page-translate batches, other features...),
-// at most NON_STREAM_MAX_CONCURRENCY upstream requests are in flight. This is
-// the single chokepoint where the rate limit actually takes effect.
-// ---------------------------------------------------------------------------
-const NON_STREAM_MAX_CONCURRENCY = 5;
-let nonStreamActive = 0;
-const nonStreamWaiters: (() => void)[] = [];
-
-function acquireNonStreamSlot(): Promise<void> {
-    if (nonStreamActive < NON_STREAM_MAX_CONCURRENCY) {
-        nonStreamActive++;
-        return Promise.resolve();
-    }
-    return new Promise<void>((resolve) => nonStreamWaiters.push(resolve));
-}
-
-function releaseNonStreamSlot(): void {
-    const next = nonStreamWaiters.shift();
-    if (next) {
-        // Hand the slot straight to the next waiter — active count stays put.
-        next();
-    } else {
-        nonStreamActive--;
-    }
-}
-
 /**
  * Dispatch a non-streaming chat completion to the right protocol adapter based
- * on `provider.type`. Returns the full response text. Calls are globally rate
- * limited to NON_STREAM_MAX_CONCURRENCY concurrent upstream requests.
+ * on the configured provider and model. Returns the full response text while
+ * sharing the global concurrency limit with page translation.
  */
 export async function chatCompleteNonStream(
     provider: AiProvider,
     messages: ChatMessage[],
     opts: ChatOptions = {},
 ): Promise<string> {
-    await acquireNonStreamSlot();
-    try {
-        switch (provider.type) {
+    return withNonStreamSlot(async () => {
+        switch (getAiProtocol(provider)) {
+            case "qwen-mt":
+                return await qwenMtChatComplete(provider, messages, opts);
             case "gemini":
                 return await geminiChatComplete(provider, messages, opts);
             case "claude":
@@ -399,9 +324,7 @@ export async function chatCompleteNonStream(
             default:
                 return await openAiChatComplete(provider, messages, opts);
         }
-    } finally {
-        releaseNonStreamSlot();
-    }
+    });
 }
 
 export async function openAiChatComplete(
@@ -602,6 +525,9 @@ export async function aiPageTranslate(
     signal?: AbortSignal,
 ): Promise<string[]> {
     const provider = await resolveAiProviderOrThrow(providerId);
+    if (getAiProtocol(provider) === "qwen-mt") {
+        return qwenMtPageTranslate(provider, texts, targetLang, signal);
+    }
 
     let temperature = 0; // todo support use defined temperature
     const params = providerTaskParams(provider); // todo support use defined params
@@ -707,7 +633,7 @@ export const aiMessageHandlers: Record<string, MessageHandler> = {
                     { role: "system", content: "Reply with exactly: ok" },
                     { role: "user", content: "ping" },
                 ],
-                { maxTokens: 16 },
+                { maxTokens: 16, task: AI_TASK.TRANSLATE, targetLang: "en" },
             );
             let collected = "";
             for await (const delta of gen) {
@@ -732,6 +658,8 @@ export const aiMessageHandlers: Record<string, MessageHandler> = {
                 temperature: 0,
                 signal,
                 params: providerTaskParams(provider),
+                task,
+                targetLang: payload.targetLang,
             });
             return { text };
         },
@@ -771,7 +699,9 @@ export function registerAiBridge(): void {
                     return;
                 }
                 const messages = buildPrompt(req);
-                const gen = chatStream(provider, messages, { signal: controller.signal });
+                const gen = chatStream(provider, messages, {
+                    signal: controller.signal, task: req.task, targetLang: req.payload.targetLang,
+                });
                 for await (const delta of gen) {
                     if (disposed) return;
                     send({ type: "delta", text: delta });

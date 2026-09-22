@@ -203,6 +203,8 @@ export interface ChatMessage {
 }
 
 export interface ChatOptions {
+    task?: AI_TASK;
+    targetLang?: string;
     params?: any;
     temperature?: number;
     maxTokens?: number;
