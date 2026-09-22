@@ -6,6 +6,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Static file server root for the local fixture pages.
 const FIXTURE_DIR = resolve(__dirname, 'fixtures/pages');
+// Launched with node directly, NOT through `pnpm exec`. Playwright stops the
+// web server by SIGKILLing its process group and then waits for the stdio pipes
+// to close. Since pnpm 11.27.1, `pnpm exec` puts the command in a process group
+// of its own (to forward signals itself), so the kill only reaches pnpm: the
+// orphaned http-server keeps the pipes open and the run hangs forever after the
+// last test passes.
+const HTTP_SERVER_BIN = resolve(__dirname, '../node_modules/http-server/bin/http-server');
 export const FIXTURE_PORT = 5566;
 export const FIXTURE_ORIGIN = `http://localhost:${FIXTURE_PORT}`;
 
@@ -34,7 +41,7 @@ export default defineConfig({
     // Serve the fixture HTML pages over http so the content script injects with
     // a real http(s) origin (matches `https://*/*` / `http://*/*`).
     webServer: {
-        command: `pnpm exec http-server "${FIXTURE_DIR}" -p ${FIXTURE_PORT} -c-1 --silent`,
+        command: `"${process.execPath}" "${HTTP_SERVER_BIN}" "${FIXTURE_DIR}" -p ${FIXTURE_PORT} -c-1 --silent`,
         url: FIXTURE_ORIGIN,
         reuseExistingServer: !process.env.CI,
         timeout: 30_000,
