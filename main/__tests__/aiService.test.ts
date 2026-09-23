@@ -16,7 +16,7 @@ import { AiProvider, normalizeProvider } from "@/main/aiProvider";
 import { ACTION, AI_TASK, CONFIG_KEY } from "@/main/constants";
 import { AI_MAX_INPUT_CHARS, aiMessageHandlers, aiPageTranslate, buildPrompt, chatCompleteNonStream, chatStream } from "@/main/aiService";
 
-const provider = new AiProvider("mt", "bailian", "阿里百炼", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "test-key", "qwen-mt-plus");
+const provider = new AiProvider("mt", "bailian", "Alibaba Cloud Model Studio", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "test-key", "qwen-mt-plus");
 const fetchMock = vi.fn();
 const options = { task: AI_TASK.TRANSLATE, targetLang: "zh-CN" };
 const messages = buildPrompt({ task: AI_TASK.TRANSLATE, payload: { text: "Hello", targetLang: "zh-CN" } });

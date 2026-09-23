@@ -100,7 +100,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     },
     {
         type: "bailian",
-        label: "阿里百炼",
+        label: "Alibaba Cloud Model Studio",
         defaultUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
         requiresApiKey: true,
         models: [
