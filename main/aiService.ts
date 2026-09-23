@@ -18,7 +18,7 @@ import type {
     ChatOptions,
 } from "@/main/aiProvider";
 import { applyTemplate, assertAiInputLength, sseFrames, withNonStreamSlot } from "@/main/aiServiceShared";
-import { isQwenMt, qwenMtChatComplete, qwenMtChatStream, qwenMtPageTranslate } from "@/main/qwenMtService";
+import { isQwenMt, qwenMtChatComplete, qwenMtChatStream } from "@/main/qwenMtService";
 import { configRepo } from "@/main/storage/configStore";
 import { hasPlaceholders, placeholdersPreserved, stripPlaceholders } from "@/main/builtinAi/placeholders";
 import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
@@ -524,9 +524,7 @@ export async function aiPageTranslate(
     signal?: AbortSignal,
 ): Promise<string[]> {
     const provider = await resolveAiProviderOrThrow(providerId);
-    if (getAiProtocol(provider) === "qwen-mt") {
-        return qwenMtPageTranslate(provider, texts, targetLang, signal);
-    }
+    const qwenMt = getAiProtocol(provider) === "qwen-mt";
 
     let temperature = 0; // todo support use defined temperature
     const params = providerTaskParams(provider); // todo support use defined params
@@ -562,6 +560,10 @@ export async function aiPageTranslate(
 
     // Translate one batch and write its results back at the right offset.
     const runBatch = async (batch: { start: number; texts: string[] }) => {
+        if (qwenMt && batch.texts.every((text) => !text.trim())) {
+            batch.texts.forEach((text, index) => { results[batch.start + index] = text; });
+            return;
+        }
         // Neutralize a literal separator inside a segment: it would otherwise
         // be indistinguishable from OUR protocol marker and misalign the split
         // below. The escaped form renders the same in practice.
@@ -576,20 +578,30 @@ export async function aiPageTranslate(
         // Non-streaming: the upstream request is sent with stream:false (see
         // chatCompleteNonStream) — page translation wants the full result in
         // one response, not an SSE stream.
-        const full = await chatCompleteNonStream(provider, messages, { temperature, signal, params });
+        const full = await chatCompleteNonStream(provider, messages, {
+            temperature, signal, params,
+            ...(qwenMt ? { task: AI_TASK.PAGE_TRANSLATE, targetLang } : {}),
+        });
         // Split on the separator but KEEP interior empties. Filtering every
         // empty (the old behavior) shifted all translations after an empty one
         // up by a position — one dropped segment mis-translated the rest of
         // the batch onto the wrong paragraphs. Only leading/trailing empties
         // (model chatter around the payload, trailing separator) are trimmed.
         const parts = full.split(SEPARATOR_TAG);
-        while (parts.length > 0 && parts[0].trim() === "") parts.shift();
-        while (parts.length > 0 && parts[parts.length - 1].trim() === "") parts.pop();
+        if (!qwenMt) {
+            while (parts.length > 0 && parts[0].trim() === "") parts.shift();
+            while (parts.length > 0 && parts[parts.length - 1].trim() === "") parts.pop();
+        }
+
+        // Qwen-MT receives source text only, so reject lost boundaries before mapping translations to the page.
+        if (qwenMt && full.trim() && parts.length !== batch.texts.length) {
+            throw new Error("Qwen-MT returned a mismatched translation batch");
+        }
 
         for (let i = 0; i < batch.texts.length; i++) {
-            const out = parts[i];
+            const out = qwenMt ? parts[i]?.split("<sep\\/>").join(SEPARATOR_TAG) : parts[i];
             let value = batch.texts[i];
-            if (out !== undefined && out.trim() !== "") {
+            if (out !== undefined && out.trim() !== "" && (!qwenMt || batch.texts[i].trim())) {
                 // <bN> round-trip check, same multiset signature the built-in
                 // AI uses: a model that dropped or fabricated tags would
                 // scatter text into the wrong inline elements on write-back.

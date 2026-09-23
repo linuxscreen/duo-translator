@@ -1,7 +1,6 @@
 import type { AiProvider, ChatMessage, ChatOptions } from "@/main/aiProvider";
 import { AI_TASK, DEFAULT_VALUE, LANGUAGES_MAP } from "@/main/constants";
-import { applyTemplate, assertAiInputLength, sseFrames, withNonStreamSlot } from "@/main/aiServiceShared";
-import { hasPlaceholders, placeholdersPreserved, stripPlaceholders } from "@/main/builtinAi/placeholders";
+import { applyTemplate, assertAiInputLength, sseFrames } from "@/main/aiServiceShared";
 
 export function isQwenMt(provider: AiProvider): boolean {
     return provider.type === "bailian" && /^qwen-mt-(plus|turbo|flash|lite)(?:$|-)/i.test(provider.model);
@@ -75,25 +74,4 @@ export async function* qwenMtChatStream(provider: AiProvider, messages: ChatMess
         previous = content;
         if (delta) yield delta;
     }
-}
-
-/** Translates paragraphs independently because Qwen-MT cannot follow separator instructions. */
-export async function qwenMtPageTranslate(
-    provider: AiProvider,
-    texts: string[],
-    targetLang: string,
-    signal?: AbortSignal,
-): Promise<string[]> {
-    return Promise.all((texts ?? []).map(async (text) => {
-        if (!text.trim()) return text;
-        const output = await withNonStreamSlot(() => qwenMtChatComplete(
-            provider,
-            [{ role: "user", content: text }],
-            { task: AI_TASK.PAGE_TRANSLATE, targetLang, temperature: 0, signal },
-        ));
-        if (!output.trim()) return text;
-        return hasPlaceholders(text) && !placeholdersPreserved(text, output)
-            ? stripPlaceholders(output)
-            : output;
-    }));
 }

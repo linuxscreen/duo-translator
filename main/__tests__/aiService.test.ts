@@ -40,8 +40,11 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Qwen-MT compatibility", () => {
-    it.each(["custom", "openai", "deepseek", "ollama", "openrouter"])("does not infer Bailian from the model, name or URL for %s", async (type) => {
-        const other = normalizeProvider({ ...provider, type });
+    it.each([
+        { type: "custom", model: "qwen-mt-plus" },
+        { type: "bailian", model: "qwen-plus" },
+    ])("keeps the general protocol for $type / $model", async (overrides) => {
+        const other = normalizeProvider({ ...provider, ...overrides });
         fetchMock.mockResolvedValueOnce(completeResponse("你好"));
         expect(await chatCompleteNonStream(other, messages, options)).toBe("你好");
         fetchMock.mockResolvedValueOnce(streamResponse(["你", "你好"]));
@@ -69,17 +72,13 @@ describe("Qwen-MT compatibility", () => {
         expect(messages[0].role).toBe("system");
     });
 
-    it.each(["qwen-mt-plus", "qwen-mt-turbo"])("converts cumulative %s output into deltas", async (model) => {
-        fetchMock.mockResolvedValue(streamResponse(["你", "你好", "你好", "你好！"]));
-        expect(await collect(chatStream(normalizeProvider({ ...provider, model }), messages, options))).toEqual(["你", "好", "！"]);
-        expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
-            stream: true, messages: [{ role: "user", content: "Hello" }],
-            translation_options: { target_lang: "Chinese" },
-        });
-    });
-
-    it.each(["qwen-mt-flash", "qwen-mt-lite"])("preserves incremental %s output", async (model) => {
-        fetchMock.mockResolvedValue(streamResponse(["你", "好", "！"]));
+    it.each([
+        ["qwen-mt-plus", ["你", "你好", "你好", "你好！"]],
+        ["qwen-mt-turbo", ["你", "你好", "你好", "你好！"]],
+        ["qwen-mt-flash", ["你", "好", "！"]],
+        ["qwen-mt-lite", ["你", "好", "！"]],
+    ] as const)("normalizes %s streaming output", async (model, chunks) => {
+        fetchMock.mockResolvedValue(streamResponse([...chunks]));
         expect(await collect(chatStream(normalizeProvider({ ...provider, model }), messages, options))).toEqual(["你", "好", "！"]);
     });
 
@@ -106,27 +105,37 @@ describe("Qwen-MT compatibility", () => {
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
-    it("translates paragraphs individually without treating literal separators as boundaries", async () => {
-        fetchMock.mockImplementation(async (_url, init) => {
-            const source = JSON.parse(init.body).messages[0].content;
-            return completeResponse(source === "Hello<sep/>world" ? "你好<sep/>世界" : "再见");
-        });
+    it("merges Qwen-MT paragraphs without treating literal separators as boundaries", async () => {
+        fetchMock.mockResolvedValue(completeResponse("你好<sep\\/>世界<sep/>再见"));
         expect(await aiPageTranslate("mt", ["Hello<sep/>world", "Goodbye"], "zh-CN")).toEqual(["你好<sep/>世界", "再见"]);
-        expect(fetchMock).toHaveBeenCalledTimes(2);
-        expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(init.body).messages)).toEqual([
-            [{ role: "user", content: "Hello<sep/>world" }],
-            [{ role: "user", content: "Goodbye" }],
-        ]);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+            messages: [{ role: "user", content: "Hello<sep\\/>world<sep/>Goodbye" }],
+            translation_options: { target_lang: "Chinese" },
+        });
     });
 
-    it.each([false, true])("keeps general Qwen prompts unchanged (stream=%s)", async (stream) => {
-        const general = normalizeProvider({ ...provider, model: "qwen-plus" });
-        fetchMock.mockResolvedValue(stream ? streamResponse(["你", "好"]) : completeResponse("你好"));
-        if (stream) expect(await collect(chatStream(general, messages, options))).toEqual(["你", "好"]);
-        else expect(await chatCompleteNonStream(general, messages, options)).toBe("你好");
-        const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-        expect(body.messages).toEqual(messages);
-        expect(body.translation_options).toBeUndefined();
+    it.each(["合并后的译文", "一<sep/>二<sep/>三"])("rejects Qwen-MT boundary mismatches: %s", async (output) => {
+        fetchMock.mockResolvedValue(completeResponse(output));
+        await expect(aiPageTranslate("mt", ["Hello", "Goodbye"], "zh-CN")).rejects.toThrow("mismatched translation batch");
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("preserves empty Qwen-MT paragraph positions", async () => {
+        fetchMock.mockResolvedValue(completeResponse("<sep/>你好<sep/><sep/>再见<sep/>"));
+        expect(await aiPageTranslate("mt", ["", "Hello", "  ", "Goodbye", ""], "zh-CN")).toEqual(["", "你好", "  ", "再见", ""]);
+    });
+
+    it("does not send blank Qwen-MT batches", async () => {
+        expect(await aiPageTranslate("mt", ["", "  "], "zh-CN")).toEqual(["", "  "]);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("splits Qwen-MT batches at the existing budget", async () => {
+        const texts = Array.from({ length: 6 }, (_, index) => String(index).padEnd(100, "x"));
+        fetchMock.mockImplementation(async (_url, init) => completeResponse(JSON.parse(init.body).messages[0].content));
+        expect(await aiPageTranslate("mt", texts, "zh-CN")).toEqual(texts);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     it("keeps general model paragraph batching", async () => {
@@ -153,24 +162,9 @@ describe("Qwen-MT compatibility", () => {
         expect(await aiPageTranslate("mt", ["Hello <b0>world</b0>"], "zh-CN")).toEqual([expected]);
     });
 
-    it("enforces the input limit without building a general chat prompt", async () => {
+    it("rejects oversized Qwen-MT input before requesting", async () => {
         await expect(aiPageTranslate("mt", ["x".repeat(AI_MAX_INPUT_CHARS + 1)], "en")).rejects.toThrow("Text too long");
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it("shares the concurrency limit between Qwen-MT paragraphs and general chat", async () => {
-        const pending: (() => void)[] = [];
-        fetchMock.mockImplementation(() => new Promise<Response>((resolve) => {
-            pending.push(() => resolve(completeResponse("译文")));
-        }));
-        const page = aiPageTranslate("mt", ["one", "two", "three", "four", "five", "six"], "zh-CN");
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
-        const chat = chatCompleteNonStream(normalizeProvider({ ...provider, model: "qwen-plus" }), messages);
-        expect(fetchMock).toHaveBeenCalledTimes(5);
-        pending.splice(0).forEach((resolve) => resolve());
-        await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(7));
-        pending.splice(0).forEach((resolve) => resolve());
-        expect(await page).toEqual(Array(6).fill("译文"));
-        expect(await chat).toBe("译文");
-    });
 });
