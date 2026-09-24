@@ -151,6 +151,41 @@ function computedDisplay(el: HTMLElement): string | undefined {
 }
 
 /**
+ * A `<script>` that a widget has turned into a rendering container: it holds
+ * element children and CSS made it render (`display: contents` in practice).
+ *
+ * OpenWeb (Spot.IM) comments do exactly this — the loader mounts the whole
+ * widget, shadow hosts included, inside its own `<script data-spotim-module>`
+ * tag. Treating the tag as just another excluded element hides everything the
+ * user reads there: the marking scan never visits the subtree, so the shadow
+ * roots under it are never even discovered.
+ *
+ * The script's own text is still never translated — only its element children
+ * are descended into, each as a container of its own. Both conditions are
+ * needed: an ordinary script has no element children (the parser keeps its
+ * content as text), and one that is not rendered (`display: none`, the UA
+ * default) holds nothing the reader can see. Detached → no computed style →
+ * false, the conservative answer.
+ *
+ * Reads `display` live, NOT through `computedDisplay`'s cache. The rule that
+ * makes the script render arrives with the widget, i.e. after the first scan —
+ * which has already classified the then-empty, `display:none` script while
+ * segmenting its parent. A cached "none" would hide the widget for the life of
+ * the page (measured on timesofisrael.com: exactly that). The cost is bounded by
+ * the guard above: only scripts holding elements ever get this far.
+ */
+export function isRenderedScript(el: Element): boolean {
+    if (el.tagName !== "SCRIPT" || !el.firstElementChild || !el.isConnected) return false;
+    let display: string;
+    try {
+        display = getComputedStyle(el).display;
+    } catch {
+        return false;
+    }
+    return display !== "" && display !== "none";
+}
+
+/**
  * Whether `el` behaves as a block-level box. Computed style wins when
  * available (CSS can blockify a <span> or inline a <div>); detached elements
  * and environments without computed style fall back to the static tag set.
@@ -295,6 +330,11 @@ export function isAtomicTextUnit(el: HTMLElement): boolean {
  */
 export function isSegmentBoundary(el: HTMLElement): boolean {
     if (isBlockBoundary(el)) return true;
+    // Its content is widget structure, never part of the surrounding sentence —
+    // and a run cannot carry it anyway: serialization skips SCRIPT subtrees. It
+    // has to be handed to the scan to be descended into. (The common
+    // `display:contents` + block-children shape already returned above.)
+    if (isRenderedScript(el)) return true;
     // A component that renders structure of its own has to be descended into,
     // not merged into a neighbouring run — its content lives in a separate tree
     // that the run's serialization cannot reach. Placed after the WeakMap-cached
@@ -312,7 +352,9 @@ export function isSegmentBoundary(el: HTMLElement): boolean {
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT, {
         acceptNode(node: Node): number {
             const child = node as HTMLElement;
-            if (EXCLUDE_CHILD_ELEMENT_TAGS.has(child.tagName)) return NodeFilter.FILTER_REJECT;
+            if (EXCLUDE_CHILD_ELEMENT_TAGS.has(child.tagName) && !isRenderedScript(child)) {
+                return NodeFilter.FILTER_REJECT;
+            }
             return isBlockBoundary(child) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
         },
     });

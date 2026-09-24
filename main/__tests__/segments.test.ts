@@ -10,6 +10,7 @@ import {
     isBlockBoundary,
     isSegmentBoundary,
     isMergeableInline,
+    isRenderedScript,
 } from "@/main/dom/segments";
 
 beforeEach(() => {
@@ -605,5 +606,76 @@ describe("atomic inline-level elements are boundaries", () => {
         expect(isSegmentBoundary(p.querySelector("button")!)).toBe(true);
         expect(isSegmentBoundary(p.querySelector("i")!)).toBe(false);
         expect(isSegmentBoundary(p.querySelector("a")!)).toBe(false);
+    });
+});
+
+describe("a <script> a widget renders into is descended into", () => {
+    // OpenWeb (Spot.IM) mounts its whole comment widget inside the loader's own
+    // <script data-spotim-module>, made visible with display:contents. The HTML
+    // parser keeps script content as raw text, so the shape can only be built
+    // through the DOM — exactly how the widget builds it.
+    function widgetScript(display: string | null, child: string): HTMLScriptElement {
+        const script = document.createElement("script");
+        if (display) script.style.display = display;
+        const inner = document.createElement("div");
+        inner.innerHTML = child;
+        while (inner.firstChild) script.appendChild(inner.firstChild);
+        return script;
+    }
+
+    it("is rendered only with element children and a display other than none", () => {
+        const container = el("<div></div>");
+        const rendered = widgetScript("contents", "<div>Comment</div>");
+        const hidden = widgetScript(null, "<div>Comment</div>");
+        const plain = document.createElement("script");
+        plain.textContent = "var x = 1;";
+        plain.style.display = "contents";
+        container.append(rendered, hidden, plain);
+        expect(isRenderedScript(rendered)).toBe(true);
+        // UA default for <script> is display:none.
+        expect(isRenderedScript(hidden)).toBe(false);
+        expect(isRenderedScript(plain)).toBe(false);
+        // Detached: no computed style, conservative answer.
+        expect(isRenderedScript(widgetScript("contents", "<div>x</div>"))).toBe(false);
+    });
+
+    it("sees the widget's display rule even after the script was classified while hidden", () => {
+        // The real page order: the first scan segments the parent while the
+        // script is still empty and display:none, caching that answer; the
+        // widget's stylesheet and DOM arrive later.
+        const container = el("<div></div>");
+        const script = document.createElement("script");
+        container.appendChild(script);
+        segmentParagraph(container);
+        expect(isBlockBoundary(script)).toBe(false);
+        script.appendChild(document.createElement("div")).textContent = "Comment";
+        script.style.display = "contents";
+        expect(isRenderedScript(script)).toBe(true);
+        expect(isSegmentBoundary(script)).toBe(true);
+    });
+
+    it("is a boundary handed to the scan, even when its children are inline", () => {
+        const container = el("<div>Intro text</div>");
+        const script = widgetScript("contents", "<span>inline comment</span>");
+        container.appendChild(script);
+        expect(isSegmentBoundary(script)).toBe(true);
+        const scan = segmentParagraph(container);
+        expect(scan.descendChildren).toEqual([script]);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].nodes).toEqual([container.firstChild]);
+    });
+
+    it("makes an inline wrapper around it a boundary via the recheck walk", () => {
+        const container = el("<div>before <span class=\"w\"></span> after</div>");
+        const wrapper = container.querySelector(".w") as HTMLElement;
+        wrapper.appendChild(widgetScript("contents", "<div>Comment</div>"));
+        expect(isSegmentBoundary(wrapper)).toBe(true);
+    });
+
+    it("an ordinary, unrendered script stays out of any boundary decision", () => {
+        const container = el("<div>before <span class=\"w\"></span> after</div>");
+        const wrapper = container.querySelector(".w") as HTMLElement;
+        wrapper.appendChild(widgetScript(null, "<div>Comment</div>"));
+        expect(isSegmentBoundary(wrapper)).toBe(false);
     });
 });

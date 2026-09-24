@@ -75,7 +75,7 @@ import {
     resetNoTranslateMarks,
     sweepDetachedParagraphMarks,
 } from "@/main/dom/paragraphMarks";
-import { isSegmentBoundary, segmentParagraph, type TranslationUnit, type UnitContainer, type UnitRange } from "@/main/dom/segments";
+import { isRenderedScript, isSegmentBoundary, segmentParagraph, type TranslationUnit, type UnitContainer, type UnitRange } from "@/main/dom/segments";
 import { containersFor, observeContainer, resetObserveTargets, unobserveContainer } from "@/main/dom/observeTargets";
 import { composedTarget, deepActiveElement, deepElementFromPoint, deepSelection, isShadowRoot, parentOrHost, type DeepSelection } from "@/main/dom/shadowTraversal";
 import { partitionRules, resolveRulePaths } from "@/main/dom/ruleSelector";
@@ -3116,7 +3116,9 @@ export async function content() {
         for (let i = ancestors.length - 1; i >= 0; i--) {
             const p = ancestors[i];
             if (!isShadowRoot(p)) {
-                if (isNotMarkElement(p)) return collectElements;
+                // A rendered <script> is transparent here as it is in the
+                // descent below: never a mark, never a reason to stop.
+                if (!isRenderedScript(p) && isNotMarkElement(p)) return collectElements;
                 if (!notTranslate && noTranslateOf(p)) notTranslate = true;
                 // Accumulate the include flag here too: a mutation-driven re-scan
                 // starts deep inside the include region, and without this walk it
@@ -3198,7 +3200,11 @@ export async function content() {
                     // boundary unchanged — the component sits inside whatever region
                     // its host sits in.
                 } else {
-                    if (isNotMarkElement(el)) continue;
+                    // A <script> a widget renders into (see isRenderedScript) is
+                    // excluded like any script for its own text, but its element
+                    // children are the widget — descend into them below.
+                    const renderedScript = isRenderedScript(el);
+                    if (!renderedScript && isNotMarkElement(el)) continue;
                     if (!nt && noTranslateOf(el)) nt = true;
                     if (!nt && matchesSelector(el, excludeSelector)) {
                         // Cache the positive rule match so re-scans of this
@@ -3214,6 +3220,16 @@ export async function content() {
                     // include root may be further down, so the walk keeps descending
                     // and only withholds the needs-translate flag on the way.
                     if (!inc && matchesSelector(el, includeSelector)) inc = true;
+
+                    if (renderedScript) {
+                        // Never segmented or marked: that would read the
+                        // script's own text as a run. Each element child becomes
+                        // a container of its own.
+                        for (let j = el.children.length - 1; j >= 0; j--) {
+                            stack.push({ node: el.children[j] as HTMLElement, notTranslate: nt, inInclude: inc, depth: depth + 1 });
+                        }
+                        continue;
+                    }
 
                     if (isEditable(el)) continue;
 
