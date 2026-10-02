@@ -8,7 +8,7 @@ import { isTraditionalChinese } from "@/utils/language";
 import { contentInvisible, decodeHtmlText } from "@/utils/dom";
 import type { TranslationUnit, UnitContainer, UnitRange } from "@/main/dom/segments";
 import { unitRangeOf } from "@/main/dom/unitHit";
-import { isTranslateIndicator } from "@/main/dom/predicates";
+import { isFormulaElement, isTranslateIndicator } from "@/main/dom/predicates";
 
 //#region types
 // ---------------------------------------------------------------------------
@@ -34,6 +34,8 @@ export class TranslateResult {
     targetLang?: string;
     textNodes?: Text[];
     textIndexMap?: Map<number, number>; // key: text node index, value: corresponding childNode of original element(ancestor of text node) index
+    /** Google only: the opaque atoms (formulas) of the unit, see PreProcessResult.atoms. */
+    atoms?: OpaqueAtom[];
     replacedTextNodes?: Text[]; // use for SINGLE view strategy, text nodes that have been replaced(has been translated or restored)
     /**
      * SINGLE only: what each node in `replacedTextNodes` held BEFORE we wrote
@@ -84,6 +86,23 @@ export default defineUnlistedScript(() => { });
 // ---------------------------------------------------------------------------
 // DOM-level helpers used by content scripts
 // ---------------------------------------------------------------------------
+/**
+ * An element that travels through translation as one empty placeholder — a
+ * rendered formula (see `isFormulaElement`). Nothing inside it is read or sent;
+ * the provider only decides where it sits in the translated sentence.
+ *
+ * The `<bN>` serialization carries it as an empty `<bN></bN>`, which is all the
+ * write-back needs. The Google path addresses text nodes instead of elements
+ * (`<a i=N>`), so an atom needs a slot of its own there, and these two fields
+ * are what build and resolve it.
+ */
+export interface OpaqueAtom {
+    /** Index of the text node it precedes (== textNodes.length when it comes last). */
+    before: number;
+    /** Index, among the unit's top-level nodes, of the node that holds it. */
+    childIndex: number;
+}
+
 class PreProcessResult {
     elements: UnitContainer[]; // container first, then the descendants that need a mapping tag
     mappedHtmlText: string;
@@ -94,8 +113,10 @@ class PreProcessResult {
     text: string;
     totalTextNodesLength: number;
     textIndexMap: Map<number, number>
+    /** Opaque atoms in document order. */
+    atoms: OpaqueAtom[];
 
-    constructor(elements: UnitContainer[], mappedHtmlText: string, textNodes: Text[], sourceTexts: string[], text: string, totalTextNodesLength: number, textIndexMap: Map<number, number>) {
+    constructor(elements: UnitContainer[], mappedHtmlText: string, textNodes: Text[], sourceTexts: string[], text: string, totalTextNodesLength: number, textIndexMap: Map<number, number>, atoms: OpaqueAtom[] = []) {
         this.elements = elements;
         this.mappedHtmlText = mappedHtmlText;
         this.textNodes = textNodes;
@@ -103,6 +124,7 @@ class PreProcessResult {
         this.text = text;
         this.totalTextNodesLength = totalTextNodesLength;
         this.textIndexMap = textIndexMap
+        this.atoms = atoms
     }
 }
 
@@ -123,6 +145,7 @@ export function getElementPreProcessResult(element: UnitContainer, viewStrategy:
     const processParent = document.createElement("div");
     const textNodes: Text[] = [];
     const sourceTexts: string[] = [];
+    const atoms: OpaqueAtom[] = [];
     // Default (whole element) keeps the legacy byte-identical serialization;
     // a caller passing a unit's node list scopes everything to that unit.
     const rootNodes: ChildNode[] = nodes ?? Array.from(element.childNodes);
@@ -141,6 +164,13 @@ export function getElementPreProcessResult(element: UnitContainer, viewStrategy:
             if (pop.nodeType === Node.ELEMENT_NODE) {
                 let p = pop as HTMLElement;
                 if (EXCLUDE_CHILD_ELEMENT_TAGS.has(p.tagName)) continue;
+                // A formula is content the translation must keep, whether or
+                // not it holds text — so it keeps its ancestors alive like a
+                // text node does, and is not looked into.
+                if (isFormulaElement(p)) {
+                    notEmptyNodes.push(p);
+                    continue;
+                }
                 stack.push(...pop.childNodes);
             }
         }
@@ -169,6 +199,22 @@ export function getElementPreProcessResult(element: UnitContainer, viewStrategy:
         if (isTranslateIndicator(node)) return;
         if (node.nodeType === Node.ELEMENT_NODE) {
             const ele = node as HTMLElement;
+            // A rendered formula goes out as ONE empty placeholder and its
+            // subtree is never read: no glyph text reaches the provider, no
+            // text node of it is collected (so nothing overwrites or clears it),
+            // and the write-back moves the element as a whole to wherever the
+            // translated sentence puts its tag. Ahead of the empty-element test
+            // below, which would drop a text-free formula from the DOUBLE copy.
+            if (isFormulaElement(ele)) {
+                parent.appendChild(document.createElement("b" + i));
+                elements.push(ele);
+                i++;
+                atoms.push({ before: textNodes.length, childIndex: index });
+                if (isSon) {
+                    index++
+                }
+                return
+            }
             // ignore empty element in double mode
             if (viewStrategy === VIEW_STRATEGY.DOUBLE && !textNotEmptyElementSet.has(ele)) {
                 removeChildren.push(ele)
@@ -212,7 +258,7 @@ export function getElementPreProcessResult(element: UnitContainer, viewStrategy:
     if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
         removeChildren.forEach(child => child.parentNode?.removeChild(child))
     }
-    return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, sourceTexts, totalTextNodesLength, text, textIndexMap };
+    return { elements, mappedHtmlText: processParent.innerHTML, textNodes: textNodes, sourceTexts, totalTextNodesLength, text, textIndexMap, atoms };
 }
 
 export function updateTranslateElementContent(rawTranslatedHtml: string, originalElements: UnitContainer[], range?: UnitRange) {
@@ -384,10 +430,24 @@ export async function getTranslateResult(
         if (pre.mappedHtmlText.trim() === "") continue;
         let text: string;
         if (service === TRANSLATE_SERVICE.GOOGLE) {
+            // One slot per text node, plus an EMPTY slot per opaque atom at its
+            // place in document order, numbered after the text nodes. Google
+            // returns an empty anchor where the sentence wants it, which is
+            // what lets googleTranslate put the formula there.
             text = "";
-            for (let index = 0; index < pre.textNodes.length; index++) {
+            let atom = 0;
+            const atomSlots = () => {
+                while (atom < pre.atoms.length && pre.atoms[atom].before <= index) {
+                    text += `<a i=${pre.textNodes.length + atom}></a>`
+                    atom++
+                }
+            }
+            let index = 0;
+            for (; index < pre.textNodes.length; index++) {
+                atomSlots()
                 text += `<a i=${index}>${pre.sourceTexts[index]}</a>`
             }
+            atomSlots()
         } else {
             text = pre.mappedHtmlText;
         }
@@ -409,7 +469,10 @@ export async function getTranslateResult(
         result.rawMappedHtmlText = pending.pre.mappedHtmlText;
         result.rawTextLength = pending.pre.totalTextNodesLength;
         result.rawText = pending.pre.text
-        service === TRANSLATE_SERVICE.GOOGLE && (result.textIndexMap = pending.pre.textIndexMap)
+        if (service === TRANSLATE_SERVICE.GOOGLE) {
+            result.textIndexMap = pending.pre.textIndexMap
+            result.atoms = pending.pre.atoms
+        }
         if (viewStrategy === VIEW_STRATEGY.DOUBLE) {
             result.translatedCopyElement = pending.copy;
         } else {
@@ -421,7 +484,14 @@ export async function getTranslateResult(
     return out;
 }
 
-export function parseIndexedText(input: string): { index: number, text: string }[] {
+/**
+ * Split a Google reply into its indexed slots and the bare text between them.
+ *
+ * Empty slots are dropped, except those numbered `keepEmptyFrom` and up: those
+ * are opaque atoms (see OpaqueAtom), which are empty by construction and whose
+ * position is the whole point.
+ */
+export function parseIndexedText(input: string, keepEmptyFrom: number = Infinity): { index: number, text: string }[] {
     const result: { index: number, text: string }[] = []
 
     const regex = /<a\b[^>]*\bi\s*=\s*["']?(-?\d+)["']?[^>]*>([\s\S]*?)<\/a>/gi
@@ -439,7 +509,7 @@ export function parseIndexedText(input: string): { index: number, text: string }
         const index = Number(match[1])
         const text = match[2]
 
-        if (text) {
+        if (text || (Number.isFinite(index) && index >= keepEmptyFrom)) {
             result.push({ index: Number.isFinite(index) ? index : -1, text })
         }
 
@@ -496,7 +566,7 @@ export function googleTranslate(results: TranslateResult[]) {
         // .filter(node => node.nodeType !== Node.COMMENT_NODE)
         let textNodes = result.textNodes
         if (textNodes === undefined) return
-        let indexedTexts = parseIndexedText(result.translatedMappedHtmlText)
+        let indexedTexts = parseIndexedText(result.translatedMappedHtmlText, textNodes.length)
         let replacedTextNodes = [...textNodes]
 
         let movedNodeSet = new Set<number>()
@@ -504,7 +574,9 @@ export function googleTranslate(results: TranslateResult[]) {
         let lastMovedNode: ChildNode | null = null
         let lastTextNodeIndex = -1
         for (const indexedText of indexedTexts) {
-            if (indexedText.text === "") continue
+            // A slot numbered past the text nodes is an opaque atom's.
+            const atom = result.atoms?.[indexedText.index - textNodes.length]
+            if (indexedText.text === "" && !atom) continue
             if (indexedText.index === -1) {
                 let textNode = document.createTextNode(decodeHtmlText(indexedText.text))
                 if (!lastMovedNode) {
@@ -519,17 +591,29 @@ export function googleTranslate(results: TranslateResult[]) {
                 continue
             }
             let num = indexedText.index
-            if (num < 0 || num >= textNodes.length) continue
-            textNodes[num].textContent = decodeHtmlText(indexedText.text)
-            // console.debug('debug', indexedText.text, textNodes[num].textContent, num, result.translatedCopyElement?.textContent)
-            let childIndex = result.textIndexMap?.get(num)
-            if (childIndex === undefined) continue
-            if (movedNodeSet.has(childIndex)) {
-                if (lastMovedNodeIndex === childIndex && lastTextNodeIndex < num) continue
-                lastMovedNode!.after(textNodes[num])
-                lastMovedNode = textNodes[num]
-                continue
+            let childIndex: number | undefined
+            if (atom) {
+                // Moves the top-level node holding the formula, exactly as a
+                // text slot moves the node holding its text. When that node has
+                // already been placed (the formula sits inside an inline child
+                // next to text), the formula stays where it is inside it — an
+                // atom is never pulled out of its parent the way a text node is.
+                childIndex = atom.childIndex
+                if (movedNodeSet.has(childIndex)) continue
+            } else {
+                if (num < 0 || num >= textNodes.length) continue
+                textNodes[num].textContent = decodeHtmlText(indexedText.text)
+                // console.debug('debug', indexedText.text, textNodes[num].textContent, num, result.translatedCopyElement?.textContent)
+                childIndex = result.textIndexMap?.get(num)
+                if (childIndex === undefined) continue
+                if (movedNodeSet.has(childIndex)) {
+                    if (lastMovedNodeIndex === childIndex && lastTextNodeIndex < num) continue
+                    lastMovedNode!.after(textNodes[num])
+                    lastMovedNode = textNodes[num]
+                    continue
+                }
             }
+            if (!targetElementChildNodes[childIndex]) continue
             if (!lastMovedNode) {
                 if (emptyNode) {
                     emptyNode.after(targetElementChildNodes[childIndex])
@@ -544,7 +628,9 @@ export function googleTranslate(results: TranslateResult[]) {
             }
             lastMovedNode = targetElementChildNodes[childIndex]
             lastMovedNodeIndex = childIndex
-            lastTextNodeIndex = num
+            // An atom's slot number is past every text index; recording it
+            // would make the next text of the same node look out of order.
+            if (!atom) lastTextNodeIndex = num
             movedNodeSet.add(childIndex)
             // console.debug('debug', result.translatedCopyElement?.textContent)
         }

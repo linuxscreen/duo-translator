@@ -2,7 +2,7 @@
 // unit tested in isolation (jsdom). Behaviour is preserved verbatim.
 import { EXCLUDE_CHILD_ELEMENT_TAGS } from "@/main/constants";
 import { contentValid, contentVisible } from "@/utils/dom";
-import { isEditable, isExcludedNodeType } from "@/main/dom/predicates";
+import { isEditable, isExcludedNodeType, isFormulaElement } from "@/main/dom/predicates";
 import { pageShadowRootOf } from "@/main/dom/shadowRoots";
 
 /** Strip every `duo-*` class and attribute the extension added to an element. */
@@ -44,7 +44,9 @@ export function removeTextNodes(element: HTMLElement) {
 
 /**
  * Collect all non-zero-width text nodes (and their concatenated text) in the
- * subtree, skipping EXCLUDE_CHILD_ELEMENT_TAGS (script/style/img/…).
+ * subtree, skipping EXCLUDE_CHILD_ELEMENT_TAGS (script/style/img/…) and
+ * rendered formulas — the same two skips the serialization applies, so the
+ * nodes collected here are exactly the ones a translation accounts for.
  */
 export function getTextNodesAndText(element: Node): { textNodes: Text[]; text: string } {
     let text = "";
@@ -56,7 +58,7 @@ export function getTextNodesAndText(element: Node): { textNodes: Text[]; text: s
         }
         if (node.nodeType === Node.ELEMENT_NODE) {
             const ele = node as HTMLElement;
-            if (EXCLUDE_CHILD_ELEMENT_TAGS.has(ele.tagName)) {
+            if (EXCLUDE_CHILD_ELEMENT_TAGS.has(ele.tagName) || isFormulaElement(ele)) {
                 return;
             }
             for (const child of node.childNodes) {
@@ -80,7 +82,13 @@ export function getTextNodesAndTextOfNodes(nodes: ChildNode[]): { textNodes: Tex
     return { textNodes, text };
 }
 
-/** Does the subtree contain at least one non-zero-width text node? */
+/**
+ * Does the subtree contain at least one non-zero-width text node?
+ *
+ * Formulas are deliberately NOT skipped here, unlike in `getTextNodesAndText`:
+ * this picks the node a translation is inserted after, and a formula closing a
+ * sentence is rendered content the translation must follow, not precede.
+ */
 export function isContainsValidTextElement(element: Node): boolean | undefined {
     if (element.nodeType === Node.TEXT_NODE) {
         return true;

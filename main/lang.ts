@@ -6,7 +6,7 @@
 // the page language on its own.
 import { franc } from "franc";
 import { isTraditionalChinese } from "@/utils/language";
-import { iso6393To1Map, excludedTagSet, TRANSLATE_SERVICE } from "@/main/constants";
+import { iso6393To1Map, TRANSLATE_SERVICE } from "@/main/constants";
 import { shuffle } from "@/utils/arrays";
 import { detectTextsLanguage } from "@/main/translateClient";
 import { allParagraphs } from "@/main/dom/paragraphMarks";
@@ -15,6 +15,7 @@ import { isVisibleForDetect } from "@/main/dom/visibility";
 import type { UnitContainer } from "@/main/dom/segments";
 import { isShadowRoot } from "@/main/dom/shadowTraversal";
 import { isInOwnUi } from "@/main/dom/shadowRoots";
+import { isExcludedNodeType } from "@/main/dom/predicates";
 
 /** Stop growing a sample once it carries this many UTF-8 bytes. */
 const SAMPLE_BUDGET_BYTES = 2000;
@@ -82,7 +83,8 @@ export function getTextLanguage(text: string): string {
 
 /**
  * Concatenate the rendered text of an element, skipping excluded tags
- * (script/style/svg/…). Text nodes are trimmed and joined directly.
+ * (script/style/svg/…) and rendered formulas. Text nodes are trimmed and
+ * joined directly.
  */
 export function getElementTextContent(element: UnitContainer): string {
     let text = "";
@@ -91,7 +93,7 @@ export function getElementTextContent(element: UnitContainer): string {
         if (node.nodeType === Node.TEXT_NODE) {
             text += node.textContent?.trim() || "";
         } else if (node.nodeType === Node.ELEMENT_NODE || isShadowRoot(node)) {
-            if (excludedTagSet.has(node.nodeName.toLowerCase())) {
+            if (isExcludedNodeType(node)) {
                 return;
             }
             // Our own UI lives in shadow roots and is written in the *interface*
