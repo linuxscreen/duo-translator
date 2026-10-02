@@ -137,9 +137,54 @@ async function saveSyncMeta(m: SyncMeta): Promise<void> {
     await storage.setItem(META_KEY, m);
 }
 
-/** Replace the whole sync-meta — used after a merge applies the merged clocks. */
-export async function setSyncMeta(meta: SyncMeta): Promise<void> {
-    await saveSyncMeta(meta);
+// THE write lock of this store. Every write to a synced key — the value AND its
+// clock — goes through it, as does the sync path applying a merge. Two things
+// depend on that:
+//
+//  - The sync-meta is ONE storage item, so each clock update is a
+//    read-modify-write. Unserialized, two back-to-back config writes (a color
+//    picker persists its color and its preset index that way) read the same old
+//    meta and the later save drops the earlier clock; at the next sync the key
+//    that lost its clock is overruled by an older remote value while its
+//    sibling keeps the new one.
+//  - A value and its clock must change as one step. applyMergedToLocal decides
+//    "was this key written since the snapshot?" from the clock alone; a value
+//    already written whose clock is still pending would be reverted, and the
+//    clock that follows would then stamp the REVERTED value as the newest.
+//
+// All writers run in the background context, so an in-memory queue is enough.
+let metaQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Run `mutate` holding the store's write lock, then persist the sync-meta.
+ * `mutate` receives the current meta and either edits it in place or returns a
+ * replacement; returning `false` means "nothing changed" and skips the save.
+ * It may await — value writes belong INSIDE it, see above — but must not call
+ * another function that takes the lock (that would deadlock the queue).
+ */
+export function updateSyncMeta(
+    mutate: (m: SyncMeta) => SyncMeta | void | false | Promise<SyncMeta | void | false>,
+): Promise<void> {
+    const run = metaQueue.then(async () => {
+        const m = await getSyncMeta();
+        const next = await mutate(m);
+        if (next !== false) await saveSyncMeta(next ?? m);
+    });
+    // A failed update must not wedge every later one.
+    metaQueue = run.catch(() => {});
+    return run;
+}
+
+/**
+ * Read under the write lock: `read` sees the sync-meta and whatever values it
+ * reads from storage as ONE consistent state — never a value whose clock has
+ * not landed yet (or the reverse). Same rule as updateSyncMeta: it must not
+ * call anything that takes the lock.
+ */
+export function readConsistent<T>(read: (m: SyncMeta) => Promise<T>): Promise<T> {
+    const run = metaQueue.then(async () => read(await getSyncMeta()));
+    metaQueue = run.catch(() => {});
+    return run;
 }
 
 /**
@@ -194,15 +239,15 @@ function diffElements(m: SyncMeta, dataKey: string, before: unknown, after: unkn
  * `change` is only needed for collection keys — pass the value as it was before
  * the write and as it is after, and the element-level clocks are derived from
  * the diff. Callers of non-collection keys pass nothing.
+ *
+ * Edits `m` in place; the caller holds the write lock (see updateSyncMeta).
  */
-async function touchKey(dataKey: string, change?: { before: unknown; after: unknown }): Promise<void> {
-    const m = await getSyncMeta();
+function markLive(m: SyncMeta, dataKey: string, change?: { before: unknown; after: unknown }): void {
     const now = Date.now();
     // Before the key clock moves: the seed inside diffElements reads it.
     if (change) diffElements(m, dataKey, change.before, change.after, now);
     m.clocks[dataKey] = now;
     delete m.tombstones[dataKey];
-    await saveSyncMeta(m);
 }
 
 /**
@@ -213,26 +258,54 @@ async function touchKey(dataKey: string, change?: { before: unknown; after: unkn
  * enough — it is cleared the moment the key is re-created, and the elements
  * that were deleted with it would then be resurrected by a stale peer.
  */
-async function tombstoneKey(dataKey: string, before?: unknown): Promise<void> {
-    const m = await getSyncMeta();
+function markDead(m: SyncMeta, dataKey: string, before?: unknown): void {
     const now = Date.now();
     if (before !== undefined) diffElements(m, dataKey, before, [], now);
     delete m.clocks[dataKey];
     m.tombstones[dataKey] = now;
-    await saveSyncMeta(m);
 }
 
-/** Bump clocks for several data keys to now — used after a manual import so the
+/**
+ * The one write path for a synced key: read the current value, decide, write
+ * the value and its clock — all under the write lock, so a read-modify-write
+ * (`domainRepo.update`, `ruleRepo.add`, …) can't lose a concurrent update and
+ * the sync path never sees a value whose clock hasn't landed yet.
+ *
+ * `decide` returns the next value, `REMOVE` to delete the key (tombstoned), or
+ * `KEEP` to leave it untouched. Collection keys get their element-level clocks
+ * from the before/after diff automatically.
+ */
+const REMOVE = Symbol('remove');
+const KEEP = Symbol('keep');
+function writeKey<T>(
+    itemKey: StorageItemKey,
+    dataKey: string,
+    decide: (current: T | null) => T | typeof REMOVE | typeof KEEP,
+): Promise<void> {
+    return updateSyncMeta(async (m) => {
+        const before = await storage.getItem<T>(itemKey);
+        const next = decide(before);
+        if (next === KEEP) return false;
+        const isCollection = collectionIdentity(dataKey) !== null;
+        if (next === REMOVE) {
+            await storage.removeItem(itemKey);
+            markDead(m, dataKey, isCollection ? before ?? undefined : undefined);
+        } else {
+            await storage.setItem(itemKey, next);
+            markLive(m, dataKey, isCollection ? { before, after: next } : undefined);
+        }
+    });
+}
+
+/** Bump clocks for several data keys to now — used by a manual import so the
  *  imported values win on the next sync. Collection keys additionally get a
- *  fresh clock on every element they currently hold (read back from storage,
- *  since the import writes the merged value before calling this), so the
- *  imported elements propagate individually. */
-export async function touchKeys(dataKeys: string[]): Promise<void> {
-    if (dataKeys.length === 0) return;
-    const m = await getSyncMeta();
+ *  fresh clock on every element they now hold (`stored[k]`, the value the
+ *  import just wrote), so the imported elements propagate individually.
+ *
+ *  Edits `m` in place; the caller holds the write lock and has written the
+ *  values inside it. */
+export function markKeysLive(m: SyncMeta, dataKeys: string[], stored: Record<string, unknown>): void {
     const now = Date.now();
-    const collections = dataKeys.filter((k) => collectionIdentity(k) !== null);
-    const stored = collections.length > 0 ? await storage.snapshot('local') : {};
     for (const k of dataKeys) {
         const idOf = collectionIdentity(k);
         if (idOf) {
@@ -245,7 +318,6 @@ export async function touchKeys(dataKeys: string[]): Promise<void> {
         m.clocks[k] = now;
         delete m.tombstones[k];
     }
-    await saveSyncMeta(m);
 }
 
 const defaultForConfig = configDefault;
@@ -268,13 +340,7 @@ export const configRepo = {
         return value
     },
     async set(name: string, value: unknown): Promise<void> {
-        const dataKey = dataConfigKey(name);
-        // Collection keys need the previous value to derive element-level
-        // clocks; every other key skips the extra read.
-        const isCollection = collectionIdentity(dataKey) !== null;
-        const before = isCollection ? await storage.getItem<unknown>(configKey(name)) : undefined;
-        await storage.setItem(configKey(name), value);
-        await touchKey(dataKey, isCollection ? { before, after: value } : undefined);
+        await writeKey<unknown>(configKey(name), dataConfigKey(name), () => value);
     },
 };
 
@@ -286,8 +352,7 @@ export const domainRepo = {
     },
 
     async set(host: string, doc: DomainDoc): Promise<void> {
-        await storage.setItem(domainKey(host), doc);
-        await touchKey(dataDomainKey(host));
+        await writeKey<DomainDoc>(domainKey(host), dataDomainKey(host), () => doc);
     },
 
     /**
@@ -295,22 +360,21 @@ export const domainRepo = {
      * the old DomainStorage.update which only overwrites defined fields.
      */
     async update(host: string, patch: DomainDoc): Promise<void> {
-        const existing = (await storage.getItem<DomainDoc>(domainKey(host))) ?? {};
-        const next: DomainDoc = { ...existing };
-        if (patch.strategy !== undefined) next.strategy = patch.strategy;
-        if (patch.viewStrategy !== undefined) next.viewStrategy = patch.viewStrategy;
-        if (patch.aiWritingDisabled !== undefined) next.aiWritingDisabled = patch.aiWritingDisabled;
-        if (patch.aiWritingEnabled !== undefined) next.aiWritingEnabled = patch.aiWritingEnabled;
-        if (patch.floatBallDisabled !== undefined) next.floatBallDisabled = patch.floatBallDisabled;
-        if (patch.selectionIconDisabled !== undefined) next.selectionIconDisabled = patch.selectionIconDisabled;
-        if (patch.translateAllElements !== undefined) next.translateAllElements = patch.translateAllElements;
-        await storage.setItem(domainKey(host), next);
-        await touchKey(dataDomainKey(host));
+        await writeKey<DomainDoc>(domainKey(host), dataDomainKey(host), (existing) => {
+            const next: DomainDoc = { ...(existing ?? {}) };
+            if (patch.strategy !== undefined) next.strategy = patch.strategy;
+            if (patch.viewStrategy !== undefined) next.viewStrategy = patch.viewStrategy;
+            if (patch.aiWritingDisabled !== undefined) next.aiWritingDisabled = patch.aiWritingDisabled;
+            if (patch.aiWritingEnabled !== undefined) next.aiWritingEnabled = patch.aiWritingEnabled;
+            if (patch.floatBallDisabled !== undefined) next.floatBallDisabled = patch.floatBallDisabled;
+            if (patch.selectionIconDisabled !== undefined) next.selectionIconDisabled = patch.selectionIconDisabled;
+            if (patch.translateAllElements !== undefined) next.translateAllElements = patch.translateAllElements;
+            return next;
+        });
     },
 
     async delete(host: string): Promise<void> {
-        await storage.removeItem(domainKey(host));
-        await tombstoneKey(dataDomainKey(host));
+        await writeKey<DomainDoc>(domainKey(host), dataDomainKey(host), () => REMOVE);
     },
 
     /**
@@ -318,24 +382,19 @@ export const domainRepo = {
      * keeps the storage tidy (mirrors original DomainStorage.clearField).
      */
     async clearField(host: string, field: DomainField): Promise<void> {
-        const doc = await storage.getItem<DomainDoc>(domainKey(host));
-        if (!doc) return;
-        delete (doc as Record<string, unknown>)[field];
-        const empty =
-            doc.strategy === undefined &&
-            doc.viewStrategy === undefined &&
-            doc.aiWritingDisabled === undefined &&
-            doc.aiWritingEnabled === undefined &&
-            doc.floatBallDisabled === undefined &&
-            doc.selectionIconDisabled === undefined &&
-            doc.translateAllElements === undefined;
-        if (empty) {
-            await storage.removeItem(domainKey(host));
-            await tombstoneKey(dataDomainKey(host));
-        } else {
-            await storage.setItem(domainKey(host), doc);
-            await touchKey(dataDomainKey(host));
-        }
+        await writeKey<DomainDoc>(domainKey(host), dataDomainKey(host), (doc) => {
+            if (!doc) return KEEP;
+            delete (doc as Record<string, unknown>)[field];
+            const empty =
+                doc.strategy === undefined &&
+                doc.viewStrategy === undefined &&
+                doc.aiWritingDisabled === undefined &&
+                doc.aiWritingEnabled === undefined &&
+                doc.floatBallDisabled === undefined &&
+                doc.selectionIconDisabled === undefined &&
+                doc.translateAllElements === undefined;
+            return empty ? REMOVE : doc;
+        });
     },
 
     async list(filter?: {
@@ -391,39 +450,23 @@ export const ruleRepo = {
     },
 
     async add(host: string, rule: string): Promise<void> {
-        const existing = (await storage.getItem<string[]>(ruleKey(host))) ?? [];
-        if (existing.includes(rule)) return;
-        // Not a push: the pre-write value has to survive for the element diff.
-        const next = [...existing, rule];
-        await storage.setItem(ruleKey(host), next);
-        await touchKey(dataRuleKey(host), { before: existing, after: next });
+        await writeKey<string[]>(ruleKey(host), dataRuleKey(host), (existing) =>
+            // Not a push: the pre-write value has to survive for the element diff.
+            existing?.includes(rule) ? KEEP : [...(existing ?? []), rule],
+        );
     },
 
     async delete(host: string, rule: string): Promise<void> {
-        const existing = await storage.getItem<string[]>(ruleKey(host));
-        if (!existing) return;
-        const next = existing.filter((r) => r !== rule);
-        if (next.length === 0) {
-            await storage.removeItem(ruleKey(host));
-            await tombstoneKey(dataRuleKey(host), existing);
-        } else {
-            await storage.setItem(ruleKey(host), next);
-            await touchKey(dataRuleKey(host), { before: existing, after: next });
-        }
+        await this.deleteList(host, [rule]);
     },
 
     async deleteList(host: string, rules: string[]): Promise<void> {
-        const existing = await storage.getItem<string[]>(ruleKey(host));
-        if (!existing) return;
         const drop = new Set(rules);
-        const next = existing.filter((r) => !drop.has(r));
-        if (next.length === 0) {
-            await storage.removeItem(ruleKey(host));
-            await tombstoneKey(dataRuleKey(host), existing);
-        } else {
-            await storage.setItem(ruleKey(host), next);
-            await touchKey(dataRuleKey(host), { before: existing, after: next });
-        }
+        await writeKey<string[]>(ruleKey(host), dataRuleKey(host), (existing) => {
+            if (!existing) return KEEP;
+            const next = existing.filter((r) => !drop.has(r));
+            return next.length === 0 ? REMOVE : next;
+        });
     },
 
     /** Original RuleStorage.search returned PouchDB doc objects ({ _id, rules }).

@@ -36,14 +36,14 @@ vi.mock("wxt/utils/storage", () => ({
 // names under test stay in sync with production; only the clock bookkeeping is
 // stubbed. `vi.hoisted` because vi.mock factories are lifted above this file's
 // own initialization.
-const { touchKeys } = vi.hoisted(() => ({ touchKeys: vi.fn(async (_keys: string[]) => {}) }));
+const { markKeysLive } = vi.hoisted(() => ({
+    markKeysLive: vi.fn((_meta: unknown, _keys: string[], _stored: Record<string, unknown>) => {}),
+}));
 vi.mock("@/main/storage/configStore", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/main/storage/configStore")>();
     return {
         ...actual,
-        getSyncMeta: vi.fn(async () => ({ clocks: {}, tombstones: {}, elements: {} })),
-        setSyncMeta: vi.fn(async () => {}),
-        touchKeys,
+        markKeysLive,
     };
 });
 
@@ -86,7 +86,7 @@ function seedLocalKeys() {
 
 beforeEach(() => {
     store = {};
-    touchKeys.mockClear();
+    markKeysLive.mockClear();
 });
 
 describe("applyImportedSnapshot — secrets", () => {
@@ -181,7 +181,7 @@ describe("applyImportedSnapshot — secrets", () => {
         await applyImportedSnapshot(snapshot({ [DEEPL_KEY]: "", [TARGET_LANG_KEY]: "ja" }));
 
         expect(store[DEEPL_KEY]).toBe("deepl-local-key");
-        const touched = touchKeys.mock.calls[0][0];
+        const touched = markKeysLive.mock.calls[0][1];
         expect(touched).toContain(TARGET_LANG_KEY);
         expect(touched).not.toContain(DEEPL_KEY);
     });
@@ -240,6 +240,6 @@ describe("snapshot boundaries — internal keys never sync", () => {
 
         expect(store[CACHE_KEY]).toEqual([{ id: "current" }]);
         expect(store[TARGET_LANG_KEY]).toBe("ja");
-        expect(touchKeys.mock.calls[0][0]).not.toContain(CACHE_KEY);
+        expect(markKeysLive.mock.calls[0][1]).not.toContain(CACHE_KEY);
     });
 });

@@ -62,6 +62,20 @@ export const HIGHLIGHT_BORDER_LINE_STYLE: Record<string, string> = {
   dashedBorder: 'dashed',
 };
 
+// The swatch a stored color actually corresponds to. A color and its picker
+// index are stored as two separate config keys, so anything that resolves keys
+// independently (cloud sync is per-key last-writer-wins) can leave them
+// disagreeing. The color is the one the page renders, so it is the truth and
+// the index is re-derived from it: a matching preset wins, anything else is the
+// custom slot (index === presets.length). A consistent pair is returned as is —
+// including a custom slot holding a color that happens to equal a preset.
+export function resolveColorIndex(color: string, index: number, presets: string[]): number {
+  const custom = presets.length;
+  if (index === custom ? color !== '' : presets[index] === color) return index;
+  const preset = presets.findIndex((p) => p.toLowerCase() === color.toLowerCase());
+  return preset >= 0 ? preset : custom;
+}
+
 // Build inline CSS for the translation style preview.
 // `borderColor` is only applied when the style produces a border (not for underline/text-decoration styles).
 // `forHighlight` previews the bilingual-highlight context, where the border

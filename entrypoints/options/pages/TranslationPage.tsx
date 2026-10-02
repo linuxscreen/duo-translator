@@ -51,6 +51,7 @@ import { DomainListSection, type DomainItem } from '@/components/options/DomainL
 import { NoTranslateLanguagesRow } from '@/components/options/NoTranslateLanguagesRow';
 import {
   buildStylePreview,
+  resolveColorIndex,
   styleColorFields,
   styleHasBorder,
   styleUsesBackground,
@@ -264,22 +265,29 @@ export function TranslationPage({ onOpenSiteRules }: TranslationPageProps) {
       if (ds === DEFAULT_STRATEGY.ALWAYS || ds === DEFAULT_STRATEGY.NEVER || ds === DEFAULT_STRATEGY.AUTO) {
         setDefaultStrategy(ds);
       }
+      // Color and index are separate keys and can arrive disagreeing (see
+      // resolveColorIndex); the color is what pages render, so the swatch
+      // selection follows it.
+      const applyColor = (
+        colorCfg: unknown,
+        indexCfg: unknown,
+        presets: string[],
+        setColor: (c: string) => void,
+        setIndex: (i: number) => void,
+      ) => {
+        const color = typeof colorCfg === 'string' ? colorCfg : '';
+        setColor(color);
+        setIndex(resolveColorIndex(color, typeof indexCfg === 'number' ? indexCfg : 0, presets));
+      };
       setStyle(typeof styleCfg === 'string' && styleCfg ? styleCfg : STYLE_NONE);
-      setBgColor(typeof bgCfg === 'string' ? bgCfg : '');
-      setBgColorIndex(typeof bgIdxCfg === 'number' ? bgIdxCfg : 0);
-      setFontColor(typeof fcCfg === 'string' ? fcCfg : '');
-      setFontColorIndex(typeof fcIdxCfg === 'number' ? fcIdxCfg : 0);
-      setBorderColor(typeof bcCfg === 'string' ? bcCfg : '');
-      setBorderColorIndex(typeof bcIdxCfg === 'number' ? bcIdxCfg : 0);
-      setQuoteBorderColor(typeof qbcCfg === 'string' ? qbcCfg : '');
-      setQuoteBorderColorIndex(typeof qbcIdxCfg === 'number' ? qbcIdxCfg : 0);
-      setHighlightBg(typeof hbCfg === 'string' ? hbCfg : '');
-      setHighlightBgIndex(typeof hbIdxCfg === 'number' ? hbIdxCfg : 0);
-      setHighlightFontColor(typeof hfCfg === 'string' ? hfCfg : '');
-      setHighlightFontColorIndex(typeof hfIdxCfg === 'number' ? hfIdxCfg : 0);
+      applyColor(bgCfg, bgIdxCfg, TRANSLATION_BG_COLORS, setBgColor, setBgColorIndex);
+      applyColor(fcCfg, fcIdxCfg, TRANSLATION_FONT_COLORS, setFontColor, setFontColorIndex);
+      applyColor(bcCfg, bcIdxCfg, TRANSLATION_BG_COLORS, setBorderColor, setBorderColorIndex);
+      applyColor(qbcCfg, qbcIdxCfg, TRANSLATION_BG_COLORS, setQuoteBorderColor, setQuoteBorderColorIndex);
+      applyColor(hbCfg, hbIdxCfg, HIGHLIGHT_COLORS, setHighlightBg, setHighlightBgIndex);
+      applyColor(hfCfg, hfIdxCfg, TRANSLATION_FONT_COLORS, setHighlightFontColor, setHighlightFontColorIndex);
       setHighlightStyle(typeof hsCfg === 'string' && hsCfg ? hsCfg : DEFAULT_VALUE.HIGHLIGHT_STYLE);
-      setHighlightBorderColor(typeof hbcCfg === 'string' ? hbcCfg : '');
-      setHighlightBorderColorIndex(typeof hbcIdxCfg === 'number' ? hbcIdxCfg : 0);
+      applyColor(hbcCfg, hbcIdxCfg, TRANSLATION_BG_COLORS, setHighlightBorderColor, setHighlightBorderColorIndex);
       await refreshDomains();
       if (!cancelled) setReady(true);
     })();

@@ -31,9 +31,9 @@ import { APP_NAME_KEBAB_CASE, CONFIG_KEY } from '@/main/constants';
 import {
     INTERNAL_STORAGE_KEYS,
     STORAGE_PREFIX,
-    getSyncMeta,
-    setSyncMeta,
-    touchKeys,
+    updateSyncMeta,
+    readConsistent,
+    markKeysLive,
     type ElementSyncMeta,
 } from './configStore';
 import { collectionIdentity, indexElements, type ElementIdentity } from './collections';
@@ -130,8 +130,13 @@ export async function buildSnapshot(opts: BuildOptions = {}): Promise<Snapshot> 
     const exclude = new Set<string>(ALWAYS_EXCLUDED);
     if (!opts.includeSecrets) for (const k of PURE_SECRET_KEYS) exclude.add(k);
 
-    const raw = await storage.snapshot('local', { excludeKeys: [...exclude] });
-    const syncMeta = await getSyncMeta();
+    // Values and clocks are read as one consistent state. Read apart, a write
+    // landing in between pairs a new value with its old clock (or the reverse);
+    // the merge would then compare the wrong clock against the remote one.
+    const { raw, syncMeta } = await readConsistent(async (syncMeta) => ({
+        raw: await storage.snapshot('local', { excludeKeys: [...exclude] }),
+        syncMeta,
+    }));
 
     const data: Record<string, unknown> = {};
     const meta: Record<string, number> = {};
@@ -492,46 +497,66 @@ function reattachApiKeys(incoming: unknown, local: unknown): unknown {
  * are re-attached from local state so on-device keys are never lost.
  */
 export async function applyMergedToLocal(merged: Snapshot): Promise<void> {
-    const current = await storage.snapshot('local');
-    const sets: { key: StorageItemKey; value: unknown }[] = [];
-    const removes: StorageItemKey[] = [];
+    // The whole apply runs under the sync-meta lock: the clocks it writes are
+    // derived from the meta it read, and a config write landing in between
+    // would have its clock replaced by the merged (older) one.
+    await updateSyncMeta(async (prev) => {
+        // A key written locally AFTER the snapshot behind `merged` was built
+        // (the sync spent that time on the network). The merge never saw that
+        // write, so applying its value or its clock would silently revert it —
+        // and when only one of two paired keys (a color and its preset index)
+        // is hit, leave them contradicting each other. Merged clocks are the
+        // max over both sides, so "local is newer" can only mean exactly this.
+        const mergedClock = (k: string) => Math.max(merged.meta[k] ?? 0, merged.tombstones[k] ?? 0);
+        const localClock = (k: string) => Math.max(prev.clocks[k] ?? 0, prev.tombstones[k] ?? 0);
+        const writtenSince = (k: string) => localClock(k) > mergedClock(k);
 
-    for (const [k, rawValue] of Object.entries(merged.data)) {
-        if (ALWAYS_EXCLUDED.includes(k)) continue;
-        const v = k === AI_PROVIDERS_KEY ? reattachApiKeys(rawValue, current[k]) : rawValue;
-        if (!(k in current) || stableStr(current[k]) !== stableStr(v)) {
-            sets.push({ key: `local:${k}` as StorageItemKey, value: v });
+        const current = await storage.snapshot('local');
+        const sets: { key: StorageItemKey; value: unknown }[] = [];
+        const removes: StorageItemKey[] = [];
+
+        for (const [k, rawValue] of Object.entries(merged.data)) {
+            if (ALWAYS_EXCLUDED.includes(k) || writtenSince(k)) continue;
+            const v = k === AI_PROVIDERS_KEY ? reattachApiKeys(rawValue, current[k]) : rawValue;
+            if (!(k in current) || stableStr(current[k]) !== stableStr(v)) {
+                sets.push({ key: `local:${k}` as StorageItemKey, value: v });
+            }
         }
-    }
-    for (const k of Object.keys(merged.tombstones)) {
-        if (ALWAYS_EXCLUDED.includes(k)) continue;
-        if (k in current) removes.push(`local:${k}` as StorageItemKey);
-    }
+        for (const k of Object.keys(merged.tombstones)) {
+            if (ALWAYS_EXCLUDED.includes(k) || writtenSince(k)) continue;
+            if (k in current) removes.push(`local:${k}` as StorageItemKey);
+        }
 
-    if (removes.length > 0) await storage.removeItems(removes);
-    if (sets.length > 0) await storage.setItems(sets);
+        if (removes.length > 0) await storage.removeItems(removes);
+        if (sets.length > 0) await storage.setItems(sets);
 
-    // Merge clocks: start from merged, then preserve any local-only clocks for
-    // keys the snapshot didn't cover (excluded secrets when not syncing them).
-    const prev = await getSyncMeta();
-    const clocks: Record<string, number> = { ...merged.meta };
-    const tombstones: Record<string, number> = { ...merged.tombstones };
-    for (const [k, ts] of Object.entries(prev.clocks)) {
-        if (!(k in clocks) && !(k in tombstones)) clocks[k] = ts;
-    }
-    for (const [k, ts] of Object.entries(prev.tombstones)) {
-        if (!(k in clocks) && !(k in tombstones)) tombstones[k] = ts;
-    }
-    // Same rule one level down. A collection key the merge DID cover but for
-    // which it produced no element section (it fell back to whole-key LWW)
-    // must NOT keep the old element clocks — they describe a value that just
-    // got replaced. buildSnapshot re-seeds it from the key clock next time.
-    const elements: Record<string, ElementSyncMeta> = { ...elementsOf(merged) };
-    for (const [k, em] of Object.entries(prev.elements)) {
-        if (k in elements || k in merged.data || k in merged.tombstones) continue;
-        elements[k] = em;
-    }
-    await setSyncMeta({ clocks, tombstones, elements });
+        // Merge clocks: start from merged, then preserve any local-only clocks
+        // for keys the snapshot didn't cover (excluded secrets when not syncing
+        // them) and the local state of keys written since the snapshot.
+        const clocks: Record<string, number> = { ...merged.meta };
+        const tombstones: Record<string, number> = { ...merged.tombstones };
+        // Same rule one level down. A collection key the merge DID cover but
+        // for which it produced no element section (it fell back to whole-key
+        // LWW) must NOT keep the old element clocks — they describe a value
+        // that just got replaced. buildSnapshot re-seeds it from the key clock
+        // next time.
+        const elements: Record<string, ElementSyncMeta> = { ...elementsOf(merged) };
+        for (const k of new Set([...Object.keys(prev.clocks), ...Object.keys(prev.tombstones)])) {
+            const covered = k in clocks || k in tombstones;
+            if (covered && !writtenSince(k)) continue;
+            delete clocks[k];
+            delete tombstones[k];
+            delete elements[k];
+            if (k in prev.clocks) clocks[k] = prev.clocks[k];
+            else tombstones[k] = prev.tombstones[k];
+        }
+        for (const [k, em] of Object.entries(prev.elements)) {
+            if (k in elements) continue;
+            if (!writtenSince(k) && (k in merged.data || k in merged.tombstones)) continue;
+            elements[k] = em;
+        }
+        return { clocks, tombstones, elements };
+    });
 }
 
 /**
@@ -580,25 +605,33 @@ export async function applyImportedSnapshot(snap: Snapshot): Promise<void> {
     if (!isValidSnapshot(snap)) {
         throw new Error('Invalid snapshot envelope');
     }
-    const current = await storage.snapshot('local');
-    const sets: { key: StorageItemKey; value: unknown }[] = [];
-    const touched: string[] = [];
-    for (const [k, rawValue] of Object.entries(snap.data)) {
-        // Same gate as build/merge: an old backup file can contain internal keys
-        // (a stale rule cache overwriting the current one, say), and touchKeys
-        // below would then give them a clock and start propagating them.
-        if (!isSnapshotKey(k)) continue;
-        // Redacted pure secret: keep whatever this device has, and leave its
-        // clock alone — nothing changed locally, so there is nothing to push.
-        if (PURE_SECRET_KEYS.includes(k) && !rawValue) continue;
-        let v = k === AI_PROVIDERS_KEY ? reattachApiKeys(rawValue, current[k]) : rawValue;
-        const idOf = collectionIdentity(k);
-        if (idOf && Array.isArray(v)) v = unionForImport(v, current[k], idOf);
-        sets.push({ key: `local:${k}` as StorageItemKey, value: v });
-        touched.push(k);
-    }
-    if (sets.length > 0) await storage.setItems(sets);
-    await touchKeys(touched);
+    // Values and clocks are written under the store's write lock as one step,
+    // like every other write (see updateSyncMeta): a sync applying a merge in
+    // between would otherwise revert the imported values.
+    await updateSyncMeta(async (meta) => {
+        const current = await storage.snapshot('local');
+        const sets: { key: StorageItemKey; value: unknown }[] = [];
+        const written: Record<string, unknown> = {};
+        for (const [k, rawValue] of Object.entries(snap.data)) {
+            // Same gate as build/merge: an old backup file can contain internal
+            // keys (a stale rule cache overwriting the current one, say), and
+            // markKeysLive below would then give them a clock and start
+            // propagating them.
+            if (!isSnapshotKey(k)) continue;
+            // Redacted pure secret: keep whatever this device has, and leave
+            // its clock alone — nothing changed locally, so there is nothing to
+            // push.
+            if (PURE_SECRET_KEYS.includes(k) && !rawValue) continue;
+            let v = k === AI_PROVIDERS_KEY ? reattachApiKeys(rawValue, current[k]) : rawValue;
+            const idOf = collectionIdentity(k);
+            if (idOf && Array.isArray(v)) v = unionForImport(v, current[k], idOf);
+            sets.push({ key: `local:${k}` as StorageItemKey, value: v });
+            written[k] = v;
+        }
+        if (sets.length === 0) return false;
+        await storage.setItems(sets);
+        markKeysLive(meta, Object.keys(written), written);
+    });
 }
 
 /**

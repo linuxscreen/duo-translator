@@ -546,3 +546,107 @@ describe("applyImportedSnapshot — collections are unioned, never replaced", ()
         expect(Object.keys(meta.elements[PROVIDERS].clocks).sort()).toEqual(["p1", "p9"]);
     });
 });
+
+describe("sync-meta writes are serialized", () => {
+    const COLOR = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.FONT_COLOR}`;
+    const INDEX = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.FONT_COLOR_INDEX}`;
+
+    // The color picker persists a color and its preset index back to back,
+    // un-awaited. Each write is a read-modify-write of the one sync-meta item,
+    // so unserialized they read the same old meta and the later save drops the
+    // earlier clock.
+    it("keeps the clock of both keys written concurrently", async () => {
+        await Promise.all([
+            configRepo.set(CONFIG_KEY.FONT_COLOR, ""),
+            configRepo.set(CONFIG_KEY.FONT_COLOR_INDEX, 0),
+        ]);
+        const meta = await getSyncMeta();
+        expect(meta.clocks[COLOR]).toBeGreaterThan(0);
+        expect(meta.clocks[INDEX]).toBeGreaterThan(0);
+    });
+
+    it("a paired write is not split by an older remote value at the next sync", async () => {
+        // Remote still has the previous choice (custom color), clocked earlier.
+        const remote = snap({
+            data: { [COLOR]: "#123456", [INDEX]: 5 },
+            meta: { [COLOR]: T0, [INDEX]: T0 },
+        });
+        await Promise.all([
+            configRepo.set(CONFIG_KEY.FONT_COLOR, ""),
+            configRepo.set(CONFIG_KEY.FONT_COLOR_INDEX, 0),
+        ]);
+        const { merged } = mergeSnapshots(await buildSnapshot({ includeSecrets: true }), remote);
+        await applyMergedToLocal(merged);
+        expect(store[COLOR]).toBe("");
+        expect(store[INDEX]).toBe(0);
+    });
+
+    it("does not revert a key written while the sync was on the network", async () => {
+        await configRepo.set(CONFIG_KEY.FONT_COLOR, "#111111");
+        const built = await buildSnapshot({ includeSecrets: true });
+        const remote = snap({ data: { [TARGET_LANG]: "ja" }, meta: { [TARGET_LANG]: T0 } });
+        const { merged } = mergeSnapshots(built, remote);
+
+        // Lands after the snapshot was built, before the merge is applied.
+        await new Promise((r) => setTimeout(r, 2));
+        await configRepo.set(CONFIG_KEY.FONT_COLOR, "#222222");
+        const written = (await getSyncMeta()).clocks[COLOR];
+
+        await applyMergedToLocal(merged);
+        expect(store[COLOR]).toBe("#222222");
+        expect(store[TARGET_LANG]).toBe("ja");
+        expect((await getSyncMeta()).clocks[COLOR]).toBe(written);
+    });
+    // The value and its clock are one step. Written apart, a merge applied in
+    // between sees the new value under the old clock, reverts it, and the
+    // clock that follows stamps the reverted value as the newest.
+    it.each([
+        ["write first", true],
+        ["apply first", false],
+    ])("a write racing the apply is never reverted (%s)", async (_name, writeFirst) => {
+        await configRepo.set(CONFIG_KEY.FONT_COLOR, "#111111");
+        const remote = snap({ data: { [TARGET_LANG]: "ja" }, meta: { [TARGET_LANG]: T0 } });
+        const { merged } = mergeSnapshots(await buildSnapshot({ includeSecrets: true }), remote);
+        await new Promise((r) => setTimeout(r, 2));
+
+        const write = () => configRepo.set(CONFIG_KEY.FONT_COLOR, "#222222");
+        const apply = () => applyMergedToLocal(merged);
+        await Promise.all(writeFirst ? [write(), apply()] : [apply(), write()]);
+
+        expect(store[COLOR]).toBe("#222222");
+        expect((await getSyncMeta()).clocks[COLOR]).toBeGreaterThan(merged.meta[COLOR]);
+    });
+
+    it("concurrent read-modify-writes of one key both land", async () => {
+        await Promise.all([ruleRepo.add("example.com", ".a"), ruleRepo.add("example.com", ".b")]);
+        expect(store[RULE_HOST]).toEqual([".a", ".b"]);
+        expect(Object.keys((await getSyncMeta()).elements[RULE_HOST].clocks).sort()).toEqual([".a", ".b"]);
+    });
+
+    it("a no-op write leaves the clock alone", async () => {
+        await ruleRepo.add("example.com", ".a");
+        const before = (await getSyncMeta()).clocks[RULE_HOST];
+        await new Promise((r) => setTimeout(r, 2));
+        await ruleRepo.add("example.com", ".a");
+        expect((await getSyncMeta()).clocks[RULE_HOST]).toBe(before);
+    });
+    // buildSnapshot reads values and clocks as one state: a snapshot pairing a
+    // new value with its old clock would lose to any remote clock in between.
+    it.each([
+        ["write first", true],
+        ["build first", false],
+    ])("a snapshot built during a write is consistent (%s)", async (_name, writeFirst) => {
+        await configRepo.set(CONFIG_KEY.FONT_COLOR, "#111111");
+        const oldClock = (await getSyncMeta()).clocks[COLOR];
+        await new Promise((r) => setTimeout(r, 2));
+
+        const write = () => configRepo.set(CONFIG_KEY.FONT_COLOR, "#222222");
+        const build = () => buildSnapshot({ includeSecrets: true });
+        const built = writeFirst
+            ? (await Promise.all([write(), build()]))[1]
+            : (await Promise.all([build(), write()]))[0];
+
+        const sawNewValue = built.data[COLOR] === "#222222";
+        expect(built.meta[COLOR] > oldClock).toBe(sawNewValue);
+    });
+});
