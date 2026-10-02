@@ -195,10 +195,49 @@ describe("segmentParagraph — run qualification (text anywhere inside the run)"
         ]);
     });
 
-    it("does NOT merge a run holding a text-less inline wrapper", () => {
+    it("an empty shell between run elements does not disqualify the merge", () => {
         const div = el("<div><span>Hello </span><i></i><span>world</span></div>");
         const scan = segmentParagraph(div);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].nodes).toEqual(Array.from(div.childNodes));
+    });
+
+    it("merges a sentence threaded through citation scaffolding", () => {
+        // The shape Gemini renders: an empty marker opening the cited range, an
+        // empty footnote slot nested in each text span, and a block-bearing
+        // source chip closing the paragraph. No direct text node is non-blank.
+        const p = el(
+            '<p><span class="c"></span><b><span class="c">Supabase</span></b>' +
+            '<span class="c"> is built on </span><b><span class="c">PostgreSQL</span></b>' +
+            '<span class="c">.<x-note><sup style="display:inline-flex"><!----></sup></x-note></span>' +
+            ' <span class="c">Second sentence.<x-note><sup style="display:inline-flex"></sup></x-note></span>' +
+            "</p>"
+        );
+        // Appended through the DOM: the HTML parser would close the <p> at a
+        // nested <div>.
+        const chips = document.createElement("x-chips");
+        chips.innerHTML = "<div><button>B12.io</button></div>";
+        p.appendChild(chips);
+        const scan = segmentParagraph(p);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].nodes).toEqual(Array.from(p.childNodes).filter(n => n !== chips));
+        expect(scan.descendChildren).toEqual([chips]);
+    });
+
+    it("an empty shell does not count toward the two mergeable elements", () => {
+        // One text-bearing element plus scaffolding is still criterion 2's
+        // unwrap: the container stays tight and the cache key unchanged.
+        const div = el("<div><span></span><span>text</span></div>");
+        const scan = segmentParagraph(div);
         expect(scan.units).toHaveLength(0);
+        expect(scan.descendChildren).toEqual(Array.from(div.querySelectorAll("span")));
+    });
+
+    it("a shell holding a block, a <br> or an excluded tag still disqualifies", () => {
+        for (const inner of ['<span style="display:block"></span>', "<br>", '<img src="x">']) {
+            const div = el(`<div><span>Hello </span><i>${inner}</i><span>world</span></div>`);
+            expect(segmentParagraph(div).units).toHaveLength(0);
+        }
     });
 
     it("comments between run elements do not disqualify the merge", () => {
@@ -436,8 +475,15 @@ describe("isMergeableInline — all-inline subtree, every leaf a non-blank text 
 
     it("rejects a subtree whose leaf is not a text node", () => {
         expect(isMergeableInline(el('<a><span>a</span><img src="x"></a>'))).toBe(false);
-        expect(isMergeableInline(el("<a>text<i></i></a>"))).toBe(false);
         expect(isMergeableInline(el("<a>text<br></a>"))).toBe(false);
+        expect(isMergeableInline(el("<a>text<i><br></i></a>"))).toBe(false);
+    });
+
+    it("skips an empty shell nested in the subtree", () => {
+        expect(isMergeableInline(el("<a>text<i></i></a>"))).toBe(true);
+        expect(
+            isMergeableInline(el('<a>text<x-note><sup style="display:inline-flex"><!----></sup></x-note></a>'))
+        ).toBe(true);
     });
 
     it("rejects an element with nothing to translate", () => {

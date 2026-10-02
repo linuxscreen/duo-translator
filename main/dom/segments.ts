@@ -9,7 +9,8 @@
 //
 // A run with no direct text of its own can still become a unit, but only when
 // *every* element in it is mergeable (`isMergeableInline`: an all-inline subtree
-// whose every leaf is a non-blank text node). That is what makes
+// whose every leaf is a non-blank text node) or an empty shell (`isEmptyShell`:
+// scaffolding that renders no content of its own). That is what makes
 // `<div><span>Hello </span><span>world</span></div>` one sentence-sized unit
 // instead of one translation per span, while keeping runs that are really page
 // structure — a nested block, an `<img>`, an inline-block chip — out of the
@@ -401,7 +402,9 @@ function isInlineBox(el: HTMLElement): boolean {
  *      descendant anywhere and the element is out (`<a><span>a</span><div/></a>`);
  *   2. **every leaf is a non-blank text node** — an element that bottoms out in
  *      anything else contributes a box the merged text can't account for, so it
- *      is out too: `<img>`, an empty `<i></i>`, a `<br>`, an `<svg>`.
+ *      is out too: `<img>`, a `<br>`, an `<svg>`. The one exception is an empty
+ *      shell (`isEmptyShell`: `<i></i>`, an empty citation marker), which is
+ *      skipped like a comment — it holds nothing the sentence could lose.
  *
  * Branching is fine (that was the point of merging in the first place):
  * `<a><span>a</span></a>`, `<a>b<span>a</span></a>` and
@@ -440,10 +443,60 @@ export function isMergeableInline(el: HTMLElement): boolean {
         }
         // Comments and other non-element nodes render nothing — skip them.
         if (child.nodeType !== Node.ELEMENT_NODE) continue;
-        if (!isMergeableInline(child as HTMLElement)) return false;
-        hasText = true; // a mergeable child always carries text of its own
+        if (isMergeableInline(child as HTMLElement)) {
+            hasText = true; // a mergeable child always carries text of its own
+            continue;
+        }
+        if (!isEmptyShell(child as HTMLElement)) return false;
     }
     return hasText;
+}
+
+/**
+ * Whether `el` is an empty shell: an element whose subtree renders no content a
+ * sentence could own — no non-blank text, no excluded tag (`<img>`, `<svg>`,
+ * `<code>`, …), nothing editable, no shadow tree, no `<br>` and no block box.
+ *
+ * Such an element is neutral to run merging, the same way a comment is: it must
+ * not qualify a run, and it must not disqualify one either. Pages scatter them
+ * through ordinary prose as scaffolding — an empty `<span class="citation">`
+ * opening a cited range, a footnote slot the framework has not filled, a CSS
+ * icon — and letting one veto the merge cuts the sentence into one unit per
+ * inline child. Its own `display` is deliberately not asked unless it is a block:
+ * an empty `inline-flex` box carries no label, which is exactly why
+ * `isAtomicTextUnit` does not call it atomic either.
+ *
+ * Only ever asked of elements that already failed `isMergeableInline`, on the
+ * criterion-3 path, so the walk is off the common path entirely.
+ */
+function isEmptyShell(el: HTMLElement): boolean {
+    const stack: HTMLElement[] = [el];
+    while (stack.length > 0) {
+        const cur = stack.pop()!;
+        if (cur.tagName === "BR") return false;
+        if (isExcludedNodeType(cur) || isEditable(cur)) return false;
+        if (pageShadowRootOf(cur)) return false;
+        if (isBlockBoundary(cur)) return false;
+        for (const child of cur.childNodes) {
+            if (child.nodeType === Node.TEXT_NODE) {
+                if (contentValid(child)) return false;
+            } else if (child.nodeType === Node.ELEMENT_NODE) {
+                stack.push(child as HTMLElement);
+            }
+        }
+    }
+    return true;
+}
+
+/** Criterion 3 of `flushRun`: >= 2 mergeable elements, the rest empty shells. */
+function isMergeableRun(elements: HTMLElement[]): boolean {
+    if (elements.length < 2) return false;
+    let mergeable = 0;
+    for (const el of elements) {
+        if (isMergeableInline(el)) mergeable++;
+        else if (!isEmptyShell(el)) return false;
+    }
+    return mergeable > 1;
 }
 
 type NodeKind = "text" | "passive" | "duo-marker" | "duo-indicator" | "br" | "block" | "inline";
@@ -505,14 +558,17 @@ export function segmentParagraph(container: UnitContainer): SegmentScan {
         //      (`<div><span>text</span></div>`) so the container stays as tight
         //      as possible, the translation is inserted closest to the text,
         //      and the cache key matches what the whole-element path produced;
-        //   3. no direct text, >= 2 element nodes, and *every* one of them is
-        //      mergeable (see `isMergeableInline`: all-inline subtree, every leaf
-        //      a non-blank text node) → one unit spanning the whole run. This is
+        //   3. no direct text, >= 2 mergeable element nodes (see
+        //      `isMergeableInline`: all-inline subtree, every leaf a non-blank
+        //      text node), and every other element in the run an empty shell
+        //      (`isEmptyShell`) → one unit spanning the whole run. This is
         //      what makes `<div><span>Hello </span><span>world</span></div>` a
         //      single sentence-sized request instead of one request per span.
-        //      One non-mergeable element is enough to disqualify the run — an
+        //      One element that is neither is enough to disqualify the run — an
         //      `<img>` or a nested block between two spans means the run is page
-        //      structure, not one sentence;
+        //      structure, not one sentence. Empty shells are neutral: they do
+        //      not count toward the two (a lone text-bearing element next to
+        //      one is still criterion 2's unwrap), and they do not veto;
         //   4. anything else → descend into the run's elements, each becoming a
         //      container of its own.
         //
@@ -535,10 +591,7 @@ export function segmentParagraph(container: UnitContainer): SegmentScan {
         // The merge test sits behind the `||` short-circuit on purpose: the two
         // cheap flags answer for the overwhelming majority of runs, and this
         // walks the run's whole subtree.
-        const qualifies =
-            curHasText ||
-            curTranslated ||
-            (elementNodes.length > 1 && elementNodes.every(isMergeableInline));
+        const qualifies = curHasText || curTranslated || isMergeableRun(elementNodes);
         if (qualifies) {
             units.push({
                 container,
