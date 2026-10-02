@@ -7,6 +7,7 @@ import {
   DB_ACTION,
   LANGUAGES,
   LANGUAGES_MAP,
+  type TranslateServiceMeta,
   SELECTION_ICON_TRIGGER,
   SELECTION_ICON_TRIGGER_OPTIONS,
   TTS_SERVICE_OPTIONS,
@@ -39,8 +40,10 @@ import {
   buildServiceOptions,
   getAiTranslateService,
   getTranslateService,
+  resolveActiveService,
   type ServiceOption,
 } from '@/utils/service';
+import type { AiProvider } from '@/main/aiProvider';
 
 /**
  * Sentinel for "follow the page translation" in the two pickers.
@@ -58,6 +61,8 @@ const PREFETCH_KEYS: CONFIG_KEY[] = [
   CONFIG_KEY.SELECTION_ICON_TRIGGER,
   CONFIG_KEY.SELECTION_TRANSLATE_SERVICE,
   CONFIG_KEY.SELECTION_TARGET_LANGUAGE,
+  CONFIG_KEY.TRANSLATE_SERVICE,
+  CONFIG_KEY.TARGET_LANGUAGE,
   CONFIG_KEY.SELECTION_POPUP_MULTI_SERVICE,
   CONFIG_KEY.SELECTION_POPUP_SERVICES,
   CONFIG_KEY.TTS_SERVICE,
@@ -108,13 +113,24 @@ export function SelectionTranslatePage({ onOpenCustomization }: Props) {
   };
 
   // The page-translation service + language, only so the "follow" entries can
-  // name what they follow ("Follow page (Microsoft)").
+  // name what they follow ("Follow page (Microsoft)"). Read reactively: they
+  // are edited on another tab of this very page, so a one-shot read goes stale.
+  const pageServiceConfig = useConfig<string | undefined>(CONFIG_KEY.TRANSLATE_SERVICE);
+  const pageLang = useConfig<string | undefined>(CONFIG_KEY.TARGET_LANGUAGE) || browserTargetLanguage();
+  const [pageServices, setPageServices] = useState<{
+    translators: TranslateServiceMeta[];
+    aiProviders: AiProvider[];
+  }>({ translators: [], aiProviders: [] });
   const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
   // Every AI provider, ungated by AI_USE_FOR_TRANSLATE_PAGE — only so a value
   // already stored but missing from `serviceOptions` can still be named.
   const [allServiceOptions, setAllServiceOptions] = useState<ServiceOption[]>([]);
-  const [pageService, setPageService] = useState('');
-  const [pageLang, setPageLang] = useState(browserTargetLanguage());
+  // Resolved the way the page pipeline resolves it, so a stored service that
+  // has since been disabled names the fallback actually in use.
+  const pageService = useMemo(
+    () => resolveActiveService(pageServiceConfig, pageServices.translators, pageServices.aiProviders),
+    [pageServiceConfig, pageServices],
+  );
 
   const [disabledList, setDisabledList] = useState<DomainItem[]>([]);
   const [disabledOpen, setDisabledOpen] = useState(false);
@@ -136,10 +152,9 @@ export function SelectionTranslatePage({ onOpenCustomization }: Props) {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [ctx, aiCtx, lang] = await Promise.all([
+      const [ctx, aiCtx] = await Promise.all([
         getTranslateService(undefined),
         getAiTranslateService(undefined),
-        readConfig<string | undefined>(CONFIG_KEY.TARGET_LANGUAGE),
         Promise.all(PREFETCH_KEYS.map((k) => readConfig(k))),
       ]);
       if (cancelled) return;
@@ -147,8 +162,7 @@ export function SelectionTranslatePage({ onOpenCustomization }: Props) {
       setAllServiceOptions(
         buildServiceOptions(aiCtx.enabledTranslateServices, aiCtx.enabledAiProviders),
       );
-      setPageService(ctx.activeService ?? '');
-      if (lang) setPageLang(lang);
+      setPageServices({ translators: ctx.enabledTranslateServices, aiProviders: ctx.enabledAiProviders });
       await refreshDomains();
       if (!cancelled) setReady(true);
     })();
