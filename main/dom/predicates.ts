@@ -41,9 +41,55 @@ export function isTranslateIndicator(node: Node | null | undefined): boolean {
         && (node as Element).tagName.toLowerCase() === TRANSLATE_INDICATOR_TAG;
 }
 
-/** True for tags we never descend into / mark (script, style, our own UI, …). */
+// Rendered math. The renderers are few and each stamps a stable root: KaTeX a
+// class, MathJax v3/v4 a custom element, MathJax v2 a class per output jax, and
+// native MathML its own tag (which also covers the assistive `<math>` copies
+// every renderer hides next to its visual output). Tag names are lower-case
+// because MathML elements, unlike HTML ones, report theirs that way.
+const FORMULA_TAGS = new Set(["math", "mjx-container"]);
+const FORMULA_CLASS = /(?:^|\s)(?:katex|MathJax(?:_CHTML|_Preview)?)(?:\s|$)/;
+
+/**
+ * The root of a rendered formula (KaTeX / MathJax / MathML).
+ *
+ * A formula is notation, not prose: one glyph per text node spread over hundreds
+ * of positioned spans, usually twice (visual output + assistive MathML) and with
+ * the TeX source on top. Translating it mangles it, and merely serializing it
+ * buries a sentence under `<bN>` scaffolding — so it is opaque to the whole
+ * pipeline:
+ *
+ *   - the marking scan never marks or descends it (`isNotMarkElement`), and no
+ *     text inside it qualifies a run (`hasTranslatableText`);
+ *   - inside a sentence it stays inline content but travels as ONE empty
+ *     placeholder, its subtree never read (`getElementPreProcessResult`), so the
+ *     provider only decides where it goes;
+ *   - its text nodes are in no covered set, no sentence map and no language
+ *     sample (`getTextNodesAndText`, `getElementTextContent`).
+ *
+ * All of these have to agree — a walk that reads formula text while the
+ * serialization skips it makes `planUnit` report the unit as changed forever —
+ * which is why they all ask here.
+ *
+ * Hardcoded rather than a site rule on purpose: an exclude selector cannot reach
+ * an element inside a unit (where inline formulas live), and "translate all
+ * elements" must not turn math into prose.
+ *
+ * Reads the `class` attribute rather than `classList`: one string read answers
+ * for the overwhelming majority of elements that carry no class at all.
+ */
+export function isFormulaElement(node: Node): boolean {
+    if (node.nodeType !== Node.ELEMENT_NODE) return false;
+    if (FORMULA_TAGS.has(node.nodeName.toLowerCase())) return true;
+    const cls = (node as Element).getAttribute("class");
+    return cls !== null && FORMULA_CLASS.test(cls);
+}
+
+/**
+ * True for content we never mark or translate: the excluded tags (script,
+ * style, code, …) and rendered formulas.
+ */
 export function isExcludedNodeType(node: Node): boolean {
-    return excludedTagSet.has(node.nodeName.toLowerCase());
+    return excludedTagSet.has(node.nodeName.toLowerCase()) || isFormulaElement(node);
 }
 
 /**
