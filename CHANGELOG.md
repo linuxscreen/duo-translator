@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.6] - 2026-10-02
+
+### Added
+
+- Azure Translator and Google Cloud Translation as translation services, each used with your own API key (Azure also takes an optional region, needed for regional and multi-service resources). The keys follow the same "include API keys" sync option as the AI provider keys
+- Alibaba Cloud Bailian as an AI provider, including its Qwen-MT translation models
+
+### Fixed
+
+- Math formulas being translated as if they were text. Rendered KaTeX / MathJax / MathML is now left exactly as it is: a display formula is skipped, and an inline one stays in its place inside the sentence while the words around it are translated. Paragraphs containing formulas are fetched once more instead of coming from the cache
+- A sentence being cut into several pieces, each translated on its own, when the page scatters empty placeholder elements through the text — seen on Gemini, where one cited paragraph went out as five separate requests. Such paragraphs are translated as one sentence now, and are fetched once more instead of coming from the cache
+- Comment sections staying untranslated on sites that use OpenWeb (Spot.IM) comments, which mount the whole widget inside their own `<script>` element
+- Two settings saved together drifting apart after a sync — for instance a translation colour keeping its new value while its preset selection snapped back to an older one. Saving them in quick succession could lose the record of when one of them changed, so the next sync let an older remote value overrule it. Settings pages now also show the preset that matches the stored colour for data that had already drifted
+- A setting changed while a sync was in progress being reverted when that sync finished
+- Google Drive sync reporting "sign-in expired; please reconnect" after a momentary failure — a renewal that did not load, being offline, a server error — when the authorization was still fine. Those are retried quietly, and reconnecting is only asked for when Google says so or after three failures in a row
+- Custom shortcuts and the double-tap modifier going dead until the window lost focus on pages that dispatch their own synthetic key events (some editors, accessibility helpers and analytics scripts do)
+- The "Follow page" entry on the selection translation settings page always naming Microsoft instead of the service actually chosen for page translation
+
 ## [2.2.5] - 2026-09-01
 
 ### Added

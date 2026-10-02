@@ -547,6 +547,7 @@
   "selectionTranslateIconHint": "Exibir um ícone de tradução após selecionar o texto.",
   "selectionIconTriggerClick": "Clique para traduzir",
   "selectionIconTriggerHover": "Passe o cursor sobre o cursor para traduzir",
+  "disableSelectionTranslation": "Desativar tradução de seleção",
   "websiteTranslationRules": "Regras de tradução do site",
   "websiteTranslationRulesHint": "Áreas de tradução por site, áreas sem tradução e CSS personalizado.",
   "manage": "Gerenciar",

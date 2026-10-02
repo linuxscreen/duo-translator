@@ -547,6 +547,7 @@
   "selectionTranslateIconHint": "텍스트를 선택한 후 번역 아이콘을 표시합니다.",
   "selectionIconTriggerClick": "클릭하여 번역하세요",
   "selectionIconTriggerHover": "마우스 커서를 올려놓으면 번역됩니다.",
+  "disableSelectionTranslation": "선택 번역 비활성화",
   "websiteTranslationRules": "웹사이트 번역 규칙",
   "websiteTranslationRulesHint": "사이트별 번역 영역, 번역 제외 영역 및 사용자 지정 CSS",
   "manage": "관리하다",

@@ -547,6 +547,7 @@
   "selectionTranslateIconHint": "Mostra un'icona di traduzione dopo aver selezionato il testo",
   "selectionIconTriggerClick": "Fai clic per tradurre",
   "selectionIconTriggerHover": "Passa il mouse sopra per tradurre",
+  "disableSelectionTranslation": "Disabilita la traduzione della selezione",
   "websiteTranslationRules": "Regole di traduzione del sito web",
   "websiteTranslationRulesHint": "Aree di traduzione per sito, aree non traducibili e CSS personalizzato",
   "manage": "Maneggio",

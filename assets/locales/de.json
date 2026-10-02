@@ -547,6 +547,7 @@
   "selectionTranslateIconHint": "Nach der Textauswahl ein Übersetzungssymbol anzeigen",
   "selectionIconTriggerClick": "Zum Übersetzen klicken",
   "selectionIconTriggerHover": "Zum Übersetzen mit der Maus darüberfahren.",
+  "disableSelectionTranslation": "Auswahlübersetzung deaktivieren",
   "websiteTranslationRules": "Regeln für die Website-Übersetzung",
   "websiteTranslationRulesHint": "Websitespezifische Übersetzungsbereiche, nicht zu übersetzende Bereiche und benutzerdefiniertes CSS",
   "manage": "Verwalten",

@@ -547,6 +547,7 @@
   "selectionTranslateIconHint": "テキストを選択した後、翻訳アイコンを表示する",
   "selectionIconTriggerClick": "クリックして翻訳",
   "selectionIconTriggerHover": "カーソルを合わせて翻訳",
+  "disableSelectionTranslation": "選択範囲の翻訳を無効にする",
   "websiteTranslationRules": "ウェブサイトの翻訳ルール",
   "websiteTranslationRulesHint": "サイトごとの翻訳エリア、翻訳しないエリア、およびカスタムCSS",
   "manage": "管理",
