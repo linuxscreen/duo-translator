@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Everything else (bundle id, version, display name, category) is
+	     generated from the target's build settings (GENERATE_INFOPLIST_FILE). -->
+	<!-- Only HTTPS to third-party services: standard encryption, exempt from
+	     export compliance. Answers the question App Store Connect would
+	     otherwise ask on every upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+</dict>
+</plist>

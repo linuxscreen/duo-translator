@@ -262,12 +262,32 @@ export default defineConfig({
         'build:manifestGenerated': (wxt, manifest) => {
             if (wxt.config.browser !== 'safari') return;
             const background = manifest.background as { service_worker?: string } | undefined;
-            if (!background?.service_worker) return;
-            manifest.background = { page: SAFARI_BACKGROUND_PAGE } as typeof manifest.background;
+            if (background?.service_worker) {
+                manifest.background = { page: SAFARI_BACKGROUND_PAGE } as typeof manifest.background;
+            }
+            // Safari has no `identity` namespace at all (Google Drive sync is
+            // gated off on IS_SAFARI); the converter flags it and App Review
+            // reads the permission list, so drop it rather than ship a
+            // permission nothing uses.
+            manifest.permissions = manifest.permissions?.filter((p) => p !== 'identity');
+            // The name Safari shows in Settings › Extensions and the toolbar
+            // tooltip. Must match the container app's display name
+            // (safari/DuoTranslator.xcodeproj) so the store listing, the app
+            // and the extension all read the same. A product name, so not
+            // localized — unlike the Chrome/Firefox `__MSG_extName__`.
+            manifest.name = 'Duo Translator for Safari';
+            // The gecko block is Firefox-only noise here. `safari` pins the
+            // floor below which `content_scripts.world` (YouTube bridge) and
+            // Selection.getComposedRanges are missing — the app's deployment
+            // target (macOS 15 → Safari 18) already guarantees it, this just
+            // states it where the extension is described.
+            manifest.browser_specific_settings = {
+                safari: { strict_min_version: '18.0' },
+            } as typeof manifest.browser_specific_settings;
         },
     },
     outDir: process.env.WXT_OUTDIR || '.output',
     zip: {
-        excludeSources: ['CLAUDE.local.md', 'AGENTS.md']
+        excludeSources: ['CLAUDE.local.md', 'AGENTS.md', 'safari/Resources/**', 'safari/build/**']
     }
 });

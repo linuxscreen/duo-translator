@@ -1,0 +1,132 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Allow it on websites: click its toolbar icon in Safari and choose “Always Allow on Every Website”." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许访问网站：点击 Safari 工具栏上的扩展图标，选择“始终在每个网站上允许”。"
+          }
+        }
+      }
+    },
+    "Bilingual web page translation for Safari." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Safari 的双语网页翻译扩展。"
+          }
+        }
+      }
+    },
+    "Checking Safari…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在检查 Safari…"
+          }
+        }
+      }
+    },
+    "Could not read the extension state" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取扩展状态"
+          }
+        }
+      }
+    },
+    "Duo Translator for Safari" : {
+      "shouldTranslate" : false
+    },
+    "Enabled in Safari" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在 Safari 中启用"
+          }
+        }
+      }
+    },
+    "GitHub" : {
+      "shouldTranslate" : false
+    },
+    "Not enabled in Safari" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未在 Safari 中启用"
+          }
+        }
+      }
+    },
+    "Open Safari Extension Settings…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开 Safari 扩展设置…"
+          }
+        }
+      }
+    },
+    "Privacy Policy" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "隐私政策"
+          }
+        }
+      }
+    },
+    "Translate any page from the toolbar icon, the right-click menu, or ⌥S." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过工具栏图标、右键菜单或 ⌥S 翻译任意网页。"
+          }
+        }
+      }
+    },
+    "Turn on Duo Translator for Safari under Safari › Settings › Extensions." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Safari › 设置 › 扩展 中打开 Duo Translator for Safari。"
+          }
+        }
+      }
+    },
+    "Version %@" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "版本 %@"
+          }
+        }
+      }
+    },
+    "Website" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "官网"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}
