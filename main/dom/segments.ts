@@ -259,6 +259,54 @@ const ATOMIC_INLINE_DISPLAYS = new Set([
 // rejects them anyway; listing them would imply a behavior we do not have.
 const ATOMIC_TAGS = new Set(["BUTTON"]);
 
+/** Whether `el`'s computed `display` makes it an atomic inline-level box. */
+function isAtomicInlineBox(el: HTMLElement): boolean {
+    const display = computedDisplay(el);
+    return display !== undefined && ATOMIC_INLINE_DISPLAYS.has(display);
+}
+
+/**
+ * Whether `el` paints a box of its own — padding, a border, a background or a
+ * shadow. This is what separates a chip from a `<span class="nowrap">`: both are
+ * `inline-block`, but only the chip is visibly a thing apart from the sentence.
+ *
+ * Cached like `display`, for the same reason: box chrome rarely changes at
+ * runtime, a stale hit only misclassifies one element one way or the other, and
+ * the read is a full `getComputedStyle` + several property reads. Only ever
+ * asked of text-bearing atomic inline boxes, so the common path never pays it.
+ * Detached elements have no computed style and answer `false` (not cached).
+ */
+const boxChromeCache = new WeakMap<Element, boolean>();
+
+function hasBoxChrome(el: HTMLElement): boolean {
+    if (!el.isConnected) return false;
+    const cached = boxChromeCache.get(el);
+    if (cached !== undefined) return cached;
+    let cs: CSSStyleDeclaration;
+    try {
+        cs = getComputedStyle(el);
+    } catch {
+        return false;
+    }
+    const nonZero = (v: string) => parseFloat(v) > 0;
+    // Border width is reported as `medium` when the style is `none` (jsdom) or
+    // as `0px` (browsers); require a drawn style so neither counts.
+    const border = (width: string, style: string) => style !== "none" && style !== "" && nonZero(width);
+    const bg = cs.backgroundColor;
+    const result =
+        nonZero(cs.paddingTop) || nonZero(cs.paddingRight)
+        || nonZero(cs.paddingBottom) || nonZero(cs.paddingLeft)
+        || border(cs.borderTopWidth, cs.borderTopStyle)
+        || border(cs.borderRightWidth, cs.borderRightStyle)
+        || border(cs.borderBottomWidth, cs.borderBottomStyle)
+        || border(cs.borderLeftWidth, cs.borderLeftStyle)
+        || (bg !== "" && bg !== "transparent" && !/^rgba\(\s*\d+,\s*\d+,\s*\d+,\s*0\s*\)$/.test(bg))
+        || (cs.backgroundImage !== "" && cs.backgroundImage !== "none")
+        || (cs.boxShadow !== "" && cs.boxShadow !== "none");
+    boxChromeCache.set(el, result);
+    return result;
+}
+
 /**
  * Whether `el` is an atomic inline-level box carrying a label of its own — a
  * button, a chip, a badge.
@@ -269,9 +317,15 @@ const ATOMIC_TAGS = new Set(["BUTTON"]);
  * its own once the paragraph is translated, and (in DOUBLE) cloned into the
  * translation, which duplicates its id and leaves an inert copy on the page.
  *
- * All three conditions are load bearing; each keeps a different thing inside the
+ * All four conditions are load bearing; each keeps a different thing inside the
  * run, where cutting it out would split a sentence:
  *
+ *   - **looks like a widget** — a `<button>`, `role="button"`, or an element
+ *     that paints its own box (`hasBoxChrome`). `display: inline-block` alone
+ *     proves nothing: pages wrap product names and dates in
+ *     `<span class="nowrap">` (inline-block + `white-space: nowrap`) purely to
+ *     keep them on one line, and that text IS the sentence. Measured on
+ *     testflight.apple.com: one `<p>` cut into eleven units by five such spans;
  *   - **carries text of its own** — a text-free `inline-block` icon
  *     (`<i class="icon"></i>`) is everywhere mid-sentence and has nothing to
  *     translate;
@@ -280,16 +334,14 @@ const ATOMIC_TAGS = new Set(["BUTTON"]);
  *   - **not editable** — an enabled `<input>`/`<textarea>` is the user's, not
  *     ours.
  *
- * Deliberately NOT memoized. The box half is already cached one level down
- * (`computedDisplay`), and the text half must stay live: a component that fills
- * its label after first paint would be frozen as "not atomic" forever. This is
- * the same trap that keeps `isMergeableInline` uncached.
+ * Deliberately NOT memoized as a whole. The box halves are cached one level down
+ * (`computedDisplay`, `hasBoxChrome`), and the text half must stay live: a
+ * component that fills its label after first paint would be frozen as "not
+ * atomic" forever. This is the same trap that keeps `isMergeableInline` uncached.
  */
 export function isAtomicTextUnit(el: HTMLElement): boolean {
-    const display = computedDisplay(el);
-    const atomicBox = ATOMIC_TAGS.has(el.tagName)
-        || (display !== undefined && ATOMIC_INLINE_DISPLAYS.has(display));
-    if (!atomicBox) return false;
+    const isButton = ATOMIC_TAGS.has(el.tagName);
+    if (!isButton && !isAtomicInlineBox(el)) return false;
     if (isExcludedNodeType(el) || isEditable(el)) return false;
     // Nothing inside, nothing to carry — and nothing to walk. Icon components
     // drawn entirely from CSS (`<i class="icon"></i>`) are the bulk of a real
@@ -298,6 +350,10 @@ export function isAtomicTextUnit(el: HTMLElement): boolean {
     // ~3 ms of the ~15 ms this predicate costs on a synthetic page carrying
     // 3000 such icons — the rest is the per-element call itself, not the walk.
     if (!el.firstChild) return false;
+    // Cached chrome read before the live text walk: on a real page most
+    // text-bearing inline-blocks are nowrap/measurement wrappers, and this
+    // rejects them without walking their subtree.
+    if (!isButton && el.getAttribute("role") !== "button" && !hasBoxChrome(el)) return false;
     return hasTranslatableText(el);
 }
 
@@ -323,6 +379,15 @@ export function isAtomicTextUnit(el: HTMLElement): boolean {
  * boxes, so nothing in them can break the line. This is deliberately NOT
  * `excludedTagSet` — `<pre>`/`<code>`/`<video>` do render, so a block inside
  * them is a real boundary even though their text is never translated.
+ *
+ * Atomic inline-level boxes (`inline-block` / `inline-flex` / …) are rejected
+ * the same way: the box is laid out as ONE inline rectangle, so whatever blocks
+ * sit inside it are contained there and cannot break the line the wrapper is
+ * on. Without this, an inline math renderer's `<span><div style="display:
+ * inline-block"><img style="position:absolute">` (Google Search, "written as
+ * ∇f") makes the wrapper a boundary — the absolutely positioned `<img>` is
+ * blockified to `display:block` and the walker takes it for a real block —
+ * and the sentence is cut on both sides of the formula.
  *
  * Known gap, unchanged from before: the inverse case, a CSS-*blockified* inline
  * tag (`<span><span style="display:block">`), is invisible to the tag probe.
@@ -356,6 +421,10 @@ export function isSegmentBoundary(el: HTMLElement): boolean {
             if (EXCLUDE_CHILD_ELEMENT_TAGS.has(child.tagName) && !isRenderedScript(child)) {
                 return NodeFilter.FILTER_REJECT;
             }
+            // Contained in its own inline rectangle — nothing below can break
+            // the wrapper's line. (Disjoint from BLOCK_DISPLAYS, so the order
+            // of the two tests is cost only: both read the cached `display`.)
+            if (isAtomicInlineBox(child)) return NodeFilter.FILTER_REJECT;
             return isBlockBoundary(child) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
         },
     });

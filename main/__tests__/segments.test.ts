@@ -577,6 +577,36 @@ describe("isSegmentBoundary — tag-level probe gated by a computed-style rechec
         expect(scan.units).toHaveLength(1);
         expect(scan.descendChildren).toHaveLength(0);
     });
+
+    it("ignores blocks contained inside an atomic inline-level box", () => {
+        // Google Search's inline math: <span><div inline-block><img absolute>.
+        // The absolutely positioned <img> is blockified to display:block, but it
+        // is laid out inside the inline-block's own rectangle — it cannot break
+        // the line the wrapper is on. The tag probe does hit the <div>.
+        const span = el(
+            '<span><span><div style="display:inline-block">' +
+            '<img style="position:absolute;display:block"><div>∇</div></div></span></span>'
+        );
+        expect(span.querySelector("div")).not.toBeNull();
+        expect(isSegmentBoundary(span)).toBe(false);
+        // Pinned end to end: the formula wrapper stays in the sentence.
+        const p = el(
+            '<p>the gradient (written as <span><div style="display:inline-block">' +
+            '<img style="position:absolute;display:block"></div></span>) is a vector.</p>'
+        );
+        const scan = segmentParagraph(p);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].wholeElement).toBe(true);
+        expect(scan.descendChildren).toHaveLength(0);
+    });
+
+    it("a real block AFTER an atomic inline box is still found", () => {
+        // The reject must be scoped to the atomic box's subtree, not end the walk.
+        const span = el(
+            '<span><div style="display:inline-block"><div>in box</div></div><div>real block</div></span>'
+        );
+        expect(isSegmentBoundary(span)).toBe(true);
+    });
 });
 
 describe("atomic inline-level elements are boundaries", () => {
@@ -607,6 +637,53 @@ describe("atomic inline-level elements are boundaries", () => {
         const scan = segmentParagraph(p);
         expect(scan.descendChildren).toEqual([p.querySelector("button")]);
         expect(scan.units).toHaveLength(2);
+    });
+
+    it("an inline-block that paints no box of its own is sentence text, not a chip", () => {
+        // testflight.apple.com: `<span class="nowrap">` is inline-block +
+        // white-space:nowrap, used purely to keep a product name on one line.
+        // Five of them cut one <p> into eleven units. No padding, border,
+        // background or shadow → it is indistinguishable from inline text.
+        const p = el(
+            '<p>使用 <span style="display:inline-block;white-space:nowrap">TestFlight App</span> 帮助开发者测试 ' +
+            '<span style="display:inline-block">Apple TV</span>、' +
+            '<span style="display:inline-flex">Apple Watch</span> 和 iMessage。</p>'
+        );
+        const scan = segmentParagraph(p);
+        expect(scan.descendChildren).toEqual([]);
+        expect(scan.units).toHaveLength(1);
+        expect(scan.units[0].wholeElement).toBe(true);
+    });
+
+    it("an inline-block with box chrome is a chip and leaves the run", () => {
+        // Each kind of chrome on its own is enough: padding, a drawn border, a
+        // background color, a background image, a shadow.
+        const chromes = [
+            "padding:2px 8px",
+            "border:1px solid red",
+            "background-color:#eee",
+            "background-image:linear-gradient(red, blue)",
+            "box-shadow:0 0 2px black",
+        ];
+        for (const chrome of chromes) {
+            const p = el(`<p>Status: <span style="display:inline-block;${chrome}">beta</span> today.</p>`);
+            const scan = segmentParagraph(p);
+            expect(scan.descendChildren, chrome).toEqual([p.querySelector("span")]);
+            expect(scan.units, chrome).toHaveLength(2);
+        }
+        // A border declared with style `none` draws nothing.
+        const none = el('<p>a <span style="display:inline-block;border:1px none red">b</span> c</p>');
+        expect(segmentParagraph(none).units).toHaveLength(1);
+    });
+
+    it("role=button and <button> are chips even with every bit of chrome reset", () => {
+        const p = el(
+            '<p>Click <span role="button" style="display:inline-block">here</span> or ' +
+            '<button style="padding:0;border:none;background:none">there</button>.</p>'
+        );
+        const scan = segmentParagraph(p);
+        expect(scan.descendChildren).toEqual([p.querySelector("span"), p.querySelector("button")]);
+        expect(scan.units).toHaveLength(3);
     });
 
     it("a text-free inline-block icon stays in the run", () => {
