@@ -48,6 +48,15 @@ export function isTranslateIndicator(node: Node | null | undefined): boolean {
 // because MathML elements, unlike HTML ones, report theirs that way.
 const FORMULA_TAGS = new Set(["math", "mjx-container"]);
 const FORMULA_CLASS = /(?:^|\s)(?:katex|MathJax(?:_CHTML|_Preview)?)(?:\s|$)/;
+// Google's own math renderer (Search AI answers): the root `<span>` and every
+// glyph `<div>` under it carry this attribute, and the root adds the TeX source
+// in `data-xpm-latex`. Its output holds NO text node at all — each glyph is an
+// `<svg><text>` behind a 1×1 `<img>` — so without recognition the DOUBLE copy
+// drops it as an empty element and "written as ∇f" comes back as "written as".
+// Matching the glyph divs too is harmless: every walk is top-down and stops at
+// the first match, so the root is what gets the placeholder. Undocumented and
+// may change; failing to match only degrades to that pre-recognition behavior.
+const FORMULA_ATTR = "data-xpm-math-type";
 
 /**
  * The root of a rendered formula (KaTeX / MathJax / MathML).
@@ -81,7 +90,8 @@ export function isFormulaElement(node: Node): boolean {
     if (node.nodeType !== Node.ELEMENT_NODE) return false;
     if (FORMULA_TAGS.has(node.nodeName.toLowerCase())) return true;
     const cls = (node as Element).getAttribute("class");
-    return cls !== null && FORMULA_CLASS.test(cls);
+    if (cls !== null && FORMULA_CLASS.test(cls)) return true;
+    return (node as Element).hasAttribute(FORMULA_ATTR);
 }
 
 /**

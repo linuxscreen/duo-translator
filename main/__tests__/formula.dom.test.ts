@@ -60,6 +60,23 @@ function katex(glyphs: string): string {
     );
 }
 
+/**
+ * What Google's math renderer emits for `\nabla f` (Search AI answers): a root
+ * `<span data-xpm-math-type>` with the TeX source, one inline-block `<div>` per
+ * glyph, each a 1×1 `<img>` plus an `<svg><text>` glyph — no text node anywhere.
+ */
+function xpm(latex: string, glyphs: string[]): string {
+    return (
+        `<span data-xpm-copy-root="" data-xpm-math-type="inline" data-xpm-latex="${latex}" style="display:inline">` +
+        glyphs.map((g) =>
+            '<div data-xpm-math-type="inline" style="position:relative;display:inline-block">' +
+            '<img aria-hidden="true" src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" style="position:absolute;height:100%;width:100%">' +
+            `<svg aria-hidden="true" width="0.7em" height="0.7em"><text>${g}</text></svg></div>`
+        ).join("") +
+        "</span>"
+    );
+}
+
 describe("isFormulaElement", () => {
     it.each([
         ['<span class="katex">x</span>', "KaTeX"],
@@ -69,6 +86,8 @@ describe("isFormulaElement", () => {
         ['<span class="mjx-chtml MathJax_CHTML">x</span>', "MathJax v2 CommonHTML"],
         ['<span class="MathJax_Preview">x</span>', "MathJax v2 preview"],
         ["<math><mi>x</mi></math>", "native MathML"],
+        ['<span data-xpm-math-type="inline" data-xpm-latex="x">x</span>', "Google xpm root"],
+        ['<div data-xpm-math-type="inline" style="display:inline-block"></div>', "Google xpm glyph box"],
     ])("recognizes %s (%s)", (html) => {
         const node = el(html);
         expect(isFormulaElement(node)).toBe(true);
@@ -81,6 +100,7 @@ describe("isFormulaElement", () => {
         '<span class="katexify">x</span>',
         '<span class="not-MathJax">x</span>',
         '<div class="mathematics">x</div>',
+        '<span data-xpm-latex="x">x</span>', // the TeX source alone is not the renderer's root marker
     ])("does not claim %s", (html) => {
         expect(isFormulaElement(el(html))).toBe(false);
     });
@@ -199,6 +219,42 @@ describe("formulas through a translation round-trip", () => {
         const formula = copy.querySelector(".katex")!;
         expect(formula.outerHTML).toBe(p.querySelector(".katex")!.outerHTML);
         expect(copy.textContent).toBe("如果成立" + formula.textContent + "，停止。");
+    });
+
+    it("DOUBLE: a text-free formula inside a styling wrapper survives in the copy (Google Search shape)", async () => {
+        // The real page: <span class="mTEjhd"><link rel=stylesheet><span>…xpm root…</span></span>.
+        // No text node anywhere under the wrapper, so before recognition the
+        // whole wrapper was dropped as an empty element and the copy read
+        // "（记为）是一个向量". The wrapper gets its own tag (it is an ancestor
+        // of the atom), the formula root ONE empty tag, and nothing below is read.
+        // A <div> container, as on the page (<li><span>): the glyph boxes are
+        // <div>s, and an HTML parser would close a <p> at the first one.
+        const p = el(
+            '<div>the gradient (written as <span class="mTEjhd">' +
+            '<link rel="stylesheet" href="https://example.invalid/stix.css"><span class="dteT0b">' +
+            xpm("\\nabla f", ["∇", "𝑓"]) +
+            "</span></span>) is a vector.</div>"
+        );
+        const pre = getElementPreProcessResult(p, VIEW_STRATEGY.DOUBLE);
+        expect(pre.mappedHtmlText).toBe(
+            "the gradient (written as <b0><b1><b2></b2></b1></b0>) is a vector."
+        );
+        expect(pre.textNodes).toHaveLength(2);
+        expect(pre.textNodes.every((t) => !p.querySelector("[data-xpm-math-type]")!.contains(t))).toBe(true);
+
+        const before = p.innerHTML;
+        registerFake(() => [new TranslateResult("梯度（记为<b0><b1><b2></b2></b1></b0>）是一个向量。", "en", 1)]);
+        const results = await getTranslateResult("microsoft", [p], "zh-CN", VIEW_STRATEGY.DOUBLE);
+        await translate("microsoft", results);
+
+        expect(p.innerHTML).toBe(before);
+        const copy = results[0].translatedCopyElement!;
+        const formula = copy.querySelector("[data-xpm-copy-root]")!;
+        expect(formula).not.toBeNull();
+        expect(formula.outerHTML).toBe(p.querySelector("[data-xpm-copy-root]")!.outerHTML);
+        expect(copy.querySelectorAll("svg text")).toHaveLength(2);
+        // The glyph text is formula content, so textContent carries it in place.
+        expect(copy.textContent).toBe("梯度（记为∇𝑓）是一个向量。");
     });
 });
 
