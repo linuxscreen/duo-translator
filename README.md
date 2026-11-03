@@ -57,26 +57,12 @@ Add to your browser:
   <a href="https://chromewebstore.google.com/detail/duotranslator/pjniaipnjcdiiglednmhgmjmpmllelke"><img src="./docs/assets/badge-chrome.svg" alt="Chrome Web Store"></a>
   <a href="https://microsoftedge.microsoft.com/addons/detail/duotranslator/aagmdliblgcoijibaiohkdfpkopekoeo"><img src="./docs/assets/badge-edge.svg" alt="Edge Add-ons"></a>
   <a href="https://addons.mozilla.org/en-US/firefox/addon/duo-translator/"><img src="./docs/assets/badge-firefox.svg" alt="Firefox Add-ons"></a>
+  <a href="https://apps.apple.com/us/app/duo-translator-for-safari/id6824118949"><img src="./docs/assets/badge-safari.svg" alt="Mac App Store"></a>
 </p>
 
 Alternatively, you can install it manually using the ZIP file.
 
-<details>
-<summary><b>Safari (beta) — manual install</b></summary>
-
-Requires **Safari 18.4 or later on macOS**.
-
-1. Download `duo-translator-<version>-safari-beta.zip` from [Releases](https://github.com/linuxscreen/duo-translator/releases) and unzip it. The folder holding `manifest.json` is the extension — keep it somewhere permanent, Safari reads it from where it sits.
-2. In Safari, open **Settings → Advanced** and tick **Show features for web developers**. A **Developer** tab appears in Settings.
-3. Go to **Settings → Developer** and turn on **Allow unsigned extensions**.
-4. Click **Add Temporary Extension…**, confirm with your Mac password or Touch ID, and select the folder from step 1 (the one containing `manifest.json`).
-5. Open **Settings → Extensions**, switch **DuoTranslator** on, and allow it on every website — the extension rewrites pages in place, so it needs access to the sites you read.
-
-**A temporary extension only lives for the current Safari session.** Quitting Safari unloads it, and steps 3–5 have to be repeated on the next launch. The store version is not available yet.
-
-Shortcuts can only be edited from Safari 26 onwards, under Safari → Settings → Extensions.
-
-</details>
+Safari users install **Duo Translator for Safari** from the Mac App Store (requires **Safari 18.4 or later on macOS**). After installing, open **Safari → Settings → Extensions**, switch it on, and allow it on every website — the extension rewrites pages in place, so it needs access to the sites you read. Shortcuts can only be edited from Safari 26 onwards, under Safari → Settings → Extensions.
 
 ## Community
 
