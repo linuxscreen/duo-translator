@@ -20,8 +20,10 @@ export async function abortableRequest<T = any>(opts: {
     data?: Record<string, unknown>;
     signal?: AbortSignal | null;
     timeout?: number;
+    /** Also cancel the upstream job if the local request budget is exhausted. */
+    cancelOnTimeout?: boolean;
 }): Promise<T | undefined> {
-    const { action, abortAction, data, signal, timeout } = opts
+    const { action, abortAction, data, signal, timeout, cancelOnTimeout } = opts
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError")
 
     // `sendMessage` has no native cancellation, so abort is relayed out of
@@ -52,6 +54,11 @@ export async function abortableRequest<T = any>(opts: {
         )
         if (signal?.aborted) throw new DOMException("Aborted", "AbortError")
         return resp as T | undefined
+    } catch (error) {
+        if (cancelOnTimeout && !signal?.aborted && error instanceof Error && error.message === `${action} request timeout`) {
+            void sendMessageToBackground({ action: abortAction, data: { requestId } })
+        }
+        throw error
     } finally {
         if (onAbort) signal?.removeEventListener("abort", onAbort)
     }

@@ -1,5 +1,5 @@
 import { AI_PREFIX, AI_TASK, DEFAULT_VALUE, TRANSLATE_SERVICE } from "@/main/constants";
-import { translateTexts } from "@/main/translateClient";
+import { preparePlainTranslationTexts, readPlainTranslationText, translateTexts } from "@/main/translateClient";
 import { startAiChatStream } from "@/main/aiClient";
 
 /**
@@ -59,6 +59,11 @@ function startRegularTranslate(
     onSourceLang?: (lang: string) => void,
 ): RunningStream {
     let aborted = false;
+    const controller = new AbortController();
+    const abort = () => {
+        aborted = true;
+        controller.abort();
+    };
     const stream: AsyncIterable<string> = {
         [Symbol.asyncIterator]() {
             let done = false;
@@ -66,20 +71,26 @@ function startRegularTranslate(
                 async next(): Promise<IteratorResult<string>> {
                     if (done || aborted) return { value: undefined as any, done: true };
                     done = true;
-                    const results = await translateTexts(service, [text], targetLang);
+                    let results;
+                    try {
+                        results = await translateTexts(service, preparePlainTranslationTexts(service, [text]), targetLang, controller.signal);
+                    } catch (error) {
+                        if (aborted) return { value: undefined as any, done: true };
+                        throw error;
+                    }
                     if (!results) throw new Error(`Unknown translate service: ${service}`);
                     if (aborted) return { value: undefined as any, done: true };
                     const sourceLang = results?.[0]?.sourceLang;
                     if (sourceLang) onSourceLang?.(sourceLang);
-                    const out = results?.[0]?.translatedMappedHtmlText ?? "";
+                    const out = readPlainTranslationText(service, results?.[0]?.translatedMappedHtmlText ?? "");
                     return { value: out, done: false };
                 },
                 return(): Promise<IteratorResult<string>> {
-                    aborted = true;
+                    abort();
                     return Promise.resolve({ value: undefined as any, done: true });
                 },
             };
         },
     };
-    return { stream, abort: () => { aborted = true; } };
+    return { stream, abort };
 }

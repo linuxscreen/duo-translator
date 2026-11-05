@@ -11,7 +11,7 @@ import { readConfig } from "@/utils/reactiveConfig";
 import { setConfig } from "@/utils/db";
 import { buildNoTranslateLanguageSet, isNoTranslateLanguage } from "@/main/noTranslateLanguage";
 import { buildAiTranslateService } from "@/utils/service";
-import { translateTexts } from "@/main/translateClient";
+import { preparePlainTranslationTexts, readPlainTranslationText, translateTexts } from "@/main/translateClient";
 import { ERROR_SCOPE, reportRequestError } from "@/main/errorReport";
 import { SubtitleOverlay } from "./overlay";
 import { mountSubtitleControls, type SubtitleControlsController } from "./controls";
@@ -871,7 +871,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
         // Captured in the same synchronous stretch as `pendingIdx`, so the two
         // cannot disagree.
         const gen = s.cuesGen;
-        void translateTexts(service, texts, lang, s.abort.signal)
+        void translateTexts(service, preparePlainTranslationTexts(service, texts), lang, s.abort.signal)
             .then((results) => {
                 if (session !== s || s.abort.signal.aborted) return;
                 if (!results || results.length !== texts.length) return;
@@ -882,7 +882,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
                 // unchanged in that case, so nothing above catches it.
                 if (s.cuesGen !== gen) return;
                 for (let k = 0; k < pendingIdx.length; k++) {
-                    s.cues[pendingIdx[k]].translated = results[k]?.translatedMappedHtmlText ?? "";
+                    s.cues[pendingIdx[k]].translated = readPlainTranslationText(service, results[k]?.translatedMappedHtmlText ?? "");
                 }
             })
             .catch((e) => {
@@ -984,7 +984,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
                     const batch = cues.slice(i, i + DOWNLOAD_BATCH);
                     const results = await translateTexts(
                         service,
-                        batch.map((c) => c.text),
+                        preparePlainTranslationTexts(service, batch.map((c) => c.text)),
                         lang,
                         job.abort.signal,
                     );

@@ -32,6 +32,7 @@ import {
     CONFIG_KEY,
     configDefault,
     DOMAIN_STRATEGY,
+    TRANSLATE_SERVICE,
     VIEW_STRATEGY,
 } from '@/main/constants';
 import { collectionIdentity, indexElements } from './collections';
@@ -343,6 +344,26 @@ export const configRepo = {
         await writeKey<unknown>(configKey(name), dataConfigKey(name), () => value);
     },
 };
+
+/** Old disabled-service lists predate Baidu. Keep it off until credentials exist. */
+export function migrateBaiduServiceDefault(): Promise<void> {
+    return updateSyncMeta(async (m) => {
+        const name = CONFIG_KEY.DISABLED_TRANSLATE_SERVICES;
+        const before = await storage.getItem<unknown>(configKey(name));
+        // A missing list already resolves to the current default, which includes Baidu.
+        if (!Array.isArray(before) || before.includes(TRANSLATE_SERVICE.BAIDU)) return false;
+        const [appId, secretKey] = await Promise.all([
+            storage.getItem<unknown>(configKey(CONFIG_KEY.BAIDU_APP_ID)),
+            storage.getItem<unknown>(configKey(CONFIG_KEY.BAIDU_SECRET_KEY)),
+        ]);
+        if (typeof appId === 'string' && appId.trim()
+            && typeof secretKey === 'string' && secretKey.trim()) return false;
+
+        const after = [...before, TRANSLATE_SERVICE.BAIDU];
+        await storage.setItem(configKey(name), after);
+        markLive(m, dataConfigKey(name), { before, after });
+    });
+}
 
 // ------------------------------ Domain -------------------------------------
 

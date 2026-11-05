@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { browser } from 'wxt/browser';
 import { ACTION, CONFIG_KEY, STATUS_SUCCESS, TRANSLATE_SERVICE } from '@/main/constants';
-import { getConfig, setConfig } from '@/utils/db';
+import { getConfig, setConfig, setConfigOrThrow } from '@/utils/db';
 import { BuiltinAiModelDialog } from '@/components/options/BuiltinAiModelDialog';
 import { builtinAiApiAvailable } from '@/main/builtinAi/capability';
 import {
@@ -31,9 +31,20 @@ type Row = {
 type CredentialService =
     | TRANSLATE_SERVICE.DEEPL
     | TRANSLATE_SERVICE.AZURE
-    | TRANSLATE_SERVICE.GOOGLE_CLOUD;
+    | TRANSLATE_SERVICE.GOOGLE_CLOUD
+    | TRANSLATE_SERVICE.BAIDU;
 
-type CredentialValues = { apiKey: string; region: string };
+type CredentialValues = {
+    apiKey: string;
+    region: string;
+    appId: string;
+    secretKey: string;
+    qps: string;
+};
+
+const EMPTY_CREDENTIALS: CredentialValues = {
+    apiKey: '', region: '', appId: '', secretKey: '', qps: '1',
+};
 
 type TestState =
     | { kind: 'idle' }
@@ -58,16 +69,16 @@ export function ServicesPage() {
     // Per-service connection-test results, keyed by service value.
     const [testStates, setTestStates] = useState<Record<string, TestState>>({});
 
-    // Credentials shared by the three API-backed translation services. Region
-    // is only used by Azure; keeping one draft shape makes the dialog flow and
-    // connection test identical for every credential-backed row.
+    // One draft shape keeps the credential dialog and test flow shared.
     const [credentials, setCredentials] = useState<Record<CredentialService, CredentialValues>>({
-        [TRANSLATE_SERVICE.DEEPL]: { apiKey: '', region: '' },
-        [TRANSLATE_SERVICE.AZURE]: { apiKey: '', region: '' },
-        [TRANSLATE_SERVICE.GOOGLE_CLOUD]: { apiKey: '', region: '' },
+        [TRANSLATE_SERVICE.DEEPL]: { ...EMPTY_CREDENTIALS },
+        [TRANSLATE_SERVICE.AZURE]: { ...EMPTY_CREDENTIALS },
+        [TRANSLATE_SERVICE.GOOGLE_CLOUD]: { ...EMPTY_CREDENTIALS },
+        [TRANSLATE_SERVICE.BAIDU]: { ...EMPTY_CREDENTIALS },
     });
     const [credentialDialogService, setCredentialDialogService] = useState<CredentialService | null>(null);
-    const [credentialDraft, setCredentialDraft] = useState<CredentialValues>({ apiKey: '', region: '' });
+    const [credentialDraft, setCredentialDraft] = useState<CredentialValues>({ ...EMPTY_CREDENTIALS });
+    const [credentialSaving, setCredentialSaving] = useState(false);
     const [dialogTest, setDialogTest] = useState<TestState>({ kind: 'idle' });
 
     // Built-in AI model dialog (status + download).
@@ -77,29 +88,41 @@ export function ServicesPage() {
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const [ds, deeplKey, azureKey, azureRegion, googleCloudKey, tl] = await Promise.all([
+            const [ds, deeplKey, azureKey, azureRegion, googleCloudKey, tl, baiduAppId, baiduSecretKey, baiduQps] = await Promise.all([
                 getConfig(CONFIG_KEY.DISABLED_TRANSLATE_SERVICES),
                 getConfig(CONFIG_KEY.DEEPL_API_KEY),
                 getConfig(CONFIG_KEY.AZURE_API_KEY),
                 getConfig(CONFIG_KEY.AZURE_REGION),
                 getConfig(CONFIG_KEY.GOOGLE_CLOUD_API_KEY),
                 getConfig(CONFIG_KEY.TARGET_LANGUAGE),
+                getConfig(CONFIG_KEY.BAIDU_APP_ID),
+                getConfig(CONFIG_KEY.BAIDU_SECRET_KEY),
+                getConfig(CONFIG_KEY.BAIDU_QPS),
             ]);
             if (cancelled) return;
             const set = new Set(Array.isArray(ds) ? ds : []);
             setDisabled(set);
             setCredentials({
                 [TRANSLATE_SERVICE.DEEPL]: {
+                    ...EMPTY_CREDENTIALS,
                     apiKey: typeof deeplKey === 'string' ? deeplKey : '',
                     region: '',
                 },
                 [TRANSLATE_SERVICE.AZURE]: {
+                    ...EMPTY_CREDENTIALS,
                     apiKey: typeof azureKey === 'string' ? azureKey : '',
                     region: typeof azureRegion === 'string' ? azureRegion : '',
                 },
                 [TRANSLATE_SERVICE.GOOGLE_CLOUD]: {
+                    ...EMPTY_CREDENTIALS,
                     apiKey: typeof googleCloudKey === 'string' ? googleCloudKey : '',
                     region: '',
+                },
+                [TRANSLATE_SERVICE.BAIDU]: {
+                    ...EMPTY_CREDENTIALS,
+                    appId: typeof baiduAppId === 'string' ? baiduAppId : '',
+                    secretKey: typeof baiduSecretKey === 'string' ? baiduSecretKey : '',
+                    qps: typeof baiduQps === 'number' ? String(baiduQps) : EMPTY_CREDENTIALS.qps,
                 },
             });
             if (typeof tl === 'string' && tl) setTargetLang(tl);
@@ -260,7 +283,23 @@ export function ServicesPage() {
     const isCredentialService = (value: string): value is CredentialService =>
         value === TRANSLATE_SERVICE.DEEPL
         || value === TRANSLATE_SERVICE.AZURE
-        || value === TRANSLATE_SERVICE.GOOGLE_CLOUD;
+        || value === TRANSLATE_SERVICE.GOOGLE_CLOUD
+        || value === TRANSLATE_SERVICE.BAIDU;
+
+    const isBaiduDialog = credentialDialogService === TRANSLATE_SERVICE.BAIDU;
+    const qps = Number(credentialDraft.qps);
+    const credentialValidationError = credentialDialogService === null
+        ? undefined
+        : isBaiduDialog
+            ? !credentialDraft.appId.trim() || !credentialDraft.secretKey.trim()
+                ? t('baiduCredentialsRequired', 'Enter your Baidu AppID and secret key.')
+                : !Number.isInteger(qps) || qps < 1 || qps > 100
+                    ? t('baiduQpsInvalid', 'QPS must be a whole number from 1 to 100.')
+                    : undefined
+            : !credentialDraft.apiKey.trim()
+                ? t('translationApiKeyRequired', 'Enter an API key.')
+                : undefined;
+    const credentialDraftValid = credentialDialogService !== null && !credentialValidationError;
 
     // Each editable service owns its own dialog — dispatch, don't early-return.
     const openEdit = (value: string) => {
@@ -277,7 +316,7 @@ export function ServicesPage() {
 
     // Test the key currently in the dialog draft (not yet persisted).
     const runDialogTest = async () => {
-        if (!credentialDialogService) return;
+        if (!credentialDialogService || !credentialDraftValid) return;
         setDialogTest({ kind: 'pending' });
         try {
             const resp: any = await browser.runtime.sendMessage({
@@ -285,10 +324,18 @@ export function ServicesPage() {
                 data: {
                     service: credentialDialogService,
                     targetLang: 'zh-CN',
-                    apiKey: credentialDraft.apiKey.trim(),
-                    ...(credentialDialogService === TRANSLATE_SERVICE.AZURE
-                        ? { region: credentialDraft.region.trim() }
-                        : {}),
+                    ...(isBaiduDialog
+                        ? {
+                            appId: credentialDraft.appId.trim(),
+                            secretKey: credentialDraft.secretKey.trim(),
+                            qps,
+                        }
+                        : {
+                            apiKey: credentialDraft.apiKey.trim(),
+                            ...(credentialDialogService === TRANSLATE_SERVICE.AZURE
+                                ? { region: credentialDraft.region.trim() }
+                                : {}),
+                        }),
                 },
             });
             if (resp?.status === STATUS_SUCCESS) {
@@ -302,25 +349,41 @@ export function ServicesPage() {
     };
 
     const saveCredentials = async () => {
-        if (!credentialDialogService) return;
+        if (!credentialDialogService || !credentialDraftValid || credentialSaving) return;
         const values = {
             apiKey: credentialDraft.apiKey.trim(),
             region: credentialDraft.region.trim(),
+            appId: credentialDraft.appId.trim(),
+            secretKey: credentialDraft.secretKey.trim(),
+            qps: credentialDraft.qps,
         };
-        setCredentials((current) => ({ ...current, [credentialDialogService]: values }));
-        if (credentialDialogService === TRANSLATE_SERVICE.DEEPL) {
-            await setConfig(CONFIG_KEY.DEEPL_API_KEY, values.apiKey);
-        } else if (credentialDialogService === TRANSLATE_SERVICE.AZURE) {
-            await Promise.all([
-                setConfig(CONFIG_KEY.AZURE_API_KEY, values.apiKey),
-                setConfig(CONFIG_KEY.AZURE_REGION, values.region),
-            ]);
-        } else {
-            await setConfig(CONFIG_KEY.GOOGLE_CLOUD_API_KEY, values.apiKey);
+        setCredentialSaving(true);
+        try {
+            if (credentialDialogService === TRANSLATE_SERVICE.BAIDU) {
+                await Promise.all([
+                    setConfigOrThrow(CONFIG_KEY.BAIDU_APP_ID, values.appId),
+                    setConfigOrThrow(CONFIG_KEY.BAIDU_SECRET_KEY, values.secretKey),
+                    setConfigOrThrow(CONFIG_KEY.BAIDU_QPS, qps),
+                ]);
+            } else if (credentialDialogService === TRANSLATE_SERVICE.DEEPL) {
+                await setConfigOrThrow(CONFIG_KEY.DEEPL_API_KEY, values.apiKey);
+            } else if (credentialDialogService === TRANSLATE_SERVICE.AZURE) {
+                await Promise.all([
+                    setConfigOrThrow(CONFIG_KEY.AZURE_API_KEY, values.apiKey),
+                    setConfigOrThrow(CONFIG_KEY.AZURE_REGION, values.region),
+                ]);
+            } else {
+                await setConfigOrThrow(CONFIG_KEY.GOOGLE_CLOUD_API_KEY, values.apiKey);
+            }
+            setCredentials((current) => ({ ...current, [credentialDialogService]: values }));
+            // Saving credentials clears any stale row-level test result.
+            setTestStates((s) => ({ ...s, [credentialDialogService]: { kind: 'idle' } }));
+            setCredentialDialogService(null);
+        } catch (e: any) {
+            setDialogTest({ kind: 'fail', message: e?.message || String(e) });
+        } finally {
+            setCredentialSaving(false);
         }
-        // Saving credentials clears any stale row-level test result.
-        setTestStates((s) => ({ ...s, [credentialDialogService]: { kind: 'idle' } }));
-        setCredentialDialogService(null);
     };
 
     const filtered = useMemo(
@@ -330,8 +393,12 @@ export function ServicesPage() {
 
     const toggleService = async (row: Row, next: boolean) => {
         // Credential-backed services cannot be enabled until their key exists.
-        if (next && isCredentialService(row.value) && !credentials[row.value].apiKey.trim()) {
-            const requiredMessage = row.value === TRANSLATE_SERVICE.DEEPL
+        if (next && isCredentialService(row.value) && (row.value === TRANSLATE_SERVICE.BAIDU
+            ? !credentials[row.value].appId.trim() || !credentials[row.value].secretKey.trim()
+            : !credentials[row.value].apiKey.trim())) {
+            const requiredMessage = row.value === TRANSLATE_SERVICE.BAIDU
+                ? t('baiduCredentialsRequired', 'Enter your Baidu AppID and secret key.')
+                : row.value === TRANSLATE_SERVICE.DEEPL
                 ? t('deeplApiKeyRequired', 'Please configure the DeepL API Key first.')
                 : row.value === TRANSLATE_SERVICE.AZURE
                     ? t('azureApiKeyRequired', 'Please configure the Azure API Key first.')
@@ -507,11 +574,15 @@ export function ServicesPage() {
                 open={credentialDialogService !== null}
                 onClose={() => setCredentialDialogService(null)}
                 widthClass="w-[480px]"
-                title={credentialDialogService === TRANSLATE_SERVICE.AZURE
-                    ? t('azureCredentialsDialogTitle', 'Edit Azure credentials')
-                    : credentialDialogService === TRANSLATE_SERVICE.GOOGLE_CLOUD
-                        ? t('googleCloudApiKeyDialogTitle', 'Edit Google Cloud API Key')
-                        : t('deeplApiKeyDialogTitle', 'Edit DeepL API Key')}
+                dismissOnBackdrop={false}
+                error={dialogTest.kind === 'fail' ? dialogTest.message : credentialValidationError}
+                title={isBaiduDialog
+                    ? t('baiduCredentialsDialogTitle', 'Configure Baidu Translate')
+                    : credentialDialogService === TRANSLATE_SERVICE.AZURE
+                        ? t('azureCredentialsDialogTitle', 'Edit Azure credentials')
+                        : credentialDialogService === TRANSLATE_SERVICE.GOOGLE_CLOUD
+                            ? t('googleCloudApiKeyDialogTitle', 'Edit Google Cloud API Key')
+                            : t('deeplApiKeyDialogTitle', 'Edit DeepL API Key')}
                 footer={
                     <>
                         <Button variant="ghost" size="sm" onClick={() => setCredentialDialogService(null)}>
@@ -521,71 +592,131 @@ export function ServicesPage() {
                             variant="outline"
                             size="sm"
                             onClick={() => void runDialogTest()}
-                            disabled={!credentialDraft.apiKey.trim() || dialogTest.kind === 'pending'}
+                            disabled={!credentialDraftValid || dialogTest.kind === 'pending' || credentialSaving}
                         >
                             {dialogTest.kind === 'pending' ? (
                                 <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
                             ) : null}
                             {t('aiTest', 'Test')}
                         </Button>
-                        <Button size="sm" onClick={() => void saveCredentials()}>
+                        <Button
+                            size="sm"
+                            onClick={() => void saveCredentials()}
+                            disabled={!credentialDraftValid || dialogTest.kind === 'pending' || credentialSaving}
+                        >
                             {t('aiSave', 'Save')}
                         </Button>
                     </>
                 }
             >
                 <div className="flex flex-col gap-2">
-                    <label className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">
-                        {credentialDialogService === TRANSLATE_SERVICE.AZURE
-                            ? t('azureApiKey', 'Azure API Key')
-                            : credentialDialogService === TRANSLATE_SERVICE.GOOGLE_CLOUD
-                                ? t('googleCloudApiKey', 'Google Cloud API Key')
-                                : t('deeplApiKey', 'DeepL API Key')}
-                    </label>
-                    <Input
-                        type="text"
-                        value={credentialDraft.apiKey}
-                        onChange={(e) => {
-                            setCredentialDraft((draft) => ({ ...draft, apiKey: e.target.value }));
-                            setDialogTest({ kind: 'idle' });
-                        }}
-                        placeholder={credentialDialogService === TRANSLATE_SERVICE.DEEPL
-                            ? t('deeplApiKeyPlaceholder', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx')
-                            : t('cloudApiKeyPlaceholder', 'Enter API key')}
-                        autoComplete="off"
-                    />
-                    {credentialDialogService === TRANSLATE_SERVICE.AZURE && (
+                    {isBaiduDialog ? (
                         <>
-                            <label className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">
-                                {t('azureRegion', 'Azure region (optional)')}
+                            <label htmlFor="baidu-app-id" className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">
+                                {t('baiduAppId', 'AppID')} <span className="text-danger" aria-hidden="true">*</span>
                             </label>
                             <Input
+                                id="baidu-app-id"
+                                required
                                 type="text"
-                                value={credentialDraft.region}
+                                value={credentialDraft.appId}
                                 onChange={(e) => {
-                                    setCredentialDraft((draft) => ({ ...draft, region: e.target.value }));
+                                    setCredentialDraft((draft) => ({ ...draft, appId: e.target.value }));
                                     setDialogTest({ kind: 'idle' });
                                 }}
-                                placeholder={t('azureRegionPlaceholder', 'e.g. eastasia')}
+                                placeholder={t('baiduAppIdPlaceholder', 'Enter your Baidu Translate AppID')}
+                                autoComplete="off"
+                                spellCheck={false}
+                            />
+                            <label htmlFor="baidu-secret-key" className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">
+                                {t('baiduSecretKey', 'Secret key')} <span className="text-danger" aria-hidden="true">*</span>
+                            </label>
+                            <Input
+                                id="baidu-secret-key"
+                                required
+                                type="password"
+                                value={credentialDraft.secretKey}
+                                onChange={(e) => {
+                                    setCredentialDraft((draft) => ({ ...draft, secretKey: e.target.value }));
+                                    setDialogTest({ kind: 'idle' });
+                                }}
+                                placeholder={t('baiduSecretKeyPlaceholder', 'Enter your Baidu Translate secret key')}
+                                autoComplete="off"
+                                spellCheck={false}
+                            />
+                            <label htmlFor="baidu-qps" className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">
+                                {t('baiduQps', 'QPS (requests per second)')} <span className="text-danger" aria-hidden="true">*</span>
+                            </label>
+                            <Input
+                                id="baidu-qps"
+                                required
+                                type="number"
+                                min={1}
+                                max={100}
+                                step={1}
+                                value={credentialDraft.qps}
+                                onChange={(e) => {
+                                    setCredentialDraft((draft) => ({ ...draft, qps: e.target.value }));
+                                    setDialogTest({ kind: 'idle' });
+                                }}
+                            />
+                            <p className="text-[11px] text-ink-mute">
+                                {t('baiduCredentialsHint', 'Use Baidu General Text Translation. Match QPS to your account limit; the default is 1 request per second.')}
+                            </p>
+                        </>
+                    ) : (
+                        <>
+                            <label htmlFor="translation-api-key" className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">
+                                {credentialDialogService === TRANSLATE_SERVICE.AZURE
+                                    ? t('azureApiKey', 'Azure API Key')
+                                    : credentialDialogService === TRANSLATE_SERVICE.GOOGLE_CLOUD
+                                        ? t('googleCloudApiKey', 'Google Cloud API Key')
+                                        : t('deeplApiKey', 'DeepL API Key')}
+                                {' '}<span className="text-danger" aria-hidden="true">*</span>
+                            </label>
+                            <Input
+                                id="translation-api-key"
+                                required
+                                type="text"
+                                value={credentialDraft.apiKey}
+                                onChange={(e) => {
+                                    setCredentialDraft((draft) => ({ ...draft, apiKey: e.target.value }));
+                                    setDialogTest({ kind: 'idle' });
+                                }}
+                                placeholder={credentialDialogService === TRANSLATE_SERVICE.DEEPL
+                                    ? t('deeplApiKeyPlaceholder', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx')
+                                    : t('cloudApiKeyPlaceholder', 'Enter API key')}
                                 autoComplete="off"
                             />
+                            {credentialDialogService === TRANSLATE_SERVICE.AZURE && (
+                                <>
+                                    <label className="mt-2 font-mono text-[10.5px] uppercase tracking-[0.12em] text-ink-mute">
+                                        {t('azureRegion', 'Azure region (optional)')}
+                                    </label>
+                                    <Input
+                                        type="text"
+                                        value={credentialDraft.region}
+                                        onChange={(e) => {
+                                            setCredentialDraft((draft) => ({ ...draft, region: e.target.value }));
+                                            setDialogTest({ kind: 'idle' });
+                                        }}
+                                        placeholder={t('azureRegionPlaceholder', 'e.g. eastasia')}
+                                        autoComplete="off"
+                                    />
+                                </>
+                            )}
+                            <p className="text-[11px] text-ink-mute">
+                                {credentialDialogService === TRANSLATE_SERVICE.DEEPL
+                                    ? t('deeplApiKeyHint', 'Free-tier keys end with ":fx". Get one from your DeepL account.')
+                                    : credentialDialogService === TRANSLATE_SERVICE.AZURE
+                                        ? t('azureCredentialsHint', 'Region is optional for global resources and required for regional or multi-service resources.')
+                                        : t('googleCloudApiKeyHint', 'Use an API key with Cloud Translation Basic (v2) enabled.')}
+                            </p>
                         </>
                     )}
-                    <p className="text-[11px] text-ink-mute">
-                        {credentialDialogService === TRANSLATE_SERVICE.DEEPL
-                            ? t('deeplApiKeyHint', 'Free-tier keys end with ":fx". Get one from your DeepL account.')
-                            : credentialDialogService === TRANSLATE_SERVICE.AZURE
-                                ? t('azureCredentialsHint', 'Region is optional for global resources and required for regional or multi-service resources.')
-                                : t('googleCloudApiKeyHint', 'Use an API key with Cloud Translation Basic (v2) enabled.')}
-                    </p>
                     {dialogTest.kind === 'ok' && (
                         <div className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1.5 text-[12px] text-emerald-600">
                             {t('translateServiceTestOk', 'OK')}
-                        </div>
-                    )}
-                    {dialogTest.kind === 'fail' && (
-                        <div className="rounded border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-[12px] text-red-600">
-                            {dialogTest.message.slice(0, 240)}
                         </div>
                     )}
                 </div>

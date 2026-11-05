@@ -90,7 +90,7 @@ describe("provider capability split", () => {
     });
 
     it("sends everyone else — including an unknown future provider — to the companion detect", () => {
-        for (const s of [TRANSLATE_SERVICE.YANDEX, TRANSLATE_SERVICE.BUILTIN, `${AI_PREFIX}abc`, "brand-new"]) {
+        for (const s of [TRANSLATE_SERVICE.BAIDU, TRANSLATE_SERVICE.YANDEX, TRANSLATE_SERVICE.BUILTIN, `${AI_PREFIX}abc`, "brand-new"]) {
             expect(reportsPerTextSourceLang(s)).toBe(false);
             expect(needsCompanionDetect(s)).toBe(true);
         }

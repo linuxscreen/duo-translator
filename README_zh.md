@@ -28,7 +28,7 @@ AI驱动的翻译和写作助手。支持网页翻译、划词翻译、写作增
   - 字幕样式
   - AI 分句
 - 接入多种翻译和AI服务
-  - 翻译服务：微软、谷歌、Yandex、浏览器内置 AI（仅Chrome和Edge支持）、DeepL
+  - 翻译服务：微软、谷歌、Yandex、浏览器内置 AI（仅Chrome和Edge支持）、DeepL、[百度翻译（自备 APPID 和密钥）](docs/BAIDU.md)
   - AI：OpenAI、DeepSeek、Gemini、OpenRouter、Claude、Ollama、自定义
 - 同步与备份
   - 同步方式：Google Drive、WebDAV

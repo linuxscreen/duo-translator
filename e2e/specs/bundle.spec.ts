@@ -30,6 +30,7 @@ test.describe('@bundle background/content separation', () => {
             'cognitive.microsofttranslator.com',
             'edge.microsoft.com/translate/auth',
             'api.deepl.com', 'api-free.deepl.com',
+            'fanyi-api.baidu.com',
             'browser.translate.yandex.net',
             // Dictionary providers — Bing's page is scraped and Google's
             // dictionary mode is parsed entirely in background.
@@ -88,6 +89,7 @@ test.describe('@bundle background/content separation', () => {
             'Ocp-Apim-Subscription-Key',
             'translate.yandex.net',
             'DeepL-Auth-Key',
+            'fanyi-api.baidu.com',
             'translate_a/single',
         ]) {
             expect(background, `background.js must contain "${marker}"`).toContain(marker);

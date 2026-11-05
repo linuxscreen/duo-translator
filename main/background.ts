@@ -23,7 +23,7 @@ import { translateMessageHandlers } from "@/main/translateService";
 import { registerSiteRuleAlarms, siteRuleMessageHandlers } from "@/main/siteRules/siteRuleService";
 import { dictMessageHandlers } from "@/main/dict/dictService";
 import { getDomainWithPortFromUrl } from '@/utils/url';
-import { configRepo, domainRepo, ruleRepo, type DomainDoc, type DomainField } from "@/main/storage/configStore";
+import { configRepo, domainRepo, ruleRepo, migrateBaiduServiceDefault, type DomainDoc, type DomainField } from "@/main/storage/configStore";
 import * as translationCache from "@/main/storage/translationCache";
 import { synthesizeTts } from "@/main/ttsService";
 import { migrateFromPouchIfNeeded } from "@/main/storage/migrateFromPouch";
@@ -113,6 +113,7 @@ export async function background() {
         // SW shutdown, retry on every boot. The migration module itself is
         // idempotent (flag-checked) so this is a near-free no-op once done.
         !IS_FIREFOX && await migrateFromPouchIfNeeded({ trigger: 'startup' });
+        await migrateBaiduServiceDefault();
 
         // Schedule periodic auto-sync + run the startup sync (if enabled) once
         // migration settled.

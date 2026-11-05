@@ -37,6 +37,7 @@ export default defineConfig({
             // 'https://translate-pa.googleapis.com/*',
             'https://api.cognitive.microsofttranslator.com/*',
             'https://translation.googleapis.com/*',
+            'https://fanyi-api.baidu.com/*',
             // 'https://api-free.deepl.com/*',
             //
             // Google Drive sync: the Drive REST API + the userinfo endpoint,

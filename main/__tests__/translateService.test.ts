@@ -3,7 +3,7 @@
 // call `fetch` directly, so network behaviour is mocked at global `fetch` —
 // these assert the real request the provider sends (URL, headers, body), not
 // an intermediate proxy envelope as the previous content-side version did.
-import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 
 // --- module mocks (hoisted) ---------------------------------------------------
 const { mockConfigGet } = vi.hoisted(() => ({ mockConfigGet: vi.fn(async (_key?: string): Promise<any> => undefined) }));
@@ -35,6 +35,7 @@ import {
     GoogleTranslateService,
     AzureTranslateService,
     GoogleCloudTranslateService,
+    BaiduTranslateService,
     MicrosoftTranslateService,
     YandexTranslateService,
     DeepLTranslateService,
@@ -44,14 +45,17 @@ import {
     googleTranslationService,
     azureTranslationService,
     googleCloudTranslationService,
+    baiduTranslationService,
     microsoftTranslationService,
     deeplTranslationService,
     builtinAiTranslationService,
     translateTextsWithCache,
+    translateMessageHandlers,
 } from "@/main/translateService";
-import { TRANSLATE_SERVICE, AI_PREFIX, CONFIG_KEY } from "@/main/constants";
+import { TRANSLATE_SERVICE, AI_PREFIX, CONFIG_KEY, ACTION } from "@/main/constants";
 import { isTraditionalChinese } from "@/utils/language";
 import { aiPageTranslate } from "@/main/aiService";
+import { handleAsync } from "@/main/messageBridge";
 
 const mockFetch = vi.fn();
 const mockIsTraditional = isTraditionalChinese as unknown as Mock;
@@ -99,6 +103,51 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 // transferLanguageCode
 // ---------------------------------------------------------------------------
+describe("BaiduTranslateService integration", () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        mockConfigGet.mockImplementation(async (key?: string) =>
+            key === CONFIG_KEY.INTERFACE_LANGUAGE ? "en" : undefined);
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it("reads stored credentials and returns native TranslateResult instances", async () => {
+        mockConfigGet.mockImplementation(async (key?: string) => ({
+            [CONFIG_KEY.BAIDU_APP_ID]: "20261028000000000000",
+            [CONFIG_KEY.BAIDU_SECRET_KEY]: "fake-stored-secret",
+            [CONFIG_KEY.BAIDU_QPS]: 100,
+            [CONFIG_KEY.INTERFACE_LANGUAGE]: "en",
+        })[key || ""]);
+        mockFetch.mockResolvedValue(new Response(JSON.stringify({ from: "en", trans_result: [{ dst: "こんにちは" }] })));
+        const pending = new BaiduTranslateService().translateText(["hello"], "ja");
+        await vi.runAllTimersAsync();
+        const [result] = await pending;
+        expect(result.translatedMappedHtmlText).toBe("こんにちは");
+        expect(result.sourceLang).toBe("en");
+        expect(result.score).toBe(1);
+        const form = new URLSearchParams(mockFetch.mock.calls[0][1].body);
+        expect(form.get("to")).toBe("jp");
+        expect(form.get("appid")).toBe("20261028000000000000");
+        expect(mockConfigGet).toHaveBeenCalledWith(CONFIG_KEY.BAIDU_SECRET_KEY);
+    });
+
+    it("tests unsaved draft credentials through the message handler without reading stored secrets", async () => {
+        mockFetch.mockResolvedValue(new Response(JSON.stringify({ from: "en", trans_result: [{ dst: "你好" }] })));
+        translateMessageHandlers[ACTION.TRANSLATE_SERVICE_TEST]({ data: {
+            service: TRANSLATE_SERVICE.BAIDU, appId: "20261028000000000001",
+            secretKey: "fake-draft-secret", qps: 100, targetLang: "zh-CN",
+        } }, vi.fn());
+        const run = vi.mocked(handleAsync).mock.calls.at(-1)![2] as () => Promise<{ reply: string }>;
+        const pending = run();
+        await vi.runAllTimersAsync();
+        expect(await pending).toEqual({ reply: "你好" });
+        expect(mockConfigGet.mock.calls).toEqual([[CONFIG_KEY.INTERFACE_LANGUAGE]]);
+        const form = new URLSearchParams(mockFetch.mock.calls[0][1].body);
+        expect(form.get("appid")).toBe("20261028000000000001");
+        expect(form.get("q")).toBe("Hello, world.");
+    });
+});
+
 describe("transferLanguageCode", () => {
     it("maps zh-Hans -> zh-CN and zh-Hant -> zh-TW", () => {
         expect(transferLanguageCode("zh-Hans")).toBe("zh-CN");
@@ -705,6 +754,7 @@ describe("resolveTranslateService", () => {
         expect(translationServices.get(TRANSLATE_SERVICE.GOOGLE)).toBe(googleTranslationService);
         expect(translationServices.get(TRANSLATE_SERVICE.AZURE)).toBe(azureTranslationService);
         expect(translationServices.get(TRANSLATE_SERVICE.GOOGLE_CLOUD)).toBe(googleCloudTranslationService);
+        expect(translationServices.get(TRANSLATE_SERVICE.BAIDU)).toBe(baiduTranslationService);
         expect(translationServices.get(TRANSLATE_SERVICE.BUILTIN)).toBe(builtinAiTranslationService);
         expect(translationServices.size).toBeGreaterThanOrEqual(4);
     });

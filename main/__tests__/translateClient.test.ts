@@ -22,7 +22,7 @@ import {
     translateTexts,
     detectTextsLanguage,
 } from "@/main/translateClient";
-import { ACTION } from "@/main/constants";
+import { ACTION, AI_REQUEST_TIMEOUT, API_REQUEST_TIMEOUT, TRANSLATE_SERVICE } from "@/main/constants";
 import { sendMessageToBackground } from "@/utils/message";
 
 const mockSend = sendMessageToBackground as unknown as Mock;
@@ -127,6 +127,35 @@ describe("parseIndexedText", () => {
 // Background bridge
 // ---------------------------------------------------------------------------
 describe("translateTexts", () => {
+    it("gives Baidu's rate-limited queue a long budget and cancels it when that budget expires", async () => {
+        mockSend.mockResolvedValue([]);
+        await translateTexts(TRANSLATE_SERVICE.BAIDU, ["<b0>hello</b0>"], "zh-CN");
+        expect(mockSend.mock.calls[0][1]).toBe(AI_REQUEST_TIMEOUT);
+        expect(mockSend.mock.calls[0][0].data.texts).toEqual(["<b0>hello</b0>"]);
+
+        mockSend.mockReset();
+        mockSend.mockRejectedValueOnce(new Error(`${ACTION.TRANSLATE_TEXTS} request timeout`));
+        mockSend.mockResolvedValueOnce(undefined);
+        await expect(translateTexts(TRANSLATE_SERVICE.BAIDU, ["hello"], "zh-CN")).rejects.toThrow("request timeout");
+        expect(mockSend.mock.calls[1][0]).toEqual({
+            action: ACTION.TRANSLATE_TEXTS_ABORT,
+            data: { requestId: mockSend.mock.calls[0][0].data.requestId },
+        });
+    });
+
+    it("keeps the normal provider timeout and does not send an extra abort for its failures", async () => {
+        mockSend.mockRejectedValueOnce(new Error(`${ACTION.TRANSLATE_TEXTS} request timeout`));
+        await expect(translateTexts(TRANSLATE_SERVICE.GOOGLE, ["hello"], "zh-CN")).rejects.toThrow("request timeout");
+        expect(mockSend).toHaveBeenCalledTimes(1);
+        expect(mockSend.mock.calls[0][1]).toBe(API_REQUEST_TIMEOUT);
+    });
+
+    it("does not send a timeout cancellation for a Baidu provider error", async () => {
+        mockSend.mockRejectedValueOnce(new Error("Baidu credentials are missing"));
+        await expect(translateTexts(TRANSLATE_SERVICE.BAIDU, ["hello"], "zh-CN")).rejects.toThrow("credentials");
+        expect(mockSend).toHaveBeenCalledTimes(1);
+    });
+
     it("sends the service + texts and rebuilds real TranslateResult instances", async () => {
         // Background replies with structured-cloned plain objects.
         mockSend.mockResolvedValue([
