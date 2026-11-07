@@ -659,11 +659,26 @@ export async function background() {
     //#endregion
 
     //#region other listeners
-    browser.webNavigation.onCommitted.addListener((details) => {
+    browser.webNavigation.onCommitted.addListener(async (details) => {
+        // Only the top frame decides the tab's translate status; an iframe
+        // reload must not reset it.
+        if (details.frameId !== 0) return
         if (!details.url.startsWith('http')) return
         if ((details.transitionType === 'reload' && !details.transitionQualifiers.includes('forward_back')) ||
             details.transitionType === 'typed') {
-            browser.storage.session.remove(TRANSLATE_STATUS_KEY + details.tabId)
+            await browser.storage.session.remove(TRANSLATE_STATUS_KEY + details.tabId)
+            // The context-menu title is driven by the in-memory `translateStatus`,
+            // which mirrors the ACTIVE tab. The fresh content script starts from
+            // `false` and only broadcasts on a change, so it never tells us the
+            // page came back untranslated — without this reset the menu keeps
+            // saying "Show original" on a page that is showing the original.
+            // Non-active tabs need nothing: `tabsActivatedListener` re-reads
+            // the (now cleared) session key when they come to the front.
+            const tab = await browser.tabs.get(details.tabId).catch(() => undefined)
+            if (!tab?.active || !translateStatus) return
+            translateStatus = false
+            if (!contextMenuSwitch) return
+            updateContextMenu(false)
         }
     })
 
