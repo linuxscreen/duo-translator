@@ -160,7 +160,7 @@ export default function App() {
                   type="button"
                   onClick={() => navigate({ tab: it.id, sub: null })}
                   className={cn(
-                    'group relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[14px]',
+                    'group flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[14px]',
                     'transition-colors duration-150',
                     active
                       ? 'bg-accent-soft text-accent'
@@ -176,9 +176,6 @@ export default function App() {
                     {it.icon}
                   </span>
                   <span className="flex-1 font-medium">{it.label}</span>
-                  {active && (
-                    <span className="absolute right-2 h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_8px_var(--color-accent-glow)]" />
-                  )}
                 </button>
               );
             })}
