@@ -857,52 +857,61 @@ export default function App({ embedded = false, uiPrefs }: AppProps = {}) {
           </Card>
         )}
 
-        {/* For this website */}
-        <Card>
-          {/* <CardTitle>{t('forThisWebsite', 'For this website')}</CardTitle> */}
-          <div className="flex items-center justify-between gap-3 px-2 py-1.5">
-            <div className="min-w-0 text-[12.5px] text-ink">
-              {t('alwaysTranslateThisWebsite', 'Always translate this website')}
-            </div>
-            <Switch
-              checked={siteRule === DOMAIN_STRATEGY.ALWAYS}
-              onCheckedChange={(v) =>
-                onDomainStrategyChange(v ? DOMAIN_STRATEGY.ALWAYS : DOMAIN_STRATEGY.AUTO)
-              }
-              size="sm"
-            />
-          </div>
-          <div className="flex items-center justify-between gap-3 px-2 py-1.5">
-            <div className="min-w-0 text-[12.5px] text-ink">
-              {t('neverTranslateThisWebsite', 'Never translate this website')}
-            </div>
-            <Switch
-              checked={siteRule === DOMAIN_STRATEGY.NEVER}
-              onCheckedChange={(v) =>
-                onDomainStrategyChange(v ? DOMAIN_STRATEGY.NEVER : DOMAIN_STRATEGY.AUTO)
-              }
-              size="sm"
-            />
-          </div>
-          {/* The divider belongs to this row: it separates it from the two
-              per-site switches above, and would end nothing without it. */}
-          {ui.bilingualHighlight && (
-            <>
-              <CardDivider />
+        {/* For this website. Every row is individually hideable, so the card
+            itself goes when none of them is left — an empty bordered box reads
+            as a rendering bug, not as "nothing to show". */}
+        {(ui.alwaysTranslateSite || ui.neverTranslateSite || ui.bilingualHighlight) && (
+          <Card>
+            {/* <CardTitle>{t('forThisWebsite', 'For this website')}</CardTitle> */}
+            {ui.alwaysTranslateSite && (
               <div className="flex items-center justify-between gap-3 px-2 py-1.5">
-                <div className="min-w-0">
-                  <div className="text-[12.5px] text-ink">
-                    {t('bilingualHighlighting', 'Bilingual sentence-by-sentence highlighting')}
-                  </div>
-                  <div className="mt-px text-[11px] text-ink-soft">
-                    {t('bilingualHighlightingHint', 'Highlight original and translation sentence by sentence')}
-                  </div>
+                <div className="min-w-0 text-[12.5px] text-ink">
+                  {t('alwaysTranslateThisWebsite', 'Always translate this website')}
                 </div>
-                <Switch checked={highlight} onCheckedChange={onHighlightToggle} size="sm" />
+                <Switch
+                  checked={siteRule === DOMAIN_STRATEGY.ALWAYS}
+                  onCheckedChange={(v) =>
+                    onDomainStrategyChange(v ? DOMAIN_STRATEGY.ALWAYS : DOMAIN_STRATEGY.AUTO)
+                  }
+                  size="sm"
+                />
               </div>
-            </>
-          )}
-        </Card>
+            )}
+            {ui.neverTranslateSite && (
+              <div className="flex items-center justify-between gap-3 px-2 py-1.5">
+                <div className="min-w-0 text-[12.5px] text-ink">
+                  {t('neverTranslateThisWebsite', 'Never translate this website')}
+                </div>
+                <Switch
+                  checked={siteRule === DOMAIN_STRATEGY.NEVER}
+                  onCheckedChange={(v) =>
+                    onDomainStrategyChange(v ? DOMAIN_STRATEGY.NEVER : DOMAIN_STRATEGY.AUTO)
+                  }
+                  size="sm"
+                />
+              </div>
+            )}
+            {/* The divider belongs to this row: it separates it from the per-site
+                switches above, and would end nothing without it — so it is also
+                dropped when both of those are hidden. */}
+            {ui.bilingualHighlight && (
+              <>
+                {(ui.alwaysTranslateSite || ui.neverTranslateSite) && <CardDivider />}
+                <div className="flex items-center justify-between gap-3 px-2 py-1.5">
+                  <div className="min-w-0">
+                    <div className="text-[12.5px] text-ink">
+                      {t('bilingualHighlighting', 'Bilingual sentence-by-sentence highlighting')}
+                    </div>
+                    <div className="mt-px text-[11px] text-ink-soft">
+                      {t('bilingualHighlightingHint', 'Highlight original and translation sentence by sentence')}
+                    </div>
+                  </div>
+                  <Switch checked={highlight} onCheckedChange={onHighlightToggle} size="sm" />
+                </div>
+              </>
+            )}
+          </Card>
+        )}
 
         {/* AI Writing */}
         {ui.aiWriting && (

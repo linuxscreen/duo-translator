@@ -20,6 +20,8 @@ export interface PopupPrefs {
     help: boolean;
     globalSwitch: boolean;
     defaultStrategy: boolean;
+    alwaysTranslateSite: boolean;
+    neverTranslateSite: boolean;
     bilingualHighlight: boolean;
     aiWriting: boolean;
 }
@@ -30,6 +32,8 @@ export const STOCK_POPUP_PREFS: PopupPrefs = {
     help: true,
     globalSwitch: true,
     defaultStrategy: true,
+    alwaysTranslateSite: true,
+    neverTranslateSite: true,
     bilingualHighlight: true,
     aiWriting: true,
 };
@@ -40,6 +44,8 @@ export const POPUP_OPTION_KEYS: CONFIG_KEY[] = [
     CONFIG_KEY.POPUP_SHOW_HELP,
     CONFIG_KEY.POPUP_SHOW_GLOBAL_SWITCH,
     CONFIG_KEY.POPUP_SHOW_DEFAULT_STRATEGY,
+    CONFIG_KEY.POPUP_SHOW_ALWAYS_TRANSLATE_SITE,
+    CONFIG_KEY.POPUP_SHOW_NEVER_TRANSLATE_SITE,
     CONFIG_KEY.POPUP_SHOW_BILINGUAL_HIGHLIGHT,
     CONFIG_KEY.POPUP_SHOW_AI_WRITING,
 ];
@@ -67,6 +73,8 @@ export function usePopupPrefs(options?: { ignoreSwitch?: boolean }): PopupPrefs 
     const help = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_HELP);
     const globalSwitch = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_GLOBAL_SWITCH);
     const defaultStrategy = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_DEFAULT_STRATEGY);
+    const alwaysTranslateSite = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_ALWAYS_TRANSLATE_SITE);
+    const neverTranslateSite = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_NEVER_TRANSLATE_SITE);
     const bilingualHighlight = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_BILINGUAL_HIGHLIGHT);
     const aiWriting = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_AI_WRITING);
 
@@ -78,11 +86,16 @@ export function usePopupPrefs(options?: { ignoreSwitch?: boolean }): PopupPrefs 
                     help: !!help,
                     globalSwitch: !!globalSwitch,
                     defaultStrategy: !!defaultStrategy,
+                    alwaysTranslateSite: !!alwaysTranslateSite,
+                    neverTranslateSite: !!neverTranslateSite,
                     bilingualHighlight: !!bilingualHighlight,
                     aiWriting: !!aiWriting,
                 }
                 : STOCK_POPUP_PREFS,
-        [enabled, ignoreSwitch, theme, help, globalSwitch, defaultStrategy, bilingualHighlight, aiWriting],
+        [
+            enabled, ignoreSwitch, theme, help, globalSwitch, defaultStrategy,
+            alwaysTranslateSite, neverTranslateSite, bilingualHighlight, aiWriting,
+        ],
     );
 }
 
@@ -95,22 +108,28 @@ export function usePopupPrefs(options?: { ignoreSwitch?: boolean }): PopupPrefs 
  * trips — it usually does, and "usually" is exactly a flash the user sees.)
  */
 export async function loadPopupPrefs(): Promise<PopupPrefs> {
-    const [enabled, theme, help, globalSwitch, defaultStrategy, bilingualHighlight, aiWriting] =
-        await Promise.all([
-            readConfig<boolean>(CONFIG_KEY.CUSTOM_POPUP_SWITCH),
-            readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_THEME),
-            readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_HELP),
-            readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_GLOBAL_SWITCH),
-            readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_DEFAULT_STRATEGY),
-            readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_BILINGUAL_HIGHLIGHT),
-            readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_AI_WRITING),
-        ]);
+    const [
+        enabled, theme, help, globalSwitch, defaultStrategy,
+        alwaysTranslateSite, neverTranslateSite, bilingualHighlight, aiWriting,
+    ] = await Promise.all([
+        readConfig<boolean>(CONFIG_KEY.CUSTOM_POPUP_SWITCH),
+        readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_THEME),
+        readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_HELP),
+        readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_GLOBAL_SWITCH),
+        readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_DEFAULT_STRATEGY),
+        readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_ALWAYS_TRANSLATE_SITE),
+        readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_NEVER_TRANSLATE_SITE),
+        readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_BILINGUAL_HIGHLIGHT),
+        readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_AI_WRITING),
+    ]);
     if (!enabled) return STOCK_POPUP_PREFS;
     return {
         theme: !!theme,
         help: !!help,
         globalSwitch: !!globalSwitch,
         defaultStrategy: !!defaultStrategy,
+        alwaysTranslateSite: !!alwaysTranslateSite,
+        neverTranslateSite: !!neverTranslateSite,
         bilingualHighlight: !!bilingualHighlight,
         aiWriting: !!aiWriting,
     };

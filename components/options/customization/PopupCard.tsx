@@ -21,6 +21,8 @@ export function usePopupDefaults(): { dirty: boolean; restore: () => void } {
     [CONFIG_KEY.POPUP_SHOW_HELP]: useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_HELP),
     [CONFIG_KEY.POPUP_SHOW_GLOBAL_SWITCH]: useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_GLOBAL_SWITCH),
     [CONFIG_KEY.POPUP_SHOW_DEFAULT_STRATEGY]: useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_DEFAULT_STRATEGY),
+    [CONFIG_KEY.POPUP_SHOW_ALWAYS_TRANSLATE_SITE]: useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_ALWAYS_TRANSLATE_SITE),
+    [CONFIG_KEY.POPUP_SHOW_NEVER_TRANSLATE_SITE]: useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_NEVER_TRANSLATE_SITE),
     [CONFIG_KEY.POPUP_SHOW_BILINGUAL_HIGHLIGHT]: useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_BILINGUAL_HIGHLIGHT),
     [CONFIG_KEY.POPUP_SHOW_AI_WRITING]: useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_AI_WRITING),
   };
@@ -52,6 +54,8 @@ export function PopupCard() {
   const help = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_HELP);
   const globalSwitch = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_GLOBAL_SWITCH);
   const defaultStrategy = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_DEFAULT_STRATEGY);
+  const alwaysTranslateSite = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_ALWAYS_TRANSLATE_SITE);
+  const neverTranslateSite = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_NEVER_TRANSLATE_SITE);
   const bilingualHighlight = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_BILINGUAL_HIGHLIGHT);
   const aiWriting = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_AI_WRITING);
 
@@ -77,6 +81,16 @@ export function PopupCard() {
           label={t('defaultTranslateStrategy', 'Default translate strategy')}
           checked={defaultStrategy}
           onChange={(v) => void setConfig(CONFIG_KEY.POPUP_SHOW_DEFAULT_STRATEGY, v)}
+        />
+        <Row
+          label={t('alwaysTranslateThisWebsite', 'Always translate this website')}
+          checked={alwaysTranslateSite}
+          onChange={(v) => void setConfig(CONFIG_KEY.POPUP_SHOW_ALWAYS_TRANSLATE_SITE, v)}
+        />
+        <Row
+          label={t('neverTranslateThisWebsite', 'Never translate this website')}
+          checked={neverTranslateSite}
+          onChange={(v) => void setConfig(CONFIG_KEY.POPUP_SHOW_NEVER_TRANSLATE_SITE, v)}
         />
         <Row
           label={t('bilingualHighlighting', 'Bilingual highlighting')}

@@ -651,6 +651,11 @@ export enum CONFIG_KEY {
     POPUP_SHOW_HELP = 'popupShowHelp',
     POPUP_SHOW_GLOBAL_SWITCH = 'popupShowGlobalSwitch',
     POPUP_SHOW_DEFAULT_STRATEGY = 'popupShowDefaultStrategy',
+    // The two per-site strategy switches. Hiding one only removes the control;
+    // a domain already set to ALWAYS/NEVER keeps that strategy (Options ›
+    // Translation still lists it).
+    POPUP_SHOW_ALWAYS_TRANSLATE_SITE = 'popupShowAlwaysTranslateSite',
+    POPUP_SHOW_NEVER_TRANSLATE_SITE = 'popupShowNeverTranslateSite',
     POPUP_SHOW_BILINGUAL_HIGHLIGHT = 'popupShowBilingualHighlight',
     POPUP_SHOW_AI_WRITING = 'popupShowAiWriting',
 }
@@ -811,6 +816,8 @@ export const DEFAULT_VALUE = {
     POPUP_SHOW_HELP: true,
     POPUP_SHOW_GLOBAL_SWITCH: true,
     POPUP_SHOW_DEFAULT_STRATEGY: true,
+    POPUP_SHOW_ALWAYS_TRANSLATE_SITE: true,
+    POPUP_SHOW_NEVER_TRANSLATE_SITE: true,
     POPUP_SHOW_BILINGUAL_HIGHLIGHT: true,
     POPUP_SHOW_AI_WRITING: true,
     // Module-level constant (see NO_TRANSLATE_LANGUAGES).
