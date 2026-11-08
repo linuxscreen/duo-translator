@@ -47,6 +47,19 @@ import {
 } from "@/main/storage/sync/googleDriveProvider";
 import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
 
+/**
+ * Toolbar icon shown while a tab's page is translated: the logo with a green
+ * check badge at the bottom right, rendered by `pnpm icon:translated`
+ * (scripts/translated-icon.mjs) from public/DuoTranslator.svg. 16/32 are what
+ * toolbars actually draw (1x/2x); 48/128 keep the set complete.
+ */
+const TRANSLATED_ICON_PATHS: Record<string, string> = {
+    16: 'icon/translated/16.png',
+    32: 'icon/translated/32.png',
+    48: 'icon/translated/48.png',
+    128: 'icon/translated/128.png',
+}
+
 export async function background() {
     //#region main
     console.debug("background loaded")
@@ -463,6 +476,9 @@ export async function background() {
                 console.debug('translateStatusChanged', message.data)
                 if (typeof message.data.status === 'boolean') {
                     translateStatus = message.data.status
+                    // Before the context-menu gate: the icon is independent of
+                    // that switch.
+                    setTranslateIcon(message.data.tabId ?? sender.tab?.id, message.data.status)
                     if (!contextMenuSwitch) return
                     updateContextMenu(message.data.status)
                 }
@@ -667,6 +683,11 @@ export async function background() {
         if ((details.transitionType === 'reload' && !details.transitionQualifiers.includes('forward_back')) ||
             details.transitionType === 'typed') {
             await browser.storage.session.remove(TRANSLATE_STATUS_KEY + details.tabId)
+            // Browsers already drop a per-tab icon on navigation; this keeps
+            // it in step with the session record on the paths where that
+            // record is reset too. Before the active-tab gate below: the icon
+            // is per tab, so a reloaded background tab needs it as well.
+            setTranslateIcon(details.tabId, false)
             // The context-menu title is driven by the in-memory `translateStatus`,
             // which mirrors the ACTIVE tab. The fresh content script starts from
             // `false` and only broadcasts on a change, so it never tells us the
@@ -808,6 +829,25 @@ export async function background() {
      * chrome://extensions. Note a surrounding `try/catch` does NOT cover this —
      * these are async rejections, not synchronous throws.
      */
+    /**
+     * Toolbar icon mirroring the tab's page-translation status: the check-badged
+     * variant while the page is translated, the stock icon otherwise.
+     *
+     * Per tab (`tabId`), so the browser owns the state — it survives the
+     * service worker suspending and is reset by the browser itself when the
+     * tab navigates. A whole-icon swap rather than `setBadgeText`: the badge
+     * glyph is browser-drawn and tiny, and it lands exactly on the icon's green
+     * bubble; the rendered variant keeps the badge clear of the artwork. The
+     * "off" paths come from the manifest so the stock set is defined once.
+     * Best-effort — the tab may already be gone.
+     */
+    function setTranslateIcon(tabId: number | undefined, status: boolean) {
+        if (typeof tabId !== 'number') return
+        const path = status ? TRANSLATED_ICON_PATHS : browser.runtime.getManifest().icons
+        if (!path) return
+        browser.action.setIcon({ tabId, path }).catch(() => { })
+    }
+
     function updateMenuQuietly(id: string, props: Parameters<typeof browser.contextMenus.update>[1]) {
         return browser.contextMenus.update(id, props).catch(() => { })
     }

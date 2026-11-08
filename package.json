@@ -23,6 +23,7 @@
     "submit": "wxt submit",
     "compile": "tsc --noEmit",
     "i18n:check": "node scripts/checkI18n.mjs",
+    "icon:translated": "node scripts/translated-icon.mjs --check",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e:build": "cross-env WXT_OUTDIR=.output/e2e-build wxt build --mode development",
