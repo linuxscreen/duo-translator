@@ -9,6 +9,13 @@
 // These switches only HIDE controls. None of them changes the setting behind
 // the control — hiding the global switch does not turn the extension off, it
 // stops offering that control here; Options still has it.
+//
+// One gate comes from outside this card: `aiWriting` is also false while the
+// AI Writing feature's own master switch (AI_WRITING_SWITCH) is off. That
+// switch only ever gated the floating dot, so the popup kept offering an entry
+// to a feature the user had turned off — and it still opened the workbench.
+// Folding it in here rather than at the render site keeps the first paint and
+// the live view in step, and the Options preview follows for free.
 // ---------------------------------------------------------------------------
 
 import { useMemo } from 'react';
@@ -60,8 +67,10 @@ export const POPUP_OPTION_KEYS: CONFIG_KEY[] = [
  * the trimmed height. The popup therefore takes its first answer from
  * {@link loadPopupPrefs} and only adopts this one afterwards.
  *
- * `ignoreSwitch` answers with what the six settings SAY, whether or not the
- * card's master switch is on. That is for the Options preview, and only for it:
+ * `ignoreSwitch` answers with what the card's settings SAY, whether or not the
+ * card's master switch is on. (The AI Writing master switch is NOT bypassed by
+ * it — that one is not a card setting, and the preview should show the entry
+ * missing for the same reason the real popup does.) That is for the Options preview, and only for it:
  * the preview's job is to show what these settings do, so having it snap back
  * to the full popup when the switch goes off would hide the very thing the user
  * is adjusting. Anything that actually renders the popup wants the gate.
@@ -77,6 +86,7 @@ export function usePopupPrefs(options?: { ignoreSwitch?: boolean }): PopupPrefs 
     const neverTranslateSite = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_NEVER_TRANSLATE_SITE);
     const bilingualHighlight = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_BILINGUAL_HIGHLIGHT);
     const aiWriting = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_AI_WRITING);
+    const aiWritingFeature = useConfig<boolean>(CONFIG_KEY.AI_WRITING_SWITCH);
 
     return useMemo(
         () =>
@@ -89,12 +99,12 @@ export function usePopupPrefs(options?: { ignoreSwitch?: boolean }): PopupPrefs 
                     alwaysTranslateSite: !!alwaysTranslateSite,
                     neverTranslateSite: !!neverTranslateSite,
                     bilingualHighlight: !!bilingualHighlight,
-                    aiWriting: !!aiWriting,
+                    aiWriting: !!aiWriting && !!aiWritingFeature,
                 }
-                : STOCK_POPUP_PREFS,
+                : withAiWritingFeature(STOCK_POPUP_PREFS, !!aiWritingFeature),
         [
             enabled, ignoreSwitch, theme, help, globalSwitch, defaultStrategy,
-            alwaysTranslateSite, neverTranslateSite, bilingualHighlight, aiWriting,
+            alwaysTranslateSite, neverTranslateSite, bilingualHighlight, aiWriting, aiWritingFeature,
         ],
     );
 }
@@ -110,7 +120,7 @@ export function usePopupPrefs(options?: { ignoreSwitch?: boolean }): PopupPrefs 
 export async function loadPopupPrefs(): Promise<PopupPrefs> {
     const [
         enabled, theme, help, globalSwitch, defaultStrategy,
-        alwaysTranslateSite, neverTranslateSite, bilingualHighlight, aiWriting,
+        alwaysTranslateSite, neverTranslateSite, bilingualHighlight, aiWriting, aiWritingFeature,
     ] = await Promise.all([
         readConfig<boolean>(CONFIG_KEY.CUSTOM_POPUP_SWITCH),
         readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_THEME),
@@ -121,8 +131,9 @@ export async function loadPopupPrefs(): Promise<PopupPrefs> {
         readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_NEVER_TRANSLATE_SITE),
         readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_BILINGUAL_HIGHLIGHT),
         readConfig<boolean>(CONFIG_KEY.POPUP_SHOW_AI_WRITING),
+        readConfig<boolean>(CONFIG_KEY.AI_WRITING_SWITCH),
     ]);
-    if (!enabled) return STOCK_POPUP_PREFS;
+    if (!enabled) return withAiWritingFeature(STOCK_POPUP_PREFS, !!aiWritingFeature);
     return {
         theme: !!theme,
         help: !!help,
@@ -131,6 +142,11 @@ export async function loadPopupPrefs(): Promise<PopupPrefs> {
         alwaysTranslateSite: !!alwaysTranslateSite,
         neverTranslateSite: !!neverTranslateSite,
         bilingualHighlight: !!bilingualHighlight,
-        aiWriting: !!aiWriting,
+        aiWriting: !!aiWriting && !!aiWritingFeature,
     };
+}
+
+/** The stock layout, minus the AI Writing entry when that feature is off. */
+function withAiWritingFeature(prefs: PopupPrefs, aiWritingFeature: boolean): PopupPrefs {
+    return aiWritingFeature ? prefs : { ...prefs, aiWriting: false };
 }

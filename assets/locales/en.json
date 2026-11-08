@@ -752,6 +752,7 @@
   "selectionPopupCopyButton": "Copy button",
   "customPopup": "Extension popup",
   "customPopupHint": "The panel that opens when you click the extension icon",
+  "popupAiWritingFeatureOffHint": "AI Writing is turned off, so the popup hides this entry",
   "webpageTranslation": "Webpage translation",
   "selectionIconTriggerMode": "Trigger mode",
   "selectionPopupInterface": "Popup interface",

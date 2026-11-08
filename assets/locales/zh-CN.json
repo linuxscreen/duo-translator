@@ -752,6 +752,7 @@
   "selectionPopupCopyButton": "复制按钮",
   "customPopup": "扩展弹窗",
   "customPopupHint": "点击扩展图标之后弹出的界面",
+  "popupAiWritingFeatureOffHint": "AI 写作已关闭,弹窗中不显示此入口",
   "webpageTranslation": "网页翻译",
   "selectionIconTriggerMode": "触发方式",
   "selectionPopupInterface": "弹窗界面",

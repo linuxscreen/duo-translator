@@ -38,11 +38,27 @@ export function usePopupDefaults(): { dirty: boolean; restore: () => void } {
 }
 
 /** One switch. The divider is on the row so the list never ends with a dangling line. */
-function Row({ label, checked, onChange }: { label: ReactNode; checked: boolean; onChange: (v: boolean) => void }) {
+function Row({
+  label,
+  hint,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: ReactNode;
+  /** Shown under the label; used to say why a row is inert. */
+  hint?: ReactNode;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (v: boolean) => void;
+}) {
   return (
     <div className="flex items-center justify-between gap-6 border-b border-line py-2.5 last:border-b-0">
-      <div className="min-w-0 text-[13px] text-ink">{label}</div>
-      <Switch checked={checked} onCheckedChange={onChange} />
+      <div className="min-w-0">
+        <div className="text-[13px] text-ink">{label}</div>
+        {hint && <div className="mt-px text-[11.5px] text-ink-soft">{hint}</div>}
+      </div>
+      <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} />
     </div>
   );
 }
@@ -58,6 +74,10 @@ export function PopupCard() {
   const neverTranslateSite = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_NEVER_TRANSLATE_SITE);
   const bilingualHighlight = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_BILINGUAL_HIGHLIGHT);
   const aiWriting = useConfig<boolean>(CONFIG_KEY.POPUP_SHOW_AI_WRITING);
+  // The popup also hides the AI Writing entry while the feature itself is off
+  // (see utils/popupPrefs.ts). The row stays visible so "restore defaults" and
+  // the stored value remain legible, but it is inert and says why.
+  const aiWritingFeature = useConfig<boolean>(CONFIG_KEY.AI_WRITING_SWITCH);
 
   return (
     <div className="flex flex-col gap-5">
@@ -99,7 +119,12 @@ export function PopupCard() {
         />
         <Row
           label={t('aiWriting', 'AI Writing')}
+          hint={
+            !aiWritingFeature &&
+            t('popupAiWritingFeatureOffHint', 'AI Writing is turned off, so the popup hides this entry')
+          }
           checked={aiWriting}
+          disabled={!aiWritingFeature}
           onChange={(v) => void setConfig(CONFIG_KEY.POPUP_SHOW_AI_WRITING, v)}
         />
       </div>
