@@ -73,6 +73,31 @@ export const CUSTOM_SHORTCUT_ACTION_OPTIONS: {
  */
 export const MOUSE_MIDDLE_KEY = 'MouseMiddle';
 
+/**
+ * The left (primary) mouse button, as a key token.
+ *
+ * Reachable ONLY through the built-in "hold left button" — the capture control
+ * never records it. Two reasons, both structural: clicking away IS the capture
+ * control's exit, so a left press can never mean "record me"; and a click or
+ * multi-click gesture on the primary button would fire on every ordinary click
+ * the user makes, which is not a shortcut but a page that no longer works. A
+ * hold is the one left-button gesture that ordinary use never performs (a drag
+ * cancels it — see content.ts), which is why exactly that one is built in.
+ */
+export const MOUSE_LEFT_KEY = 'MouseLeft';
+
+const MOUSE_KEYS = new Set([MOUSE_MIDDLE_KEY, MOUSE_LEFT_KEY]);
+
+/** Is this token a mouse button rather than a keyboard key? */
+export function isMouseToken(key: string): boolean {
+    return MOUSE_KEYS.has(key);
+}
+
+/** Does any key of this combo come from the mouse? Such a gesture types nothing. */
+export function comboHasMouseKey(combo: string): boolean {
+    return comboKeys(combo).some(isMouseToken);
+}
+
 /** The "no gesture" entry of the shortcut picker. Not a real shortcut id. */
 export const SHORTCUT_NONE = 'none';
 
@@ -146,6 +171,7 @@ export const BUILTIN_SHORTCUTS: readonly ShortcutDef[] = [
     { id: 'middleClick', key: MOUSE_MIDDLE_KEY, trigger: GESTURE_TRIGGER.CLICK, count: 0, interval: 0, holdMs: 0 },
     { id: 'holdMiddle', key: MOUSE_MIDDLE_KEY, trigger: GESTURE_TRIGGER.HOLD, count: 0, interval: 0, holdMs: HOLD_MS.def },
     { id: 'doubleMiddle', key: MOUSE_MIDDLE_KEY, trigger: GESTURE_TRIGGER.MULTI, count: 2, interval: MULTI_INTERVAL_MS.def, holdMs: 0 },
+    { id: 'holdLeft', key: MOUSE_LEFT_KEY, trigger: GESTURE_TRIGGER.HOLD, count: 0, interval: 0, holdMs: HOLD_MS.def },
     { id: 'tripleSpace', key: 'Space', trigger: GESTURE_TRIGGER.MULTI, count: 3, interval: TRIPLE_TAP_INTERVAL_MS, holdMs: 0 },
 ];
 
@@ -266,6 +292,7 @@ const MAC_MODIFIER_SYMBOLS: Record<string, string> = {
 /** Human label for one key token. */
 export function keyLabel(key: string, t: TFn, isMac = false): string {
     if (key === MOUSE_MIDDLE_KEY) return t('customShortcutKeyMiddle', 'Middle button');
+    if (key === MOUSE_LEFT_KEY) return t('customShortcutKeyLeft', 'Left button');
     if (key === 'Space') return t('customShortcutKeySpace', 'Space');
     const modifier = (isMac ? MAC_MODIFIER_LABELS : MODIFIER_LABELS)[key];
     if (modifier) return modifier;

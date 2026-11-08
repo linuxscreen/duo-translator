@@ -28,8 +28,11 @@ import { getDomainWithPortFromUrl } from "@/utils/url";
 import { createGestureEngine } from "@/main/customShortcut/gestureEngine";
 import {
     CUSTOM_SHORTCUT_ACTION,
+    GESTURE_TRIGGER,
+    MOUSE_LEFT_KEY,
     MOUSE_MIDDLE_KEY,
     actionsForGesture,
+    comboKeys,
     findShortcut,
     gestureKeyOf,
     normalizeBindings,
@@ -90,6 +93,7 @@ import {
 import {
     deepQuerySelector,
     forgetDisconnectedRoots,
+    isOwnHost,
     knownRoots,
     noteElement,
     resetShadowRoots,
@@ -311,7 +315,15 @@ export async function content() {
     // fired gesture's DEFINITION is needed to know how many characters it can
     // have typed (see takeTypedEcho).
     let customShortcutList: CustomShortcut[] = []
+    // A hold on the LEFT button fired, so the click that ends the press is the
+    // gesture's tail, not an activation: holding a link for half a second to
+    // translate its paragraph must not then navigate to it. Cleared on the
+    // next left press too, because a press released over a different element
+    // produces no click at all and the flag would otherwise eat the one after.
+    let leftHoldFired = false
     const customShortcuts = createGestureEngine((shortcutId) => {
+        const def = findShortcut(shortcutId, customShortcutList)
+        if (def?.trigger === GESTURE_TRIGGER.HOLD && comboKeys(def.key).includes(MOUSE_LEFT_KEY)) leftHoldFired = true
         void runCustomShortcutGesture(shortcutId)
     })
     {
@@ -333,6 +345,23 @@ export async function content() {
     // that follows can be suppressed too — open-link-in-new-tab is dispatched
     // from auxclick, which a preventDefault on mousedown does NOT cancel.
     let middleClaimed = false
+    // The left button is only ever WATCHED, never claimed: a preventDefault on
+    // a left mousedown would take focus, caret placement and text selection
+    // away from the whole page. Its one gesture is a hold, and the press stops
+    // being a candidate the moment it turns into something else — a drag (the
+    // pointer leaves the slop box below) or a native drag-and-drop (`dragstart`,
+    // which Chromium starts after fewer pixels than the slop and which then
+    // swallows the mousemove / mouseup the slop check relies on). The engine's
+    // `abort` is what both cases call: unlike a release it completes nothing.
+    //
+    // `leftPress` is where the watched press began; null while no left press is
+    // a candidate, which is also what keeps the mousemove listener below at one
+    // null check for every pointer move on the page.
+    let leftPress: { x: number; y: number } | null = null
+    // How far the pointer may wander during a hold before it is a drag. A hand
+    // resting on a mouse jitters a pixel or two; a text selection or a float
+    // ball drag covers this in its first frame.
+    const LEFT_HOLD_SLOP_PX = 5
     // The same for Alt, which Windows/Linux browsers read as "focus the menu
     // bar" when it is tapped on its own: without this an Alt gesture fires AND
     // pulls focus out of the page — and where focus lands is the browser's own
@@ -391,6 +420,20 @@ export async function content() {
         customShortcuts.release(key, e)
     }, true);
     document.addEventListener('mousedown', (e) => {
+        if (e.button === 0) {
+            leftHoldFired = false
+            leftPress = null
+            // Not on our own surfaces: holding a workbench button or dragging
+            // the float ball is interaction with the UI, not a page gesture.
+            // `e.target` is already the host here — a listener outside a
+            // shadow tree sees the retargeted event — so this is one Set
+            // lookup, not a climb.
+            if (isOwnHost(e.target as Node)) return
+            if (!customShortcuts.wouldActivate(MOUSE_LEFT_KEY, e)) return
+            leftPress = { x: e.clientX, y: e.clientY }
+            customShortcuts.press(MOUSE_LEFT_KEY, e)
+            return
+        }
         if (e.button !== 1) return
         // Suppress the browser's own middle-button behaviour — autoscroll on
         // Windows, primary-selection paste on Linux — but ONLY for a press that
@@ -403,8 +446,35 @@ export async function content() {
         customShortcuts.press(MOUSE_MIDDLE_KEY, e)
     }, true);
     document.addEventListener('mouseup', (e) => {
+        if (e.button === 0) {
+            leftPress = null
+            customShortcuts.release(MOUSE_LEFT_KEY, e)
+            return
+        }
         if (e.button !== 1) return
         customShortcuts.release(MOUSE_MIDDLE_KEY, e)
+    }, true);
+    const abortLeftPress = () => {
+        if (!leftPress) return
+        leftPress = null
+        customShortcuts.abort(MOUSE_LEFT_KEY)
+    }
+    document.addEventListener('mousemove', (e) => {
+        if (!leftPress) return
+        if (Math.abs(e.clientX - leftPress.x) <= LEFT_HOLD_SLOP_PX && Math.abs(e.clientY - leftPress.y) <= LEFT_HOLD_SLOP_PX) return
+        abortLeftPress()
+    }, { capture: true, passive: true });
+    document.addEventListener('dragstart', abortLeftPress, true);
+    document.addEventListener('click', (e) => {
+        if (e.button !== 0 || !leftHoldFired) return
+        leftHoldFired = false
+        // Both: preventDefault stops the link / submit / checkbox, and
+        // stopPropagation keeps the page's own click handlers (a card that
+        // opens on click, an SPA router) from acting on a press the user meant
+        // as a hold. Best effort on the second — a page listener registered on
+        // `document` in the capture phase before ours still runs.
+        e.preventDefault()
+        e.stopPropagation()
     }, true);
     document.addEventListener('auxclick', (e) => {
         if (e.button !== 1 || !middleClaimed) return
@@ -416,7 +486,13 @@ export async function content() {
     // Alt-tab is the ordinary way an Alt press ends off-page: the keyup never
     // arrives, so the claim has to be dropped here or the NEXT Alt press starts
     // out already claimed and is suppressed for nothing.
-    window.addEventListener('blur', () => { altClaimed = false; typedEcho = null; customShortcuts.reset() });
+    window.addEventListener('blur', () => {
+        altClaimed = false
+        leftPress = null
+        leftHoldFired = false
+        typedEcho = null
+        customShortcuts.reset()
+    });
 
     // add 'Translate/Restore this paragraph' menu when mouse is over the text of
     // a paragraph element and right mouse clicked

@@ -207,7 +207,9 @@ export default function App() {
           )}
           {tab === 'aiWriting' && <AiWritingPage />}
           {tab === 'videoSubtitle' && <VideoSubtitlePage />}
-          {tab === 'shortcuts' && <ShortcutsPage />}
+          {tab === 'shortcuts' && (
+            <ShortcutsPage onOpenCustomization={() => navigate({ tab: 'customization', sub: null })} />
+          )}
           {tab === 'customization' && <CustomizationPage />}
         </main>
       </div>

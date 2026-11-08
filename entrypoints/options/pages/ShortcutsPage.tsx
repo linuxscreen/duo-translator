@@ -214,9 +214,23 @@ function DoubleTapShortcutsCard() {
   );
 }
 
-export function ShortcutsPage() {
+type Props = {
+  /** Opens the Customization tab, where the function shortcuts live. */
+  onOpenCustomization: () => void;
+};
+
+export function ShortcutsPage({ onOpenCustomization }: Props) {
   const { t } = useTranslation();
   const isMac = useIsMac();
+  // Same shape as SelectionTranslatePage's pointer at Customization: the
+  // translated sentence carries a `{{link}}` marker and the clickable word is
+  // rendered in its place, so the sentence can put the link wherever that
+  // language needs it.
+  const functionHint = t(
+    'shortcutsFunctionHint',
+    "Can't find a suitable shortcut? Set one up under {{link}} → Function shortcuts",
+  );
+  const [functionHintBefore, functionHintAfter] = functionHint.split('{{link}}');
   const [commands, setCommands] = useState<CommandInfo[]>([]);
   const [ready, setReady] = useState(false);
 
@@ -294,7 +308,7 @@ export function ShortcutsPage() {
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <Keyboard className="h-3.5 w-3.5 text-ink-soft" strokeWidth={1.6} />
           <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-mute">
-            {t('currentShortcuts', 'Current shortcuts')}
+            {t('browserShortcuts', 'Browser shortcuts')}
           </span>
         </div>
         {!ready ? (
@@ -363,7 +377,7 @@ export function ShortcutsPage() {
       {!canEditShortcuts && (
         <div className="rounded-xl border border-line bg-surface/60 p-6 backdrop-blur-sm">
           <p className="text-[13.5px] text-ink">
-            {t('pleaseModifyInBrowserSettings', 'Please modify in browser settings')}
+            {t('pleaseModifyInBrowserSettings', 'Please modify in browser settings:')}
           </p>
           {IS_SAFARI ? (
             <p className="mt-1 text-[12px] text-ink-soft">
@@ -374,9 +388,7 @@ export function ShortcutsPage() {
             </p>
           ) : (
             <>
-              <p className="mt-1 text-[12px] text-ink-soft">
-                Chrome / Edge: <span className="font-mono">chrome://extensions/shortcuts</span>
-              </p>
+              <p className="mt-1 font-mono text-[12px] text-ink-soft">chrome://extensions/shortcuts</p>
               <Button className="mt-5" onClick={openBrowserShortcuts}>
                 <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.8} />
                 {t('settings', 'Open settings')}
@@ -385,6 +397,23 @@ export function ShortcutsPage() {
           )}
         </div>
       )}
+
+      {/* The browser-level shortcuts above are a fixed, four-slot list (see
+          CUSTOM_SHORTCUT_ACTION_OPTIONS); anything beyond them is a function
+          shortcut, which is configured on another tab — point there. */}
+      <div className="rounded-xl border border-line bg-surface/60 p-6 backdrop-blur-sm">
+        <p className="text-[13.5px] text-ink">
+          {functionHintBefore}
+          <button
+            type="button"
+            onClick={onOpenCustomization}
+            className="cursor-pointer text-accent underline-offset-2 hover:underline"
+          >
+            {t('customization', 'Customization')}
+          </button>
+          {functionHintAfter}
+        </p>
+      </div>
     </div>
   );
 }

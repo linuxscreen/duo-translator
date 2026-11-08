@@ -71,6 +71,14 @@ export type GestureEngine = {
     press(key: string, mods?: ModifierState): void;
     /** A key came up. */
     release(key: string, mods?: ModifierState): void;
+    /**
+     * The press of `key` turned out not to be a gesture at all — the pointer
+     * dragged away, a native drag started. Drops it from the held set and
+     * cancels every combo it was part of WITHOUT firing anything: unlike
+     * `release`, which completes a click, this is a press that never counts,
+     * and any tap sequence it was continuing is lost with it.
+     */
+    abort(key: string): void;
     /** Drop all in-flight state (window blur, tab hidden). */
     reset(): void;
 };
@@ -303,6 +311,13 @@ export function createGestureEngine(onGesture: (shortcutId: string) => void): Ge
         release(key: string, mods?: ModifierState) {
             syncModifiers(mods, key);
             lift(key);
+        },
+
+        abort(key: string) {
+            if (!down.delete(key)) return;
+            for (const [combo, plan] of plans) {
+                if (plan.keys.has(key)) cancel(stateOf(combo));
+            }
         },
 
         reset,

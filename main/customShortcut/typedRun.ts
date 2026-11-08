@@ -14,7 +14,7 @@
 // cut at all, leaving ALL of them behind.
 // ---------------------------------------------------------------------------
 
-import { GESTURE_TRIGGER, type ShortcutDef } from "./types";
+import { GESTURE_TRIGGER, comboHasMouseKey, type ShortcutDef } from "./types";
 
 export interface TypedRun {
     el: HTMLElement;
@@ -80,6 +80,11 @@ export function extendTypedRun(run: TypedRun | null, e: TypedKey, el: HTMLElemen
  */
 export function typedRunForShortcut(run: TypedRun | null, def: ShortcutDef | null): TypedRun | null {
     if (!run || !def) return null;
+    // A mouse gesture has no keydown of its own, so whatever run is pending was
+    // typed by the user BEFORE it ("..." then hold the button) and is theirs to
+    // keep. Without this the HOLD branch below would claim the whole run and
+    // "translate input box" would delete it.
+    if (comboHasMouseKey(def.key)) return null;
     const presses = def.trigger === GESTURE_TRIGGER.MULTI ? def.count
         : def.trigger === GESTURE_TRIGGER.CLICK ? 1
             // HOLD: the key auto-repeats for as long as it is held, so how many

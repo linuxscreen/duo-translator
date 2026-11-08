@@ -9,6 +9,7 @@ import {
     CUSTOM_SHORTCUT_ACTION,
     GESTURE_TRIGGER,
     HOLD_MS,
+    MOUSE_LEFT_KEY,
     MOUSE_MIDDLE_KEY,
     MULTI_COUNT,
     MULTI_INTERVAL_MS,
@@ -232,6 +233,45 @@ describe("gesture engine", () => {
         vi.runAllTimers();
         expect(fired).toEqual(["g"]);
     });
+
+    // The left-button hold: a press that turns into a drag is not a gesture.
+    // `abort` differs from `release` in both directions — the armed hold must
+    // not fire, and the press must not count as a click either.
+    it("abort disarms a hold without firing and does not count as a press", () => {
+        engine.setGestures([
+            def({ id: "hold", key: MOUSE_LEFT_KEY, trigger: GESTURE_TRIGGER.HOLD, holdMs: 500 }),
+            def({ id: "dbl", key: MOUSE_MIDDLE_KEY, trigger: GESTURE_TRIGGER.MULTI, count: 2, interval: 400 }),
+        ]);
+        engine.press(MOUSE_LEFT_KEY);
+        vi.advanceTimersByTime(400);
+        engine.abort(MOUSE_LEFT_KEY);
+        vi.runAllTimers();
+        expect(fired).toEqual([]);
+        // A later, genuine hold on the same key still works: abort left no
+        // stale "already down" behind.
+        engine.press(MOUSE_LEFT_KEY);
+        vi.advanceTimersByTime(500);
+        expect(fired).toEqual(["hold"]);
+        engine.release(MOUSE_LEFT_KEY);
+
+        // Mid-sequence it throws the tap count away: one tap, then an aborted
+        // press, then a tap is not a double-tap.
+        fired = [];
+        tap(MOUSE_MIDDLE_KEY);
+        engine.press(MOUSE_MIDDLE_KEY);
+        engine.abort(MOUSE_MIDDLE_KEY);
+        tap(MOUSE_MIDDLE_KEY);
+        vi.runAllTimers();
+        expect(fired).toEqual([]);
+    });
+
+    it("abort of a key that is not down is a no-op", () => {
+        engine.setGestures([def({ id: "hold", key: MOUSE_LEFT_KEY, trigger: GESTURE_TRIGGER.HOLD, holdMs: 500 })]);
+        engine.press(MOUSE_LEFT_KEY);
+        engine.abort(MOUSE_MIDDLE_KEY);
+        vi.advanceTimersByTime(500);
+        expect(fired).toEqual(["hold"]);
+    });
 });
 
 describe("combos", () => {
@@ -345,7 +385,7 @@ describe("combo serialization", () => {
     // The single-key spelling is unchanged from the pre-combo version, which is
     // what makes every stored shortcut and every built-in migrate for free.
     it("leaves a lone key byte-identical", () => {
-        for (const k of ["Control", "Space", MOUSE_MIDDLE_KEY]) {
+        for (const k of ["Control", "Space", MOUSE_MIDDLE_KEY, MOUSE_LEFT_KEY]) {
             expect(normalizeCombo(k)).toBe(k);
         }
     });
@@ -363,7 +403,10 @@ describe("labels", () => {
         expect(label("middleClick")).toBe("Click Middle button");
         expect(label("holdMiddle")).toBe("Hold Middle button");
         expect(label("doubleMiddle")).toBe("Double-tap Middle button");
+        expect(label("holdLeft")).toBe("Hold Left button");
         expect(label("tripleSpace")).toBe("Triple-tap Space");
+        // Picker order: the left-button hold sits right above the triple-tap.
+        expect(BUILTIN_SHORTCUTS.map((s) => s.id).slice(-2)).toEqual(["holdLeft", "tripleSpace"]);
     });
 
     it("draws modifiers by their keycap on macOS", () => {
@@ -615,6 +658,18 @@ describe("typedRun", () => {
         expect(typedRunForShortcut(run, multi(3))?.text).toBe("   ");
         // More presses than characters is fine — take what is there.
         expect(typedRunForShortcut(run, multi(4))?.text).toBe("   ");
+    });
+
+    // A mouse gesture has no keydown, so a pending run was typed by the user
+    // before it ("..." then hold the button). The HOLD rule would otherwise
+    // claim the whole run and the input-box translation would delete it.
+    it("claims nothing for a mouse gesture", () => {
+        const run = feed([tap("."), tap("."), tap(".")]);
+        const mouse = (key: string, trigger: GESTURE_TRIGGER): ShortcutDef =>
+            ({ id: "x", key, trigger, count: 2, interval: 400, holdMs: 500 });
+        expect(typedRunForShortcut(run, mouse(MOUSE_LEFT_KEY, GESTURE_TRIGGER.HOLD))).toBeNull();
+        expect(typedRunForShortcut(run, mouse(MOUSE_MIDDLE_KEY, GESTURE_TRIGGER.CLICK))).toBeNull();
+        expect(typedRunForShortcut(run, mouse(MOUSE_MIDDLE_KEY, GESTURE_TRIGGER.MULTI))).toBeNull();
     });
 
     it("takes one for a click and the whole run for a hold", () => {
