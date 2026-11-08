@@ -16,6 +16,7 @@ export type AiProviderType =
     | "gemini"
     | "ollama"
     | "openrouter"
+    | "opencode"
     | "claude"
     | "custom";
 
@@ -167,6 +168,36 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
             "moonshotai/kimi-k3",
             "meta-llama/llama-4-maverick",
             "mistralai/mistral-large-2512",
+        ],
+    },
+    {
+        // OpenCode Go (https://opencode.ai/docs/console/go/) — a subscription
+        // gateway in front of many third-party models. Every text model is
+        // reachable through the OpenAI-compatible chat-completions endpoint
+        // (Console translates to each model's native API), so one adapter
+        // covers the whole catalog; the Responses / Anthropic / Gemini URLs
+        // the docs list per model are not needed here. The key is a Console
+        // API key. Besides the key, Go asks clients to send a stable
+        // `x-opencode-session` header — see aiService.ts.
+        type: "opencode",
+        label: "OpenCode Go",
+        defaultUrl: "https://opencode.ai/inference/go/openai/v1/chat/completions",
+        requiresApiKey: true,
+        models: [
+            "glm-5.3-flash",
+            "deepseek-v4.1-flash",
+            "kimi-k3",
+            "kimi-k3.1-pro",
+            "minimax-m3.1-flash",
+            "qwen3.8-flash",
+            "qwen3.8-max",
+            "glm-5.3",
+            "deepseek-v4-pro",
+            "mimo-v2.6-flash",
+            "claude-haiku-5-5",
+            "gpt-5.6-luna",
+            "gemini-4-argon",
+            "grok-4.7",
         ],
     },
     {

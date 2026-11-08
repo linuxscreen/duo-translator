@@ -349,6 +349,7 @@
   "aiProviderUrl": "URL",
   "aiUrlTemplateHint": "占位符 {model} 和 {key} 会自动替换。",
   "aiApiKeyOptionalHint": "此类型可不填。",
+  "aiOpenCodeGoKeyHint": "在 opencode.ai/console 创建的 Console API Key，需订阅 Go。",
   "translateServiceTest": "测试",
   "translateServiceTestOk": "成功",
   "translateServiceTestFailed": "测试失败",

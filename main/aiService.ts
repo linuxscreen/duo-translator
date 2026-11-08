@@ -119,14 +119,39 @@ export async function* chatStream(
         case "claude":
             yield* claudeChatStream(provider, messages, opts);
             return;
-        // OpenAI-compatible: openai, deepseek, ollama, openrouter, custom
+        // OpenAI-compatible: openai, deepseek, ollama, openrouter, opencode, custom
         default:
             yield* openAiChatStream(provider, messages, opts);
             return;
     }
 }
 
-// ---- OpenAI-compatible (also DeepSeek / Ollama / OpenRouter / Custom) ----
+// ---- OpenAI-compatible (also DeepSeek / Ollama / OpenRouter / OpenCode Go / Custom) ----
+
+/**
+ * One id per background lifetime. OpenCode Go asks every client to send a
+ * stable session id per conversation (`x-opencode-session`) so it can route
+ * requests to the same backend and reuse prompt caches; page translation has
+ * no conversation, so the service-worker lifetime is the closest analogue
+ * and keeps the batches of one browsing session together. It is minted on
+ * first use because the module is also evaluated in test environments.
+ */
+let openCodeSessionId: string | undefined;
+
+export const OPENCODE_SESSION_HEADER = "x-opencode-session";
+
+function openAiHeaders(provider: AiProvider): Record<string, string> {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (provider.apiKey) headers["Authorization"] = `Bearer ${provider.apiKey}`;
+    if (provider.type === "opencode") {
+        // The docs also ask for a client-specific User-Agent, but that is a
+        // forbidden request header for fetch() — the browser always sends its
+        // own — so the session header is the only client identity we can give.
+        openCodeSessionId ??= crypto.randomUUID();
+        headers[OPENCODE_SESSION_HEADER] = openCodeSessionId;
+    }
+    return headers;
+}
 
 export async function* openAiChatStream(
     provider: AiProvider,
@@ -134,8 +159,7 @@ export async function* openAiChatStream(
     opts: ChatOptions = {},
 ): AsyncGenerator<string, void, void> {
     const url = applyTemplate(provider.url, { model: provider.model, key: provider.apiKey });
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (provider.apiKey) headers["Authorization"] = `Bearer ${provider.apiKey}`;
+    const headers = openAiHeaders(provider);
 
     const resp = await fetch(url, {
         method: "POST",
@@ -319,7 +343,7 @@ export async function chatCompleteNonStream(
                 return await geminiChatComplete(provider, messages, opts);
             case "claude":
                 return await claudeChatComplete(provider, messages, opts);
-            // OpenAI-compatible: openai, deepseek, ollama, openrouter, custom
+            // OpenAI-compatible: openai, deepseek, ollama, openrouter, opencode, custom
             default:
                 return await openAiChatComplete(provider, messages, opts);
         }
@@ -332,8 +356,7 @@ export async function openAiChatComplete(
     opts: ChatOptions = {},
 ): Promise<string> {
     const url = applyTemplate(provider.url, { model: provider.model, key: provider.apiKey });
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (provider.apiKey) headers["Authorization"] = `Bearer ${provider.apiKey}`;
+    const headers = openAiHeaders(provider);
 
     const resp = await fetch(url, {
         method: "POST",

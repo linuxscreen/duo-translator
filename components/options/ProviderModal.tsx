@@ -242,7 +242,9 @@ export function ProviderModal({ open, initial, onClose, onSave }: Props) {
                     hint={
                         !entry.requiresApiKey
                             ? t('aiApiKeyOptionalHint', 'Optional for this provider type.')
-                            : undefined
+                            : type === 'opencode'
+                                ? t('aiOpenCodeGoKeyHint', 'A Console API key from opencode.ai/console with a Go subscription.')
+                                : undefined
                     }
                 >
                     <div className="relative">

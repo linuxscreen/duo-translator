@@ -14,7 +14,7 @@ vi.mock("@/main/messageBridge", () => ({
 
 import { AiProvider, normalizeProvider } from "@/main/aiProvider";
 import { ACTION, AI_TASK, CONFIG_KEY } from "@/main/constants";
-import { AI_MAX_INPUT_CHARS, aiMessageHandlers, aiPageTranslate, buildPrompt, chatCompleteNonStream, chatStream } from "@/main/aiService";
+import { AI_MAX_INPUT_CHARS, OPENCODE_SESSION_HEADER, aiMessageHandlers, aiPageTranslate, buildPrompt, chatCompleteNonStream, chatStream } from "@/main/aiService";
 
 const provider = new AiProvider("mt", "bailian", "Alibaba Cloud Model Studio", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "test-key", "qwen-mt-plus");
 const fetchMock = vi.fn();
@@ -167,4 +167,32 @@ describe("Qwen-MT compatibility", () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
+});
+
+describe("OpenCode Go", () => {
+    const opencode = new AiProvider("oc", "opencode", "OpenCode Go", "https://opencode.ai/inference/go/openai/v1/chat/completions", "oc-key", "kimi-k3");
+
+    it("sends a stable session header on both the streaming and one-shot paths", async () => {
+        fetchMock.mockResolvedValueOnce(completeResponse("你好"));
+        expect(await chatCompleteNonStream(opencode, messages, options)).toBe("你好");
+        fetchMock.mockResolvedValueOnce(streamResponse(["你", "好"]));
+        expect(await collect(chatStream(opencode, messages, options))).toEqual(["你", "好"]);
+
+        const sessions = fetchMock.mock.calls.map(([, init]) => init.headers[OPENCODE_SESSION_HEADER]);
+        expect(sessions).toHaveLength(2);
+        expect(sessions[0]).toMatch(/^[0-9a-f-]{36}$/);
+        expect(sessions[1]).toBe(sessions[0]);
+        for (const [url, init] of fetchMock.mock.calls) {
+            expect(url).toBe(opencode.url);
+            expect(init.headers.Authorization).toBe("Bearer oc-key");
+            expect(JSON.parse(init.body).model).toBe("kimi-k3");
+        }
+    });
+
+    it("does not leak the session header to other OpenAI-compatible providers", async () => {
+        fetchMock.mockResolvedValue(completeResponse("ok"));
+        const other = normalizeProvider({ ...provider, type: "openai", model: "gpt-4o" });
+        await chatCompleteNonStream(other, messages, options);
+        expect(fetchMock.mock.calls[0][1].headers[OPENCODE_SESSION_HEADER]).toBeUndefined();
+    });
 });

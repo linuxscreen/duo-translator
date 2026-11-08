@@ -349,6 +349,7 @@
   "aiProviderUrl": "URL",
   "aiUrlTemplateHint": "Placeholders {model} and {key} are auto-substituted.",
   "aiApiKeyOptionalHint": "Optional for this provider type.",
+  "aiOpenCodeGoKeyHint": "A Console API key from opencode.ai/console with a Go subscription.",
   "translateServiceTest": "Test",
   "translateServiceTestOk": "OK",
   "translateServiceTestFailed": "Test failed",

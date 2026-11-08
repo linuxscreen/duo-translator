@@ -24,7 +24,7 @@ test.describe('@bundle background/content separation', () => {
         // client symbol may appear here.
         const forbidden = [
             // AI provider clients
-            'anthropic-version', 'x-api-key', 'chatCompleteNonStream', 'acquireNonStreamSlot',
+            'anthropic-version', 'x-api-key', 'x-opencode-session', 'chatCompleteNonStream', 'acquireNonStreamSlot',
             // Translate provider endpoints
             'translate-pa.googleapis.com', 'translation.googleapis.com',
             'cognitive.microsofttranslator.com',
@@ -82,6 +82,7 @@ test.describe('@bundle background/content separation', () => {
         // clients out of background would break translation at runtime.
         for (const marker of [
             'anthropic-version',
+            'x-opencode-session',
             'edge.microsoft.com/translate/auth',
             'translate-pa.googleapis.com',
             'translation.googleapis.com',

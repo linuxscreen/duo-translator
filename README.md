@@ -29,7 +29,7 @@ An AI-powered translation and writing assistant. Supports webpage translation, s
   - AI sentence segmentation
 - Multiple translation and AI service integrations
   - Translation services: Microsoft, Google, Yandex, browser built-in AI (Chrome and Edge only), DeepL, [Baidu (your own APPID and secret key)](docs/BAIDU.md)
-  - AI: OpenAI, DeepSeek, Gemini, OpenRouter, Claude, Ollama, Custom
+  - AI: OpenAI, DeepSeek, Gemini, OpenRouter, OpenCode Go, Claude, Ollama, Custom
 - Sync & Backup
   - Sync methods: Google Drive, WebDAV
   - Automatic sync (on a schedule and after a setting changes)
