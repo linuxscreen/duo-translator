@@ -676,6 +676,20 @@ export async function restore(results: TranslateResult[]): Promise<void> {
 // or provider endpoint is reachable from a page context.
 // ---------------------------------------------------------------------------
 
+/** Escape plain input before handing it to Baidu's mapped-HTML adapter. */
+export function preparePlainTranslationTexts(service: string, texts: string[]): string[] {
+    if (service !== TRANSLATE_SERVICE.BAIDU) return texts;
+    return texts.map((text) => text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;"));
+}
+
+/** Baidu returns HTML-safe output; input boxes and live captions need text. */
+export function readPlainTranslationText(service: string, text: string): string {
+    return service === TRANSLATE_SERVICE.BAIDU ? decodeHtmlText(text) : text;
+}
+
 /**
  * Translate `texts` with `service`, resolving 1:1 with the input order.
  *
@@ -696,6 +710,7 @@ export async function translateTexts(
         abortAction: ACTION.TRANSLATE_TEXTS_ABORT,
         data: { service, texts, targetLang },
         signal,
+        cancelOnTimeout: service === TRANSLATE_SERVICE.BAIDU,
         // Anything that waits on a MODEL gets the long budget; plain machine
         // translators get the shorter one. Built-in AI counts even though it
         // issues no network request: running on-device makes it slower than a
@@ -703,7 +718,8 @@ export async function translateTexts(
         // (there is no batch API), so a paragraph batch is N sequential-ish
         // inferences, and the first call for a language pair also has to load
         // the model into memory.
-        timeout: service.startsWith(AI_PREFIX) || service === TRANSLATE_SERVICE.BUILTIN
+        // Baidu may queue behind other tabs to respect the configured QPS.
+        timeout: service.startsWith(AI_PREFIX) || service === TRANSLATE_SERVICE.BUILTIN || service === TRANSLATE_SERVICE.BAIDU
             ? AI_REQUEST_TIMEOUT
             : API_REQUEST_TIMEOUT,
     });

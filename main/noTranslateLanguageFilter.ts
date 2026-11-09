@@ -81,8 +81,8 @@ export function resetDetectedLanguageCache() {
  * Does this translator report a source language for every text in a batch?
  *
  * Google (`data[1][i]`), Microsoft/Azure (`detectedLanguage`), Google Cloud
- * (`detectedSourceLanguage`) and DeepL (`detected_source_language`) do. Yandex
- * reports ONE language for the whole chunk and built-in AI one for the whole
+ * (`detectedSourceLanguage`) and DeepL (`detected_source_language`) do. Baidu and Yandex
+ * report ONE language for the whole chunk and built-in AI one for the whole
  * batch — using either as a per-paragraph verdict would let one long paragraph
  * decide for its neighbours — and the AI providers report none at all
  * (`sourceLang` is `""`).

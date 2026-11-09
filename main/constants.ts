@@ -191,6 +191,7 @@ export enum TRANSLATE_SERVICE {
     GOOGLE = 'google',
     AZURE = 'azure',
     GOOGLE_CLOUD = 'googleCloud',
+    BAIDU = 'baidu',
     // Yandex's browser-translate endpoint. Keyless like Google/Microsoft, and
     // it preserves the same `<bN>` inline placeholders Microsoft does, so it
     // needs no special handling in the DOM orchestration.
@@ -226,6 +227,7 @@ export const TRANSLATE_SERVICES: Map<string, TranslateServiceMeta> = new Map([
     ["deepl", new TranslateServiceMeta("DeepL", "deepl", "deepl", "DeeplTranslateDescription", true)],
     ["azure", new TranslateServiceMeta("Azure", "azure", "azureTranslator", "AzureTranslateDescription", true, undefined, undefined, "azure")],
     ["googleCloud", new TranslateServiceMeta("GoogleCloud", "googleCloud", "googleCloudTranslator", "GoogleCloudTranslateDescription", true, undefined, undefined, "googlecloud")],
+    ["baidu", new TranslateServiceMeta("Baidu", "baidu", "baiduTranslator", "BaiduTranslateDescription", true)],
 ]);
 
 export const DEFAULT_STRATEGY_OPTIONS: { value: DEFAULT_STRATEGY; title: string; fallback: string }[] = [
@@ -502,6 +504,9 @@ export enum CONFIG_KEY {
     AZURE_REGION = 'azureRegion',
     // User-supplied API key for Cloud Translation Basic (v2).
     GOOGLE_CLOUD_API_KEY = 'googleCloudApiKey',
+    BAIDU_APP_ID = 'baiduAppId',
+    BAIDU_SECRET_KEY = 'baiduSecretKey',
+    BAIDU_QPS = 'baiduQps',
     // When true, cloud sync includes API keys (AI providers + translation
     // APIs) in the synced snapshot. Off by default so secrets stay on-device
     // unless the user opts in. Separate from the per-export "include keys"
@@ -749,7 +754,10 @@ export const DEFAULT_VALUE = {
     // without it has the service force-disabled by `builtinAiApiAvailable()` in
     // utils/service.ts — which no static default could express, since the same
     // build ships to browsers that do and don't have it.
-    DISABLED_TRANSLATE_SERVICES: ['deepl', 'azure', 'googleCloud'],
+    DISABLED_TRANSLATE_SERVICES: ['deepl', 'azure', 'googleCloud', 'baidu'],
+    BAIDU_APP_ID: '',
+    BAIDU_SECRET_KEY: '',
+    BAIDU_QPS: 1,
     // Module-level constant on purpose: `useConfig` resolves its default
     // through here, and a fresh [] every render would loop useSyncExternalStore.
     NO_TRANSLATE_LANGUAGES: [] as string[],

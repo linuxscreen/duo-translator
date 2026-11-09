@@ -1,8 +1,16 @@
 import { ACTION, CONFIG_KEY, DB_ACTION } from "@/main/constants";
-import { sendMessageToBackground } from "@/utils/message";
+import { sendMessageToBackground, sendMessageToBackgroundOrThrow } from "@/utils/message";
 
 export function setConfig(key: CONFIG_KEY, value: any) {
     return sendMessageToBackground({
+        action: DB_ACTION.CONFIG_SET,
+        data: { name: key, value: value }
+    });
+}
+
+/** Persist a setting and reject when background cannot confirm the write. */
+export function setConfigOrThrow(key: CONFIG_KEY, value: any) {
+    return sendMessageToBackgroundOrThrow({
         action: DB_ACTION.CONFIG_SET,
         data: { name: key, value: value }
     });

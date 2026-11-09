@@ -43,6 +43,7 @@ import * as translationCache from "@/main/storage/translationCache";
 import { isTraditionalChinese, toSimplified, toTraditional } from "@/utils/language";
 import { utf8Length } from "@/utils/text";
 import { ABORT_SCOPE, handleAbort, handleAbortable, handleAsync } from "@/main/messageBridge";
+import { BaiduTranslator, type BaiduCredentials } from "@/main/baiduTranslator";
 
 // ---------------------------------------------------------------------------
 // Provider HTTP
@@ -533,6 +534,45 @@ export class GoogleCloudTranslateService extends TranslateService {
                 1,
             );
         });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Baidu General Translation API
+// ---------------------------------------------------------------------------
+
+export class BaiduTranslateService extends TranslateService {
+    readonly name = TRANSLATE_SERVICE.BAIDU;
+    private readonly translator: BaiduTranslator;
+
+    /** Options tests validate draft credentials without persisting them. */
+    constructor(credentialsOverride?: BaiduCredentials) {
+        super();
+        this.translator = new BaiduTranslator(async () => {
+            if (credentialsOverride !== undefined) return credentialsOverride;
+            const [appId, secretKey, qps] = await Promise.all([
+                configRepo.get(CONFIG_KEY.BAIDU_APP_ID),
+                configRepo.get(CONFIG_KEY.BAIDU_SECRET_KEY),
+                configRepo.get(CONFIG_KEY.BAIDU_QPS),
+            ]);
+            return {
+                appId: typeof appId === "string" ? appId : "",
+                secretKey: typeof secretKey === "string" ? secretKey : "",
+                qps: typeof qps === "number" ? qps : undefined,
+            };
+        });
+    }
+
+    async translateText(
+        texts: string[], targetLang: string, signal?: AbortSignal | null,
+        sourceLang?: string, _options?: TranslateRequestOptions,
+    ): Promise<TranslateResult[]> {
+        const results = await this.translator.translateText(texts, targetLang, signal, sourceLang);
+        return results.map(result => new TranslateResult(result.text, result.sourceLang, 1));
+    }
+
+    async detectLanguage(texts: string[]): Promise<string> {
+        return this.translator.detectLanguage(texts);
     }
 }
 
@@ -1212,6 +1252,7 @@ export class AiTranslateService extends TranslateService {
 export const googleTranslationService: TranslateService = new GoogleTranslateService();
 export const azureTranslationService: TranslateService = new AzureTranslateService();
 export const googleCloudTranslationService: TranslateService = new GoogleCloudTranslateService();
+export const baiduTranslationService: TranslateService = new BaiduTranslateService();
 // Typed as the concrete class, not `TranslateService`: it is the one provider
 // that can answer per-text detection (detectTextsLanguages), and the
 // no-translate-language filter calls it by name regardless of which translator
@@ -1226,6 +1267,7 @@ export const translationServices = new Map<string, TranslateService>([
     [googleTranslationService.name, googleTranslationService],
     [azureTranslationService.name, azureTranslationService],
     [googleCloudTranslationService.name, googleCloudTranslationService],
+    [baiduTranslationService.name, baiduTranslationService],
     [microsoftTranslationService.name, microsoftTranslationService],
     [yandexTranslationService.name, yandexTranslationService],
     [builtinAiTranslationService.name, builtinAiTranslationService],
@@ -1390,6 +1432,7 @@ export async function translateTextsWithCache(
  *   machine that has the translator, and using it removes the one remaining
  *   network round-trip from an otherwise fully offline path.
  * - Yandex — no reason to call a second vendor when the user picked this one.
+ * - Baidu — a bounded translation sample also reports the detected source.
  *
  * Falls back to Microsoft whenever that detector fails or is inconclusive —
  * this is the tie-breaker for local franc detection, so an empty answer costs
@@ -1399,6 +1442,7 @@ async function detectDominantLanguage(texts: string[]): Promise<string> {
     const active = await configRepo.get(CONFIG_KEY.TRANSLATE_SERVICE);
     const own = active === TRANSLATE_SERVICE.BUILTIN ? builtinAiTranslationService
         : active === TRANSLATE_SERVICE.YANDEX ? yandexTranslationService
+            : active === TRANSLATE_SERVICE.BAIDU ? baiduTranslationService
             : null;
     if (own) {
         try {
@@ -1523,7 +1567,10 @@ export const translateMessageHandlers: Record<string, MessageHandler> = {
  * reason arrives here on its own and `handleAsync` relays it to the dialog.
  */
 async function testTranslateService(
-    data: { service?: string; targetLang?: string; apiKey?: string; region?: string } | undefined,
+    data: {
+        service?: string; targetLang?: string; apiKey?: string; region?: string;
+        appId?: string; secretKey?: string; qps?: number;
+    } | undefined,
 ): Promise<{ reply: string }> {
     const svc = data?.service;
     const targetLang = data?.targetLang || 'zh-CN';
@@ -1531,13 +1578,15 @@ async function testTranslateService(
 
     // Draft credentials typed into an Options dialog but not yet saved need a
     // one-off instance; row tests and keyless providers use the shared singletons.
-    const service = svc === TRANSLATE_SERVICE.DEEPL && data?.apiKey !== undefined
-        ? new DeepLTranslateService(data.apiKey)
-        : svc === TRANSLATE_SERVICE.AZURE && data?.apiKey !== undefined
-            ? new AzureTranslateService({ apiKey: data.apiKey, region: data.region })
-            : svc === TRANSLATE_SERVICE.GOOGLE_CLOUD && data?.apiKey !== undefined
-                ? new GoogleCloudTranslateService(data.apiKey)
-                : resolveTranslateService(svc);
+    const service = svc === TRANSLATE_SERVICE.BAIDU && data?.appId !== undefined
+        ? new BaiduTranslateService({ appId: data.appId, secretKey: data.secretKey ?? "", qps: data.qps })
+        : svc === TRANSLATE_SERVICE.DEEPL && data?.apiKey !== undefined
+            ? new DeepLTranslateService(data.apiKey)
+            : svc === TRANSLATE_SERVICE.AZURE && data?.apiKey !== undefined
+                ? new AzureTranslateService({ apiKey: data.apiKey, region: data.region })
+                : svc === TRANSLATE_SERVICE.GOOGLE_CLOUD && data?.apiKey !== undefined
+                    ? new GoogleCloudTranslateService(data.apiKey)
+                    : resolveTranslateService(svc);
     if (!service) throw new Error(`Unknown service: ${svc}`);
 
     // Pressing Test is the user asking for this service to work, so it lifts a

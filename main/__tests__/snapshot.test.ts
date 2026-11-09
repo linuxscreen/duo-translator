@@ -18,7 +18,8 @@ const stripArea = (key: string) => key.replace(/^local:/, "");
 
 vi.mock("wxt/utils/storage", () => ({
     storage: {
-        snapshot: vi.fn(async () => ({ ...store })),
+        snapshot: vi.fn(async (_area?: string, opts?: { excludeKeys?: string[] }) =>
+            Object.fromEntries(Object.entries(store).filter(([key]) => !opts?.excludeKeys?.includes(key)))),
         setItems: vi.fn(async (items: { key: string; value: unknown }[]) => {
             for (const { key, value } of items) store[stripArea(key)] = value;
         }),
@@ -61,6 +62,7 @@ const AI_PROVIDERS_KEY = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.AI_PROVIDERS}`;
 const DEEPL_KEY = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.DEEPL_API_KEY}`;
 const AZURE_KEY = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.AZURE_API_KEY}`;
 const GOOGLE_CLOUD_KEY = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.GOOGLE_CLOUD_API_KEY}`;
+const BAIDU_KEY = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.BAIDU_SECRET_KEY}`;
 const TARGET_LANG_KEY = `${STORAGE_PREFIX.CONFIG}${CONFIG_KEY.TARGET_LANGUAGE}`;
 
 function snapshot(data: Record<string, unknown>): Snapshot {
@@ -90,6 +92,22 @@ beforeEach(() => {
 });
 
 describe("applyImportedSnapshot — secrets", () => {
+    it("excludes Baidu secrets by default, redacts exports and preserves a local key on redacted import", async () => {
+        store[BAIDU_KEY] = "baidu-secret-test-only";
+        const defaultSnapshot = await buildSnapshot();
+        expect(defaultSnapshot.data).not.toHaveProperty(BAIDU_KEY);
+
+        const withSecrets = await buildSnapshot({ includeSecrets: true });
+        expect(withSecrets.data[BAIDU_KEY]).toBe("baidu-secret-test-only");
+        const redacted = redactSecrets(withSecrets);
+        expect(redacted.data[BAIDU_KEY]).toBe("");
+        await applyImportedSnapshot(redacted);
+        expect(store[BAIDU_KEY]).toBe("baidu-secret-test-only");
+
+        await applyImportedSnapshot(snapshot({ [BAIDU_KEY]: "baidu-import-test-only" }));
+        expect(store[BAIDU_KEY]).toBe("baidu-import-test-only");
+    });
+
     it("keeps local API keys when importing a redacted backup", async () => {
         seedLocalKeys();
         // Exactly what the default "Export JSON" path produces: a full snapshot

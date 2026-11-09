@@ -51,6 +51,16 @@ describe("buildSrt", () => {
         expect(buildSrt(cues, "translation")).not.toContain("Hello");
     });
 
+    it("strips provider markup and decodes entities for the default HTML format", () => {
+        const out = buildSrt([cue(0, 1000, "original", "<b>A &amp; B</b> &lt;tag&gt; &amp;amp;")], "translation");
+        expect(out).toBe("1\n00:00:00,000 --> 00:00:01,000\nA & B <tag> &amp;\n");
+    });
+
+    it("preserves literal tags and entities when translations are already plain text", () => {
+        const out = buildSrt([cue(0, 1000, "original", "A & B <b0>literal</b0> <tag> &amp;")], "translation", "text");
+        expect(out).toBe("1\n00:00:00,000 --> 00:00:01,000\nA & B <b0>literal</b0> <tag> &amp;\n");
+    });
+
     it("falls back to the original when there is no translation", () => {
         // Same-language tracks are never translated; a blank file would just
         // look broken.
