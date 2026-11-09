@@ -83,10 +83,11 @@ describe("Baidu plain-text surfaces", () => {
         expect(sendStub).not.toHaveBeenCalled();
     });
 
-    it("decodes live captions once and leaves download output encoded until SRT formatting", () => {
+    it("decodes captions once and preserves the same plain text in SRT output", () => {
         const encoded = "A &amp; B &lt;tag&gt; &amp;amp;";
-        expect(readPlainTranslationText(TRANSLATE_SERVICE.BAIDU, encoded)).toBe("A & B <tag> &amp;");
-        const srt = buildSrt([{ startMs: 0, endMs: 1000, text: "original", translated: encoded }], "translation");
+        const translated = readPlainTranslationText(TRANSLATE_SERVICE.BAIDU, encoded);
+        expect(translated).toBe("A & B <tag> &amp;");
+        const srt = buildSrt([{ startMs: 0, endMs: 1000, text: "original", translated }], "translation", "text");
         expect(srt).toContain("A & B <tag> &amp;");
     });
 

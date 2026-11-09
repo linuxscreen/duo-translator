@@ -48,13 +48,13 @@ function button(label: string, within: ParentNode = document.body): HTMLButtonEl
     return result!;
 }
 
-async function renderPage() {
+async function renderPage(service = 'Baidu') {
     await act(async () => { root.render(<ServicesPage />); });
-    await openBaiduDialog();
+    await openCredentialDialog(service);
 }
 
-async function openBaiduDialog() {
-    const name = Array.from(container.querySelectorAll('span')).find((el) => el.textContent === 'Baidu');
+async function openCredentialDialog(service = 'Baidu') {
+    const name = Array.from(container.querySelectorAll('span')).find((el) => el.textContent === service);
     const row = name?.closest('.grid')!;
     expect(row).toBeTruthy();
     await act(async () => { button('Edit', row).click(); });
@@ -64,8 +64,18 @@ async function input(id: string, value: string) {
     const element = document.getElementById(id) as HTMLInputElement;
     expect(element).toBeTruthy();
     await act(async () => {
+        element.focus();
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(element, value);
         element.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+}
+
+async function blur(id: string) {
+    const element = document.getElementById(id) as HTMLInputElement;
+    expect(element).toBeTruthy();
+    await act(async () => {
+        element.focus();
+        element.blur();
     });
 }
 
@@ -93,6 +103,89 @@ afterEach(async () => {
     await act(async () => { root.unmount(); });
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+});
+
+describe('credential validation feedback', () => {
+    it.each(['Baidu', 'DeepL', 'Azure', 'GoogleCloud'])(
+        'does not show errors when opening %s or leaving an unchanged field',
+        async (service) => {
+            await renderPage(service);
+            const id = service === 'Baidu' ? 'baidu-app-id' : 'translation-api-key';
+            expect((document.getElementById(id) as HTMLInputElement).required).toBe(true);
+            expect(document.querySelector('[role="alert"]')).toBeNull();
+            expect(button('Save').disabled).toBe(true);
+            expect(button('Test', button('Save').parentElement!).disabled).toBe(true);
+            await blur(id);
+            expect(document.querySelector('[role="alert"]')).toBeNull();
+        },
+    );
+
+    it.each(['DeepL', 'Azure', 'GoogleCloud'])(
+        'validates the %s API key after editing and blur, and resets on reopening',
+        async (service) => {
+            await renderPage(service);
+            await input('translation-api-key', ' ');
+            expect(document.querySelector('[role="alert"]')).toBeNull();
+            expect(button('Save').disabled).toBe(true);
+            await blur('translation-api-key');
+            expect(document.querySelector('[role="alert"]')?.textContent).toBe('Enter an API key.');
+            await input('translation-api-key', 'example-api-key');
+            expect(document.querySelector('[role="alert"]')).toBeNull();
+            expect(button('Save').disabled).toBe(false);
+            await act(async () => { button('Cancel').click(); });
+            await openCredentialDialog(service);
+            expect(button('Save').disabled).toBe(true);
+            await blur('translation-api-key');
+            expect(document.querySelector('[role="alert"]')).toBeNull();
+        },
+    );
+
+    it.each(['baidu-app-id', 'baidu-secret-key'])(
+        'shows only edited and blurred Baidu credential errors for %s',
+        async (id) => {
+            await renderPage();
+            await input(id, ' ');
+            expect(document.querySelector('[role="alert"]')).toBeNull();
+            await blur(id);
+            expect(document.querySelector('[role="alert"]')?.textContent).toBe('Enter your Baidu AppID and secret key.');
+            await input(id, 'example-credential');
+            await blur(id);
+            // The other required credential is still empty and untouched.
+            expect(document.querySelector('[role="alert"]')).toBeNull();
+            expect(button('Save').disabled).toBe(true);
+            await act(async () => { button('Cancel').click(); });
+            await openCredentialDialog();
+            await blur(id);
+            expect(document.querySelector('[role="alert"]')).toBeNull();
+        },
+    );
+
+    it.each(['', '0', '1.5', '101'])(
+        'shows the QPS error for %j after blur without exposing untouched credentials',
+        async (value) => {
+            await renderPage();
+            await input('baidu-qps', value);
+            expect(document.querySelector('[role="alert"]')).toBeNull();
+            expect(button('Save').disabled).toBe(true);
+            await blur('baidu-qps');
+            expect(document.querySelector('[role="alert"]')?.textContent).toBe('QPS must be a whole number from 1 to 100.');
+            await input('baidu-qps', '10');
+            expect(document.querySelector('[role="alert"]')).toBeNull();
+            expect(button('Save').disabled).toBe(true);
+        },
+    );
+
+    it('does not carry API-key validation state into another service', async () => {
+        await renderPage('DeepL');
+        await input('translation-api-key', ' ');
+        await blur('translation-api-key');
+        expect(document.querySelector('[role="alert"]')?.textContent).toBe('Enter an API key.');
+        await act(async () => { button('Cancel').click(); });
+        await openCredentialDialog('Azure');
+        await blur('translation-api-key');
+        expect(document.querySelector('[role="alert"]')).toBeNull();
+        expect(button('Save').disabled).toBe(true);
+    });
 });
 
 describe('Baidu translation credentials', () => {
@@ -157,7 +250,7 @@ describe('Baidu translation credentials', () => {
             // Reopening reads the component's saved-credential state. A failed
             // write must not populate it and make an unsaved service usable.
             await act(async () => { button('Cancel').click(); });
-            await openBaiduDialog();
+            await openCredentialDialog();
             expect((document.getElementById('baidu-app-id') as HTMLInputElement).value).toBe('');
             expect((document.getElementById('baidu-secret-key') as HTMLInputElement).value).toBe('');
         },

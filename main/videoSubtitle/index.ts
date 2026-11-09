@@ -4,6 +4,7 @@ import {
     browserTargetLanguage,
     CONFIG_KEY,
     normalizeLanguageTag,
+    TRANSLATE_SERVICE,
     VIDEO_SUBTITLE_DISPLAY_MODE,
     VIDEO_SUBTITLE_SOURCE_POLICY,
 } from "@/main/constants";
@@ -991,7 +992,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
                     if (job.abort.signal.aborted) return;
                     if (results && results.length === batch.length) {
                         for (let k = 0; k < batch.length; k++) {
-                            batch[k].translated = results[k]?.translatedMappedHtmlText ?? "";
+                            batch[k].translated = readPlainTranslationText(service, results[k]?.translatedMappedHtmlText ?? "");
                         }
                     }
                     // Held below 100 until the file is actually built, so the
@@ -1007,7 +1008,7 @@ export function initVideoSubtitle(): VideoSubtitleController {
             publishDownloadState({ kind, percent: 100 });
             downloadTextFile(
                 subtitleFileName(currentVideoTitle(), kind, lang, s.videoId),
-                buildSrt(cues, kind),
+                buildSrt(cues, kind, service === TRANSLATE_SERVICE.BAIDU ? "text" : "html"),
             );
         } catch (e) {
             if (job.abort.signal.aborted) return;

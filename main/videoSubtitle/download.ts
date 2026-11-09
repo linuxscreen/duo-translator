@@ -13,6 +13,8 @@ import type { SubtitleCue } from "./types";
  */
 
 export type SubtitleDownloadKind = "bilingual" | "original" | "translation";
+/** Whether cue translations still contain provider markup or are already decoded. */
+export type SubtitleTranslationFormat = "html" | "text";
 
 /** Live state of the running job, pushed into the player menu. */
 export interface SubtitleDownloadState {
@@ -52,9 +54,12 @@ export function stripHtml(text: string): string {
 }
 
 /** The lines one cue contributes, in the same order the overlay stacks them. */
-function cueLines(cue: SubtitleCue, kind: SubtitleDownloadKind): string[] {
+function cueLines(cue: SubtitleCue, kind: SubtitleDownloadKind, format: SubtitleTranslationFormat): string[] {
     const original = cue.text.trim();
-    const translated = stripHtml(cue.translated ?? "").trim();
+    const rawTranslation = cue.translated ?? "";
+    // Decoded plain text must never be parsed again: literal <tags> and &amp;
+    // belong in the file, just as they do in the live subtitle's textContent.
+    const translated = (format === "text" ? rawTranslation : stripHtml(rawTranslation)).trim();
     // A missing translation degrades to the original rather than to an empty
     // cue: same-language tracks are never translated at all, and a "translation"
     // file that is blank from top to bottom would just look broken.
@@ -64,10 +69,14 @@ function cueLines(cue: SubtitleCue, kind: SubtitleDownloadKind): string[] {
 }
 
 /** Render cues as an SRT document. Cues with no text at all are dropped. */
-export function buildSrt(cues: SubtitleCue[], kind: SubtitleDownloadKind): string {
+export function buildSrt(
+    cues: SubtitleCue[],
+    kind: SubtitleDownloadKind,
+    translationFormat: SubtitleTranslationFormat = "html",
+): string {
     const blocks: string[] = [];
     for (const cue of cues) {
-        const lines = cueLines(cue, kind).filter((l) => l !== "");
+        const lines = cueLines(cue, kind, translationFormat).filter((l) => l !== "");
         if (lines.length === 0) continue;
         blocks.push(
             `${blocks.length + 1}\n` +

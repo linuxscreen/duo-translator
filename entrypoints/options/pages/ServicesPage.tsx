@@ -42,6 +42,8 @@ type CredentialValues = {
     qps: string;
 };
 
+type CredentialField = Exclude<keyof CredentialValues, 'region'>;
+
 const EMPTY_CREDENTIALS: CredentialValues = {
     apiKey: '', region: '', appId: '', secretKey: '', qps: '1',
 };
@@ -78,6 +80,8 @@ export function ServicesPage() {
     });
     const [credentialDialogService, setCredentialDialogService] = useState<CredentialService | null>(null);
     const [credentialDraft, setCredentialDraft] = useState<CredentialValues>({ ...EMPTY_CREDENTIALS });
+    const editedCredentialFields = useRef(new Set<CredentialField>());
+    const [touchedCredentialFields, setTouchedCredentialFields] = useState(new Set<CredentialField>());
     const [credentialSaving, setCredentialSaving] = useState(false);
     const [dialogTest, setDialogTest] = useState<TestState>({ kind: 'idle' });
 
@@ -288,23 +292,41 @@ export function ServicesPage() {
 
     const isBaiduDialog = credentialDialogService === TRANSLATE_SERVICE.BAIDU;
     const qps = Number(credentialDraft.qps);
-    const credentialValidationError = credentialDialogService === null
-        ? undefined
-        : isBaiduDialog
-            ? !credentialDraft.appId.trim() || !credentialDraft.secretKey.trim()
-                ? t('baiduCredentialsRequired', 'Enter your Baidu AppID and secret key.')
-                : !Number.isInteger(qps) || qps < 1 || qps > 100
-                    ? t('baiduQpsInvalid', 'QPS must be a whole number from 1 to 100.')
-                    : undefined
-            : !credentialDraft.apiKey.trim()
-                ? t('translationApiKeyRequired', 'Enter an API key.')
-                : undefined;
-    const credentialDraftValid = credentialDialogService !== null && !credentialValidationError;
+    const credentialErrors: Partial<Record<CredentialField, string | undefined>> = isBaiduDialog
+        ? {
+            appId: !credentialDraft.appId.trim()
+                ? t('baiduCredentialsRequired', 'Enter your Baidu AppID and secret key.') : undefined,
+            secretKey: !credentialDraft.secretKey.trim()
+                ? t('baiduCredentialsRequired', 'Enter your Baidu AppID and secret key.') : undefined,
+            qps: !Number.isInteger(qps) || qps < 1 || qps > 100
+                ? t('baiduQpsInvalid', 'QPS must be a whole number from 1 to 100.') : undefined,
+        }
+        : {
+            apiKey: !credentialDraft.apiKey.trim()
+                ? t('translationApiKeyRequired', 'Enter an API key.') : undefined,
+        };
+    const credentialDraftValid = credentialDialogService !== null && !Object.values(credentialErrors).some(Boolean);
+    const credentialValidationError = Object.entries(credentialErrors)
+        .find(([field, error]) => error && touchedCredentialFields.has(field as CredentialField))?.[1];
+
+    const updateCredentialField = (field: CredentialField, value: string) => {
+        editedCredentialFields.current.add(field);
+        setCredentialDraft((draft) => ({ ...draft, [field]: value }));
+        setDialogTest({ kind: 'idle' });
+    };
+
+    const blurCredentialField = (field: CredentialField) => {
+        if (editedCredentialFields.current.has(field)) {
+            setTouchedCredentialFields((current) => new Set(current).add(field));
+        }
+    };
 
     // Each editable service owns its own dialog — dispatch, don't early-return.
     const openEdit = (value: string) => {
         if (isCredentialService(value)) {
             setCredentialDraft(credentials[value]);
+            editedCredentialFields.current.clear();
+            setTouchedCredentialFields(new Set());
             setDialogTest({ kind: 'idle' });
             setCredentialDialogService(value);
             return;
@@ -620,10 +642,8 @@ export function ServicesPage() {
                                 required
                                 type="text"
                                 value={credentialDraft.appId}
-                                onChange={(e) => {
-                                    setCredentialDraft((draft) => ({ ...draft, appId: e.target.value }));
-                                    setDialogTest({ kind: 'idle' });
-                                }}
+                                onChange={(e) => updateCredentialField('appId', e.target.value)}
+                                onBlur={() => blurCredentialField('appId')}
                                 placeholder={t('baiduAppIdPlaceholder', 'Enter your Baidu Translate AppID')}
                                 autoComplete="off"
                                 spellCheck={false}
@@ -636,10 +656,8 @@ export function ServicesPage() {
                                 required
                                 type="password"
                                 value={credentialDraft.secretKey}
-                                onChange={(e) => {
-                                    setCredentialDraft((draft) => ({ ...draft, secretKey: e.target.value }));
-                                    setDialogTest({ kind: 'idle' });
-                                }}
+                                onChange={(e) => updateCredentialField('secretKey', e.target.value)}
+                                onBlur={() => blurCredentialField('secretKey')}
                                 placeholder={t('baiduSecretKeyPlaceholder', 'Enter your Baidu Translate secret key')}
                                 autoComplete="off"
                                 spellCheck={false}
@@ -655,10 +673,8 @@ export function ServicesPage() {
                                 max={100}
                                 step={1}
                                 value={credentialDraft.qps}
-                                onChange={(e) => {
-                                    setCredentialDraft((draft) => ({ ...draft, qps: e.target.value }));
-                                    setDialogTest({ kind: 'idle' });
-                                }}
+                                onChange={(e) => updateCredentialField('qps', e.target.value)}
+                                onBlur={() => blurCredentialField('qps')}
                             />
                             <p className="text-[11px] text-ink-mute">
                                 {t('baiduCredentialsHint', 'Use Baidu General Text Translation. Match QPS to your account limit; the default is 1 request per second.')}
@@ -679,10 +695,8 @@ export function ServicesPage() {
                                 required
                                 type="text"
                                 value={credentialDraft.apiKey}
-                                onChange={(e) => {
-                                    setCredentialDraft((draft) => ({ ...draft, apiKey: e.target.value }));
-                                    setDialogTest({ kind: 'idle' });
-                                }}
+                                onChange={(e) => updateCredentialField('apiKey', e.target.value)}
+                                onBlur={() => blurCredentialField('apiKey')}
                                 placeholder={credentialDialogService === TRANSLATE_SERVICE.DEEPL
                                     ? t('deeplApiKeyPlaceholder', 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:fx')
                                     : t('cloudApiKeyPlaceholder', 'Enter API key')}
