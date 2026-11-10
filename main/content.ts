@@ -22,7 +22,7 @@ import { confirmRuleModeHint } from "./ruleHintDialog";
 import { detectLanguage, getElementTextContent } from "@/main/lang";
 import { parseTranslateServiceKey, startTranslate, TranslateServiceChoice } from "./aiWriting/translateRunner";
 import { applyTextToTarget } from "./aiWriting/applyText";
-import { getElementText } from "@/utils/dom";
+import { documentBody, getElementText } from "@/utils/dom";
 import { readConfig, watchConfig } from "@/utils/reactiveConfig";
 import { getDomainWithPortFromUrl } from "@/utils/url";
 import { createGestureEngine } from "@/main/customShortcut/gestureEngine";
@@ -1405,7 +1405,7 @@ export async function content() {
         // Website rules are gated at compile time — recompile with the new
         // answer before anything reads `siteRules`.
         refreshCompiledSiteRules()
-        await markParagraphElement(document.body)
+        await markDocument()
         if (!translateStatus) return
         controller = new AbortController()
         void retranslateNeedsTranslateParagraphs()
@@ -2161,7 +2161,7 @@ export async function content() {
         // so this is where the request started at entry is collected.
         await awaitSiteRules()
         startObserveDom()
-        let htmlElements = await markParagraphElement(document.body);
+        let htmlElements = await markDocument();
         // Paragraph marks now exist, which is everything the pointer gestures
         // need — release them here rather than at the end of init(), so a
         // double-tap does not have to wait behind a full auto-translation of
@@ -3117,6 +3117,19 @@ export async function content() {
         // that includes the ::highlight() rules — same string, delivered per
         // root. See main/dom/shadowCss.ts.
         setShadowCss("translation", css)
+    }
+
+    /**
+     * The whole-document marking scan. `document.body` is null in an XHTML
+     * document without <body> (and transiently if a page swaps its body out
+     * during the startup awaits); handing that null to markParagraphElement
+     * crashed startup — init() threw on the first scan, before the strategy
+     * was decided. Scanning nothing is right in both cases: the <html>-level
+     * observer re-roots marking on a fresh <body> when one is added.
+     */
+    function markDocument(): Promise<UnitContainer[]> {
+        const body = documentBody()
+        return body ? markParagraphElement(body) : Promise.resolve([])
     }
 
     /**

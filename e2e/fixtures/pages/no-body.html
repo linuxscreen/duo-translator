@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Duo Translator e2e — frames without body</title>
+</head>
+<body>
+    <h1>Host page for frames whose document has no body</h1>
+    <p id="top">This paragraph lives in the top frame and should be translated as usual.</p>
+    <!-- XHTML without <body>: the pipeline loads and must survive a null
+         `document.body` (used to crash the first marking scan). Also opens
+         fine directly as the top frame. -->
+    <iframe id="xhtml-frame" src="no-body.xhtml" width="600" height="80"></iframe>
+    <!-- SVG document: the pipeline must not even be evaluated here (used to
+         crash at module load in React DOM). -->
+    <iframe id="svg-frame" src="no-body.svg" width="600" height="160"></iframe>
+</body>
+</html>

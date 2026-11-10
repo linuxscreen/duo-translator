@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Served as application/xhtml+xml, so createElement() still yields HTML
+     elements (the pipeline loads, unlike in an SVG document), yet
+     `document.body` is null: the XML parser never synthesizes a <body> the
+     way the HTML parser does. Startup used to hand that null to the first
+     marking scan and crash on "null ... isConnected"; it now scans nothing
+     (markDocument in main/content.ts). -->
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Duo Translator e2e — XHTML document without body</title>
+</head>
+</html>

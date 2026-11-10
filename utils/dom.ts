@@ -9,6 +9,42 @@
  * pages it gets repositioned off-screen as soon as the content grows (e.g.
  * bilingual translation doubling the page height).
  */
+const HTML_NS = "http://www.w3.org/1999/xhtml";
+
+/**
+ * Whether `createElement` yields HTML elements in this document — the
+ * precondition for loading the content-script pipeline at all.
+ *
+ * all_frames + http(s) matches inject the content script into every document
+ * a frame can hold, SVG and raw XML included. Per the DOM spec, createElement
+ * there returns null-namespace `Element`s, which have no `.style`, and React
+ * DOM reads `document.createElement("div").style` at MODULE EVALUATION — so
+ * the bundle crashed before content() even ran.
+ *
+ * Probing the namespace asks exactly that question. `contentType` would not:
+ * a text/plain page (raw files, translatable today) is an HTML document whose
+ * contentType is not text/html. Under-matching is impossible too — every
+ * document this rejects is one where the bundle crashed at load anyway.
+ */
+export function isHtmlDocument(doc: Document = document): boolean {
+    return doc.createElement("div").namespaceURI === HTML_NS;
+}
+
+/**
+ * `document.body`, typed honestly. lib.dom declares it non-null, but it is
+ * null whenever the root has no <body> child — an XHTML document without one
+ * passes isHtmlDocument and still lands here. The nullable return type makes
+ * every caller handle that instead of crashing on it.
+ */
+export function documentBody(): HTMLElement | null {
+    return document.body;
+}
+
+/** Parent for our own transient nodes: the body, or the root when there is none. */
+export function bodyOrRoot(): HTMLElement {
+    return documentBody() ?? document.documentElement;
+}
+
 export function getViewportSize(): { width: number; height: number } {
     if (document.compatMode === "BackCompat") {
         const body = document.body;

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A non-HTML document: the root is not <html>, so `document.body` is null
+     and createElement() yields null-namespace elements without `.style`.
+     The content script is injected here (all_frames + http origin). It used
+     to crash at MODULE EVALUATION, before content() ran: React DOM reads
+     document.createElement("div").style while loading. The entrypoint now
+     checks isHtmlDocument() before importing the pipeline and stops here. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="120" viewBox="0 0 560 120">
+    <rect x="0" y="0" width="560" height="120" fill="#f3f3f3" stroke="#999" />
+    <text x="20" y="50" font-family="sans-serif" font-size="18" fill="#333">
+        SVG document loaded as a sub-frame.
+    </text>
+    <text x="20" y="85" font-family="sans-serif" font-size="14" fill="#666">
+        document.body is null in this frame.
+    </text>
+</svg>

@@ -1,7 +1,7 @@
 import { RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CONFIG_KEY, FLOAT_BALL_STYLE } from "@/main/constants";
 import { getConfig, setConfig } from "@/utils/db";
-import { getViewportSize } from "@/utils/dom";
+import { bodyOrRoot, getViewportSize } from "@/utils/dom";
 
 const DRAG_THRESHOLD = 5;
 const MIN_MARGIN = 5;
@@ -172,7 +172,7 @@ export function useDraggable(
             const el = ref.current;
             if (!s.dragging || !el) return;
             s.dragging = false;
-            document.body.style.userSelect = "";
+            bodyOrRoot().style.userSelect = "";
             // Pure click (no drag): nothing to snap or persist.
             if (!movedRef.current) return;
 
@@ -272,7 +272,7 @@ export function useDraggable(
         s.offsetY = e.clientY - (parseFloat(cs.top) || 0);
         // Drop any snap transition so dragging tracks the cursor 1:1.
         el.style.transition = "";
-        document.body.style.userSelect = "none";
+        bodyOrRoot().style.userSelect = "none";
     };
 
     return { ready, dock, onMouseDown, movedRef };

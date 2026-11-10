@@ -1,4 +1,5 @@
 import type { SubtitleCue } from "./types";
+import { bodyOrRoot } from "@/utils/dom";
 
 /**
  * Subtitle download — SRT generation and the browser save.
@@ -134,7 +135,7 @@ export function downloadTextFile(fileName: string, text: string): void {
     a.href = url;
     a.download = fileName;
     a.style.display = "none";
-    document.body.appendChild(a);
+    bodyOrRoot().appendChild(a);
     a.click();
     a.remove();
     // Revoked on a later task: some browsers abort the save if the URL dies

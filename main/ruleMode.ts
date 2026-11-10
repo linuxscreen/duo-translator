@@ -4,6 +4,7 @@ import { anyParagraphUnder, isParagraph, markNoTranslate, paragraphsUnder, setNe
 import { resolveRuleSelector, serializeRuleSelector } from "@/main/dom/ruleSelector";
 import { deepElementFromPoint, parentElementOrHost } from "@/main/dom/shadowTraversal";
 import { deepQuerySelectorAll } from "@/main/dom/shadowRoots";
+import { bodyOrRoot } from "@/utils/dom";
 
 const svgAddCursor = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M12 0C5.37259 0 0 5.37259 0 12C0 18.6274 5.37259 24 12 24C18.6274 24 24 18.6274 24 12C24 5.37259 18.6274 0 12 0Z" fill="white"/>
@@ -113,7 +114,7 @@ export function createRuleMode(domainWithPort: string): RuleModeController {
         el.addEventListener('mousedown', onOverlayMouseDown);
         el.addEventListener('contextmenu', (e) => e.preventDefault());
 
-        document.body.appendChild(el);
+        bodyOrRoot().appendChild(el);
         overlay = el;
 
         // The hover highlight box. zIndex above the yellow selected boxes so the
