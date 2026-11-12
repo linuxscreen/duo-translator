@@ -8,6 +8,14 @@ export default defineContentScript({
     allFrames: true,
     // runAt: "document_start",
     cssInjectionMode: 'manual',
+    // WXT announces startup with a CustomEvent and, for backwards
+    // compatibility only, ALSO a window.postMessage that every page `message`
+    // listener in every frame receives — before any of our settings are read.
+    // A page that answers every message (seen on a router admin page) turned
+    // that single message into an endless self-ping-pong pinning a CPU core.
+    // Nothing of ours listens for it: the current listener is the CustomEvent.
+    // Pinned by e2e/specs/content.footprint.spec.ts.
+    noScriptStartedPostMessage: true,
     async main(ctx) {
         // SVG / raw XML documents: nothing to translate, and the pipeline
         // cannot even be evaluated there (see isHtmlDocument). The import MUST

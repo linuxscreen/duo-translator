@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Duo Translator e2e — window message footprint</title>
+    <script>
+        // Installed before the content script injects (it runs at
+        // document_idle). Records every window `message` event this frame
+        // receives, except the test's own sentinel.
+        //
+        // Modeled on a real router admin page that replied to EVERY message
+        // with `event.source.postMessage('true', event.origin)` — including
+        // its own replies, so a single message posted to the window started an
+        // endless self-ping-pong pinning a CPU core. This fixture only records
+        // instead of replying: the assertion is "nothing arrives", and a real
+        // echo would turn a regression into a runaway loop in the test browser.
+        window.__received = [];
+        window.__sentinelSeen = false;
+        window.addEventListener('message', function (event) {
+            if (event.data === '__duo_e2e_sentinel__') {
+                window.__sentinelSeen = true;
+                return;
+            }
+            var d = event.data;
+            window.__received.push({
+                fromSelf: event.source === window,
+                type: d && typeof d === 'object' ? String(d.type) : typeof d,
+            });
+        });
+    </script>
+</head>
+<body>
+    <p id="p1">This paragraph gives the test a positive signal that the content script is running.</p>
+    <iframe id="child" src="message-echo-child.html" width="600" height="200"></iframe>
+</body>
+</html>

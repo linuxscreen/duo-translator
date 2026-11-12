@@ -843,7 +843,11 @@ export async function background() {
      */
     function setTranslateIcon(tabId: number | undefined, status: boolean) {
         if (typeof tabId !== 'number') return
-        const path = status ? TRANSLATED_ICON_PATHS : browser.runtime.getManifest().icons
+        // @wxt-dev/browser types manifest icons with a numeric index signature,
+        // which setIcon's string-keyed `path` rejects; at runtime the keys are
+        // the manifest's size strings ("16", "32", …) — exactly what it wants.
+        const manifestIcons = browser.runtime.getManifest().icons as Record<string, string> | undefined
+        const path = status ? TRANSLATED_ICON_PATHS : manifestIcons
         if (!path) return
         browser.action.setIcon({ tabId, path }).catch(() => { })
     }
