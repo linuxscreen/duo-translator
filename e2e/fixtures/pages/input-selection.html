@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Duo Translator e2e — input box and selection translation</title>
+</head>
+<body>
+    <h1>Input box and selection translation</h1>
+    <p id="para">Selected sentence for the selection translation test.</p>
+    <!-- One field per write-back path: <input>/<textarea> go through the value
+         setter, contenteditable through insertText. -->
+    <p><input id="field" type="text" size="40" value="Hello input world" /></p>
+    <p><textarea id="area" rows="2" cols="40">Hello textarea world</textarea></p>
+    <div id="rich" contenteditable="true">Hello editable world</div>
+    <!-- Same-origin child frame with an input of its own: the browser command
+         is broadcast to every frame, and only the focused one may act. -->
+    <iframe id="child" src="input-selection-child.html" width="600" height="80"></iframe>
+</body>
+</html>

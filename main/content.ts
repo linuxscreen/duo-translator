@@ -1473,8 +1473,8 @@ export async function content() {
             }
         }
         if (doInput) {
-            const active = deepActiveElement();
-            if (active instanceof HTMLElement && IsEditableElement(active)) {
+            const active = focusedEditableElement();
+            if (active) {
                 lastEditableElement = active;
                 translateInputBox();
                 return;
@@ -1490,9 +1490,7 @@ export async function content() {
      * listener above, registered in the first synchronous pass, can call it.
      */
     function noteTypedEcho(e: KeyboardEvent) {
-        const active = deepActiveElement()
-        const el = active instanceof HTMLElement && IsEditableElement(active) ? active : null
-        typedEcho = extendTypedRun(typedEcho, e, el)
+        typedEcho = extendTypedRun(typedEcho, e, focusedEditableElement())
     }
 
     /** What the shortcut that just fired can account for, taken and cleared. */
@@ -1539,8 +1537,8 @@ export async function content() {
                 return true
             }
             case CUSTOM_SHORTCUT_ACTION.TRANSLATE_INPUT: {
-                const active = deepActiveElement();
-                if (!(active instanceof HTMLElement) || !IsEditableElement(active)) return false
+                const active = focusedEditableElement();
+                if (!active) return false
                 // Take the shortcut's own characters back out FIRST: they are
                 // in the field the user is asking us to translate, so leaving
                 // them in would both send them to the provider and leave them
@@ -1604,20 +1602,22 @@ export async function content() {
         return false
     }
 
+    // Browser-command entry (Alt+A): a selection wins, otherwise the focused
+    // input is translated in place.
     function translateSelectionInputBox() {
         const { selection, text, inPopup } = currentTranslateSelection()
-        if (!text) {
-            // translate input box
-            const active = deepActiveElement()
-            if (!active || !(active instanceof HTMLElement) || IsEditableElement(active)) return
-            lastEditableElement = active
-            translateInputBox()
-            // console.debug('translateSelectionInputBox active: ', active)
+        if (text) {
+            translateSelection(text, selection, inPopup)
             return
         }
-        // console.debug('translateSelectionInputBox text: ', text)
-        translateSelection(text, selection, inPopup)
-
+        // The command is broadcast to every frame of the tab, but only the
+        // focused one can answer here: a document that loses focus to another
+        // frame has its activeElement reset to <body> (measured in Chromium
+        // and Firefox), so no other frame still reports an input.
+        const active = focusedEditableElement()
+        if (!active) return
+        lastEditableElement = active
+        translateInputBox()
     }
 
     /**
@@ -1739,6 +1739,14 @@ export async function content() {
         const ele = deepElementFromPoint(lastX, lastY)
         const container = closestParagraph(ele)
         if (container) toggleTranslateContainer(container)
+    }
+
+    // The editable element that currently holds focus (shadow-piercing), or
+    // null. Shared by every "translate the input box" trigger so they cannot
+    // disagree about what counts as a target.
+    function focusedEditableElement(): HTMLElement | null {
+        const active = deepActiveElement()
+        return active instanceof HTMLElement && IsEditableElement(active) ? active : null
     }
 
     function IsEditableElement(element: HTMLElement): boolean {
