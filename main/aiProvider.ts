@@ -253,6 +253,10 @@ export interface ChatOptions {
     targetLang?: string;
     params?: any;
     temperature?: number;
+    /**
+     * Output cap. Avoid for OpenAI-compatible providers: it is sent as
+     * `max_tokens`, which newer OpenAI models reject with HTTP 400.
+     */
     maxTokens?: number;
     signal?: AbortSignal;
 }

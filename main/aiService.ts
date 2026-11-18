@@ -667,7 +667,14 @@ export const aiMessageHandlers: Record<string, MessageHandler> = {
                     { role: "system", content: "Reply with exactly: ok" },
                     { role: "user", content: "ping" },
                 ],
-                { maxTokens: 16, task: AI_TASK.TRANSLATE, targetLang: "en" },
+                // No output cap on purpose. The parameter name is not portable
+                // across OpenAI-compatible models (newer OpenAI models reject
+                // `max_tokens` with HTTP 400 and want `max_completion_tokens`,
+                // which older compatible servers do not know), and on reasoning
+                // models a small cap is spent on thinking and yields an empty
+                // reply. The loop below stops after ~32 chars and sseFrames
+                // cancels the upstream body, which bounds the cost instead.
+                { task: AI_TASK.TRANSLATE, targetLang: "en" },
             );
             let collected = "";
             for await (const delta of gen) {

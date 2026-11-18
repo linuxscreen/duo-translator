@@ -93,6 +93,8 @@ describe("Qwen-MT compatibility", () => {
             aiMessageHandlers[ACTION.AI_PROVIDER_TEST]({ data: provider }, resolve);
         });
         expect(reply).toEqual({ reply: "ping" });
+        // Newer OpenAI models reject `max_tokens` outright; the test must not send a cap.
+        expect(JSON.parse(fetchMock.mock.calls[0][1].body)).not.toHaveProperty("max_tokens");
         expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
             messages: [{ role: "user", content: "ping" }],
             translation_options: { source_lang: "auto", target_lang: "English" },
