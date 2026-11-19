@@ -24,6 +24,10 @@ final class ExtensionState {
     private(set) var status: Status = .unknown
 
     /// Must match PRODUCT_BUNDLE_IDENTIFIER of the "DuoTranslator Extension" target.
+    /// Derived rather than spelled out because the Debug configuration uses its
+    /// own pair of identifiers (`….safari.dev` / `….safari.dev.extension`), so a
+    /// development build can sit next to an installed release without sharing
+    /// its registration or its stored data.
     nonisolated static let extensionIdentifier: String = {
         (Bundle.main.bundleIdentifier ?? "com.duotranslator.safari") + ".extension"
     }()

@@ -2,11 +2,24 @@
 // Safari / Mac App Store pipeline. macOS + Xcode only.
 //
 //   pnpm safari:sync [--dev]   build the extension with WXT and mirror it into
-//                              safari/Resources; stamp version + build number
-//                              into the Xcode project
-//   pnpm safari:run            sync --dev, build the app with xcodebuild and
-//                              launch it (which registers the extension with
-//                              Safari) — the "pnpm dev" of this target
+//                              safari/Resources; without --dev also stamp
+//                              version + build number into the Xcode project
+//                              (sync / archive / dist stamp, run never does)
+//   pnpm safari:run [--prod] [--open]
+//                              sync --dev and build the app with xcodebuild
+//                              (which registers the extension with Safari) —
+//                              the "pnpm dev" of this target. --open also
+//                              launches the app; off by default so a rebuild
+//                              does not bring its window to the front.
+//                              Development payload by default (unminified,
+//                              inline sourcemaps, console.debug kept); --prod
+//                              puts the production payload into the same
+//                              Debug app, for bugs that only show minified.
+//                              The Debug app has its own name ("… (Dev)") and
+//                              bundle id (com.duotranslator.safari.dev), so it keeps its
+//                              own stored data across rebuilds and never
+//                              shares registration or data with an installed
+//                              release.
 //   pnpm safari:archive        sync (production), archive, export a Mac App
 //                              Store .pkg into safari/build/export
 //   pnpm safari:icon           regenerate App/Assets.xcassets/AppIcon from
@@ -42,9 +55,17 @@ const buildDir = join(safariDir, 'build');
 const scheme = 'DuoTranslator';
 // PRODUCT_NAME of the app target: the .app / .pkg file name users see.
 const appName = 'Duo Translator for Safari';
+// PRODUCT_NAME of the Debug configuration. The suffix is on the product name,
+// not only on the display name, because the file name and CFBundleName are
+// what Finder, the Dock and the menu bar show — and because two apps with the
+// same file name cannot sit in one folder, so a development build copied into
+// /Applications would otherwise replace the installed release.
+const devAppName = `${appName} (Dev)`;
 
 const [command = 'sync', ...flags] = process.argv.slice(2);
-const dev = flags.includes('--dev');
+// `run` is the day-to-day debugging loop, so it defaults to the development
+// payload; every other command stays production unless --dev is passed.
+const dev = flags.includes('--dev') || (command === 'run' && !flags.includes('--prod'));
 
 const run = (cmd, args, opts = {}) => {
     console.log(`\n> ${cmd} ${args.join(' ')}`);
@@ -59,7 +80,14 @@ function requireMac() {
     }
 }
 
-/** package.json version → MARKETING_VERSION; git commit count → CURRENT_PROJECT_VERSION. */
+/**
+ * package.json version → MARKETING_VERSION; git commit count → CURRENT_PROJECT_VERSION.
+ *
+ * Production commands only (see the switch at the bottom). The build number
+ * moves with every commit, so stamping on a debugging run rewrote the checked-in
+ * project file each time and left a diff nobody asked for; a development build
+ * keeps whatever numbers the last release stamped.
+ */
 function stampVersion() {
     const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
     // App Store Connect requires a strictly increasing build number per
@@ -118,7 +146,6 @@ function sync() {
     mkdirSync(resourcesDir, { recursive: true });
     run('rsync', ['-a', '--delete', '--exclude', '.DS_Store', `${outDir}/`, `${resourcesDir}/`]);
     console.log(`\nExtension payload mirrored to ${resourcesDir}`);
-    return stampVersion();
 }
 
 function build() {
@@ -130,7 +157,7 @@ function build() {
         // with 'No signing certificate "Mac Development" found'.
         '-derivedDataPath', buildDir, '-allowProvisioningUpdates', '-quiet', 'build',
     ]);
-    return join(buildDir, 'Build', 'Products', 'Debug', `${appName}.app`);
+    return join(buildDir, 'Build', 'Products', 'Debug', `${devAppName}.app`);
 }
 
 function makeArchive() {
@@ -227,12 +254,22 @@ requireMac();
 switch (command) {
     case 'sync':
         sync();
+        if (!dev) stampVersion();
         break;
     case 'run': {
         sync();
         const app = build();
-        run('open', [app]);
-        console.log('\nApp launched. Enable the extension under Safari › Settings › Extensions; if it is missing, turn on Develop › Allow Unsigned Extensions.');
+        // Launching the container app is only needed to get at its window
+        // (first-time setup, checking the enabled state). The build itself
+        // already registers the app with Launch Services, which is what makes
+        // Safari pick up the new payload — so the everyday loop skips the
+        // launch and does not pull a window to the front on every rebuild.
+        if (flags.includes('--open')) {
+            run('open', [app]);
+            console.log('\nApp launched. Enable the extension under Safari › Settings › Extensions; if it is missing, turn on Develop › Allow Unsigned Extensions.');
+        } else {
+            console.log(`\nBuilt ${app}\nNot launched — pass --open to open the app (needed the first time, to enable the extension under Safari › Settings › Extensions).`);
+        }
         break;
     }
     case 'archive':
@@ -241,6 +278,7 @@ switch (command) {
             process.exit(1);
         }
         sync();
+        stampVersion();
         archive();
         break;
     case 'dist':
@@ -248,7 +286,8 @@ switch (command) {
             console.error('dist always uses the production build; drop --dev');
             process.exit(1);
         }
-        dist(sync());
+        sync();
+        dist(stampVersion());
         break;
     case 'icon':
         icon();

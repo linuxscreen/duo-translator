@@ -232,10 +232,11 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/manifest.json",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# Mirrors safari/Resources (the WXT build output, placed there by\n# `pnpm safari:sync`) into the appex's resource root, where Safari expects\n# manifest.json. A whole-directory copy rather than Xcode's per-file list so\n# a new top-level file in the build output can never be silently left out.\nset -eu\nSRC=\"${SRCROOT}/Resources\"\nDST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nif [ ! -f \"${SRC}/manifest.json\" ]; then\n  echo \"error: ${SRC}/manifest.json not found — run 'pnpm safari:sync' (or 'pnpm safari:sync --dev') first\" >&2\n  exit 1\nfi\nmkdir -p \"${DST}\"\nrsync -a --delete --exclude .DS_Store \"${SRC}/\" \"${DST}/\"\n";
+			shellScript = "# Mirrors safari/Resources (the WXT build output, placed there by\n# `pnpm safari:sync`) into the appex's resource root, where Safari expects\n# manifest.json. A whole-directory copy rather than Xcode's per-file list so\n# a new top-level file in the build output can never be silently left out.\nset -eu\nSRC=\"${SRCROOT}/Resources\"\nDST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nif [ ! -f \"${SRC}/manifest.json\" ]; then\n  echo \"error: ${SRC}/manifest.json not found — run 'pnpm safari:sync' (or 'pnpm safari:sync --dev') first\" >&2\n  exit 1\nfi\nmkdir -p \"${DST}\"\nrsync -a --delete --exclude .DS_Store \"${SRC}/\" \"${DST}/\"\n# Xcode re-signs the appex only when it can see that the bundle changed, and\n# all it can see of this phase is the declared output (manifest.json): files\n# rsync rewrites are invisible to it. A payload-only change therefore left\n# the previous signature in place, sealing files that no longer exist, and\n# Safari does not load an extension whose seal is broken (it stays listed\n# as enabled, with no toolbar item). Bumping the declared output on every\n# run makes the signing step follow every copy; rsync -a alone would keep\n# the source mtime, which does not change when only other files do.\ntouch \"${DST}/manifest.json\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -300,7 +301,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 175;
+				CURRENT_PROJECT_VERSION = 192;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 4R5A8D8B77;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -372,7 +373,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 175;
+				CURRENT_PROJECT_VERSION = 192;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 4R5A8D8B77;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -409,14 +410,14 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Extension/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Duo Translator for Safari";
+				INFOPLIST_KEY_CFBundleDisplayName = "Duo Translator for Safari (Dev)";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Duo Translator";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@executable_path/../../../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.duotranslator.safari.extension;
+				PRODUCT_BUNDLE_IDENTIFIER = com.duotranslator.safari.dev.extension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 			};
@@ -453,15 +454,15 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = App/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Duo Translator for Safari";
+				INFOPLIST_KEY_CFBundleDisplayName = "Duo Translator for Safari (Dev)";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Duo Translator";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.duotranslator.safari;
-				PRODUCT_NAME = "Duo Translator for Safari";
+				PRODUCT_BUNDLE_IDENTIFIER = com.duotranslator.safari.dev;
+				PRODUCT_NAME = "Duo Translator for Safari (Dev)";
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 			};
 			name = Debug;

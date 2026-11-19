@@ -276,7 +276,13 @@ export default defineConfig({
             // (safari/DuoTranslator.xcodeproj) so the store listing, the app
             // and the extension all read the same. A product name, so not
             // localized — unlike the Chrome/Firefox `__MSG_extName__`.
-            manifest.name = 'Duo Translator for Safari';
+            // A development build carries the same "(Dev)" suffix as the Debug
+            // configuration's display name: that app has its own bundle id and
+            // can be installed next to a release, and Safari would otherwise
+            // list two entries nobody can tell apart.
+            manifest.name = wxt.config.mode === 'development'
+                ? 'Duo Translator for Safari (Dev)'
+                : 'Duo Translator for Safari';
             // The gecko block is Firefox-only noise here. `safari` pins the
             // floor below which `content_scripts.world` (YouTube bridge) and
             // Selection.getComposedRanges are missing — the app's deployment
