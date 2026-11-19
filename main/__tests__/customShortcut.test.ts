@@ -203,6 +203,23 @@ describe("gesture engine", () => {
         expect(engine.wouldActivate(MOUSE_MIDDLE_KEY, mods(["Control"]))).toBe(true);
     });
 
+    // content.ts cancels the keydown that completes a chord so the browser's
+    // own accelerator on it does not run. A held key auto-repeats, and every
+    // repeat is another accelerator press — so the answer must not flip to
+    // false merely because the key is already part of the held set.
+    it("wouldActivate() keeps answering yes for a chord that is already held", () => {
+        engine.setGestures([def({ id: "g", key: buildCombo(["Alt"], "KeyF"), trigger: GESTURE_TRIGGER.HOLD })]);
+        expect(engine.wouldActivate("KeyF", mods(["Alt"]))).toBe(true);
+        engine.press("Alt", mods(["Alt"]));
+        engine.press("KeyF", mods(["Alt"]));
+        expect(engine.wouldActivate("KeyF", mods(["Alt"]))).toBe(true);
+        // A neighbouring chord is not claimed, held or not.
+        expect(engine.wouldActivate("KeyG", mods(["Alt"]))).toBe(false);
+        // Nor is the bare key once Alt is gone.
+        engine.release("Alt", mods());
+        expect(engine.wouldActivate("KeyF", mods())).toBe(false);
+    });
+
     it("turning the feature off mid-sequence cannot fire the removed gesture", () => {
         const g = def({ id: "g", key: "Space", trigger: GESTURE_TRIGGER.MULTI, count: 2, interval: 400 });
         engine.setGestures([g]);

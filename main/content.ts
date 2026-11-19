@@ -35,6 +35,7 @@ import {
     comboKeys,
     findShortcut,
     gestureKeyOf,
+    isModifierToken,
     normalizeBindings,
     normalizeCustomShortcuts,
     resolveGestures,
@@ -379,9 +380,11 @@ export async function content() {
     // Chromium routes to its own handler exactly those key events the renderer
     // left unhandled, so the KEYUP that opens the menu must be taken too.
     //
-    // Alt+F and friends are unaffected: a browser accelerator is decided on the
-    // ACCELERATOR key's event (the F), which is not this one, and modifier
-    // state itself does not come from the default action of a modifier press.
+    // Alt+F and friends are unaffected by THIS claim: a browser accelerator is
+    // decided on the ACCELERATOR key's event (the F), which is not this one,
+    // and modifier state itself does not come from the default action of a
+    // modifier press. A chord the user has configured is taken on that other
+    // event — see the `else` branch in the keydown listener below.
     //
     // `Meta` gets no equivalent on purpose: the Start / Command menu belongs to
     // the OS, which takes that key before the page is offered it at all.
@@ -396,6 +399,29 @@ export async function content() {
             // Auto-repeats included: the menu opens on the release, and a press
             // half of which was cancelled is not a state worth handing over.
             if (altClaimed) e.preventDefault()
+        } else if ((e.ctrlKey || e.altKey || e.metaKey) && !isModifierToken(key) && customShortcuts.wouldActivate(key, e)) {
+            // The press that completes a configured chord (Alt+F) is taken away
+            // from the browser. A browser accelerator that is not reserved is
+            // offered to the page first and runs only if the page leaves the
+            // event alone — and its action (a menu, the address bar) takes
+            // focus out of the page, so the release never arrives and the
+            // gesture can never complete. Recording the same chord in Options
+            // works, because the capture control does cancel it; without this
+            // it would record fine and then never fire.
+            //
+            // Only chords with Ctrl / Alt / Meta: a bare key or Shift+key TYPES,
+            // and cancelling it would eat the user's text on every press of a
+            // sequence that may never complete. Those keep the "remove what the
+            // gesture typed afterwards" route (noteTypedEcho).
+            //
+            // Auto-repeats included, and they need no extra state: the answer
+            // depends only on the held key set, which a repeat does not change,
+            // and a held accelerator fires once per repeat.
+            //
+            // Reserved accelerators (Ctrl+T, Ctrl+W) and OS ones (Alt+Tab) are
+            // out of reach — they are never dispatched to a page at all, which
+            // is also why they cannot be recorded in the first place.
+            e.preventDefault()
         }
         // Before the repeat guard: a held printable key really does insert a
         // character per repeat, and those are just as much the shortcut's doing.
