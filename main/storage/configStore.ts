@@ -26,6 +26,7 @@
 //   __sync_webdav_disconnected       — disconnected but keeping the credentials
 //   __site_rule_cache                — fetched subscription bodies (re-fetchable)
 //   __site_rule_official             — the official subscription package
+//   __browser_commands               — this browser's command shortcuts, for content
 
 import { storage, type StorageItemKey } from 'wxt/utils/storage';
 import {
@@ -62,6 +63,8 @@ export const INTERNAL_STORAGE_KEYS = [
     // refresh can't rebuild, so there is no reason to carry it in every sync.
     '__site_rule_cache',
     '__site_rule_official',
+    // A mirror of commands.getAll() — a property of this browser, not the account.
+    '__browser_commands',
 ] as const;
 
 export type DomainDoc = {

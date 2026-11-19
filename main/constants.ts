@@ -342,6 +342,13 @@ export enum ACTION {
     // RELAY_FRAMES, which broadcasts to EVERY frame — that would echo back to
     // the reporting frame and duplicate the console line.
     REPORT_ERROR = 'reportError',
+    // Content → background: run a browser command (`commands` in the manifest)
+    // as if its shortcut had fired, `data` = { command }. On macOS, Firefox and
+    // Safari hand Option+<key> to a focused text field instead of the command,
+    // so the content script takes the key and asks for the command by name —
+    // see main/customShortcut/browserShortcuts.ts. Going through the background
+    // keeps one dispatch path: same global-switch gate, same fan-out to frames.
+    BROWSER_COMMAND_RUN = 'browserCommandRun',
     // Sub-frame → top-frame translating-indicator state, corner-spinner mode
     // only. The corner surface is viewport-anchored, so an iframe drawing its
     // own would land inside the iframe's box; instead each frame reports

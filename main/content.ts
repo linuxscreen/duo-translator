@@ -26,6 +26,8 @@ import { documentBody, getElementText } from "@/utils/dom";
 import { readConfig, watchConfig } from "@/utils/reactiveConfig";
 import { getDomainWithPortFromUrl } from "@/utils/url";
 import { createGestureEngine } from "@/main/customShortcut/gestureEngine";
+import { browserShortcutsFrom, commandSwallowedByTextInput, type BrowserShortcut } from "@/main/customShortcut/browserShortcuts";
+import { watchBrowserCommands } from "@/main/browserCommandMirror";
 import {
     CUSTOM_SHORTCUT_ACTION,
     GESTURE_TRIGGER,
@@ -336,6 +338,24 @@ export async function content() {
         watchConfig<unknown[]>(CONFIG_KEY.CUSTOM_SHORTCUT_LIST, (v) => { customShortcutList = normalizeCustomShortcuts(v); refresh() })
         watchConfig<unknown[]>(CONFIG_KEY.CUSTOM_SHORTCUT_BINDINGS, (v) => { customShortcutBindings = normalizeBindings(v); refresh() })
     }
+    // Browser commands whose key a focused text field eats. macOS only: Option
+    // plus a key types a character there (Option+A is "å"), and Firefox and
+    // Safari give the key to the field instead of the command — so the default
+    // Alt+A could never translate an input box, the one place it is pressed
+    // with an input focused. The keydown listener below takes such a press and
+    // has the background run the command. Chromium handles commands before the
+    // page is offered the key, so the branch is never reached there.
+    //
+    // The list is the background's mirror of `commands.getAll()`, live, so it
+    // follows whatever the user has bound; the global switch is watched for the
+    // same reason the background reads it per press — and because the key must
+    // not be taken away from the page while the extension is switched off.
+    let textFieldCommands: BrowserShortcut[] = []
+    let commandTakeoverEnabled = false
+    if (IS_MAC) {
+        watchBrowserCommands((commands) => { textFieldCommands = browserShortcutsFrom(commands, true) })
+        watchConfig<boolean>(CONFIG_KEY.GLOBAL_SWITCH, (v) => { commandTakeoverEnabled = !!v })
+    }
     /**
      * The run of identical characters the focused editable has just received.
      * The rules live in main/customShortcut/typedRun.ts; this only feeds it
@@ -392,6 +412,17 @@ export async function content() {
     document.addEventListener('keydown', (e) => {
         if (!isKeyEvent(e)) return
         const key = gestureKeyOf(e)
+        // A browser command the focused text field is about to eat (see
+        // textFieldCommands). Cancelling the press keeps the character out of
+        // the field, repeats included; the command itself runs once per press.
+        // Only with an editable focused — anywhere else the browser delivers
+        // the command itself, and answering here too would run it twice.
+        const command = commandTakeoverEnabled ? commandSwallowedByTextInput(textFieldCommands, e) : null
+        const takeover = command !== null && focusedEditableElement() !== null
+        if (takeover) {
+            e.preventDefault()
+            if (!e.repeat) notifyBackground({ action: ACTION.BROWSER_COMMAND_RUN, data: { command: command.name } })
+        }
         if (key === 'Alt') {
             // Before `press` below: `wouldActivate` probes what the key set
             // WOULD become, so it has to be asked while Alt is still out of it.
@@ -432,6 +463,12 @@ export async function content() {
         // the recognizer.
         if (e.repeat) return
         customShortcuts.press(key, e)
+        // The chord belongs to the browser command, as it does wherever the
+        // browser takes the key itself: a gesture recorded on the same chord
+        // must not run beside it. Pressed first so the key still breaks every
+        // other combo (a bare-Alt gesture must not read this as an Alt tap),
+        // then withdrawn without counting.
+        if (takeover) customShortcuts.abort(key)
     }, true);
     document.addEventListener('keyup', (e) => {
         // Symmetrical with the keydown above: a release the engine cannot name

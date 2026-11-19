@@ -26,6 +26,7 @@ import { getDomainWithPortFromUrl } from '@/utils/url';
 import { configRepo, domainRepo, ruleRepo, type DomainDoc, type DomainField } from "@/main/storage/configStore";
 import * as translationCache from "@/main/storage/translationCache";
 import { synthesizeTts } from "@/main/ttsService";
+import { mirrorBrowserCommands } from "@/main/browserCommandMirror";
 import { migrateFromPouchIfNeeded } from "@/main/storage/migrateFromPouch";
 import { buildSnapshot, applyImportedSnapshot, redactSecrets } from "@/main/storage/snapshot";
 import {
@@ -98,6 +99,14 @@ export async function background() {
     // the shortcut, so shortcuts silently die once the extension goes idle. The
     // listener itself reads the global switch from storage at dispatch time.
     browser.commands.onCommand.addListener(shortcutKeyListener);
+    // Publish the current command shortcuts for the content script (see
+    // main/browserCommandMirror.ts), now and whenever one is rebound.
+    // `onChanged` is probed: Chromium has never shipped it, and there a rebind
+    // is picked up the next time the worker starts — which is harmless, because
+    // Chromium is the one engine where the page-side takeover never runs.
+    void mirrorBrowserCommands();
+    (browser.commands as unknown as { onChanged?: { addListener(cb: () => void): void } })
+        .onChanged?.addListener(() => { void mirrorBrowserCommands() });
 
     // IMPORTANT (MV3): an idle SW is torn down and cold-started by the very event
     // that needs it. runtime.onMessage / onConnect listeners MUST be registered
@@ -513,6 +522,14 @@ export async function background() {
                     ).catch(() => { })
                 }
                 break
+            case ACTION.BROWSER_COMMAND_RUN:
+                // A content script took a command's key because the browser
+                // would not deliver it (macOS text field, see the ACTION's
+                // comment). Unknown names fall out in dispatchCommand.
+                if (sender.tab?.id != null && typeof message.data?.command === 'string') {
+                    void dispatchCommand(message.data.command, sender.tab.id)
+                }
+                break
             case ACTION.RELAY_FRAMES:
                 // Re-broadcast an inner action to every frame of the sender's
                 // tab. The top-frame content script uses this to fan a
@@ -872,7 +889,18 @@ export async function background() {
         browser.tabs.onActivated.removeListener(tabsActivatedListener)
     }
 
-    async function shortcutKeyListener(command: string) {
+    // `commands.onCommand` hands over (command, tab); the second argument is
+    // ignored on purpose so the listener keeps resolving the tab itself.
+    function shortcutKeyListener(command: string) {
+        void dispatchCommand(command)
+    }
+
+    /**
+     * Run a browser command. `tabId` is given when a content script asks for it
+     * (ACTION.BROWSER_COMMAND_RUN) — the tab is then the one the key was
+     * pressed in, not whichever happens to be active by the time we get here.
+     */
+    async function dispatchCommand(command: string, tabId?: number) {
         // Global off ⇒ shortcuts inert. Read the switch from storage on each
         // press rather than a cached flag: this listener is registered
         // synchronously so it can wake a stopped background (see registration
@@ -894,6 +922,10 @@ export async function background() {
             action = TRANSLATE_ACTION.TRANSLATE_SELECTION_INPUT_BOX
         }
         if (!action) return
+        if (tabId != null) {
+            browser.tabs.sendMessage(tabId, { action: action }).catch(() => { });
+            return
+        }
         browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
             if (tabs.length === 0) {
                 return

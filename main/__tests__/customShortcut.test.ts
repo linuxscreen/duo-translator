@@ -3,7 +3,12 @@
 // DOM, no storage — so this suite is the real coverage for the timing rules.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createGestureEngine } from "@/main/customShortcut/gestureEngine";
-import { browserShortcutsFrom, commandShortcutToCombo } from "@/main/customShortcut/browserShortcuts";
+import {
+    browserShortcutsFrom,
+    commandShortcutToCombo,
+    commandSwallowedByTextInput,
+    type CommandKeyEvent,
+} from "@/main/customShortcut/browserShortcuts";
 import {
     BUILTIN_SHORTCUTS,
     CUSTOM_SHORTCUT_ACTION,
@@ -545,6 +550,21 @@ describe("browser shortcut parsing", () => {
         expect(commandShortcutToCombo("Ctrl+Y", false)).toBe("Control+KeyY");
     });
 
+    // Measured: `commands.getAll()` in Chrome on macOS answers "⌥A", not
+    // "Alt+A". Unparsed, every command there produced no combo at all — so the
+    // editor's "taken by a browser shortcut" warning never appeared on a Mac.
+    it("reads the glyph form Chrome reports on macOS", () => {
+        expect(commandShortcutToCombo("⌥A", true)).toBe("Alt+KeyA");
+        expect(commandShortcutToCombo("⇧⌘Y", true)).toBe("Shift+Meta+KeyY");
+        // The glyph is literal: ⌃ is Control, not the Command that the WORD
+        // `Ctrl` stands for on macOS.
+        expect(commandShortcutToCombo("⌃⌥1", true)).toBe("Control+Alt+Digit1");
+        expect(commandShortcutToCombo("⌥F5", true)).toBe("Alt+F5");
+        // Glyphs alone are no shortcut, and an unknown key is still unknown.
+        expect(commandShortcutToCombo("⌥", true)).toBeNull();
+        expect(commandShortcutToCombo("⌥←", true)).toBeNull();
+    });
+
     it("answers null rather than guessing — no warning beats a wrong one", () => {
         expect(commandShortcutToCombo("", false)).toBeNull();
         expect(commandShortcutToCombo("Search+A", false)).toBeNull();
@@ -569,9 +589,78 @@ describe("browser shortcut parsing", () => {
                 false,
             ),
         ).toEqual([
-            { combo: "Alt+KeyW", label: "AI workbench" },
-            { combo: "Alt+KeyQ", label: "bare" },
+            { name: "workbench", combo: "Alt+KeyW", label: "AI workbench" },
+            { name: "bare", combo: "Alt+KeyQ", label: "bare" },
         ]);
+    });
+});
+
+// On macOS a focused text field eats Option+<key> (it types a character) and
+// Firefox / Safari never deliver the command. content.ts takes the key itself
+// when this says the press is such a command; whether an editable is focused is
+// the caller's half.
+describe("commands a text field swallows", () => {
+    const commands = browserShortcutsFrom(
+        [
+            { name: "input", shortcut: "Alt+A" },
+            { name: "shifted", shortcut: "Alt+Shift+Y" },
+            { name: "digit", shortcut: "Alt+1" },
+            { name: "comma", shortcut: "Alt+Comma" },
+            // Not text input: the browser delivers these on its own.
+            { name: "command", shortcut: "Command+Shift+L" },
+            { name: "control", shortcut: "MacCtrl+B" },
+        ],
+        true,
+    );
+    const press = (over: Partial<CommandKeyEvent>): CommandKeyEvent => ({
+        key: "",
+        code: "",
+        ctrlKey: false,
+        altKey: false,
+        shiftKey: false,
+        metaKey: false,
+        ...over,
+    });
+    const hit = (over: Partial<CommandKeyEvent>) => commandSwallowedByTextInput(commands, press(over))?.name ?? null;
+
+    it("matches Option+key by the character on it, not what Option turned it into", () => {
+        // `key` is the composed character; it must not be what is compared.
+        expect(hit({ key: "å", code: "KeyA", keyCode: 65, altKey: true })).toBe("input");
+        expect(hit({ key: "¡", code: "Digit1", keyCode: 49, altKey: true })).toBe("digit");
+        expect(hit({ key: "Á", code: "KeyY", keyCode: 89, altKey: true, shiftKey: true })).toBe("shifted");
+        // No usable keyCode for punctuation: the position decides.
+        expect(hit({ key: "≤", code: "Comma", keyCode: 188, altKey: true })).toBe("comma");
+    });
+
+    it("follows the layout: the key that types the letter, wherever it sits", () => {
+        // AZERTY: "a" is on the key QWERTY calls Q.
+        expect(hit({ key: "æ", code: "KeyQ", keyCode: 65, altKey: true })).toBe("input");
+        // …and the key in QWERTY's A position types "q", which is not bound.
+        expect(hit({ key: "‡", code: "KeyA", keyCode: 81, altKey: true })).toBeNull();
+    });
+
+    it("falls back to the position when the IME took the press", () => {
+        expect(hit({ key: "Process", code: "KeyA", keyCode: 229, altKey: true })).toBe("input");
+        expect(hit({ key: "å", code: "KeyA", altKey: true })).toBe("input");
+    });
+
+    it("requires the exact modifiers", () => {
+        expect(hit({ key: "a", code: "KeyA", keyCode: 65 })).toBeNull();
+        // Shift is part of the chord, in both directions.
+        expect(hit({ key: "Å", code: "KeyA", keyCode: 65, altKey: true, shiftKey: true })).toBeNull();
+        expect(hit({ key: "¥", code: "KeyY", keyCode: 89, altKey: true })).toBeNull();
+    });
+
+    it("leaves chords with Control or Command to the browser", () => {
+        expect(hit({ key: "a", code: "KeyA", keyCode: 65, altKey: true, ctrlKey: true })).toBeNull();
+        expect(hit({ key: "a", code: "KeyA", keyCode: 65, altKey: true, metaKey: true })).toBeNull();
+        expect(hit({ key: "l", code: "KeyL", keyCode: 76, metaKey: true, shiftKey: true })).toBeNull();
+        expect(hit({ key: "b", code: "KeyB", keyCode: 66, ctrlKey: true })).toBeNull();
+    });
+
+    it("ignores a bare modifier press and an empty list", () => {
+        expect(hit({ key: "Alt", code: "AltLeft", keyCode: 18, altKey: true })).toBeNull();
+        expect(commandSwallowedByTextInput([], press({ key: "å", code: "KeyA", keyCode: 65, altKey: true }))).toBeNull();
     });
 });
 

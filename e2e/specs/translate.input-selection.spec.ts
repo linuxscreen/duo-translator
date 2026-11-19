@@ -158,4 +158,97 @@ test.describe('@input-selection input box and selection translation', () => {
         await expect(inner).toHaveValue(`${ZH}${INNER_TEXT}`);
         expect(recorder.texts.filter((t) => t.includes(INNER_TEXT))).toHaveLength(1);
     });
+
+    // A fourth way in, and only on macOS: Option+<key> types a character there
+    // (Option+A is "å"), and Firefox and Safari give the key to a focused text
+    // field instead of running the command. The content script then takes the
+    // key itself and has the background run the command.
+    //
+    // Chromium never reaches that code with a real key — it runs commands
+    // before the page sees them — but Playwright's keys arrive below that
+    // layer, so the page does get the chord here, exactly as it does on the two
+    // browsers this exists for. What cannot be shown is the other half: that
+    // the browser does not ALSO run the command.
+    test.describe('the command chord pressed inside a text field (macOS)', () => {
+        test.skip(process.platform !== 'darwin', 'Option only types characters on macOS; the takeover is gated on it');
+
+        type Keydown = { code: string; prevented: boolean };
+
+        /** Open the page once the background has published the bindings. */
+        async function openWithCommands(page: Page, serviceWorker: Parameters<typeof waitForContentScripts>[0]) {
+            await expect.poll(() => serviceWorker.evaluate(async () => {
+                const stored = await chrome.storage.local.get('__browser_commands');
+                const commands = (stored.__browser_commands ?? []) as { name: string }[];
+                return commands.map((c) => c.name);
+            })).toContain(COMMAND);
+            await open(page, serviceWorker);
+            // Bubble phase on window, i.e. after the content script's capture
+            // listener: `defaultPrevented` is its verdict on the press.
+            await page.evaluate(() => {
+                const w = window as unknown as { __keydowns: Keydown[] };
+                w.__keydowns = [];
+                window.addEventListener('keydown', (e) => {
+                    if (e.code === 'KeyA') w.__keydowns.push({ code: e.code, prevented: e.defaultPrevented });
+                });
+            });
+        }
+
+        const keydowns = (page: Page) =>
+            page.evaluate(() => (window as unknown as { __keydowns: Keydown[] }).__keydowns);
+
+        test('the chord is taken from the focused input and translates it', async ({ page, serviceWorker }) => {
+            await openWithCommands(page, serviceWorker);
+            await page.locator('#field').click();
+
+            await page.keyboard.press('Alt+KeyA');
+
+            // Cancelled, so the character Option would have typed stays out.
+            expect(await keydowns(page)).toEqual([{ code: 'KeyA', prevented: true }]);
+            await expect(page.locator('#field')).toHaveValue(`${ZH}${INPUT_TEXT}`);
+        });
+
+        test('outside an input the chord is left to the browser', async ({ page, serviceWorker }) => {
+            await openWithCommands(page, serviceWorker);
+            await selectParagraph(page);
+
+            await page.keyboard.press('Alt+KeyA');
+
+            // Not cancelled and nothing requested: the same branch does both,
+            // and here the browser delivers the command on its own.
+            expect(await keydowns(page)).toEqual([{ code: 'KeyA', prevented: false }]);
+        });
+
+        test('a gesture recorded on the same chord does not run beside the command', async ({ page, serviceWorker, seedConfig }) => {
+            await seedConfig({
+                config_defaultStrategy: 'never',
+                config_aiTranslateService: 'microsoft',
+                config_aiTargetLanguage: 'zh-CN',
+                config_customShortcutSwitch: true,
+                config_customShortcutList: [
+                    { id: 'e2e-chord', name: '', key: 'Alt+KeyA', trigger: 'click', count: 2, interval: 400, holdMs: 500 },
+                ],
+                config_customShortcutBindings: [{ id: 'e2e', action: 'translateInput', shortcutId: 'e2e-chord' }],
+            });
+            await openWithCommands(page, serviceWorker);
+            await page.locator('#field').click();
+
+            await page.keyboard.press('Alt+KeyA');
+
+            // One translation, not two: a second pass would both double the
+            // marker and send the input's text a second time.
+            await expect(page.locator('#field')).toHaveValue(`${ZH}${INPUT_TEXT}`);
+            expect(recorder.texts.filter((t) => t.includes(INPUT_TEXT))).toHaveLength(1);
+        });
+
+        test('with the extension switched off the key is not taken', async ({ page, serviceWorker, seedConfig }) => {
+            await seedConfig({ config_globalSwitch: false });
+            await openWithCommands(page, serviceWorker);
+            await page.locator('#field').click();
+
+            await page.keyboard.press('Alt+KeyA');
+
+            expect(await keydowns(page)).toEqual([{ code: 'KeyA', prevented: false }]);
+            await expect(page.locator('#field')).toHaveValue(INPUT_TEXT);
+        });
+    });
 });
