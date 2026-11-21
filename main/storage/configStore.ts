@@ -27,6 +27,7 @@
 //   __site_rule_cache                — fetched subscription bodies (re-fetchable)
 //   __site_rule_official             — the official subscription package
 //   __browser_commands               — this browser's command shortcuts, for content
+//   __storage_schema_version         — highest storage migration applied on THIS device
 
 import { storage, type StorageItemKey } from 'wxt/utils/storage';
 import {
@@ -65,6 +66,9 @@ export const INTERNAL_STORAGE_KEYS = [
     '__site_rule_official',
     // A mirror of commands.getAll() — a property of this browser, not the account.
     '__browser_commands',
+    // How far THIS device's storage has been migrated. Syncing it would let one
+    // device declare another one migrated.
+    '__storage_schema_version',
 ] as const;
 
 export type DomainDoc = {
@@ -321,6 +325,186 @@ export function markKeysLive(m: SyncMeta, dataKeys: string[], stored: Record<str
         m.clocks[k] = now;
         delete m.tombstones[k];
     }
+}
+
+// ------------------------------ Migrations ---------------------------------
+
+const hasDataPrefix = (key: string): boolean =>
+    Object.values(STORAGE_PREFIX).some((prefix) => key.startsWith(prefix));
+
+/** Whether `key` (no `local:` area prefix) is a synced data key. */
+export function isSyncedDataKey(key: string): boolean {
+    return hasDataPrefix(key);
+}
+
+/**
+ * Clocked writes to synced keys, as handed to a storage migration
+ * (main/storage/migrations).
+ *
+ * Every write returns whether the migration's decision now stands on this
+ * device: `false` means the user has decided since, and nothing was touched.
+ * `true` does not imply the value changed — a value that already was what the
+ * migration wants is still claimed with the migration's clock.
+ */
+export type SyncedKeyWriter = {
+    /** The stored value of a synced key — no default applied. */
+    get<T>(dataKey: string): Promise<T | null>;
+    /** Set a whole (non-collection) key. */
+    setIfOlder(dataKey: string, value: unknown): Promise<boolean>;
+    /** Delete a whole (non-collection) key. */
+    removeIfOlder(dataKey: string): Promise<boolean>;
+    /**
+     * Add one element to a collection key (or replace the one with its id).
+     * With nothing stored the list becomes `[element]` — which REPLACES the
+     * key's default, so check `get()` first when the default should stand.
+     */
+    addElement(dataKey: string, element: unknown): Promise<boolean>;
+    /**
+     * Remove one element from a collection key, by element identity. With
+     * nothing stored there is no list to remove from, and nothing is recorded.
+     */
+    removeElement(dataKey: string, id: string): Promise<boolean>;
+};
+
+/**
+ * The writer a storage migration uses for synced keys.
+ *
+ * A migration runs once on EVERY device, at whatever moment that device happens
+ * to upgrade — and the user may have edited the same key on another device in
+ * between. Stamping the write with the current time would make the last device
+ * to upgrade overrule that edit. So a migration's write is an LWW event with a
+ * FIXED clock, the `epoch` its author declared, on every device alike:
+ *
+ *  - across devices, any real edit made after the release is newer than the
+ *    epoch and wins the merge, whichever device syncs first;
+ *  - locally, the same rule decides whether the write lands at all: only where
+ *    what is stored is OLDER than the epoch (or has no history). That is also
+ *    what makes a re-run a no-op — after the first run the clock IS the epoch.
+ *
+ * A collection element is judged by its own history, not the key's: a user who
+ * toggled an unrelated element last week has said nothing about this one.
+ *
+ * The event is recorded even when the value already is what the migration
+ * wants. Skipping that looks like a free optimization and is not: the value and
+ * the sync-meta are two storage items, so a run can die having written the
+ * first only — and the repeat run, finding the value in place, would leave it
+ * dated by a clock older than a peer's stale copy.
+ *
+ * `m` is the sync-meta of the enclosing `updateSyncMeta` call and is edited in
+ * place; `changed` tells the caller whether it needs saving.
+ */
+export function migrationWriter(m: SyncMeta, epoch: number): SyncedKeyWriter & { readonly changed: boolean } {
+    if (!Number.isFinite(epoch) || epoch <= 0) throw new Error(`migration: invalid epoch ${epoch}`);
+    let changed = false;
+
+    const itemKey = (dataKey: string): StorageItemKey => {
+        if (!hasDataPrefix(dataKey)) throw new Error(`migration: "${dataKey}" is not a synced key`);
+        return `local:${dataKey}`;
+    };
+    const identityOf = (dataKey: string) => {
+        const idOf = collectionIdentity(dataKey);
+        if (!idOf) throw new Error(`migration: "${dataKey}" is not a collection key`);
+        return idOf;
+    };
+    const rejectCollection = (dataKey: string) => {
+        if (collectionIdentity(dataKey)) {
+            throw new Error(`migration: "${dataKey}" is a collection key — use addElement / removeElement`);
+        }
+    };
+    const keyHistory = (dataKey: string): number =>
+        Math.max(m.clocks[dataKey] ?? 0, m.tombstones[dataKey] ?? 0);
+    // Mirrors mergeCollectionKey: an element without a clock of its own takes
+    // the key's, and a key-level tombstone is a death of every element.
+    const elementHistory = (dataKey: string, id: string, present: boolean): number => {
+        const em = m.elements[dataKey];
+        const live = present ? em?.clocks[id] ?? m.clocks[dataKey] ?? 0 : 0;
+        const dead = Math.max(em?.tombstones[id] ?? 0, m.tombstones[dataKey] ?? 0);
+        return Math.max(live, dead);
+    };
+    // Never moves the key clock backwards: it also dates the key's OTHER
+    // elements wherever a peer carries no element clocks.
+    const keyTouched = (dataKey: string) => {
+        m.clocks[dataKey] = Math.max(m.clocks[dataKey] ?? 0, epoch);
+        delete m.tombstones[dataKey];
+        changed = true;
+    };
+
+    return {
+        get changed() {
+            return changed;
+        },
+
+        async get<T>(dataKey: string): Promise<T | null> {
+            return await storage.getItem<T>(itemKey(dataKey));
+        },
+
+        async setIfOlder(dataKey, value) {
+            const key = itemKey(dataKey);
+            rejectCollection(dataKey);
+            if (value === null || value === undefined) {
+                throw new Error(`migration: no value for "${dataKey}" — use removeIfOlder to delete a key`);
+            }
+            if (keyHistory(dataKey) >= epoch) return false;
+            const before = await storage.getItem<unknown>(key);
+            if (before === null || stableStr(before) !== stableStr(value)) await storage.setItem(key, value);
+            m.clocks[dataKey] = epoch;
+            delete m.tombstones[dataKey];
+            changed = true;
+            return true;
+        },
+
+        async removeIfOlder(dataKey) {
+            const key = itemKey(dataKey);
+            rejectCollection(dataKey);
+            if (keyHistory(dataKey) >= epoch) return false;
+            if ((await storage.getItem<unknown>(key)) !== null) await storage.removeItem(key);
+            delete m.clocks[dataKey];
+            m.tombstones[dataKey] = epoch;
+            changed = true;
+            return true;
+        },
+
+        async addElement(dataKey, element) {
+            const key = itemKey(dataKey);
+            const idOf = identityOf(dataKey);
+            const id = idOf(element);
+            if (id === null) throw new Error(`migration: element without an identity for "${dataKey}"`);
+            const before = await storage.getItem<unknown>(key);
+            // A corrupt (non-array) value is not ours to repair here.
+            if (before !== null && !Array.isArray(before)) return false;
+            const list: unknown[] = before ?? [];
+            const stored = indexElements(list, idOf).byId;
+            const present = stored.has(id);
+            if (elementHistory(dataKey, id, present) >= epoch) return false;
+            if (!present) {
+                await storage.setItem(key, [...list, element]);
+            } else if (stableStr(stored.get(id)) !== stableStr(element)) {
+                await storage.setItem(key, list.map((el) => (idOf(el) === id ? element : el)));
+            }
+            // Before the key clock moves: creating the bucket dates the
+            // elements already there by the key's CURRENT clock.
+            const em = elementMetaFor(m, dataKey, before);
+            em.clocks[id] = epoch;
+            delete em.tombstones[id];
+            keyTouched(dataKey);
+            return true;
+        },
+
+        async removeElement(dataKey, id) {
+            const key = itemKey(dataKey);
+            const idOf = identityOf(dataKey);
+            const before = await storage.getItem<unknown>(key);
+            if (!Array.isArray(before)) return false;
+            const present = indexElements(before, idOf).byId.has(id);
+            if (elementHistory(dataKey, id, present) >= epoch) return false;
+            if (present) await storage.setItem(key, before.filter((el) => idOf(el) !== id));
+            const em = elementMetaFor(m, dataKey, before);
+            delete em.clocks[id];
+            em.tombstones[id] = epoch;
+            keyTouched(dataKey);
+            return true;
+        },
+    };
 }
 
 const defaultForConfig = configDefault;

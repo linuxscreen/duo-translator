@@ -28,6 +28,7 @@ import * as translationCache from "@/main/storage/translationCache";
 import { synthesizeTts } from "@/main/ttsService";
 import { mirrorBrowserCommands } from "@/main/browserCommandMirror";
 import { migrateFromPouchIfNeeded } from "@/main/storage/migrateFromPouch";
+import { runMigrations } from "@/main/storage/migrations";
 import { buildSnapshot, applyImportedSnapshot, redactSecrets } from "@/main/storage/snapshot";
 import {
     getActiveProviderId,
@@ -135,6 +136,10 @@ export async function background() {
         // SW shutdown, retry on every boot. The migration module itself is
         // idempotent (flag-checked) so this is a near-free no-op once done.
         !IS_FIREFOX && await migrateFromPouchIfNeeded({ trigger: 'startup' });
+
+        // After the Pouch import (it writes the very data a migration may have
+        // to touch), before the first sync. Never rejects.
+        await runMigrations();
 
         // Schedule periodic auto-sync + run the startup sync (if enabled) once
         // migration settled.

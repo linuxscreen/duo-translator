@@ -38,6 +38,7 @@ import {
 } from './configStore';
 import { collectionIdentity, indexElements, type ElementIdentity } from './collections';
 import { stableStr } from './stableJson';
+import { MIGRATION_EPOCHS } from './migrations';
 
 export type Snapshot = {
     app: string;
@@ -65,8 +66,32 @@ const SNAPSHOT_APP = APP_NAME_KEBAB_CASE;
 const SNAPSHOT_VERSION = 2 as const;
 
 // Tombstones older than this are garbage-collected during merge. Long enough
-// that a device offline for ~2 months still propagates its deletions.
+// that a device offline for ~2 months still propagates its deletions. A
+// migration's tombstones are exempt, see keepTombstone.
 const TOMBSTONE_TTL_MS = 60 * 24 * 60 * 60 * 1000; // 60 days
+
+/**
+ * Whether a merge at `now` still carries a tombstone dated `ts` forward.
+ *
+ * A tombstone dated at a storage migration's epoch never expires. The epoch is
+ * fixed in the past by design (see migrationWriter), so on a device that
+ * upgrades more than the TTL after it, the deletion would be expired the moment
+ * it is written: the merge applies it once and drops it, and the next device
+ * that has not upgraded pushes the deleted value straight back — while this
+ * device has already recorded the migration as applied and never runs it again.
+ *
+ * Only the devices that have upgraded need to keep it. An older client still
+ * drops it from what it pushes, but it applies the deletion first; a stale peer
+ * that syncs after that is overruled again by the next upgraded device, whose
+ * local sync-meta still holds the tombstone.
+ *
+ * The cost is bounded by the number of deletions written by migrations. A user
+ * deletion landing on exactly an epoch's millisecond would be kept too, which
+ * is harmless.
+ */
+function keepTombstone(ts: number, now: number): boolean {
+    return now - ts <= TOMBSTONE_TTL_MS || MIGRATION_EPOCHS.has(ts);
+}
 
 // Keys that should never participate in a snapshot — internal state plus the
 // transient Microsoft translator token (refreshed every ~10min, no value in
@@ -280,7 +305,7 @@ function mergeWholeKey(
     if (win.kind === 'live') {
         out.data[key] = win.value;
         out.meta[key] = win.ts;
-    } else if (now - win.ts <= TOMBSTONE_TTL_MS) {
+    } else if (keepTombstone(win.ts, now)) {
         out.tombstones[key] = win.ts;
     }
 }
@@ -356,7 +381,7 @@ function mergeCollectionKey(
         const win = resolveLWW(evs);
         if (!win) continue;
         if (win.kind === 'live') live.push({ id, value: win.value, ts: win.ts });
-        else if (now - win.ts <= TOMBSTONE_TTL_MS) deaths[id] = win.ts;
+        else if (keepTombstone(win.ts, now)) deaths[id] = win.ts;
     }
 
     if (!allowDeletes) {
@@ -372,7 +397,7 @@ function mergeCollectionKey(
         // back for exactly one round.
         for (const em of [lEm, rEm]) {
             for (const [id, ts] of Object.entries(em?.tombstones ?? {})) {
-                if (now - ts > TOMBSTONE_TTL_MS) continue;
+                if (!keepTombstone(ts, now)) continue;
                 deaths[id] = Math.max(deaths[id] ?? 0, ts);
             }
         }
@@ -399,7 +424,7 @@ function mergeCollectionKey(
         out.data[key] = value;
         out.meta[key] = Math.max(lKeyClock, rKeyClock);
     } else {
-        if (anonWin && now - anonWin.ts <= TOMBSTONE_TTL_MS) out.tombstones[key] = anonWin.ts;
+        if (anonWin && keepTombstone(anonWin.ts, now)) out.tombstones[key] = anonWin.ts;
         // Nothing left to say about this key — an empty element section here
         // would differ from what buildSnapshot produces next time, so every
         // future merge would report a change that isn't one.

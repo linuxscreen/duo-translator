@@ -18,6 +18,7 @@ import {
     type Snapshot,
 } from '@/main/storage/snapshot';
 import { getConfigItem } from '@/main/storage/configStore';
+import { runMigrations } from '@/main/storage/migrations';
 import type { SyncProvider, SyncResult, SyncDirection } from './types';
 import { isTransientSyncError } from './types';
 import { googleDriveProvider } from './googleDriveProvider';
@@ -110,6 +111,13 @@ async function runSync(provider: SyncProvider): Promise<SyncResult> {
         if (!(await provider.isAuthenticated())) {
             return { ok: false, error: 'Sync provider not authenticated' };
         }
+
+        // Migrations first, even though the background start runs them too: an
+        // alarm can get a sync going before that start reaches them. A snapshot
+        // built before a migration and applied after it would roll the
+        // migration's write back — its clock is fixed in the past, so
+        // applyMergedToLocal cannot tell it from a value that never changed.
+        await runMigrations();
 
         const includeSecrets = await shouldSyncSecrets();
         const local = await buildSnapshot({ includeSecrets });
