@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.7] - 2026-11-23
+
+### Added
+
+- Baidu Translate (General Text Translation API) as a translation service, used with your own APPID and key, with an adjustable request rate (QPS). Like the other key-based services it starts out disabled until you set it up — on existing installs too
+- OpenCode Go as an AI provider
+- The toolbar icon carries a green check while the current tab is translated, and goes back to normal when the page is restored or reloaded
+- A built-in "hold left mouse button" gesture for function shortcuts. Dragging cancels it, so ordinary clicks and selections are unaffected. The Shortcuts settings page now also points to function shortcuts for anyone who cannot find a suitable browser shortcut
+- Two more switches in the extension popup customization: "Always translate this website" and "Never translate this website" can each be hidden. The website card disappears entirely when all of its rows are hidden
+- Safari: Duo Translator is now a regular macOS app, available on the Mac App Store and as a notarized download, so it no longer needs to be loaded as a temporary extension after every Safari restart. Requires macOS 15 / Safari 18 or later
+
+### Changed
+
+- The popup no longer offers the AI Writing entry while AI Writing is turned off in Settings
+
+### Fixed
+
+- The "translate selection / input box" browser shortcut (Alt+A by default) never translating the focused input box — it only worked on a selection. Double-tapping Ctrl and custom shortcuts were not affected
+- On macOS in Firefox and Safari, the Alt+letter browser shortcuts typing a character (Option+A gives "å") instead of running when the cursor is in a text field — which is exactly where "translate input box" and the AI Writing workbench are used. Chrome was not affected
+- A function shortcut on a key combo the browser also uses (such as Alt+F on Windows, which opens the browser menu) recording fine in Settings but never firing on a page
+- In Chrome on a Mac, the function shortcut editor never warning that a key combo is already taken by a browser shortcut
+- A page pinning a CPU core until the tab was closed. At startup the extension posted a message to every page, and a page that answers every message — including its own answers — kept replying to itself tens of thousands of times a second. Neither the global switch nor disabling the site could prevent it. The extension no longer posts any message to pages
+- The extension failing to start in frames showing an SVG image, raw XML or a page without a `<body>` (such as XHTML) — reported on Safari as "null is not an object (evaluating 't.isConnected')"
+- A sentence being cut into many separately translated pieces when the page wraps words in inline-block elements just to keep them on one line — one paragraph on testflight.apple.com went out as eleven requests. Buttons, chips and badges are still kept apart from the surrounding sentence. Affected paragraphs are fetched once more instead of coming from the cache
+- Formulas in Google Search AI answers disappearing from the bilingual translation ("written as ∇f" came back as "written as"), and the sentence around an inline formula being split in two
+- The right-click menu still saying "Show original" after a translated page was reloaded and showed the original again
+- Testing an OpenAI provider with a newer model failing with "Unsupported parameter: 'max_tokens'"
+
 ## [2.2.6] - 2026-10-02
 
 ### Added
