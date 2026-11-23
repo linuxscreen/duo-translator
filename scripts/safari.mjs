@@ -24,7 +24,8 @@
 //                              Store .pkg into safari/build/export
 //   pnpm safari:icon           regenerate App/Assets.xcassets/AppIcon from
 //                              public/DuoTranslator.svg
-//   pnpm safari:dist           distribution OUTSIDE the App Store: sync,
+//   pnpm safari:dist [--prebuilt]
+//                              distribution OUTSIDE the App Store: sync,
 //                              archive, export with Developer ID, notarize,
 //                              staple, wrap into safari/build/dist/*.dmg.
 //                              Needs a one-time
@@ -34,6 +35,16 @@
 //                              Users open the .app once; Safari then lists the
 //                              extension and the user switches it on — there
 //                              is no API to enable it for them.
+//                              The release workflow runs this on a macOS
+//                              runner, where there is no signed-in Xcode
+//                              account and no keychain profile; see
+//                              "Signing without an Xcode account" below for
+//                              the environment variables it sets instead.
+//
+// --prebuilt (sync / archive / dist): skip the WXT build and take the payload
+// already in .output/safari-mv3. CI builds that payload on Linux next to the
+// other targets, so the Mac job needs no dependency install and ships the
+// bytes the other builds were made from.
 //
 // Why the extension payload is copied rather than referenced: Xcode's
 // converter lists every top-level file of the build output individually in
@@ -42,7 +53,7 @@
 // the appex by a Run Script phase (see project.pbxproj), and this script is
 // the only writer of that directory.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -66,6 +77,24 @@ const [command = 'sync', ...flags] = process.argv.slice(2);
 // `run` is the day-to-day debugging loop, so it defaults to the development
 // payload; every other command stays production unless --dev is passed.
 const dev = flags.includes('--dev') || (command === 'run' && !flags.includes('--prod'));
+const prebuilt = flags.includes('--prebuilt');
+
+// Signing without an Xcode account (CI). Locally `dist` relies on automatic
+// signing through the Apple ID added in Xcode and on a notarytool keychain
+// profile; a runner has neither, so the release workflow sets:
+//   SAFARI_SIGNING_IDENTITY   certificate to sign with, already imported into
+//                             a keychain on the search list (e.g.
+//                             "Developer ID Application"). Switches archive and
+//                             export to manual signing. No provisioning profile
+//                             is involved because both targets carry only the
+//                             app-sandbox entitlement — adding one that needs a
+//                             profile (app groups, iCloud) breaks CI signing
+//                             until the workflow installs that profile too.
+//   SAFARI_NOTARY_KEY / SAFARI_NOTARY_KEY_ID / SAFARI_NOTARY_ISSUER
+//                             App Store Connect API key (.p8 path, key id,
+//                             issuer id) for notarytool, in place of the
+//                             keychain profile.
+const signingIdentity = process.env.SAFARI_SIGNING_IDENTITY || '';
 
 const run = (cmd, args, opts = {}) => {
     console.log(`\n> ${cmd} ${args.join(' ')}`);
@@ -134,9 +163,16 @@ function checkLocaleDescriptions(outDir) {
 }
 
 function sync() {
-    const args = ['exec', 'wxt', 'build', '-b', 'safari', '--mv3'];
-    if (dev) args.push('--mode', 'development');
-    run('pnpm', args);
+    if (prebuilt) {
+        if (dev) {
+            console.error('--prebuilt takes the production payload in .output/safari-mv3; it cannot be combined with --dev');
+            process.exit(1);
+        }
+    } else {
+        const args = ['exec', 'wxt', 'build', '-b', 'safari', '--mv3'];
+        if (dev) args.push('--mode', 'development');
+        run('pnpm', args);
+    }
     const outDir = join(root, '.output', dev ? 'safari-mv3-dev' : 'safari-mv3');
     if (!existsSync(join(outDir, 'manifest.json'))) {
         console.error(`WXT output not found at ${outDir}`);
@@ -160,28 +196,67 @@ function build() {
     return join(buildDir, 'Build', 'Products', 'Debug', `${devAppName}.app`);
 }
 
-function makeArchive() {
+/**
+ * xcodebuild arguments that select signing. Automatic signing through the
+ * Xcode account by default; with `identity`, manual signing with that
+ * certificate and no portal access at all — `-allowProvisioningUpdates` would
+ * make xcodebuild look for an account the runner does not have.
+ */
+const signingArgs = (identity) => identity
+    ? ['CODE_SIGN_STYLE=Manual', `CODE_SIGN_IDENTITY=${identity}`, 'PROVISIONING_PROFILE_SPECIFIER=']
+    : ['-allowProvisioningUpdates'];
+
+function makeArchive(identity = '') {
     const archivePath = join(buildDir, 'DuoTranslator.xcarchive');
     run('xcodebuild', [
         '-project', project, '-scheme', scheme, '-configuration', 'Release',
         '-destination', 'generic/platform=macOS',
-        '-archivePath', archivePath, '-allowProvisioningUpdates', 'archive',
+        '-archivePath', archivePath, ...signingArgs(identity), 'archive',
     ]);
     return archivePath;
 }
 
-function exportArchive(archivePath, optionsPlist, exportPath) {
+function exportArchive(archivePath, optionsPlist, exportPath, identity = '') {
     rmSync(exportPath, { recursive: true, force: true });
     run('xcodebuild', [
         '-exportArchive', '-archivePath', archivePath,
-        '-exportOptionsPlist', join(safariDir, optionsPlist),
-        '-exportPath', exportPath, '-allowProvisioningUpdates',
+        '-exportOptionsPlist', optionsPlist,
+        '-exportPath', exportPath, ...(identity ? [] : ['-allowProvisioningUpdates']),
     ]);
+}
+
+/**
+ * ExportOptionsDeveloperID.plist, switched to manual signing with `identity`
+ * when one is given. Derived from the checked-in file rather than kept as a
+ * second copy, so method and team id cannot drift apart between the two.
+ */
+function developerIdExportOptions(identity) {
+    const base = join(safariDir, 'ExportOptionsDeveloperID.plist');
+    if (!identity) return base;
+    const plist = join(buildDir, 'ExportOptionsDeveloperID-manual.plist');
+    mkdirSync(buildDir, { recursive: true });
+    copyFileSync(base, plist);
+    run('plutil', ['-replace', 'signingStyle', '-string', 'manual', plist]);
+    run('plutil', ['-replace', 'signingCertificate', '-string', identity, plist]);
+    return plist;
+}
+
+/** notarytool credentials: an App Store Connect API key if given, else the keychain profile. */
+function notaryAuth() {
+    const { SAFARI_NOTARY_KEY: key, SAFARI_NOTARY_KEY_ID: keyId, SAFARI_NOTARY_ISSUER: issuer } = process.env;
+    if (key || keyId || issuer) {
+        if (!(key && keyId && issuer)) {
+            console.error('SAFARI_NOTARY_KEY, SAFARI_NOTARY_KEY_ID and SAFARI_NOTARY_ISSUER must be set together');
+            process.exit(1);
+        }
+        return ['--key', key, '--key-id', keyId, '--issuer', issuer];
+    }
+    return ['--keychain-profile', process.env.SAFARI_NOTARY_PROFILE || 'duo-translator'];
 }
 
 function archive() {
     const exportPath = join(buildDir, 'export');
-    exportArchive(makeArchive(), 'ExportOptions.plist', exportPath);
+    exportArchive(makeArchive(), join(safariDir, 'ExportOptions.plist'), exportPath);
     console.log(`\nApp Store package exported to ${exportPath} — upload it with Transporter or Xcode › Organizer.`);
 }
 
@@ -199,9 +274,14 @@ function developerIdIdentity(app) {
 
 /** Developer ID build: notarized, stapled .dmg for distribution outside the store. */
 function dist({ version }) {
-    const profile = process.env.SAFARI_NOTARY_PROFILE || 'duo-translator';
+    const notary = notaryAuth();
     const exportPath = join(buildDir, 'export-developer-id');
-    exportArchive(makeArchive(), 'ExportOptionsDeveloperID.plist', exportPath);
+    exportArchive(
+        makeArchive(signingIdentity),
+        developerIdExportOptions(signingIdentity),
+        exportPath,
+        signingIdentity,
+    );
     const app = join(exportPath, `${appName}.app`);
 
     // 1. Notarize + staple the .app itself, so it passes Gatekeeper even when
@@ -209,7 +289,7 @@ function dist({ version }) {
     const appZip = join(buildDir, 'DuoTranslator-notarize.zip');
     rmSync(appZip, { force: true });
     run('ditto', ['-c', '-k', '--keepParent', app, appZip]);
-    run('xcrun', ['notarytool', 'submit', appZip, '--keychain-profile', profile, '--wait']);
+    run('xcrun', ['notarytool', 'submit', appZip, ...notary, '--wait']);
     run('xcrun', ['stapler', 'staple', app]);
 
     // 2. Wrap into a dmg (app + Applications shortcut), notarize + staple that too.
@@ -220,7 +300,9 @@ function dist({ version }) {
     mkdirSync(distDir, { recursive: true });
     run('ditto', [app, join(stage, `${appName}.app`)]);
     symlinkSync('/Applications', join(stage, 'Applications'));
-    const dmg = join(distDir, `DuoTranslator-${version}-safari.dmg`);
+    // Named like the other release assets (duo-translator-<version>-<target>.zip);
+    // the release workflow uploads it under this name.
+    const dmg = join(distDir, `duo-translator-${version}-safari.dmg`);
     rmSync(dmg, { force: true });
     run('hdiutil', ['create', '-volname', appName, '-srcfolder', stage, '-ov', '-format', 'UDZO', dmg]);
     // The disk image needs its own Developer ID signature: notarization
@@ -229,7 +311,7 @@ function dist({ version }) {
     // invalidates the stapled ticket. Identity taken from the exported app so
     // it can never disagree with what Xcode signed with.
     run('codesign', ['--sign', developerIdIdentity(app), '--timestamp', dmg]);
-    run('xcrun', ['notarytool', 'submit', dmg, '--keychain-profile', profile, '--wait']);
+    run('xcrun', ['notarytool', 'submit', dmg, ...notary, '--wait']);
     run('xcrun', ['stapler', 'staple', dmg]);
     run('spctl', ['-a', '-vv', '-t', 'open', '--context', 'context:primary-signature', dmg]);
     console.log(`\nNotarized installer: ${dmg}`);
