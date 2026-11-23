@@ -76,17 +76,23 @@ jobs:
       - name: Zip (Edge, reuse Chrome build)
         run: cp .output/duo-translator-$VERSION-chrome.zip .output/duo-translator-$VERSION-edge.zip
 
+      # .output is a dot-directory, which upload-artifact skips by default:
+      # without include-hidden-files the glob matches nothing and the step
+      # only warns, leaving the release job without the zips.
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: duo-translator-${{ env.VERSION }}
           path: .output/*.zip
+          include-hidden-files: true
+          if-no-files-found: error
 
       - name: Upload Safari payload
         uses: actions/upload-artifact@v4
         with:
           name: safari-payload
           path: .output/safari-mv3
+          include-hidden-files: true
           if-no-files-found: error
 
   # Signed + notarized installer: `pnpm safari:dist --prebuilt`, see
