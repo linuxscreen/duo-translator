@@ -95,13 +95,44 @@ describe("Baidu error interface language", () => {
         ["en", "zh-CN", "Enter your Baidu AppID and secret key."],
         ["zh-CN", "en", "请填写百度翻译 AppID 和密钥。"],
         [undefined, "zh-CN", "请填写百度翻译 AppID 和密钥。"],
-        ["ja", "zh-CN", "Enter your Baidu AppID and secret key."],
         ["invalid", "en", "Enter your Baidu AppID and secret key."],
     ] as const)("uses stored locale %s with browser locale %s and English fallback", async (stored, browserLanguage, expected) => {
         mockConfigGet.mockResolvedValue(stored);
         mockUiLanguage.mockReturnValue(browserLanguage);
         await expect(service({ secretKey: "" }).translateText(["hello"], "en")).rejects.toThrow(expected);
         expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    // Locales other than en / zh-CN are filled in at release time, so whether
+    // ja has a given key depends on where we are in the cycle. Pin both paths
+    // explicitly instead of relying on the current contents of ja.json.
+    it("uses a stored non-default locale over the browser locale when it has the key", async () => {
+        const { INTERFACE_LOCALES } = await import("@/utils/interfaceLang");
+        const ja = INTERFACE_LOCALES.ja;
+        const original = ja.baiduCredentialsRequired;
+        ja.baiduCredentialsRequired = "JA: credentials required";
+        try {
+            mockConfigGet.mockResolvedValue("ja");
+            mockUiLanguage.mockReturnValue("zh-CN");
+            await expect(service({ secretKey: "" }).translateText(["hello"], "en")).rejects.toThrow("JA: credentials required");
+        } finally {
+            if (original === undefined) delete ja.baiduCredentialsRequired;
+            else ja.baiduCredentialsRequired = original;
+        }
+    });
+
+    it("falls back to English when the stored locale lacks the key", async () => {
+        const { INTERFACE_LOCALES } = await import("@/utils/interfaceLang");
+        const ja = INTERFACE_LOCALES.ja;
+        const original = ja.baiduCredentialsRequired;
+        delete ja.baiduCredentialsRequired;
+        try {
+            mockConfigGet.mockResolvedValue("ja");
+            mockUiLanguage.mockReturnValue("zh-CN");
+            await expect(service({ secretKey: "" }).translateText(["hello"], "en")).rejects.toThrow("Enter your Baidu AppID and secret key.");
+        } finally {
+            if (original !== undefined) ja.baiduCredentialsRequired = original;
+        }
     });
 
     it("reads a changed setting for the next call and preserves provider error codes", async () => {
